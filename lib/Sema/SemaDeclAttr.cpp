@@ -699,10 +699,12 @@ static void handleExtVectorTypeAttr(Sema &S, Scope *scope, Decl *D,
   // Special case where the argument is a template id.
   if (Attr.getParameterName()) {
     CXXScopeSpec SS;
+    SourceLocation TemplateKWLoc;
     UnqualifiedId id;
     id.setIdentifier(Attr.getParameterName(), Attr.getLoc());
     
-    ExprResult Size = S.ActOnIdExpression(scope, SS, id, false, false);
+    ExprResult Size = S.ActOnIdExpression(scope, SS, TemplateKWLoc, id,
+                                          false, false);
     if (Size.isInvalid())
       return;
     
@@ -1692,9 +1694,16 @@ static void handleVisibilityAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     type = VisibilityAttr::Hidden;
   else if (TypeStr == "internal")
     type = VisibilityAttr::Hidden; // FIXME
-  else if (TypeStr == "protected")
-    type = VisibilityAttr::Protected;
-  else {
+  else if (TypeStr == "protected") {
+    // Complain about attempts to use protected visibility on targets
+    // (like Darwin) that don't support it.
+    if (!S.Context.getTargetInfo().hasProtectedVisibility()) {
+      S.Diag(Attr.getLoc(), diag::warn_attribute_protected_visibility);
+      type = VisibilityAttr::Default;
+    } else {
+      type = VisibilityAttr::Protected;
+    }
+  } else {
     S.Diag(Attr.getLoc(), diag::warn_attribute_unknown_visibility) << TypeStr;
     return;
   }
@@ -2251,8 +2260,7 @@ static FormatAttrKind getFormatAttrKind(StringRef Format) {
 
   // Otherwise, check for supported formats.
   if (Format == "scanf" || Format == "printf" || Format == "printf0" ||
-      Format == "strfmon" || Format == "cmn_err" || Format == "strftime" ||
-      Format == "NSString" || Format == "CFString" || Format == "vcmn_err" ||
+      Format == "strfmon" || Format == "cmn_err" || Format == "vcmn_err" ||
       Format == "zcmn_err" ||
       Format == "kprintf")  // OpenBSD.
     return SupportedFormat;

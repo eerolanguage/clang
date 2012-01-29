@@ -94,6 +94,7 @@ ParsedType Sema::getTypeName(IdentifierInfo &II, SourceLocation NameLoc,
                              Scope *S, CXXScopeSpec *SS,
                              bool isClassName, bool HasTrailingDot,
                              ParsedType ObjectTypePtr,
+                             bool IsCtorOrDtorName,
                              bool WantNontrivialTypeSourceInfo,
                              IdentifierInfo **CorrectedII) {
   // Determine where we will perform name lookup.
@@ -194,6 +195,7 @@ ParsedType Sema::getTypeName(IdentifierInfo &II, SourceLocation NameLoc,
                            false, Template, MemberOfUnknownSpecialization))) {
         ParsedType Ty = getTypeName(*NewII, NameLoc, S, NewSSPtr,
                                     isClassName, HasTrailingDot, ObjectTypePtr,
+                                    IsCtorOrDtorName,
                                     WantNontrivialTypeSourceInfo);
         if (Ty) {
           std::string CorrectedStr(Correction.getAsString(getLangOptions()));
@@ -272,8 +274,11 @@ ParsedType Sema::getTypeName(IdentifierInfo &II, SourceLocation NameLoc,
 
     if (T.isNull())
       T = Context.getTypeDeclType(TD);
-    
-    if (SS && SS->isNotEmpty()) {
+
+    // NOTE: avoid constructing an ElaboratedType(Loc) if this is a
+    // constructor or destructor name (in such a case, the scope specifier
+    // will be attached to the enclosing Expr or Decl node).
+    if (SS && SS->isNotEmpty() && !IsCtorOrDtorName) {
       if (WantNontrivialTypeSourceInfo) {
         // Construct a type with type-source information.
         TypeLocBuilder Builder;
@@ -394,6 +399,7 @@ bool Sema::DiagnoseUnknownTypeName(const IdentifierInfo &II,
 
       SuggestedType = getTypeName(*Result->getIdentifier(), IILoc, S, SS,
                                   false, false, ParsedType(),
+                                  /*IsCtorOrDtorName=*/false,
                                   /*NonTrivialTypeSourceInfo=*/true);
     }
     return true;
@@ -636,7 +642,7 @@ Corrected:
     Result.suppressDiagnostics();
     return NameClassification::Unknown();
       
-  case LookupResult::NotFoundInCurrentInstantiation:
+  case LookupResult::NotFoundInCurrentInstantiation: {
     // We performed name lookup into the current instantiation, and there were 
     // dependent bases, so we treat this result the same way as any other
     // dependent nested-name-specifier.
@@ -651,7 +657,9 @@ Corrected:
     // perform some heroics to see if we actually have a 
     // template-argument-list, which would indicate a missing 'template'
     // keyword here.
-    return BuildDependentDeclRefExpr(SS, NameInfo, /*TemplateArgs=*/0);
+    return BuildDependentDeclRefExpr(SS, /*TemplateKWLoc=*/SourceLocation(),
+                                     NameInfo, /*TemplateArgs=*/0);
+  }
 
   case LookupResult::Found:
   case LookupResult::FoundOverloaded:
@@ -757,7 +765,7 @@ Corrected:
   }
   
   if (!Result.empty() && (*Result.begin())->isCXXClassMember())
-    return BuildPossibleImplicitMemberExpr(SS, Result, 0);
+    return BuildPossibleImplicitMemberExpr(SS, SourceLocation(), Result, 0);
 
   bool ADL = UseArgumentDependentLookup(SS, Result, NextToken.is(tok::l_paren));
   return BuildDeclarationNameExpr(SS, Result, ADL);

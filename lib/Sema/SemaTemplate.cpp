@@ -390,6 +390,7 @@ void Sema::LookupTemplateName(LookupResult &Found,
 /// specifier naming a dependent type.
 ExprResult
 Sema::ActOnDependentIdExpression(const CXXScopeSpec &SS,
+                                 SourceLocation TemplateKWLoc,
                                  const DeclarationNameInfo &NameInfo,
                                  bool isAddressOfOperand,
                            const TemplateArgumentListInfo *TemplateArgs) {
@@ -409,20 +410,23 @@ Sema::ActOnDependentIdExpression(const CXXScopeSpec &SS,
                                                      /*IsArrow*/ true,
                                                      /*Op*/ SourceLocation(),
                                                SS.getWithLocInContext(Context),
+                                                     TemplateKWLoc,
                                                      FirstQualifierInScope,
                                                      NameInfo,
                                                      TemplateArgs));
   }
 
-  return BuildDependentDeclRefExpr(SS, NameInfo, TemplateArgs);
+  return BuildDependentDeclRefExpr(SS, TemplateKWLoc, NameInfo, TemplateArgs);
 }
 
 ExprResult
 Sema::BuildDependentDeclRefExpr(const CXXScopeSpec &SS,
+                                SourceLocation TemplateKWLoc,
                                 const DeclarationNameInfo &NameInfo,
                                 const TemplateArgumentListInfo *TemplateArgs) {
   return Owned(DependentScopeDeclRefExpr::Create(Context,
                                                SS.getWithLocInContext(Context),
+                                                 TemplateKWLoc,
                                                  NameInfo,
                                                  TemplateArgs));
 }
@@ -2045,7 +2049,8 @@ Sema::ActOnTemplateIdType(CXXScopeSpec &SS,
                           TemplateTy TemplateD, SourceLocation TemplateLoc,
                           SourceLocation LAngleLoc,
                           ASTTemplateArgsPtr TemplateArgsIn,
-                          SourceLocation RAngleLoc) {
+                          SourceLocation RAngleLoc,
+                          bool IsCtorOrDtorName) {
   if (SS.isInvalid())
     return true;
 
@@ -2056,12 +2061,12 @@ Sema::ActOnTemplateIdType(CXXScopeSpec &SS,
   translateTemplateArguments(TemplateArgsIn, TemplateArgs);
 
   if (DependentTemplateName *DTN = Template.getAsDependentTemplateName()) {
-    QualType T = Context.getDependentTemplateSpecializationType(ETK_None,
-                                                           DTN->getQualifier(), 
-                                                           DTN->getIdentifier(), 
-                                                                TemplateArgs);
-    
-    // Build type-source information.    
+    QualType T
+      = Context.getDependentTemplateSpecializationType(ETK_None,
+                                                       DTN->getQualifier(),
+                                                       DTN->getIdentifier(),
+                                                       TemplateArgs);
+    // Build type-source information.
     TypeLocBuilder TLB;
     DependentTemplateSpecializationTypeLoc SpecTL
       = TLB.push<DependentTemplateSpecializationTypeLoc>(T);
@@ -2091,7 +2096,10 @@ Sema::ActOnTemplateIdType(CXXScopeSpec &SS,
   for (unsigned i = 0, e = SpecTL.getNumArgs(); i != e; ++i)
     SpecTL.setArgLocInfo(i, TemplateArgs[i].getLocInfo());
 
-  if (SS.isNotEmpty()) {
+  // NOTE: avoid constructing an ElaboratedTypeLoc if this is a
+  // constructor or destructor name (in such a case, the scope specifier
+  // will be attached to the enclosing Decl or Expr node).
+  if (SS.isNotEmpty() && !IsCtorOrDtorName) {
     // Create an elaborated-type-specifier containing the nested-name-specifier.
     Result = Context.getElaboratedType(ETK_None, SS.getScopeRep(), Result);
     ElaboratedTypeLoc ElabTL = TLB.push<ElaboratedTypeLoc>(Result);
@@ -2192,6 +2200,7 @@ TypeResult Sema::ActOnTagTemplateIdType(TagUseKind TUK,
 }
 
 ExprResult Sema::BuildTemplateIdExpr(const CXXScopeSpec &SS,
+                                     SourceLocation TemplateKWLoc,
                                      LookupResult &R,
                                      bool RequiresADL,
                                  const TemplateArgumentListInfo &TemplateArgs) {
@@ -2215,6 +2224,7 @@ ExprResult Sema::BuildTemplateIdExpr(const CXXScopeSpec &SS,
   UnresolvedLookupExpr *ULE
     = UnresolvedLookupExpr::Create(Context, R.getNamingClass(),
                                    SS.getWithLocInContext(Context),
+                                   TemplateKWLoc,
                                    R.getLookupNameInfo(),
                                    RequiresADL, TemplateArgs,
                                    R.begin(), R.end());
@@ -2225,13 +2235,15 @@ ExprResult Sema::BuildTemplateIdExpr(const CXXScopeSpec &SS,
 // We actually only call this from template instantiation.
 ExprResult
 Sema::BuildQualifiedTemplateIdExpr(CXXScopeSpec &SS,
+                                   SourceLocation TemplateKWLoc,
                                    const DeclarationNameInfo &NameInfo,
                              const TemplateArgumentListInfo &TemplateArgs) {
   DeclContext *DC;
   if (!(DC = computeDeclContext(SS, false)) ||
       DC->isDependentContext() ||
       RequireCompleteDeclContext(SS, DC))
-    return BuildDependentDeclRefExpr(SS, NameInfo, &TemplateArgs);
+    return BuildDependentDeclRefExpr(SS, TemplateKWLoc, NameInfo,
+                                     &TemplateArgs);
 
   bool MemberOfUnknownSpecialization;
   LookupResult R(*this, NameInfo, LookupOrdinaryName);
@@ -2255,7 +2267,7 @@ Sema::BuildQualifiedTemplateIdExpr(CXXScopeSpec &SS,
     return ExprError();
   }
 
-  return BuildTemplateIdExpr(SS, R, /* ADL */ false, TemplateArgs);
+  return BuildTemplateIdExpr(SS, TemplateKWLoc, R, /*ADL*/ false, TemplateArgs);
 }
 
 /// \brief Form a dependent template name.
@@ -2266,8 +2278,8 @@ Sema::BuildQualifiedTemplateIdExpr(CXXScopeSpec &SS,
 /// SS will be "MetaFun::", \p TemplateKWLoc contains the location
 /// of the "template" keyword, and "apply" is the \p Name.
 TemplateNameKind Sema::ActOnDependentTemplateName(Scope *S,
-                                                  SourceLocation TemplateKWLoc,
                                                   CXXScopeSpec &SS,
+                                                  SourceLocation TemplateKWLoc,
                                                   UnqualifiedId &Name,
                                                   ParsedType ObjectType,
                                                   bool EnteringContext,
@@ -2735,9 +2747,14 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param,
 
         CXXScopeSpec SS;
         SS.Adopt(Arg.getTemplateQualifierLoc());
+        // FIXME: the template-template arg was a DependentTemplateName,
+        // so it was provided with a template keyword. However, its source
+        // location is not stored in the template argument structure.
+        SourceLocation TemplateKWLoc;
         ExprResult E = Owned(DependentScopeDeclRefExpr::Create(Context,
                                                 SS.getWithLocInContext(Context),
-                                                    NameInfo));
+                                                               TemplateKWLoc,
+                                                               NameInfo, 0));
 
         // If we parsed the template argument as a pack expansion, create a
         // pack expansion expression.

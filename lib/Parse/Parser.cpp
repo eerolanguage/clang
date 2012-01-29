@@ -1279,6 +1279,7 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
                                             &SS, false, 
                                             NextToken().is(tok::period),
                                             ParsedType(),
+                                            /*IsCtorOrDtorName=*/false,
                                             /*NonTrivialTypeSourceInfo*/true,
                                             NeedType ? &CorrectedII : NULL)) {
       // A FixIt was applied as a result of typo correction
@@ -1319,7 +1320,8 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
                                    Template, MemberOfUnknownSpecialization)) {
         // Consume the identifier.
         ConsumeToken();
-        if (AnnotateTemplateIdToken(Template, TNK, SS, TemplateName)) {
+        if (AnnotateTemplateIdToken(Template, TNK, SS, SourceLocation(),
+                                    TemplateName)) {
           // If an unrecoverable error occurred, we need to return true here,
           // because the token stream is in a damaged state.  We may not return
           // a valid identifier.
@@ -1513,9 +1515,10 @@ bool Parser::ParseMicrosoftIfExistsCondition(IfExistsCondition& Result) {
     return true;
   }
 
-  // Parse the unqualified-id. 
-  if (ParseUnqualifiedId(Result.SS, false, true, true, ParsedType(), 
-                         Result.Name)) {
+  // Parse the unqualified-id.
+  SourceLocation TemplateKWLoc; // FIXME: parsed, but unused.
+  if (ParseUnqualifiedId(Result.SS, false, true, true, ParsedType(),
+                         TemplateKWLoc, Result.Name)) {
     T.skipToEnd();
     return true;
   }

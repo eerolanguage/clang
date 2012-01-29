@@ -1846,6 +1846,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                                Next.getLocation(),
                                                getCurScope(), &SS,
                                                false, false, ParsedType(),
+                                               /*IsCtorOrDtorName=*/false,
                                                /*NonTrivialSourceInfo=*/true);
 
       // If the referenced identifier is not a type, then this declspec is
@@ -3938,11 +3939,13 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
       else
         AllowConstructorName = (D.getContext() == Declarator::MemberContext);
 
+      SourceLocation TemplateKWLoc;
       if (ParseUnqualifiedId(D.getCXXScopeSpec(), 
                              /*EnteringContext=*/true, 
                              /*AllowDestructorName=*/true, 
                              AllowConstructorName,
                              ParsedType(),
+                             TemplateKWLoc,
                              D.getName()) ||
           // Once we're past the identifier, if the scope was bad, mark the
           // whole declarator bad.
