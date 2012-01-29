@@ -56,6 +56,7 @@ enum InputKind {
   IK_C,
   IK_CXX,
   IK_ObjC,
+  IK_Eero,
   IK_ObjCXX,
   IK_PreprocessedC,
   IK_PreprocessedCXX,

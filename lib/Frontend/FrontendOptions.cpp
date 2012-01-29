@@ -19,6 +19,7 @@ InputKind FrontendOptions::getInputKindForExtension(StringRef Extension) {
     .Case("i", IK_PreprocessedC)
     .Case("ii", IK_PreprocessedCXX)
     .Case("m", IK_ObjC)
+    .Cases("ero", "eero", IK_Eero)
     .Case("mi", IK_PreprocessedObjC)
     .Cases("mm", "M", IK_ObjCXX)
     .Case("mii", IK_PreprocessedObjCXX)

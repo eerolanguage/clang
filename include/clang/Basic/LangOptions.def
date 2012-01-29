@@ -50,6 +50,7 @@ LANGOPT(CPlusPlus         , 1, 0, "C++")
 LANGOPT(CPlusPlus0x       , 1, 0, "C++0x")
 LANGOPT(ObjC1             , 1, 0, "Objective-C 1")
 LANGOPT(ObjC2             , 1, 0, "Objective-C 2")
+LANGOPT(Eero              , 1, 0, "Eero")
 LANGOPT(ObjCNonFragileABI , 1, 0, "Objective-C modern abi")
 LANGOPT(ObjCNonFragileABI2 , 1, 0, "Objective-C enhanced modern abi")
 BENIGN_LANGOPT(ObjCDefaultSynthProperties , 1, 0, 

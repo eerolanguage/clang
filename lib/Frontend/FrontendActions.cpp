@@ -468,6 +468,7 @@ void PrintPreambleAction::ExecuteAction() {
   case IK_C:
   case IK_CXX:
   case IK_ObjC:
+  case IK_Eero:
   case IK_ObjCXX:
   case IK_OpenCL:
   case IK_CUDA:

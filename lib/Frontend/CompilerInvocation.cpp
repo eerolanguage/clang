@@ -387,6 +387,7 @@ static const char *getInputKindName(InputKind Kind) {
   case IK_CXX:               return "c++";
   case IK_LLVM_IR:           return "ir";
   case IK_ObjC:              return "objective-c";
+  case IK_Eero:              return "eero";
   case IK_ObjCXX:            return "objective-c++";
   case IK_OpenCL:            return "cl";
   case IK_CUDA:              return "cuda";
@@ -1449,6 +1450,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       .Case("cuda", IK_CUDA)
       .Case("c++", IK_CXX)
       .Case("objective-c", IK_ObjC)
+      .Case("eero", IK_Eero)
       .Case("objective-c++", IK_ObjCXX)
       .Case("cpp-output", IK_PreprocessedC)
       .Case("assembler-with-cpp", IK_Asm)
@@ -1460,6 +1462,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       .Case("c-header", IK_C)
       .Case("cl-header", IK_OpenCL)
       .Case("objective-c-header", IK_ObjC)
+      .Case("eero-header", IK_Eero)
       .Case("c++-header", IK_CXX)
       .Case("objective-c++-header", IK_ObjCXX)
       .Case("ast", IK_AST)
@@ -1603,10 +1606,16 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   if (IK == IK_Asm) {
     Opts.AsmPreprocessor = 1;
   } else if (IK == IK_ObjC ||
+             IK == IK_Eero ||
              IK == IK_ObjCXX ||
              IK == IK_PreprocessedObjC ||
              IK == IK_PreprocessedObjCXX) {
     Opts.ObjC1 = Opts.ObjC2 = 1;
+  }
+
+  if (IK == IK_Eero) {
+    Opts.Eero = 1;
+    Opts.CXXOperatorNames = 1;
   }
 
   if (LangStd == LangStandard::lang_unspecified) {
@@ -1626,6 +1635,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     case IK_C:
     case IK_PreprocessedC:
     case IK_ObjC:
+    case IK_Eero:
     case IK_PreprocessedObjC:
       LangStd = LangStandard::lang_gnu99;
       break;
@@ -1666,7 +1676,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   Opts.Bool = Opts.OpenCL || Opts.CPlusPlus;
 
   Opts.GNUKeywords = Opts.GNUMode;
-  Opts.CXXOperatorNames = Opts.CPlusPlus;
+  Opts.CXXOperatorNames |= Opts.CPlusPlus;
 
   // Mimicing gcc's behavior, trigraphs are only enabled if -trigraphs
   // is specified, or -std is set to a conforming mode.
@@ -1694,6 +1704,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
       switch (IK) {
       case IK_C:
       case IK_ObjC:
+      case IK_Eero:
       case IK_PreprocessedC:
       case IK_PreprocessedObjC:
         if (!(Std.isC89() || Std.isC99()))
