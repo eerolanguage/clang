@@ -1726,7 +1726,10 @@ void Lexer::LexCharConstant(Token &Result, const char *CurPtr,
     Diag(BufferPtr, diag::warn_cxx98_compat_unicode_literal);
 
   char C = getAndAdvanceChar(CurPtr, Result);
-  if (C == '\'') {
+  if (C == '\'' && 
+      (!Features.Eero || // Eero needs to allow empty '', since an objc string
+       !PP || 
+       PP->getSourceManager().isInSystemHeader(getSourceLocation(CurPtr)))) {
     if (!isLexingRawMode() && !Features.AsmPreprocessor)
       Diag(BufferPtr, diag::err_empty_character);
     FormTokenWithChars(Result, CurPtr, tok::unknown);

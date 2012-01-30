@@ -1093,7 +1093,8 @@ void StringLiteralParser::init(const Token *StringToks, unsigned NumStringToks){
       }
 
     } else {
-      assert(ThisTokBuf[0] == '"' && "Expected quote, lexer broken?");
+      if (!Features.Eero) // eero converts 'xxx' strings to objc strings
+        assert(ThisTokBuf[0] == '"' && "Expected quote, lexer broken?");
       ++ThisTokBuf; // skip "
 
       // Check if this is a pascal string

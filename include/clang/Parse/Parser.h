@@ -713,6 +713,16 @@ private:
   };
 
   //===--------------------------------------------------------------------===//
+  // Eero convenience methods
+
+  bool InSystemHeader(const SourceLocation& Loc) {
+    if (PP.isInPrimaryFile())
+      return false;
+    else 
+      return PP.getSourceManager().isInSystemHeader(Loc);
+  }
+
+  //===--------------------------------------------------------------------===//
   // Diagnostic Emission and Error recovery.
 
 public:
