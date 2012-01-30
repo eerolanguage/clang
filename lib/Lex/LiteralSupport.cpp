@@ -397,6 +397,12 @@ NumericLiteralParser(const char *begin, const char *end,
   } else { // the first digit is non-zero
     radix = 10;
     s = SkipDigits(s);
+    const LangOptions& Features = PP.getLangOptions();
+    if (Features.Eero) {                      // Eero accepts and ignores
+      while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+        s = SkipDigits(++s);
+      }
+    }
     if (s == ThisTokEnd) {
       // Done.
     } else if (isxdigit(*s) && !(*s == 'e' || *s == 'E')) {
@@ -408,6 +414,11 @@ NumericLiteralParser(const char *begin, const char *end,
       s++;
       saw_period = true;
       s = SkipDigits(s);
+      if (Features.Eero) {                      // Eero accepts and ignores
+        while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+          s = SkipDigits(++s);
+        }
+      }
     }
     if ((*s == 'e' || *s == 'E')) { // exponent
       const char *Exponent = s;
@@ -542,12 +553,19 @@ NumericLiteralParser(const char *begin, const char *end,
 void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   assert(s[0] == '0' && "Invalid method call");
   s++;
+  const LangOptions& Features = PP.getLangOptions();
 
   // Handle a hex number like 0x1234.
-  if ((*s == 'x' || *s == 'X') && (isxdigit(s[1]) || s[1] == '.')) {
+  if ((*s == 'x' || *s == 'X') && (isxdigit(s[1]) || s[1] == '.' ||
+                                   (Features.Eero && s[1] == '_'))) {
     s++;
     radix = 16;
     DigitsBegin = s;
+    if (Features.Eero) {                      // Eero accepts and ignores
+      while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+        s = SkipHexDigits(++s);
+      }
+    }
     s = SkipHexDigits(s);
     if (s == ThisTokEnd) {
       // Done.
@@ -555,6 +573,11 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
       s++;
       saw_period = true;
       s = SkipHexDigits(s);
+      if (Features.Eero) {                      // Eero accepts and ignores
+        while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+          s = SkipHexDigits(++s);
+        }
+      }
     }
     // A binary exponent can appear with or with a '.'. If dotted, the
     // binary exponent is required.
@@ -590,6 +613,11 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
     radix = 2;
     DigitsBegin = s;
     s = SkipBinaryDigits(s);
+    if (Features.Eero) {                      // Eero accepts and ignores
+      while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+        s = SkipBinaryDigits(++s);
+      }
+    }
     if (s == ThisTokEnd) {
       // Done.
     } else if (isxdigit(*s)) {
@@ -607,6 +635,11 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   radix = 8;
   DigitsBegin = s;
   s = SkipOctalDigits(s);
+  if (Features.Eero) {                      // Eero accepts and ignores
+    while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+      s = SkipOctalDigits(++s);
+    }
+  }
   if (s == ThisTokEnd)
     return; // Done, simple octal number like 01234
 
@@ -667,10 +700,12 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
   unsigned MaxBitsPerDigit = 1;
   while ((1U << MaxBitsPerDigit) < radix)
     MaxBitsPerDigit += 1;
+  const LangOptions& Features(PP.getLangOptions());
   if ((SuffixBegin - DigitsBegin) * MaxBitsPerDigit <= 64) {
     uint64_t N = 0;
     for (s = DigitsBegin; s != SuffixBegin; ++s)
-      N = N*radix + HexDigitValue(*s);
+      if (!Features.Eero || *s != '_') // Eero accepts and skips '_'
+        N = N*radix + HexDigitValue(*s);
 
     // This will truncate the value to Val's input width. Simply check
     // for overflow by comparing.
@@ -687,6 +722,10 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
 
   bool OverflowOccurred = false;
   while (s < SuffixBegin) {
+    if (Features.Eero && *s == '_') { // Eero accepts and skips '_'
+      s++;
+      continue;
+    }
     unsigned C = HexDigitValue(*s++);
 
     // If this letter is out of bound for this radix, reject it.
@@ -715,7 +754,12 @@ NumericLiteralParser::GetFloatValue(llvm::APFloat &Result) {
   using llvm::APFloat;
 
   unsigned n = std::min(SuffixBegin - ThisTokBegin, ThisTokEnd - ThisTokBegin);
-  return Result.convertFromString(StringRef(ThisTokBegin, n),
+  std::string floatString(ThisTokBegin, n);
+  if (PP.getLangOptions().Eero) { // Eero accepts underscores, strip them out
+    floatString.erase(std::remove(floatString.begin(), floatString.end(), '_'),
+                      floatString.end());
+  }
+  return Result.convertFromString(floatString,
                                   APFloat::rmNearestTiesToEven);
 }
 
