@@ -4249,7 +4249,6 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
     return false;
 
   QualType T = NewVD->getType();
-  bool isConst = T.isLocalConstQualified();
 
   if (T->isObjCObjectType()) {
    if (!getLangOptions().Eero) { // eero objects are always pointers
