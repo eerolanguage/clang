@@ -4249,11 +4249,27 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
     return false;
 
   QualType T = NewVD->getType();
+  bool isConst = T.isLocalConstQualified();
 
   if (T->isObjCObjectType()) {
+   if (!getLangOptions().Eero) { // eero objects are always pointers
     Diag(NewVD->getLocation(), diag::err_statically_allocated_object)
       << FixItHint::CreateInsertion(NewVD->getLocation(), "*");
+   } else {
+    // If const qualifier is present, remove it from the pointed-to data,
+    // and add it to the variable itself. This is to make something like
+    //      const String string = 'abc'
+    // equivalent to
+    //      typedef NSString* StringType
+    //      const StringType string = 'abc'
+    if (T.isLocalConstQualified()) {
+      T.removeLocalConst();
+    }      
+   }
     T = Context.getObjCObjectPointerType(T);
+    if (getLangOptions().Eero && NewVD->getType().isLocalConstQualified()) {
+      T.addConst();
+    }
     NewVD->setType(T);
   }
 
@@ -4813,11 +4829,12 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
   // Do not allow returning a objc interface by-value.
   if (R->getAs<FunctionType>()->getResultType()->isObjCObjectType()) {
+   if (!getLangOptions().Eero) { // eero objects are always pointers
     Diag(D.getIdentifierLoc(),
          diag::err_object_cannot_be_passed_returned_by_value) << 0
     << R->getAs<FunctionType>()->getResultType()
     << FixItHint::CreateInsertion(D.getIdentifierLoc(), "*");
-
+   }
     QualType T = R->getAs<FunctionType>()->getResultType();
     T = Context.getObjCObjectPointerType(T);
     if (const FunctionProtoType *FPT = dyn_cast<FunctionProtoType>(R)) {
@@ -6940,9 +6957,11 @@ ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
   // Parameter declarators cannot be interface types. All ObjC objects are
   // passed by reference.
   if (T->isObjCObjectType()) {
+   if (!getLangOptions().Eero) { // eero objects are always pointers
     Diag(NameLoc,
          diag::err_object_cannot_be_passed_returned_by_value) << 1 << T
       << FixItHint::CreateInsertion(NameLoc, "*");
+   }
     T = Context.getObjCObjectPointerType(T);
     New->setType(T);
   }
@@ -9282,8 +9301,10 @@ void Sema::ActOnFields(Scope* S,
         Record->setHasObjectMember(true);
     } else if (FDTy->isObjCObjectType()) {
       /// A field cannot be an Objective-c object
+     if (!getLangOptions().Eero) { // eero objects are always pointers
       Diag(FD->getLocation(), diag::err_statically_allocated_object)
         << FixItHint::CreateInsertion(FD->getLocation(), "*");
+     }
       QualType T = Context.getObjCObjectPointerType(FD->getType());
       FD->setType(T);
     } 

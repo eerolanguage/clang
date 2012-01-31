@@ -2640,9 +2640,13 @@ Decl *Sema::ActOnMethodDeclaration(
     // Methods cannot return interface types. All ObjC objects are
     // passed by reference.
     if (resultDeclType->isObjCObjectType()) {
+     if (!getLangOptions().Eero) { // eero objects are always pointers
       Diag(MethodLoc, diag::err_object_cannot_be_passed_returned_by_value)
         << 0 << resultDeclType;
       return 0;
+     } else {
+      resultDeclType = Context.getObjCObjectPointerType(resultDeclType);
+     }
     }    
     
     HasRelatedResultType = (resultDeclType == Context.getObjCInstanceType());
@@ -2730,10 +2734,15 @@ Decl *Sema::ActOnMethodDeclaration(
       // Perform the default array/function conversions (C99 6.7.5.3p[7,8]).
       ArgType = Context.getAdjustedParameterType(ArgType);
     if (ArgType->isObjCObjectType()) {
+     if (!getLangOptions().Eero) { // eero objects are always pointers
       Diag(Param->getLocation(),
            diag::err_object_cannot_be_passed_returned_by_value)
       << 1 << ArgType;
       Param->setInvalidDecl();
+     } else {
+      ArgType = Context.getObjCObjectPointerType(ArgType);
+      Param->setType(ArgType);
+     }
     }
     Param->setDeclContext(ObjCMethod);
     
@@ -2936,6 +2945,8 @@ VarDecl *Sema::BuildObjCExceptionDecl(TypeSourceInfo *TInfo, QualType T,
     // Don't do any further checking.
   } else if (T->isDependentType()) {
     // Okay: we don't know what this type will instantiate to.
+  } else if (getLangOptions().Eero && T->isObjCObjectType()) {
+    T = Context.getObjCObjectPointerType(T); // make it a pointer for eero
   } else if (!T->isObjCObjectPointerType()) {
     Invalid = true;
     Diag(IdLoc ,diag::err_catch_param_not_objc_type);

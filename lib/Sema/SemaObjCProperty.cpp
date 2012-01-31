@@ -381,12 +381,18 @@ ObjCPropertyDecl *Sema::CreatePropertyDecl(Scope *S,
             Diag(AtLoc, diag::warn_implements_nscopying) << PropertyId;
     }
   if (T->isObjCObjectType())
+   if (!getLangOptions().Eero) // eero objects are always pointers
     Diag(FD.D.getIdentifierLoc(), diag::err_statically_allocated_object);
 
   DeclContext *DC = cast<DeclContext>(CDecl);
   ObjCPropertyDecl *PDecl = ObjCPropertyDecl::Create(Context, DC,
                                                      FD.D.getIdentifierLoc(),
                                                      PropertyId, AtLoc, TInfo);
+
+  if (getLangOptions().Eero && T->isObjCObjectType()) { // make it a pointer
+    T = Context.getObjCObjectPointerType(PDecl->getType());
+    PDecl->setType(Context.getTrivialTypeSourceInfo(T));
+  }
 
   if (ObjCPropertyDecl *prevDecl =
         ObjCPropertyDecl::findPropertyDecl(DC, PropertyId)) {
