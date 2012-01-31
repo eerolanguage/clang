@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -Wformat-nonliteral -fsyntax-only -verify %s
 
 //===----------------------------------------------------------------------===//
 // The following code is reduced using delta-debugging from
@@ -97,7 +97,7 @@ NSString *test_literal_propagation(void) {
   printf(s2); // expected-warning {{more '%' conversions than data arguments}}
 
   const char * const s3 = (const char *)0;
-  printf(s3); // expected-warning {{format string is not a string literal}}
+  printf(s3); // no-warning (NULL is a valid format string)
 
   NSString * const ns1 = @"constant string %s"; // expected-note {{format string is defined here}}
   NSLog(ns1); // expected-warning {{more '%' conversions than data arguments}}
@@ -106,4 +106,44 @@ NSString *test_literal_propagation(void) {
   NSLog(ns2); // expected-warning {{more '%' conversions than data arguments}}
   NSString * ns3 = ns1;
   NSLog(ns3); // expected-warning {{format string is not a string literal}}}
+}
+
+// Do not emit warnings when using NSLocalizedString
+extern NSString *GetLocalizedString(NSString *str);
+#define NSLocalizedString(key) GetLocalizedString(key)
+
+void check_NSLocalizedString() {
+  [Foo fooWithFormat:NSLocalizedString(@"format"), @"arg"]; // no-warning
+}
+
+typedef __WCHAR_TYPE__ wchar_t;
+
+
+// Test that %S, %C, %ls check for 16 bit types in ObjC strings, as described at
+// http://developer.apple.com/library/mac/#documentation/Cocoa/Conceptual/Strings/Articles/formatSpecifiers.html#//apple_ref/doc/uid/TP40004265
+
+void test_percent_S() {
+  const unsigned short data[] = { 'a', 'b', 0 };
+  const unsigned short* ptr = data;
+  NSLog(@"%S", ptr);  // no-warning
+
+  const wchar_t* wchar_ptr = L"ab";
+  NSLog(@"%S", wchar_ptr);  // expected-warning{{format specifies type 'const unsigned short *' but the argument has type 'const wchar_t *'}}
+}
+
+void test_percent_ls() {
+  const unsigned short data[] = { 'a', 'b', 0 };
+  const unsigned short* ptr = data;
+  NSLog(@"%ls", ptr);  // no-warning
+
+  const wchar_t* wchar_ptr = L"ab";
+  NSLog(@"%ls", wchar_ptr);  // expected-warning{{format specifies type 'const unsigned short *' but the argument has type 'const wchar_t *'}}
+}
+
+void test_percent_C() {
+  const unsigned short data = 'a';
+  NSLog(@"%C", data);  // no-warning
+
+  const wchar_t wchar_data = L'a';
+  NSLog(@"%C", wchar_data);  // expected-warning{{format specifies type 'unsigned short' but the argument has type 'wchar_t'}}
 }

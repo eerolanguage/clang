@@ -2063,61 +2063,6 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
 
   switch (BuiltinID) {
   default: return 0;
-  case X86::BI__builtin_ia32_pslldi128:
-  case X86::BI__builtin_ia32_psllqi128:
-  case X86::BI__builtin_ia32_psllwi128:
-  case X86::BI__builtin_ia32_psradi128:
-  case X86::BI__builtin_ia32_psrawi128:
-  case X86::BI__builtin_ia32_psrldi128:
-  case X86::BI__builtin_ia32_psrlqi128:
-  case X86::BI__builtin_ia32_psrlwi128: {
-    Ops[1] = Builder.CreateZExt(Ops[1], Int64Ty, "zext");
-    llvm::Type *Ty = llvm::VectorType::get(Int64Ty, 2);
-    llvm::Value *Zero = llvm::ConstantInt::get(Int32Ty, 0);
-    Ops[1] = Builder.CreateInsertElement(llvm::UndefValue::get(Ty),
-                                         Ops[1], Zero, "insert");
-    Ops[1] = Builder.CreateBitCast(Ops[1], Ops[0]->getType(), "bitcast");
-    const char *name = 0;
-    Intrinsic::ID ID = Intrinsic::not_intrinsic;
-
-    switch (BuiltinID) {
-    default: llvm_unreachable("Unsupported shift intrinsic!");
-    case X86::BI__builtin_ia32_pslldi128:
-      name = "pslldi";
-      ID = Intrinsic::x86_sse2_psll_d;
-      break;
-    case X86::BI__builtin_ia32_psllqi128:
-      name = "psllqi";
-      ID = Intrinsic::x86_sse2_psll_q;
-      break;
-    case X86::BI__builtin_ia32_psllwi128:
-      name = "psllwi";
-      ID = Intrinsic::x86_sse2_psll_w;
-      break;
-    case X86::BI__builtin_ia32_psradi128:
-      name = "psradi";
-      ID = Intrinsic::x86_sse2_psra_d;
-      break;
-    case X86::BI__builtin_ia32_psrawi128:
-      name = "psrawi";
-      ID = Intrinsic::x86_sse2_psra_w;
-      break;
-    case X86::BI__builtin_ia32_psrldi128:
-      name = "psrldi";
-      ID = Intrinsic::x86_sse2_psrl_d;
-      break;
-    case X86::BI__builtin_ia32_psrlqi128:
-      name = "psrlqi";
-      ID = Intrinsic::x86_sse2_psrl_q;
-      break;
-    case X86::BI__builtin_ia32_psrlwi128:
-      name = "psrlwi";
-      ID = Intrinsic::x86_sse2_psrl_w;
-      break;
-    }
-    llvm::Function *F = CGM.getIntrinsic(ID);
-    return Builder.CreateCall(F, Ops, name);
-  }
   case X86::BI__builtin_ia32_vec_init_v8qi:
   case X86::BI__builtin_ia32_vec_init_v4hi:
   case X86::BI__builtin_ia32_vec_init_v2si:
@@ -2126,66 +2071,6 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_ia32_vec_ext_v2si:
     return Builder.CreateExtractElement(Ops[0],
                                   llvm::ConstantInt::get(Ops[1]->getType(), 0));
-  case X86::BI__builtin_ia32_pslldi:
-  case X86::BI__builtin_ia32_psllqi:
-  case X86::BI__builtin_ia32_psllwi:
-  case X86::BI__builtin_ia32_psradi:
-  case X86::BI__builtin_ia32_psrawi:
-  case X86::BI__builtin_ia32_psrldi:
-  case X86::BI__builtin_ia32_psrlqi:
-  case X86::BI__builtin_ia32_psrlwi: {
-    Ops[1] = Builder.CreateZExt(Ops[1], Int64Ty, "zext");
-    llvm::Type *Ty = llvm::VectorType::get(Int64Ty, 1);
-    Ops[1] = Builder.CreateBitCast(Ops[1], Ty, "bitcast");
-    const char *name = 0;
-    Intrinsic::ID ID = Intrinsic::not_intrinsic;
-
-    switch (BuiltinID) {
-    default: llvm_unreachable("Unsupported shift intrinsic!");
-    case X86::BI__builtin_ia32_pslldi:
-      name = "pslldi";
-      ID = Intrinsic::x86_mmx_psll_d;
-      break;
-    case X86::BI__builtin_ia32_psllqi:
-      name = "psllqi";
-      ID = Intrinsic::x86_mmx_psll_q;
-      break;
-    case X86::BI__builtin_ia32_psllwi:
-      name = "psllwi";
-      ID = Intrinsic::x86_mmx_psll_w;
-      break;
-    case X86::BI__builtin_ia32_psradi:
-      name = "psradi";
-      ID = Intrinsic::x86_mmx_psra_d;
-      break;
-    case X86::BI__builtin_ia32_psrawi:
-      name = "psrawi";
-      ID = Intrinsic::x86_mmx_psra_w;
-      break;
-    case X86::BI__builtin_ia32_psrldi:
-      name = "psrldi";
-      ID = Intrinsic::x86_mmx_psrl_d;
-      break;
-    case X86::BI__builtin_ia32_psrlqi:
-      name = "psrlqi";
-      ID = Intrinsic::x86_mmx_psrl_q;
-      break;
-    case X86::BI__builtin_ia32_psrlwi:
-      name = "psrlwi";
-      ID = Intrinsic::x86_mmx_psrl_w;
-      break;
-    }
-    llvm::Function *F = CGM.getIntrinsic(ID);
-    return Builder.CreateCall(F, Ops, name);
-  }
-  case X86::BI__builtin_ia32_cmpps: {
-    llvm::Function *F = CGM.getIntrinsic(Intrinsic::x86_sse_cmp_ps);
-    return Builder.CreateCall(F, Ops, "cmpps");
-  }
-  case X86::BI__builtin_ia32_cmpss: {
-    llvm::Function *F = CGM.getIntrinsic(Intrinsic::x86_sse_cmp_ss);
-    return Builder.CreateCall(F, Ops, "cmpss");
-  }
   case X86::BI__builtin_ia32_ldmxcsr: {
     llvm::Type *PtrTy = Int8PtrTy;
     Value *One = llvm::ConstantInt::get(Int32Ty, 1);
@@ -2201,14 +2086,6 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     Builder.CreateCall(CGM.getIntrinsic(Intrinsic::x86_sse_stmxcsr),
                        Builder.CreateBitCast(Tmp, PtrTy));
     return Builder.CreateLoad(Tmp, "stmxcsr");
-  }
-  case X86::BI__builtin_ia32_cmppd: {
-    llvm::Function *F = CGM.getIntrinsic(Intrinsic::x86_sse2_cmp_pd);
-    return Builder.CreateCall(F, Ops, "cmppd");
-  }
-  case X86::BI__builtin_ia32_cmpsd: {
-    llvm::Function *F = CGM.getIntrinsic(Intrinsic::x86_sse2_cmp_sd);
-    return Builder.CreateCall(F, Ops, "cmpsd");
   }
   case X86::BI__builtin_ia32_storehps:
   case X86::BI__builtin_ia32_storelps: {
@@ -2343,128 +2220,12 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     return SI;
   }
   // 3DNow!
-  case X86::BI__builtin_ia32_pavgusb:
-  case X86::BI__builtin_ia32_pf2id:
-  case X86::BI__builtin_ia32_pfacc:
-  case X86::BI__builtin_ia32_pfadd:
-  case X86::BI__builtin_ia32_pfcmpeq:
-  case X86::BI__builtin_ia32_pfcmpge:
-  case X86::BI__builtin_ia32_pfcmpgt:
-  case X86::BI__builtin_ia32_pfmax:
-  case X86::BI__builtin_ia32_pfmin:
-  case X86::BI__builtin_ia32_pfmul:
-  case X86::BI__builtin_ia32_pfrcp:
-  case X86::BI__builtin_ia32_pfrcpit1:
-  case X86::BI__builtin_ia32_pfrcpit2:
-  case X86::BI__builtin_ia32_pfrsqrt:
-  case X86::BI__builtin_ia32_pfrsqit1:
-  case X86::BI__builtin_ia32_pfrsqrtit1:
-  case X86::BI__builtin_ia32_pfsub:
-  case X86::BI__builtin_ia32_pfsubr:
-  case X86::BI__builtin_ia32_pi2fd:
-  case X86::BI__builtin_ia32_pmulhrw:
-  case X86::BI__builtin_ia32_pf2iw:
-  case X86::BI__builtin_ia32_pfnacc:
-  case X86::BI__builtin_ia32_pfpnacc:
-  case X86::BI__builtin_ia32_pi2fw:
   case X86::BI__builtin_ia32_pswapdsf:
   case X86::BI__builtin_ia32_pswapdsi: {
     const char *name = 0;
     Intrinsic::ID ID = Intrinsic::not_intrinsic;
     switch(BuiltinID) {
-    case X86::BI__builtin_ia32_pavgusb:
-      name = "pavgusb";
-      ID = Intrinsic::x86_3dnow_pavgusb;
-      break;
-    case X86::BI__builtin_ia32_pf2id:
-      name = "pf2id";
-      ID = Intrinsic::x86_3dnow_pf2id;
-      break;
-    case X86::BI__builtin_ia32_pfacc:
-      name = "pfacc";
-      ID = Intrinsic::x86_3dnow_pfacc;
-      break;
-    case X86::BI__builtin_ia32_pfadd:
-      name = "pfadd";
-      ID = Intrinsic::x86_3dnow_pfadd;
-      break;
-    case X86::BI__builtin_ia32_pfcmpeq:
-      name = "pfcmpeq";
-      ID = Intrinsic::x86_3dnow_pfcmpeq;
-      break;
-    case X86::BI__builtin_ia32_pfcmpge:
-      name = "pfcmpge";
-      ID = Intrinsic::x86_3dnow_pfcmpge;
-      break;
-    case X86::BI__builtin_ia32_pfcmpgt:
-      name = "pfcmpgt";
-      ID = Intrinsic::x86_3dnow_pfcmpgt;
-      break;
-    case X86::BI__builtin_ia32_pfmax:
-      name = "pfmax";
-      ID = Intrinsic::x86_3dnow_pfmax;
-      break;
-    case X86::BI__builtin_ia32_pfmin:
-      name = "pfmin";
-      ID = Intrinsic::x86_3dnow_pfmin;
-      break;
-    case X86::BI__builtin_ia32_pfmul:
-      name = "pfmul";
-      ID = Intrinsic::x86_3dnow_pfmul;
-      break;
-    case X86::BI__builtin_ia32_pfrcp:
-      name = "pfrcp";
-      ID = Intrinsic::x86_3dnow_pfrcp;
-      break;
-    case X86::BI__builtin_ia32_pfrcpit1:
-      name = "pfrcpit1";
-      ID = Intrinsic::x86_3dnow_pfrcpit1;
-      break;
-    case X86::BI__builtin_ia32_pfrcpit2:
-      name = "pfrcpit2";
-      ID = Intrinsic::x86_3dnow_pfrcpit2;
-      break;
-    case X86::BI__builtin_ia32_pfrsqrt:
-      name = "pfrsqrt";
-      ID = Intrinsic::x86_3dnow_pfrsqrt;
-      break;
-    case X86::BI__builtin_ia32_pfrsqit1:
-    case X86::BI__builtin_ia32_pfrsqrtit1:
-      name = "pfrsqit1";
-      ID = Intrinsic::x86_3dnow_pfrsqit1;
-      break;
-    case X86::BI__builtin_ia32_pfsub:
-      name = "pfsub";
-      ID = Intrinsic::x86_3dnow_pfsub;
-      break;
-    case X86::BI__builtin_ia32_pfsubr:
-      name = "pfsubr";
-      ID = Intrinsic::x86_3dnow_pfsubr;
-      break;
-    case X86::BI__builtin_ia32_pi2fd:
-      name = "pi2fd";
-      ID = Intrinsic::x86_3dnow_pi2fd;
-      break;
-    case X86::BI__builtin_ia32_pmulhrw:
-      name = "pmulhrw";
-      ID = Intrinsic::x86_3dnow_pmulhrw;
-      break;
-    case X86::BI__builtin_ia32_pf2iw:
-      name = "pf2iw";
-      ID = Intrinsic::x86_3dnowa_pf2iw;
-      break;
-    case X86::BI__builtin_ia32_pfnacc:
-      name = "pfnacc";
-      ID = Intrinsic::x86_3dnowa_pfnacc;
-      break;
-    case X86::BI__builtin_ia32_pfpnacc:
-      name = "pfpnacc";
-      ID = Intrinsic::x86_3dnowa_pfpnacc;
-      break;
-    case X86::BI__builtin_ia32_pi2fw:
-      name = "pi2fw";
-      ID = Intrinsic::x86_3dnowa_pi2fw;
-      break;
+    default: llvm_unreachable("Unsupported intrinsic!");
     case X86::BI__builtin_ia32_pswapdsf:
     case X86::BI__builtin_ia32_pswapdsi:
       name = "pswapd";

@@ -119,14 +119,11 @@ public:
   explicit ExplodedNode(const ProgramPoint &loc, ProgramStateRef state,
                         bool IsSink)
     : Location(loc), State(state) {
-    const_cast<ProgramState*>(State)->incrementReferenceCount();
     if (IsSink)
       Succs.setFlag();
   }
   
-  ~ExplodedNode() {
-    const_cast<ProgramState*>(State)->decrementReferenceCount();
-  }
+  ~ExplodedNode() {}
 
   /// getLocation - Returns the edge associated with the given node.
   ProgramPoint getLocation() const { return Location; }
@@ -156,7 +153,7 @@ public:
                       ProgramStateRef state,
                       bool IsSink) {
     ID.Add(Loc);
-    ID.AddPointer(state);
+    ID.AddPointer(state.getPtr());
     ID.AddBoolean(IsSink);
   }
 
@@ -370,6 +367,10 @@ public:
   /// Reclaim "uninteresting" nodes created since the last time this method
   /// was called.
   void reclaimRecentlyAllocatedNodes();
+
+private:
+  bool shouldCollect(const ExplodedNode *node);
+  void collectNode(ExplodedNode *node);
 };
 
 class ExplodedNodeSet {

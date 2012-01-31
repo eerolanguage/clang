@@ -570,7 +570,10 @@ class PPCTargetInfo : public TargetInfo {
   static const char * const GCCRegNames[];
   static const TargetInfo::GCCRegAlias GCCRegAliases[];
 public:
-  PPCTargetInfo(const std::string& triple) : TargetInfo(triple) {}
+  PPCTargetInfo(const std::string& triple) : TargetInfo(triple) {
+    LongDoubleWidth = LongDoubleAlign = 128;
+    LongDoubleFormat = &llvm::APFloat::PPCDoubleDouble;
+  }
 
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
                                  unsigned &NumRecords) const {
@@ -583,6 +586,8 @@ public:
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const;
 
+  virtual bool hasFeature(StringRef Feature) const;
+  
   virtual void getGCCRegNames(const char * const *&Names,
                               unsigned &NumNames) const;
   virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
@@ -735,7 +740,11 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
   }
 }
 
+bool PPCTargetInfo::hasFeature(StringRef Feature) const {
+  return Feature == "powerpc";
+}
 
+  
 const char * const PPCTargetInfo::GCCRegNames[] = {
   "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7",
   "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
@@ -848,6 +857,7 @@ public:
                         "i64:64:64-f32:32:32-f64:64:64-v128:128:128-n32";
 
     switch (getTriple().getOS()) {
+    case llvm::Triple::Linux:
     case llvm::Triple::FreeBSD:
     case llvm::Triple::NetBSD:
       SizeType = UnsignedInt;
@@ -964,7 +974,10 @@ namespace {
       Records = BuiltinInfo;
       NumRecords = clang::PTX::LastTSBuiltin-Builtin::FirstTSBuiltin;
     }
-
+    virtual bool hasFeature(StringRef Feature) const {
+      return Feature == "ptx";
+    }
+    
     virtual void getGCCRegNames(const char * const *&Names,
                                 unsigned &NumNames) const;
     virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
@@ -1063,6 +1076,10 @@ public:
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const;
 
+  virtual bool hasFeature(StringRef Feature) const {
+    return Feature == "mblaze";
+  }
+  
   virtual const char *getVAListDeclaration() const {
     return "typedef char* __builtin_va_list;";
   }
@@ -1402,6 +1419,7 @@ public:
                                  const std::string &Name,
                                  bool Enabled) const;
   virtual void getDefaultFeatures(llvm::StringMap<bool> &Features) const;
+  virtual bool hasFeature(StringRef Feature) const;
   virtual void HandleTargetFeatures(std::vector<std::string> &Features);
   virtual const char* getABI() const {
     if (PointerWidth == 64 && SSELevel >= AVX)
@@ -2072,6 +2090,30 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   }
 }
 
+bool X86TargetInfo::hasFeature(StringRef Feature) const {
+  return llvm::StringSwitch<bool>(Feature)
+      .Case("aes", HasAES)
+      .Case("avx", SSELevel >= AVX)
+      .Case("avx2", SSELevel >= AVX2)
+      .Case("bmi", HasBMI)
+      .Case("bmi2", HasBMI2)
+      .Case("fma4", HasFMA4)
+      .Case("lzcnt", HasLZCNT)
+      .Case("mm3dnow", MMX3DNowLevel >= AMD3DNow)
+      .Case("mm3dnowa", MMX3DNowLevel >= AMD3DNowAthlon)
+      .Case("mmx", MMX3DNowLevel >= MMX)
+      .Case("popcnt", HasPOPCNT)
+      .Case("sse", SSELevel >= SSE1)
+      .Case("sse2", SSELevel >= SSE2)
+      .Case("sse3", SSELevel >= SSE3)
+      .Case("ssse3", SSELevel >= SSSE3)
+      .Case("sse41", SSELevel >= SSE41)
+      .Case("sse42", SSELevel >= SSE42)
+      .Case("x86", true)
+      .Case("x86_32", PointerWidth == 32)
+      .Case("x86_64", PointerWidth == 64)
+      .Default(false);
+}
 
 bool
 X86TargetInfo::validateAsmConstraint(const char *&Name,
@@ -2702,6 +2744,15 @@ public:
       Features.erase(it);
   }
 
+  virtual bool hasFeature(StringRef Feature) const {
+    return llvm::StringSwitch<bool>(Feature)
+        .Case("arm", true)
+        .Case("softfloat", SoftFloat)
+        .Case("thumb", IsThumb)
+        .Case("neon", FPU == NeonFPU && !SoftFloat && 
+              StringRef(getCPUDefineSuffix(CPU)).startswith("7"))    
+        .Default(false);
+  }
   static const char *getCPUDefineSuffix(StringRef Name) {
     return llvm::StringSwitch<const char*>(Name)
       .Cases("arm8", "arm810", "4")
@@ -2964,6 +3015,10 @@ public:
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const;
 
+  virtual bool hasFeature(StringRef Feature) const {
+    return Feature == "hexagon";
+  }
+  
   virtual const char *getVAListDeclaration() const {
     return "typedef char* __builtin_va_list;";
   }
@@ -3111,6 +3166,14 @@ public:
     if (SoftFloat)
       Builder.defineMacro("SOFT_FLOAT", "1");
   }
+  
+  virtual bool hasFeature(StringRef Feature) const {
+    return llvm::StringSwitch<bool>(Feature)
+             .Case("softfloat", SoftFloat)
+             .Case("sparc", true)
+             .Default(false);
+  }
+  
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
                                  unsigned &NumRecords) const {
     // FIXME: Implement!
@@ -3239,6 +3302,9 @@ namespace {
       Records = 0;
       NumRecords = 0;
     }
+    virtual bool hasFeature(StringRef Feature) const {
+      return Feature == "msp430";
+    }
     virtual void getGCCRegNames(const char * const *&Names,
                                 unsigned &NumNames) const;
     virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
@@ -3328,6 +3394,10 @@ namespace {
       Builder.defineMacro("__TCE__");
       Builder.defineMacro("__TCE_V1__");
     }
+    virtual bool hasFeature(StringRef Feature) const {
+      return Feature == "tce";
+    }
+    
     virtual void getTargetBuiltins(const Builtin::Info *&Records,
                                    unsigned &NumRecords) const {}
     virtual const char *getClobbers() const {
@@ -3372,6 +3442,9 @@ public:
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
                                  unsigned &NumRecords) const {
     // FIXME: Implement!
+  }
+  virtual bool hasFeature(StringRef Feature) const {
+    return Feature == "mips";
   }
   virtual const char *getVAListDeclaration() const {
     return "typedef void* __builtin_va_list;";
@@ -3698,6 +3771,9 @@ public:
 
     Builder.defineMacro("__native_client__");
     getArchDefines(Opts, Builder);
+  }
+  virtual bool hasFeature(StringRef Feature) const {
+    return Feature == "pnacl";
   }
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
                                  unsigned &NumRecords) const {
