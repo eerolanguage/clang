@@ -143,6 +143,10 @@ private:
   typedef llvm::SmallPtrSet<Decl *, 32> DeclSetTy;
   DeclSetTy DeclsInScope;
 
+  /// Ordered list of Eero namespace-like prefixes
+  typedef llvm::SmallVector<const char *, 32> PrefixListTy;
+  PrefixListTy PrefixesInScope;
+
   /// Entity - The entity with which this scope is associated. For
   /// example, the entity of a class scope is the class itself, the
   /// entity of a function scope is a function, etc. This field is
@@ -244,6 +248,13 @@ public:
   bool isDeclScope(Decl *D) {
     return DeclsInScope.count(D) != 0;
   }
+
+  /// Support for Eero namespace-like prefixes
+  typedef PrefixListTy::const_iterator prefix_iterator;
+  prefix_iterator prefix_begin() { return PrefixesInScope.begin(); }
+  prefix_iterator prefix_end() { return PrefixesInScope.end(); }
+  bool prefix_empty() const { return PrefixesInScope.empty(); }
+  void AddPrefix(const char *P) { PrefixesInScope.push_back(P); }
 
   void* getEntity() const { return Entity; }
   void setEntity(void *E) { Entity = E; }

@@ -31,6 +31,7 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/LangOptions.h"
+#include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -1225,6 +1226,36 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
   return (ExternalSource && ExternalSource->LookupUnqualified(R, S));
 }
 
+/// Eero
+bool Sema::LookupNameWithPrefixes(LookupResult &R, Scope *S) {
+  if (R.getLookupKind() != Sema::LookupOrdinaryName)
+    return false;
+  bool found = false;
+  if (PP.isInPrimaryFile() || 
+      (R.getNameLoc().isValid() &&
+       !PP.getSourceManager().isInSystemHeader(R.getNameLoc()))) {
+    const DeclarationName Name = R.getLookupName();
+    const std::string& name = Name.getAsString();
+
+    // First check for the almighty "NS" prefix
+    R.setLookupName(&(PP.getIdentifierTable().get("NS" + name)));
+    found = LookupName(R, S);   
+
+    Scope* prefixScope = S;
+    while (!found && prefixScope) { // now check for any explicit prefix typedefs
+      for ( Scope::prefix_iterator it = prefixScope->prefix_begin(); 
+            !found && (it != prefixScope->prefix_end());
+            it++ ) {
+        R.setLookupName(&(PP.getIdentifierTable().get(*it + name)));
+        found = LookupName(R, S);
+      }
+      prefixScope = prefixScope->getParent(); // keep looking in enclosing scopes
+    }
+    if (!found) R.setLookupName(Name); // restore orig name for diagnostics
+  }
+  return found;
+}
+
 /// @brief Perform qualified name lookup in the namespaces nominated by
 /// using directives by the given context.
 ///
@@ -2176,7 +2207,8 @@ NamedDecl *Sema::LookupSingleName(Scope *S, DeclarationName Name,
                                   LookupNameKind NameKind,
                                   RedeclarationKind Redecl) {
   LookupResult R(*this, Name, Loc, NameKind, Redecl);
-  LookupName(R, S);
+  if (!LookupName(R, S) && getLangOptions().Eero)
+    LookupNameWithPrefixes(R, S);
   return R.getAsSingle<NamedDecl>();
 }
 

@@ -602,6 +602,19 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
   case tok::kw_using:
   case tok::kw_namespace:
   case tok::kw_typedef:
+    if (getLang().Eero && !InSystemHeader(Tok.getLocation()) &&
+        GetLookAheadToken(1).is(tok::identifier) && 
+        GetLookAheadToken(2).is(tok::ellipsis) && 
+        GetLookAheadToken(3).is(tok::ellipsis)) {
+      IdentifierInfo* prefix = GetLookAheadToken(1).getIdentifierInfo();
+      Actions.ActOnPrefixTypedef(getCurScope(),
+                                 ConsumeToken(), // typedef
+                                 ConsumeToken(), // prefix
+                                 prefix);
+      ConsumeToken(); // ellipsis
+      ConsumeToken(); // ellipsis
+      break;
+    }
   case tok::kw_template:
   case tok::kw_export:    // As in 'export template'
   case tok::kw_static_assert:

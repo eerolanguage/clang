@@ -879,7 +879,8 @@ Sema::ObjCMessageKind Sema::getObjCMessageKind(Scope *S,
     return HasTrailingDot? ObjCInstanceMessage : ObjCSuperMessage;
   
   LookupResult Result(*this, Name, NameLoc, LookupOrdinaryName);
-  LookupName(Result, S);
+  if (!LookupName(Result, S) && getLangOptions().Eero)
+    LookupNameWithPrefixes(Result, S);
   
   switch (Result.getResultKind()) {
   case LookupResult::NotFound:

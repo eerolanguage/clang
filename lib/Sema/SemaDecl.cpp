@@ -164,7 +164,8 @@ ParsedType Sema::getTypeName(IdentifierInfo &II, SourceLocation NameLoc,
     }
   } else {
     // Perform unqualified name lookup.
-    LookupName(Result, S);
+    if (!LookupName(Result, S) && getLangOptions().Eero)
+      LookupNameWithPrefixes(Result, S);
   }
   
   NamedDecl *IIDecl = 0;
@@ -484,7 +485,9 @@ Sema::NameClassification Sema::ClassifyName(Scope *S,
   }
       
   LookupResult Result(*this, Name, NameLoc, LookupOrdinaryName);
-  LookupParsedName(Result, S, &SS, !CurMethod);
+  if (!LookupParsedName(Result, S, &SS, !CurMethod) && 
+      getLangOptions().Eero)
+    LookupNameWithPrefixes(Result, S);
   
   // Perform lookup for Objective-C instance variables (including automatically 
   // synthesized instance variables), if we're in an Objective-C method.
@@ -3731,6 +3734,15 @@ Sema::ActOnTypedefNameDecl(Scope *S, DeclContext *DC, TypedefNameDecl *NewTD,
     }
 
   return NewTD;
+}
+
+/// Eero support for namespace-like prefixes
+void Sema::ActOnPrefixTypedef(Scope *CurScope,
+                              SourceLocation TypedefLoc,
+                              SourceLocation PrefixNameLoc,
+                              IdentifierInfo *PrefixName) {
+    // TODO: add error checking for duplicate prefixes in same scope?    
+    CurScope->AddPrefix(PrefixName->getNameStart());
 }
 
 /// \brief Determines whether the given declaration is an out-of-scope

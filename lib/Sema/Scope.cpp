@@ -51,6 +51,7 @@ void Scope::Init(Scope *parent, unsigned flags) {
   if (flags & FunctionPrototypeScope) PrototypeDepth++;
 
   DeclsInScope.clear();
+  PrefixesInScope.clear(); // eero namespace prefixes
   UsingDirectives.clear();
   Entity = 0;
   ErrorTrap.reset();
