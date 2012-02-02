@@ -456,6 +456,8 @@ bool Sema::CheckFunctionCall(FunctionDecl *FDecl, CallExpr *TheCall) {
   // Handle memory setting and copying functions.
   if (CMId == Builtin::BIstrlcpy || CMId == Builtin::BIstrlcat)
     CheckStrlcpycatArguments(TheCall, FnInfo);
+  else if (CMId == Builtin::BIstrncat)
+    CheckStrncatArguments(TheCall, FnInfo);
   else
     CheckMemaccessArguments(TheCall, CMId, FnInfo);
 
@@ -2198,11 +2200,14 @@ CheckPrintfHandler::HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier
           os.str()));
     }
     else {
-      S.Diag(getLocationOfByte(CS.getStart()),
-             diag::warn_printf_conversion_argument_type_mismatch)
-        << ATR.getRepresentativeTypeName(S.Context) << Ex->getType()
-        << getSpecifierRange(startSpecifier, specifierLen)
-        << Ex->getSourceRange();
+      EmitFormatDiagnostic(
+        S.PDiag(diag::warn_printf_conversion_argument_type_mismatch)
+          << ATR.getRepresentativeTypeName(S.Context) << Ex->getType()
+          << getSpecifierRange(startSpecifier, specifierLen)
+          << Ex->getSourceRange(),
+        getLocationOfByte(CS.getStart()),
+        true,
+        getSpecifierRange(startSpecifier, specifierLen));
     }
   }
 
@@ -2313,12 +2318,13 @@ bool CheckScanfHandler::HandleScanfSpecifier(
   // Check the length modifier is valid with the given conversion specifier.
   const LengthModifier &LM = FS.getLengthModifier();
   if (!FS.hasValidLengthModifier()) {
-    S.Diag(getLocationOfByte(LM.getStart()),
-           diag::warn_format_nonsensical_length)
-      << LM.toString() << CS.toString()
-      << getSpecifierRange(startSpecifier, specifierLen)
-      << FixItHint::CreateRemoval(getSpecifierRange(LM.getStart(),
-                                                    LM.getLength()));
+    const CharSourceRange &R = getSpecifierRange(LM.getStart(), LM.getLength());
+    EmitFormatDiagnostic(S.PDiag(diag::warn_format_nonsensical_length)
+                         << LM.toString() << CS.toString()
+                         << getSpecifierRange(startSpecifier, specifierLen),
+                         getLocationOfByte(LM.getStart()),
+                         /*IsStringLocation*/true, R,
+                         FixItHint::CreateRemoval(R));
   }
 
   // The remaining checks depend on the data arguments.
@@ -2352,11 +2358,13 @@ bool CheckScanfHandler::HandleScanfSpecifier(
           getSpecifierRange(startSpecifier, specifierLen),
           os.str()));
     } else {
-      S.Diag(getLocationOfByte(CS.getStart()),
-             diag::warn_printf_conversion_argument_type_mismatch)
+      EmitFormatDiagnostic(
+        S.PDiag(diag::warn_printf_conversion_argument_type_mismatch)
           << ATR.getRepresentativeTypeName(S.Context) << Ex->getType()
-          << getSpecifierRange(startSpecifier, specifierLen)
-          << Ex->getSourceRange();
+          << Ex->getSourceRange(),
+        getLocationOfByte(CS.getStart()),
+        /*IsStringLocation*/true,
+        getSpecifierRange(startSpecifier, specifierLen));
     }
   }
 
@@ -2674,6 +2682,99 @@ void Sema::CheckStrlcpycatArguments(const CallExpr *Call,
   
   Diag(OriginalSizeArg->getLocStart(), diag::note_strlcpycat_wrong_size)
     << FixItHint::CreateReplacement(OriginalSizeArg->getSourceRange(),
+                                    OS.str());
+}
+
+/// Check if two expressions refer to the same declaration.
+static bool referToTheSameDecl(const Expr *E1, const Expr *E2) {
+  if (const DeclRefExpr *D1 = dyn_cast_or_null<DeclRefExpr>(E1))
+    if (const DeclRefExpr *D2 = dyn_cast_or_null<DeclRefExpr>(E2))
+      return D1->getDecl() == D2->getDecl();
+  return false;
+}
+
+static const Expr *getStrlenExprArg(const Expr *E) {
+  if (const CallExpr *CE = dyn_cast<CallExpr>(E)) {
+    const FunctionDecl *FD = CE->getDirectCallee();
+    if (!FD || FD->getMemoryFunctionKind() != Builtin::BIstrlen)
+      return 0;
+    return CE->getArg(0)->IgnoreParenCasts();
+  }
+  return 0;
+}
+
+// Warn on anti-patterns as the 'size' argument to strncat.
+// The correct size argument should look like following:
+//   strncat(dst, src, sizeof(dst) - strlen(dest) - 1);
+void Sema::CheckStrncatArguments(const CallExpr *CE,
+                                 IdentifierInfo *FnName) {
+  // Don't crash if the user has the wrong number of arguments.
+  if (CE->getNumArgs() < 3)
+    return;
+  const Expr *DstArg = CE->getArg(0)->IgnoreParenCasts();
+  const Expr *SrcArg = CE->getArg(1)->IgnoreParenCasts();
+  const Expr *LenArg = CE->getArg(2)->IgnoreParenCasts();
+
+  // Identify common expressions, which are wrongly used as the size argument
+  // to strncat and may lead to buffer overflows.
+  unsigned PatternType = 0;
+  if (const Expr *SizeOfArg = getSizeOfExprArg(LenArg)) {
+    // - sizeof(dst)
+    if (referToTheSameDecl(SizeOfArg, DstArg))
+      PatternType = 1;
+    // - sizeof(src)
+    else if (referToTheSameDecl(SizeOfArg, SrcArg))
+      PatternType = 2;
+  } else if (const BinaryOperator *BE = dyn_cast<BinaryOperator>(LenArg)) {
+    if (BE->getOpcode() == BO_Sub) {
+      const Expr *L = BE->getLHS()->IgnoreParenCasts();
+      const Expr *R = BE->getRHS()->IgnoreParenCasts();
+      // - sizeof(dst) - strlen(dst)
+      if (referToTheSameDecl(DstArg, getSizeOfExprArg(L)) &&
+          referToTheSameDecl(DstArg, getStrlenExprArg(R)))
+        PatternType = 1;
+      // - sizeof(src) - (anything)
+      else if (referToTheSameDecl(SrcArg, getSizeOfExprArg(L)))
+        PatternType = 2;
+    }
+  }
+
+  if (PatternType == 0)
+    return;
+
+  if (PatternType == 1)
+    Diag(DstArg->getLocStart(), diag::warn_strncat_large_size)
+      << LenArg->getSourceRange();
+  else
+    Diag(DstArg->getLocStart(), diag::warn_strncat_src_size)
+      << LenArg->getSourceRange();
+
+  // Output a FIXIT hint if the destination is an array (rather than a
+  // pointer to an array).  This could be enhanced to handle some
+  // pointers if we know the actual size, like if DstArg is 'array+2'
+  // we could say 'sizeof(array)-2'.
+  QualType DstArgTy = DstArg->getType();
+
+  // Only handle constant-sized or VLAs, but not flexible members.
+  if (const ConstantArrayType *CAT = Context.getAsConstantArrayType(DstArgTy)) {
+    // Only issue the FIXIT for arrays of size > 1.
+    if (CAT->getSize().getSExtValue() <= 1)
+      return;
+  } else if (!DstArgTy->isVariableArrayType()) {
+    return;
+  }
+
+  llvm::SmallString<128> sizeString;
+  llvm::raw_svector_ostream OS(sizeString);
+  OS << "sizeof(";
+  DstArg->printPretty(OS, Context, 0, getPrintingPolicy());
+  OS << ") - ";
+  OS << "strlen(";
+  DstArg->printPretty(OS, Context, 0, getPrintingPolicy());
+  OS << ") - 1";
+
+  Diag(LenArg->getLocStart(), diag::note_strncat_wrong_size)
+    << FixItHint::CreateReplacement(LenArg->getSourceRange(),
                                     OS.str());
 }
 
@@ -3176,7 +3277,8 @@ struct IntRange {
   }
 };
 
-IntRange GetValueRange(ASTContext &C, llvm::APSInt &value, unsigned MaxWidth) {
+static IntRange GetValueRange(ASTContext &C, llvm::APSInt &value,
+                              unsigned MaxWidth) {
   if (value.isSigned() && value.isNegative())
     return IntRange(value.getMinSignedBits(), false);
 
@@ -3188,8 +3290,8 @@ IntRange GetValueRange(ASTContext &C, llvm::APSInt &value, unsigned MaxWidth) {
   return IntRange(value.getActiveBits(), true);
 }
 
-IntRange GetValueRange(ASTContext &C, APValue &result, QualType Ty,
-                       unsigned MaxWidth) {
+static IntRange GetValueRange(ASTContext &C, APValue &result, QualType Ty,
+                              unsigned MaxWidth) {
   if (result.isInt())
     return GetValueRange(C, result.getInt(), MaxWidth);
 
@@ -3221,7 +3323,7 @@ IntRange GetValueRange(ASTContext &C, APValue &result, QualType Ty,
 /// range of values it might take.
 ///
 /// \param MaxWidth - the width to which the value will be truncated
-IntRange GetExprRange(ASTContext &C, Expr *E, unsigned MaxWidth) {
+static IntRange GetExprRange(ASTContext &C, Expr *E, unsigned MaxWidth) {
   E = E->IgnoreParens();
 
   // Try a full evaluation first.
@@ -3439,16 +3541,16 @@ IntRange GetExprRange(ASTContext &C, Expr *E, unsigned MaxWidth) {
   return IntRange::forValueOfType(C, E->getType());
 }
 
-IntRange GetExprRange(ASTContext &C, Expr *E) {
+static IntRange GetExprRange(ASTContext &C, Expr *E) {
   return GetExprRange(C, E, C.getIntWidth(E->getType()));
 }
 
 /// Checks whether the given value, which currently has the given
 /// source semantics, has the same value when coerced through the
 /// target semantics.
-bool IsSameFloatAfterCast(const llvm::APFloat &value,
-                          const llvm::fltSemantics &Src,
-                          const llvm::fltSemantics &Tgt) {
+static bool IsSameFloatAfterCast(const llvm::APFloat &value,
+                                 const llvm::fltSemantics &Src,
+                                 const llvm::fltSemantics &Tgt) {
   llvm::APFloat truncated = value;
 
   bool ignored;
@@ -3463,9 +3565,9 @@ bool IsSameFloatAfterCast(const llvm::APFloat &value,
 /// target semantics.
 ///
 /// The value might be a vector of floats (or a complex number).
-bool IsSameFloatAfterCast(const APValue &value,
-                          const llvm::fltSemantics &Src,
-                          const llvm::fltSemantics &Tgt) {
+static bool IsSameFloatAfterCast(const APValue &value,
+                                 const llvm::fltSemantics &Src,
+                                 const llvm::fltSemantics &Tgt) {
   if (value.isFloat())
     return IsSameFloatAfterCast(value.getFloat(), Src, Tgt);
 
@@ -3481,7 +3583,7 @@ bool IsSameFloatAfterCast(const APValue &value,
           IsSameFloatAfterCast(value.getComplexFloatImag(), Src, Tgt));
 }
 
-void AnalyzeImplicitConversions(Sema &S, Expr *E, SourceLocation CC);
+static void AnalyzeImplicitConversions(Sema &S, Expr *E, SourceLocation CC);
 
 static bool IsZero(Sema &S, Expr *E) {
   // Suppress cases where we are comparing against an enum constant.
@@ -3510,7 +3612,7 @@ static bool HasEnumType(Expr *E) {
   return E->getType()->isEnumeralType();
 }
 
-void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
+static void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
   BinaryOperatorKind op = E->getOpcode();
   if (E->isValueDependent())
     return;
@@ -3536,7 +3638,7 @@ void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
 
 /// Analyze the operands of the given comparison.  Implements the
 /// fallback case from AnalyzeComparison.
-void AnalyzeImpConvsInComparison(Sema &S, BinaryOperator *E) {
+static void AnalyzeImpConvsInComparison(Sema &S, BinaryOperator *E) {
   AnalyzeImplicitConversions(S, E->getLHS(), E->getOperatorLoc());
   AnalyzeImplicitConversions(S, E->getRHS(), E->getOperatorLoc());
 }
@@ -3544,7 +3646,7 @@ void AnalyzeImpConvsInComparison(Sema &S, BinaryOperator *E) {
 /// \brief Implements -Wsign-compare.
 ///
 /// \param E the binary operator to check for warnings
-void AnalyzeComparison(Sema &S, BinaryOperator *E) {
+static void AnalyzeComparison(Sema &S, BinaryOperator *E) {
   // The type the comparison is being performed in.
   QualType T = E->getLHS()->getType();
   assert(S.Context.hasSameUnqualifiedType(T, E->getRHS()->getType())
@@ -3617,8 +3719,8 @@ void AnalyzeComparison(Sema &S, BinaryOperator *E) {
 /// Analyzes an attempt to assign the given value to a bitfield.
 ///
 /// Returns true if there was something fishy about the attempt.
-bool AnalyzeBitFieldAssignment(Sema &S, FieldDecl *Bitfield, Expr *Init,
-                               SourceLocation InitLoc) {
+static bool AnalyzeBitFieldAssignment(Sema &S, FieldDecl *Bitfield, Expr *Init,
+                                      SourceLocation InitLoc) {
   assert(Bitfield->isBitField());
   if (Bitfield->isInvalidDecl())
     return false;
@@ -3656,8 +3758,8 @@ bool AnalyzeBitFieldAssignment(Sema &S, FieldDecl *Bitfield, Expr *Init,
     return false;
 
   // Special-case bitfields of width 1: booleans are naturally 0/1, and
-  // therefore don't strictly fit into a bitfield of width 1.
-  if (FieldWidth == 1 && Value.getBoolValue() == TruncatedValue.getBoolValue())
+  // therefore don't strictly fit into a signed bitfield of width 1.
+  if (FieldWidth == 1 && Value == 1)
     return false;
 
   std::string PrettyValue = Value.toString(10);
@@ -3672,7 +3774,7 @@ bool AnalyzeBitFieldAssignment(Sema &S, FieldDecl *Bitfield, Expr *Init,
 
 /// Analyze the given simple or compound assignment for warning-worthy
 /// operations.
-void AnalyzeAssignment(Sema &S, BinaryOperator *E) {
+static void AnalyzeAssignment(Sema &S, BinaryOperator *E) {
   // Just recurse on the LHS.
   AnalyzeImplicitConversions(S, E->getLHS(), E->getOperatorLoc());
 
@@ -3691,16 +3793,25 @@ void AnalyzeAssignment(Sema &S, BinaryOperator *E) {
 }
 
 /// Diagnose an implicit cast;  purely a helper for CheckImplicitConversion.
-void DiagnoseImpCast(Sema &S, Expr *E, QualType SourceType, QualType T, 
-                     SourceLocation CContext, unsigned diag) {
+static void DiagnoseImpCast(Sema &S, Expr *E, QualType SourceType, QualType T, 
+                            SourceLocation CContext, unsigned diag,
+                            bool pruneControlFlow = false) {
+  if (pruneControlFlow) {
+    S.DiagRuntimeBehavior(E->getExprLoc(), E,
+                          S.PDiag(diag)
+                            << SourceType << T << E->getSourceRange()
+                            << SourceRange(CContext));
+    return;
+  }
   S.Diag(E->getExprLoc(), diag)
     << SourceType << T << E->getSourceRange() << SourceRange(CContext);
 }
 
 /// Diagnose an implicit cast;  purely a helper for CheckImplicitConversion.
-void DiagnoseImpCast(Sema &S, Expr *E, QualType T, SourceLocation CContext,
-                     unsigned diag) {
-  DiagnoseImpCast(S, E, E->getType(), T, CContext, diag);
+static void DiagnoseImpCast(Sema &S, Expr *E, QualType T,
+                            SourceLocation CContext, unsigned diag,
+                            bool pruneControlFlow = false) {
+  DiagnoseImpCast(S, E, E->getType(), T, CContext, diag, pruneControlFlow);
 }
 
 /// Diagnose an implicit cast from a literal expression. Does not warn when the
@@ -3906,7 +4017,8 @@ void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
       return;
     
     if (SourceRange.Width == 64 && TargetRange.Width == 32)
-      return DiagnoseImpCast(S, E, T, CC, diag::warn_impcast_integer_64_32);
+      return DiagnoseImpCast(S, E, T, CC, diag::warn_impcast_integer_64_32,
+                             /* pruneControlFlow */ true);
     return DiagnoseImpCast(S, E, T, CC, diag::warn_impcast_integer_precision);
   }
 

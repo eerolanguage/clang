@@ -9,10 +9,6 @@
 
 #include "ToolChains.h"
 
-#ifdef HAVE_CLANG_CONFIG_H
-# include "clang/Config/config.h"
-#endif
-
 #include "clang/Driver/Arg.h"
 #include "clang/Driver/ArgList.h"
 #include "clang/Driver/Compilation.h"
@@ -37,6 +33,10 @@
 
 #include <cstdlib> // ::getenv
 
+#ifdef HAVE_CLANG_CONFIG_H
+# include "clang/Config/config.h"
+#endif
+
 #include "llvm/Config/config.h" // for CXX_INCLUDE_ROOT
 
 using namespace clang::driver;
@@ -50,17 +50,19 @@ Darwin::Darwin(const Driver &D, const llvm::Triple& Triple)
     ARCRuntimeForSimulator(ARCSimulator_None),
     LibCXXForSimulator(LibCXXSimulator_None)
 {
-  // Compute the initial Darwin version based on the host.
-  bool HadExtra;
-  std::string OSName = Triple.getOSName();
-  if (!Driver::GetReleaseVersion(&OSName.c_str()[6],
-                                 DarwinVersion[0], DarwinVersion[1],
-                                 DarwinVersion[2], HadExtra))
-    getDriver().Diag(diag::err_drv_invalid_darwin_version) << OSName;
-
+  // Compute the initial Darwin version from the triple
+  unsigned Major, Minor, Micro;
+  if (!Triple.getMacOSXVersion(Major, Minor, Micro))
+    getDriver().Diag(diag::err_drv_invalid_darwin_version) <<
+      Triple.getOSName();
   llvm::raw_string_ostream(MacosxVersionMin)
-    << "10." << std::max(0, (int)DarwinVersion[0] - 4) << '.'
-    << DarwinVersion[1];
+    << Major << '.' << Minor << '.' << Micro;
+
+  // FIXME: DarwinVersion is only used to find GCC's libexec directory.
+  // It should be removed when we stop supporting that.
+  DarwinVersion[0] = Minor + 4;
+  DarwinVersion[1] = Micro;
+  DarwinVersion[2] = 0;
 }
 
 types::ID Darwin::LookupTypeForExtension(const char *Ext) const {

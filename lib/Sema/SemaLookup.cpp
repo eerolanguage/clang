@@ -33,6 +33,7 @@
 #include "clang/Basic/LangOptions.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -3568,7 +3569,7 @@ static void AddKeywordsToConsumer(Sema &SemaRef,
 TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
                                  Sema::LookupNameKind LookupKind,
                                  Scope *S, CXXScopeSpec *SS,
-                                 CorrectionCandidateCallback *CCC,
+                                 CorrectionCandidateCallback &CCC,
                                  DeclContext *MemberContext,
                                  bool EnteringContext,
                                  const ObjCObjectPointerType *OPT) {
@@ -3604,7 +3605,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
   // If a callback object returns true for an empty typo correction candidate,
   // assume it does not do any actual validation of the candidates.
   TypoCorrection EmptyCorrection;
-  bool ValidatingCallback = CCC && !CCC->ValidateCandidate(EmptyCorrection);
+  bool ValidatingCallback = !CCC.ValidateCandidate(EmptyCorrection);
 
   // Perform name lookup to find visible, similarly-named entities.
   bool IsUnqualifiedLookup = false;
@@ -3640,7 +3641,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
       // keyword case, we'll end up adding the keyword below.
       if (Cached->second) {
         if (!Cached->second.isKeyword() &&
-            (!CCC || CCC->ValidateCandidate(Cached->second)))
+            CCC.ValidateCandidate(Cached->second))
           Consumer.addCorrection(Cached->second);
       } else {
         // Only honor no-correction cache hits when a callback that will validate
@@ -3678,8 +3679,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
     }
   }
 
-  CorrectionCandidateCallback DefaultCCC;
-  AddKeywordsToConsumer(*this, Consumer, S, CCC ? *CCC : DefaultCCC);
+  AddKeywordsToConsumer(*this, Consumer, S, CCC);
 
   // If we haven't found anything, we're done.
   if (Consumer.empty()) {
@@ -3736,7 +3736,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
       if (I->second.isResolved()) {
         TypoCorrectionConsumer::result_iterator Prev = I;
         ++I;
-        if (CCC && !CCC->ValidateCandidate(Prev->second))
+        if (!CCC.ValidateCandidate(Prev->second))
           DI->second->erase(Prev);
         continue;
       }
@@ -3744,7 +3744,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
       // Perform name lookup on this name.
       IdentifierInfo *Name = I->second.getCorrectionAsIdentifierInfo();
       LookupPotentialTypoResult(*this, TmpRes, Name, S, SS, MemberContext,
-                                EnteringContext, CCC && CCC->IsObjCIvarLookup);
+                                EnteringContext, CCC.IsObjCIvarLookup);
 
       switch (TmpRes.getResultKind()) {
       case LookupResult::NotFound:
@@ -3773,7 +3773,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
              TRD != TRDEnd; ++TRD)
           I->second.addCorrectionDecl(*TRD);
         ++I;
-        if (CCC && !CCC->ValidateCandidate(Prev->second))
+        if (!CCC.ValidateCandidate(Prev->second))
           DI->second->erase(Prev);
         break;
       }
@@ -3782,7 +3782,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
         TypoCorrectionConsumer::result_iterator Prev = I;
         I->second.setCorrectionDecl(TmpRes.getAsSingle<NamedDecl>());
         ++I;
-        if (CCC && !CCC->ValidateCandidate(Prev->second))
+        if (!CCC.ValidateCandidate(Prev->second))
           DI->second->erase(Prev);
         break;
       }
@@ -3900,7 +3900,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
            // WantObjCSuper is only true for CTC_ObjCMessageReceiver and for
            // some instances of CTC_Unknown, while WantRemainingKeywords is true
            // for CTC_Unknown but not for CTC_ObjCMessageReceiver.
-           && CCC && CCC->WantObjCSuper && !CCC->WantRemainingKeywords
+           && CCC.WantObjCSuper && !CCC.WantRemainingKeywords
            && BestResults["super"].isKeyword()) {
     // Prefer 'super' when we're completing in a message-receiver
     // context.

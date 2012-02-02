@@ -18,7 +18,6 @@
 #include "clang/Basic/PartialDiagnostic.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/SetVector.h"
 
 namespace clang {
 
@@ -140,15 +139,18 @@ public:
     // copy constructor.
     llvm::PointerIntPair<Expr*, 1, bool> CopyExprAndNested;
 
+    /// \brief The source location at which the first capture occurred..
+    SourceLocation Loc;
+    
   public:
-    Capture(VarDecl *Var, bool isByref, bool isNested, Expr *Cpy)
+    Capture(VarDecl *Var, bool isByref, bool isNested, SourceLocation Loc,
+            Expr *Cpy)
       : VarAndKind(Var, isByref ? Cap_ByRef : Cap_ByVal),
         CopyExprAndNested(Cpy, isNested) {}
 
     enum IsThisCapture { ThisCapture };
-    Capture(IsThisCapture, bool isNested)
-      : VarAndKind(0, Cap_This),
-        CopyExprAndNested(0, isNested) {
+    Capture(IsThisCapture, bool isNested, SourceLocation Loc)
+      : VarAndKind(0, Cap_This), CopyExprAndNested(0, isNested), Loc(Loc) {
     }
 
     bool isThisCapture() const { return VarAndKind.getInt() == Cap_This; }
@@ -160,6 +162,10 @@ public:
     VarDecl *getVariable() const {
       return VarAndKind.getPointer();
     }
+    
+    /// \brief Retrieve the location at which this variable was captured.
+    SourceLocation getLocation() const { return Loc; }
+    
     Expr *getCopyExpr() const {
       return CopyExprAndNested.getPointer();
     }
@@ -188,14 +194,43 @@ public:
   /// or null if unknown.
   QualType ReturnType;
 
-  void AddCapture(VarDecl *Var, bool isByref, bool isNested, Expr *Cpy) {
-    Captures.push_back(Capture(Var, isByref, isNested, Cpy));
+  void AddCapture(VarDecl *Var, bool isByref, bool isNested, SourceLocation Loc,
+                  Expr *Cpy) {
+    Captures.push_back(Capture(Var, isByref, isNested, Loc, Cpy));
     CaptureMap[Var] = Captures.size();
   }
 
-  void AddThisCapture(bool isNested) {
-    Captures.push_back(Capture(Capture::ThisCapture, isNested));
+  void AddThisCapture(bool isNested, SourceLocation Loc) {
+    Captures.push_back(Capture(Capture::ThisCapture, isNested, Loc));
     CXXThisCaptureIndex = Captures.size();
+  }
+
+  /// \brief Determine whether the C++ 'this' is captured.
+  bool isCXXThisCaptured() const { return CXXThisCaptureIndex != 0; }
+  
+  /// \brief Retrieve the capture of C++ 'this', if it has been captured.
+  Capture &getCXXThisCapture() {
+    assert(isCXXThisCaptured() && "this has not been captured");
+    return Captures[CXXThisCaptureIndex - 1];
+  }
+  
+  /// \brief Determine whether the given variable has been captured.
+  bool isCaptured(VarDecl *Var) const {
+    return CaptureMap.count(Var) > 0;
+  }
+  
+  /// \brief Retrieve the capture of the given variable, if it has been
+  /// captured already.
+  Capture &getCapture(VarDecl *Var) {
+    assert(isCaptured(Var) && "Variable has not been captured");
+    return Captures[CaptureMap[Var] - 1];
+  }
+
+  const Capture &getCapture(VarDecl *Var) const {
+    llvm::DenseMap<VarDecl*, unsigned>::const_iterator Known
+      = CaptureMap.find(Var);
+    assert(Known != CaptureMap.end() && "Variable has not been captured");
+    return Captures[Known->second - 1];
   }
 
   static bool classof(const FunctionScopeInfo *FSI) { 
@@ -250,6 +285,11 @@ public:
 
   virtual ~LambdaScopeInfo();
 
+  /// \brief Note when 
+  void finishedExplicitCaptures() {
+    NumExplicitCaptures = Captures.size();
+  }
+  
   static bool classof(const FunctionScopeInfo *FSI) { 
     return FSI->Kind == SK_Lambda; 
   }

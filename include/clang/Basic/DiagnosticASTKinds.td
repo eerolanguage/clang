@@ -20,6 +20,10 @@ def note_constexpr_invalid_downcast : Note<
   "cannot cast object of dynamic type %0 to type %1">;
 def note_constexpr_overflow : Note<
   "value %0 is outside the range of representable values of type %1">;
+def note_constexpr_negative_shift : Note<"negative shift count %0">;
+def note_constexpr_large_shift : Note<
+  "shift count %0 >= width of type %1 (%2 bit%s2)">;
+def note_constexpr_lshift_of_negative : Note<"left shift of negative value %0">;
 def note_constexpr_invalid_function : Note<
   "%select{non-constexpr|undefined}0 %select{function|constructor}1 %2 cannot "
   "be used in a constant expression">;
@@ -32,23 +36,42 @@ def note_constexpr_non_global : Note<
   "cannot be used to initialize a member in a constant expression}3">;
 def note_constexpr_array_index : Note<"cannot refer to element %0 of "
   "%select{array of %2 elements|non-array object}1 in a constant expression">;
+def note_constexpr_float_arithmetic : Note<
+  "floating point arithmetic produces %select{an infinity|a NaN}0">;
 def note_constexpr_pointer_arithmetic : Note<
   "cannot refer to element %0 of non-array object in a constant "
   "expression">;
+def note_constexpr_pointer_subtraction_not_same_array : Note<
+  "subtracted pointers are not elements of the same array">;
+def note_constexpr_pointer_comparison_base_classes : Note<
+  "comparison of addresses of subobjects of different base classes "
+  "has unspecified value">;
+def note_constexpr_pointer_comparison_base_field : Note<
+  "comparison of address of base class subobject %0 of class %1 to field %2 "
+  "has unspecified value">;
+def note_constexpr_pointer_comparison_differing_access : Note<
+  "comparison of address of fields %0 and %2 of %4 with differing access "
+  "specifiers (%1 vs %3) has unspecified value">;
+def note_constexpr_compare_virtual_mem_ptr : Note<
+  "comparison of pointer to virtual member function %0 has unspecified value">;
 def note_constexpr_past_end : Note<
   "dereferenced pointer past the end of %select{|subobject of }0"
   "%select{temporary|%2}1 is not a constant expression">;
 def note_constexpr_past_end_subobject : Note<
-  "cannot access %select{base class|derived class|field|array element}0 of "
+  "cannot %select{access base class of|access derived class of|access field of|"
+  "access array element of|ERROR|call member function on}0 "
   "pointer past the end of object">;
 def note_constexpr_null_subobject : Note<
   "cannot %select{access base class of|access derived class of|access field of|"
-  "access array element of|perform pointer arithmetic on}0 null pointer">;
+  "access array element of|perform pointer arithmetic on|"
+  "call member function on}0 null pointer">;
 def note_constexpr_var_init_non_constant : Note<
   "initializer of %0 is not a constant expression">;
 def note_constexpr_typeid_polymorphic : Note<
   "typeid applied to expression of polymorphic type %0 is "
   "not allowed in a constant expression">;
+def note_constexpr_void_comparison : Note<
+  "comparison between unequal pointers to void has unspecified result">;
 def note_constexpr_temporary_here : Note<"temporary created here">;
 def note_constexpr_literal_here : Note<"literal written here">;
 def note_constexpr_depth_limit_exceeded : Note<

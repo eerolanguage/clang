@@ -616,6 +616,7 @@ static bool HasFeature(const Preprocessor &PP, const IdentifierInfo *II) {
            .Case("objc_arc", LangOpts.ObjCAutoRefCount)
            .Case("objc_arc_weak", LangOpts.ObjCAutoRefCount && 
                  LangOpts.ObjCRuntimeHasWeak)
+           .Case("objc_default_synthesize_properties", LangOpts.ObjC2)
            .Case("objc_fixed_enum", LangOpts.ObjC2)
            .Case("objc_instancetype", LangOpts.ObjC2)
            .Case("objc_modules", LangOpts.ObjC2 && LangOpts.Modules)
@@ -1032,7 +1033,8 @@ void Preprocessor::ExpandBuiltinMacro(Token &Tok) {
     }
 
     OS << (int)Value;
-    Tok.setKind(tok::numeric_constant);
+    if (IsValid)
+      Tok.setKind(tok::numeric_constant);
   } else if (II == Ident__has_include ||
              II == Ident__has_include_next) {
     // The argument to these two builtins should be a parenthesized

@@ -1794,7 +1794,7 @@ public:
   TypoCorrection CorrectTypo(const DeclarationNameInfo &Typo,
                              Sema::LookupNameKind LookupKind,
                              Scope *S, CXXScopeSpec *SS,
-                             CorrectionCandidateCallback *CCC,
+                             CorrectionCandidateCallback &CCC,
                              DeclContext *MemberContext = 0,
                              bool EnteringContext = false,
                              const ObjCObjectPointerType *OPT = 0);
@@ -2273,7 +2273,19 @@ public:
   ExprResult TranformToPotentiallyEvaluated(Expr *E);
   ExprResult HandleExprEvaluationContextForTypeof(Expr *E);
 
-  void MarkDeclarationReferenced(SourceLocation Loc, Decl *D);
+  // Functions for marking a declaration referenced.  These functions also
+  // contain the relevant logic for marking if a reference to a function or
+  // variable is an odr-use (in the C++11 sense).  There are separate variants
+  // for expressions referring to a decl; these exist because odr-use marking
+  // needs to be delayed for some constant variables when we build one of the
+  // named expressions.
+  void MarkAnyDeclReferenced(SourceLocation Loc, Decl *D);
+  void MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func);
+  void MarkVariableReferenced(SourceLocation Loc, VarDecl *Var);
+  void MarkBlockDeclRefReferenced(BlockDeclRefExpr *E);
+  void MarkDeclRefReferenced(DeclRefExpr *E);
+  void MarkMemberReferenced(MemberExpr *E);
+
   void MarkDeclarationsReferencedInType(SourceLocation Loc, QualType T);
   void MarkDeclarationsReferencedInExpr(Expr *E);
 
@@ -3093,7 +3105,12 @@ public:
 
   /// \brief Make sure the value of 'this' is actually available in the current
   /// context, if it is a potentially evaluated context.
-  void CheckCXXThisCapture(SourceLocation Loc);
+  ///
+  /// \param Loc The location at which the capture of 'this' occurs.
+  ///
+  /// \param Explicit Whether 'this' is explicitly captured in a lambda
+  /// capture list.
+  void CheckCXXThisCapture(SourceLocation Loc, bool Explicit = false);
 
   /// ActOnCXXBoolLiteral - Parse {true,false} literals.
   ExprResult ActOnCXXBoolLiteral(SourceLocation OpLoc, tok::TokenKind Kind);
@@ -5628,7 +5645,8 @@ public:
 
   /// PushNamespaceVisibilityAttr - Note that we've entered a
   /// namespace with a visibility attribute.
-  void PushNamespaceVisibilityAttr(const VisibilityAttr *Attr);
+  void PushNamespaceVisibilityAttr(const VisibilityAttr *Attr,
+                                   SourceLocation Loc);
 
   /// AddPushedVisibilityAttribute - If '#pragma GCC visibility' was used,
   /// add an appropriate visibility attribute.
@@ -5636,7 +5654,7 @@ public:
 
   /// PopPragmaVisibility - Pop the top element of the visibility stack; used
   /// for '#pragma GCC visibility' and visibility attributes on namespaces.
-  void PopPragmaVisibility();
+  void PopPragmaVisibility(bool IsNamespaceEnd, SourceLocation EndLoc);
 
   /// FreeVisContext - Deallocate and null out VisContext.
   void FreeVisContext();
@@ -6349,6 +6367,9 @@ private:
 
   void CheckStrlcpycatArguments(const CallExpr *Call,
                                 IdentifierInfo *FnName);
+
+  void CheckStrncatArguments(const CallExpr *Call,
+                             IdentifierInfo *FnName);
 
   void CheckReturnStackAddr(Expr *RetValExp, QualType lhsType,
                             SourceLocation ReturnLoc);

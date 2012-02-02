@@ -11,10 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifdef HAVE_CLANG_CONFIG_H
-# include "clang/Config/config.h"
-#endif
-
 #include "clang/Frontend/Utils.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/LangOptions.h"
@@ -29,6 +25,11 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Path.h"
+
+#ifdef HAVE_CLANG_CONFIG_H
+# include "clang/Config/config.h"
+#endif
+
 #include "llvm/Config/config.h"
 using namespace clang;
 using namespace clang::frontend;

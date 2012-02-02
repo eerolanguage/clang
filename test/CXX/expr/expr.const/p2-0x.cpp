@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -std=c++11 -pedantic -verify -fcxx-exceptions %s -fconstexpr-depth 128
+// RUN: %clang_cc1 -fsyntax-only -std=c++11 -pedantic -verify -fcxx-exceptions %s -fconstexpr-depth 128 -triple i686-pc-linux-gnu
 
 // A conditional-expression is a core constant expression unless it involves one
 // of the following as a potentially evaluated subexpression [...]:
@@ -109,7 +109,6 @@ namespace RecursionLimits {
   };
 }
 
-// FIXME:
 // - an operation that would have undefined behavior [Note: including, for
 //   example, signed integer overflow (Clause 5 [expr]), certain pointer
 //   arithmetic (5.7 [expr.add]), division by zero (5.6 [expr.mul]), or certain
@@ -128,6 +127,31 @@ namespace UndefinedBehavior {
       break;
     }
   }
+
+  constexpr int int_min = ~0x7fffffff;
+  constexpr int minus_int_min = -int_min; // expected-error {{constant expression}} expected-note {{value 2147483648 is outside the range}}
+  constexpr int div0 = 3 / 0; // expected-error {{constant expression}} expected-note {{division by zero}} expected-warning {{undefined}}
+  constexpr int mod0 = 3 % 0; // expected-error {{constant expression}} expected-note {{division by zero}} expected-warning {{undefined}}
+  constexpr int int_min_div_minus_1 = int_min / -1; // expected-error {{constant expression}} expected-note {{value 2147483648 is outside the range}}
+  constexpr int int_min_mod_minus_1 = int_min % -1; // expected-error {{constant expression}} expected-note {{value 2147483648 is outside the range}}
+
+  constexpr int shl_m1 = 0 << -1; // expected-error {{constant expression}} expected-note {{negative shift count -1}} expected-warning {{negative}}
+  constexpr int shl_0 = 0 << 0; // ok
+  constexpr int shl_31 = 0 << 31; // ok
+  constexpr int shl_32 = 0 << 32; // expected-error {{constant expression}} expected-note {{shift count 32 >= width of type 'int' (32}} expected-warning {{>= width of type}}
+  constexpr int shl_unsigned_negative = unsigned(-3) << 1; // ok
+  constexpr int shl_unsigned_into_sign = 1u << 31; // ok
+  constexpr int shl_unsigned_overflow = 1024u << 31; // ok
+  constexpr int shl_signed_negative = (-3) << 1; // expected-error {{constant expression}} expected-note {{left shift of negative value -3}}
+  constexpr int shl_signed_ok = 1 << 30; // ok
+  constexpr int shl_signed_into_sign = 1 << 31; // expected-error {{constant expression}} expected-note {{value 2147483648 is outside the range}}
+  constexpr int shl_signed_overflow = 1024 << 31; // expected-error {{constant expression}} expected-note {{value 2199023255552 is outside the range}} expected-warning {{requires 43 bits to represent}}
+  constexpr int shl_signed_ok2 = 1024 << 20; // ok
+
+  constexpr int shr_m1 = 0 >> -1; // expected-error {{constant expression}} expected-note {{negative shift count -1}} expected-warning {{negative}}
+  constexpr int shr_0 = 0 >> 0; // ok
+  constexpr int shr_31 = 0 >> 31; // ok
+  constexpr int shr_32 = 0 >> 32; // expected-error {{constant expression}} expected-note {{shift count 32 >= width of type}} expected-warning {{>= width of type}}
 
   struct S {
     int m;
@@ -161,6 +185,73 @@ namespace UndefinedBehavior {
     static_assert((B*)na == 0, "");
     constexpr const int &nf = nb->n; // expected-error {{constant expression}} expected-note {{cannot access field of null pointer}}
     constexpr const int &np = (*(int(*)[4])nullptr)[2]; // expected-error {{constant expression}} expected-note {{cannot access array element of null pointer}}
+
+    struct C {
+      constexpr int f() { return 0; }
+    } constexpr c = C();
+    constexpr int k1 = c.f(); // ok
+    constexpr int k2 = ((C*)nullptr)->f(); // expected-error {{constant expression}} expected-note {{cannot call member function on null pointer}}
+    constexpr int k3 = (&c)[1].f(); // expected-error {{constant expression}} expected-note {{cannot call member function on pointer past the end of object}}
+    C c2;
+    constexpr int k4 = c2.f(); // ok!
+
+    constexpr int diff1 = &a[2] - &a[0];
+    constexpr int diff2 = &a[1][3] - &a[1][0];
+    constexpr int diff3 = &a[2][0] - &a[1][0]; // expected-error {{constant expression}} expected-note {{subtracted pointers are not elements of the same array}}
+    static_assert(&a[2][0] == &a[1][3], "");
+    constexpr int diff4 = (&b + 1) - &b;
+    constexpr int diff5 = &a[1][2].n - &a[1][0].n; // expected-error {{constant expression}} expected-note {{subtracted pointers are not elements of the same array}}
+    constexpr int diff6 = &a[1][2].n - &a[1][2].n;
+    constexpr int diff7 = (A*)&a[0][1] - (A*)&a[0][0]; // expected-error {{constant expression}} expected-note {{subtracted pointers are not elements of the same array}}
+  }
+
+  namespace Overflow {
+    // Signed int overflow.
+    constexpr int n1 = 2 * 3 * 3 * 7 * 11 * 31 * 151 * 331; // ok
+    constexpr int n2 = 65536 * 32768; // expected-error {{constant expression}} expected-note {{value 2147483648 is outside the range of }}
+    constexpr int n3 = n1 + 1; // ok
+    constexpr int n4 = n3 + 1; // expected-error {{constant expression}} expected-note {{value 2147483648 is outside the range of }}
+    constexpr int n5 = -65536 * 32768; // ok
+    constexpr int n6 = 3 * -715827883; // expected-error {{constant expression}} expected-note {{value -2147483649 is outside the range of }}
+    constexpr int n7 = -n3 + -1; // ok
+    constexpr int n8 = -1 + n7; // expected-error {{constant expression}} expected-note {{value -2147483649 is outside the range of }}
+    constexpr int n9 = n3 - 0; // ok
+    constexpr int n10 = n3 - -1; // expected-error {{constant expression}} expected-note {{value 2147483648 is outside the range of }}
+    constexpr int n11 = -1 - n3; // ok
+    constexpr int n12 = -2 - n3; // expected-error {{constant expression}} expected-note {{value -2147483649 is outside the range of }}
+    constexpr int n13 = n5 + n5; // expected-error {{constant expression}} expected-note {{value -4294967296 is outside the range of }}
+    constexpr int n14 = n3 - n5; // expected-error {{constant expression}} expected-note {{value 4294967295 is outside the range of }}
+    constexpr int n15 = n5 * n5; // expected-error {{constant expression}} expected-note {{value 4611686018427387904 is outside the range of }}
+    constexpr signed char c1 = 100 * 2; // ok
+    constexpr signed char c2 = '\x64' * '\2'; // also ok
+    constexpr long long ll1 = 0x7fffffffffffffff; // ok
+    constexpr long long ll2 = ll1 + 1; // expected-error {{constant}} expected-note {{ 9223372036854775808 }}
+    constexpr long long ll3 = -ll1 - 1; // ok
+    constexpr long long ll4 = ll3 - 1; // expected-error {{constant}} expected-note {{ -9223372036854775809 }}
+    constexpr long long ll5 = ll3 * ll3; // expected-error {{constant}} expected-note {{ 85070591730234615865843651857942052864 }}
+
+    // Yikes.
+    char melchizedek[2200000000];
+    typedef decltype(melchizedek[1] - melchizedek[0]) ptrdiff_t;
+    constexpr ptrdiff_t d1 = &melchizedek[0x7fffffff] - &melchizedek[0]; // ok
+    constexpr ptrdiff_t d2 = &melchizedek[0x80000000u] - &melchizedek[0]; // expected-error {{constant expression}} expected-note {{ 2147483648 }}
+    constexpr ptrdiff_t d3 = &melchizedek[0] - &melchizedek[0x80000000u]; // ok
+    constexpr ptrdiff_t d4 = &melchizedek[0] - &melchizedek[0x80000001u]; // expected-error {{constant expression}} expected-note {{ -2147483649 }}
+
+    // Unsigned int overflow.
+    static_assert(65536u * 65536u == 0u, ""); // ok
+    static_assert(4294967295u + 1u == 0u, ""); // ok
+    static_assert(0u - 1u == 4294967295u, ""); // ok
+    static_assert(~0u * ~0u == 1u, ""); // ok
+
+    // Floating-point overflow and NaN.
+    constexpr float f1 = 1e38f * 3.4028f; // ok
+    constexpr float f2 = 1e38f * 3.4029f; // expected-error {{constant expression}} expected-note {{floating point arithmetic produces an infinity}}
+    constexpr float f3 = 1e38f / -.2939f; // ok
+    constexpr float f4 = 1e38f / -.2938f; // expected-error {{constant expression}} expected-note {{floating point arithmetic produces an infinity}}
+    constexpr float f5 = 2e38f + 2e38f; // expected-error {{constant expression}} expected-note {{floating point arithmetic produces an infinity}}
+    constexpr float f6 = -2e38f - 2e38f; // expected-error {{constant expression}} expected-note {{floating point arithmetic produces an infinity}}
+    constexpr float f7 = 0.f / 0.f; // expected-error {{constant expression}} expected-note {{floating point arithmetic produces a NaN}}
   }
 }
 
@@ -210,8 +301,6 @@ namespace LValueToRValue {
   static_assert(((volatile const S&&)(S)0).i, ""); // expected-error {{constant expression}} expected-note {{subexpression}}
 }
 
-// FIXME:
-//
 // DR1312: The proposed wording for this defect has issues, so we ignore this
 // bullet and instead prohibit casts from pointers to cv void (see core-20842
 // and core-20845).
@@ -220,9 +309,23 @@ namespace LValueToRValue {
 // glvalue of type cv1 T that refers to an object of type cv2 U, where T and U
 // are neither the same type nor similar types (4.4 [conv.qual]);
 
-// FIXME:
 // - an lvalue-to-rvalue conversion (4.1) that is applied to a glvalue that
 // refers to a non-active member of a union or a subobject thereof;
+namespace LValueToRValueUnion {
+  // test/SemaCXX/constant-expression-cxx11.cpp contains more thorough testing
+  // of this.
+  union U { int a, b; } constexpr u = U();
+  static_assert(u.a == 0, "");
+  constexpr const int *bp = &u.b;
+  constexpr int b = *bp; // expected-error {{constant expression}} expected-note {{read of member 'b' of union with active member 'a'}}
+
+  extern const U pu;
+  constexpr const int *pua = &pu.a;
+  constexpr const int *pub = &pu.b;
+  constexpr U pu = { .b = 1 }; // expected-warning {{C99 feature}}
+  constexpr const int a2 = *pua; // expected-error {{constant expression}} expected-note {{read of member 'a' of union with active member 'b'}}
+  constexpr const int b2 = *pub; // ok
+}
 
 // - an id-expression that refers to a variable or data member of reference type
 //   unless the reference has a preceding initialization, initialized with a
@@ -348,18 +451,59 @@ namespace UnspecifiedRelations {
   constexpr bool u13 = pf < pg; // expected-error {{constant expression}}
   constexpr bool u14 = pf == pg;
 
-  // FIXME:
   // If two pointers point to non-static data members of the same object with
   // different access control, the result is unspecified.
+  struct A {
+  public:
+    constexpr A() : a(0), b(0) {}
+    int a;
+    constexpr bool cmp() { return &a < &b; } // expected-error {{constexpr function never produces a constant expression}} expected-note {{comparison of address of fields 'a' and 'b' of 'A' with differing access specifiers (public vs private) has unspecified value}}
+  private:
+    int b;
+  };
+  class B {
+  public:
+    A a;
+    constexpr bool cmp() { return &a.a < &b.a; } // expected-error {{constexpr function never produces a constant expression}} expected-note {{comparison of address of fields 'a' and 'b' of 'B' with differing access specifiers (public vs protected) has unspecified value}}
+  protected:
+    A b;
+  };
 
-  // FIXME:
+  // If two pointers point to different base sub-objects of the same object, or
+  // one points to a base subobject and the other points to a member, the result
+  // of the comparison is unspecified. This is not explicitly called out by
+  // [expr.rel]p2, but is covered by 'Other pointer comparisons are
+  // unspecified'.
+  struct C {
+    int c[2];
+  };
+  struct D {
+    int d;
+  };
+  struct E : C, D {
+    struct Inner {
+      int f;
+    } e;
+  } e;
+  constexpr bool base1 = &e.c[0] < &e.d; // expected-error {{constant expression}} expected-note {{comparison of addresses of subobjects of different base classes has unspecified value}}
+  constexpr bool base2 = &e.c[1] < &e.e.f; // expected-error {{constant expression}} expected-note {{comparison of address of base class subobject 'C' of class 'E' to field 'e' has unspecified value}}
+  constexpr bool base3 = &e.e.f < &e.d; // expected-error {{constant expression}} expected-note {{comparison of address of base class subobject 'D' of class 'E' to field 'e' has unspecified value}}
+
   // [expr.rel]p3: Pointers to void can be compared [...] if both pointers
   // represent the same address or are both the null pointer [...]; otherwise
   // the result is unspecified.
-
-  // FIXME: Implement comparisons of pointers to members.
-  // [expr.eq]p2: If either is a pointer to a virtual member function and
-  // neither is null, the result is unspecified.
+  struct S { int a, b; } s;
+  constexpr void *null = 0;
+  constexpr void *pv = (void*)&s.a;
+  constexpr void *qv = (void*)&s.b;
+  constexpr bool v1 = null < 0;
+  constexpr bool v2 = null < pv; // expected-error {{constant expression}}
+  constexpr bool v3 = null == pv; // ok
+  constexpr bool v4 = qv == pv; // ok
+  constexpr bool v5 = qv >= pv; // expected-error {{constant expression}} expected-note {{unequal pointers to void}}
+  constexpr bool v6 = qv > null; // expected-error {{constant expression}}
+  constexpr bool v7 = qv <= (void*)&s.b; // ok
+  constexpr bool v8 = qv > (void*)&s.a; // expected-error {{constant expression}} expected-note {{unequal pointers to void}}
 }
 
 // - an assignment or a compound assignment (5.17); or

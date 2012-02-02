@@ -7,10 +7,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifdef HAVE_CLANG_CONFIG_H
-# include "clang/Config/config.h"
-#endif
-
 #include "clang/Driver/Driver.h"
 
 #include "clang/Driver/Action.h"
@@ -27,7 +23,6 @@
 
 #include "clang/Basic/Version.h"
 
-#include "llvm/Config/config.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/OwningPtr.h"
@@ -40,6 +35,11 @@
 
 #include "InputInfo.h"
 #include "ToolChains.h"
+
+#ifdef HAVE_CLANG_CONFIG_H
+# include "clang/Config/config.h"
+#endif
+#include "llvm/Config/config.h"
 
 #include <map>
 

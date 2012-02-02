@@ -2420,7 +2420,7 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     break;
   }
   case Decl::ObjCCompatibleAlias:
-    // compatibility-alias is a directive and has no code gen.
+    ObjCRuntime->RegisterAlias(cast<ObjCCompatibleAliasDecl>(D));
     break;
 
   case Decl::LinkageSpec:

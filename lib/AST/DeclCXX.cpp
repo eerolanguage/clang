@@ -970,11 +970,7 @@ bool CXXRecordDecl::isCLike() const {
   if (!hasDefinition())
     return true;
 
-  return isPOD() &&
-      data().HasOnlyCMembers &&
-      !data().HasPrivateFields &&
-      !data().HasProtectedFields &&
-      !data().NumBases;
+  return isPOD() && data().HasOnlyCMembers;
 }
 
 static CanQualType GetConversionType(ASTContext &Context, NamedDecl *Conv) {
@@ -1974,6 +1970,11 @@ static const char *getAccessName(AccessSpecifier AS) {
 }
 
 const DiagnosticBuilder &clang::operator<<(const DiagnosticBuilder &DB,
+                                           AccessSpecifier AS) {
+  return DB << getAccessName(AS);
+}
+
+const PartialDiagnostic &clang::operator<<(const PartialDiagnostic &DB,
                                            AccessSpecifier AS) {
   return DB << getAccessName(AS);
 }

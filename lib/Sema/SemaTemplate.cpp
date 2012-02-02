@@ -310,7 +310,7 @@ void Sema::LookupTemplateName(LookupResult &Found,
     FilterCCC.WantCXXNamedCasts = true;
     if (TypoCorrection Corrected = CorrectTypo(Found.getLookupNameInfo(),
                                                Found.getLookupKind(), S, &SS,
-                                               &FilterCCC, LookupCtx)) {
+                                               FilterCCC, LookupCtx)) {
       Found.setLookupName(Corrected.getCorrection());
       if (Corrected.getCorrectionDecl())
         Found.addDecl(Corrected.getCorrectionDecl());
@@ -3630,7 +3630,7 @@ CheckTemplateArgumentAddressOfObjectOrFunction(Sema &S,
 
   // Create the template argument.
   Converted = TemplateArgument(Entity->getCanonicalDecl());
-  S.MarkDeclarationReferenced(Arg->getLocStart(), Entity);
+  S.MarkAnyDeclReferenced(Arg->getLocStart(), Entity);
   return false;
 }
 

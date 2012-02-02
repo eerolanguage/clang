@@ -45,6 +45,7 @@
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/SmallString.h"
 #include <cstring>
+#include <functional>
 
 using namespace clang;
 using llvm::APSInt;
@@ -77,25 +78,27 @@ namespace {
   }
 
   /// Get an LValue path entry, which is known to not be an array index, as a
-  /// field declaration.
-  const FieldDecl *getAsField(APValue::LValuePathEntry E) {
+  /// field or base class.
+  APValue::BaseOrMemberType getAsBaseOrMember(APValue::LValuePathEntry E) {
     APValue::BaseOrMemberType Value;
     Value.setFromOpaqueValue(E.BaseOrMember);
-    return dyn_cast<FieldDecl>(Value.getPointer());
+    return Value;
+  }
+
+  /// Get an LValue path entry, which is known to not be an array index, as a
+  /// field declaration.
+  const FieldDecl *getAsField(APValue::LValuePathEntry E) {
+    return dyn_cast<FieldDecl>(getAsBaseOrMember(E).getPointer());
   }
   /// Get an LValue path entry, which is known to not be an array index, as a
   /// base class declaration.
   const CXXRecordDecl *getAsBaseClass(APValue::LValuePathEntry E) {
-    APValue::BaseOrMemberType Value;
-    Value.setFromOpaqueValue(E.BaseOrMember);
-    return dyn_cast<CXXRecordDecl>(Value.getPointer());
+    return dyn_cast<CXXRecordDecl>(getAsBaseOrMember(E).getPointer());
   }
   /// Determine whether this LValue path entry for a base class names a virtual
   /// base class.
   bool isVirtualBaseClass(APValue::LValuePathEntry E) {
-    APValue::BaseOrMemberType Value;
-    Value.setFromOpaqueValue(E.BaseOrMember);
-    return Value.getInt();
+    return getAsBaseOrMember(E).getInt();
   }
 
   /// Find the path length and type of the most-derived subobject in the given
@@ -127,7 +130,8 @@ namespace {
 
   // The order of this enum is important for diagnostics.
   enum CheckSubobjectKind {
-    CSK_Base, CSK_Derived, CSK_Field, CSK_ArrayToPointer, CSK_ArrayIndex
+    CSK_Base, CSK_Derived, CSK_Field, CSK_ArrayToPointer, CSK_ArrayIndex,
+    CSK_This
   };
 
   /// A path from a glvalue to a subobject of that glvalue.
@@ -348,6 +352,24 @@ namespace {
         *Diag << v;
       return *this;
     }
+
+    OptionalDiagnostic &operator<<(const APSInt &I) {
+      if (Diag) {
+        llvm::SmallVector<char, 32> Buffer;
+        I.toString(Buffer);
+        *Diag << StringRef(Buffer.data(), Buffer.size());
+      }
+      return *this;
+    }
+
+    OptionalDiagnostic &operator<<(const APFloat &F) {
+      if (Diag) {
+        llvm::SmallVector<char, 32> Buffer;
+        F.toString(Buffer);
+        *Diag << StringRef(Buffer.data(), Buffer.size());
+      }
+      return *this;
+    }
   };
 
   struct EvalInfo {
@@ -489,6 +511,22 @@ namespace {
     /// construct which can't be folded?
     bool keepEvaluatingAfterFailure() {
       return CheckingPotentialConstantExpression && EvalStatus.Diag->empty();
+    }
+  };
+
+  /// Object used to treat all foldable expressions as constant expressions.
+  struct FoldConstant {
+    bool Enabled;
+
+    explicit FoldConstant(EvalInfo &Info)
+      : Enabled(Info.EvalStatus.Diag && Info.EvalStatus.Diag->empty() &&
+                !Info.EvalStatus.HasSideEffects) {
+    }
+    // Treat the value we've computed since this object was created as constant.
+    void Fold(EvalInfo &Info) {
+      if (Enabled && !Info.EvalStatus.Diag->empty() &&
+          !Info.EvalStatus.HasSideEffects)
+        Info.EvalStatus.Diag->clear();
     }
   };
 }
@@ -795,6 +833,15 @@ namespace {
     }
   };
 
+  /// Compare two member pointers, which are assumed to be of the same type.
+  static bool operator==(const MemberPtr &LHS, const MemberPtr &RHS) {
+    if (!LHS.getDecl() || !RHS.getDecl())
+      return !LHS.getDecl() && !RHS.getDecl();
+    if (LHS.getDecl()->getCanonicalDecl() != RHS.getDecl()->getCanonicalDecl())
+      return false;
+    return LHS.Path == RHS.Path;
+  }
+
   /// Kinds of constant expression checking, for diagnostics.
   enum CheckConstantExpressionKind {
     CCEK_Constant,    ///< A normal constant.
@@ -1052,10 +1099,8 @@ static bool EvaluateAsBooleanCondition(const Expr *E, bool &Result,
 template<typename T>
 static bool HandleOverflow(EvalInfo &Info, const Expr *E,
                            const T &SrcValue, QualType DestType) {
-  llvm::SmallVector<char, 32> Buffer;
-  SrcValue.toString(Buffer);
   Info.Diag(E->getExprLoc(), diag::note_constexpr_overflow)
-    << StringRef(Buffer.data(), Buffer.size()) << DestType;
+    << SrcValue << DestType;
   return false;
 }
 
@@ -1453,6 +1498,59 @@ static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
   return true;
 }
 
+/// Find the position where two subobject designators diverge, or equivalently
+/// the length of the common initial subsequence.
+static unsigned FindDesignatorMismatch(QualType ObjType,
+                                       const SubobjectDesignator &A,
+                                       const SubobjectDesignator &B,
+                                       bool &WasArrayIndex) {
+  unsigned I = 0, N = std::min(A.Entries.size(), B.Entries.size());
+  for (/**/; I != N; ++I) {
+    if (!ObjType.isNull() && ObjType->isArrayType()) {
+      // Next subobject is an array element.
+      if (A.Entries[I].ArrayIndex != B.Entries[I].ArrayIndex) {
+        WasArrayIndex = true;
+        return I;
+      }
+      ObjType = ObjType->castAsArrayTypeUnsafe()->getElementType();
+    } else {
+      if (A.Entries[I].BaseOrMember != B.Entries[I].BaseOrMember) {
+        WasArrayIndex = false;
+        return I;
+      }
+      if (const FieldDecl *FD = getAsField(A.Entries[I]))
+        // Next subobject is a field.
+        ObjType = FD->getType();
+      else
+        // Next subobject is a base class.
+        ObjType = QualType();
+    }
+  }
+  WasArrayIndex = false;
+  return I;
+}
+
+/// Determine whether the given subobject designators refer to elements of the
+/// same array object.
+static bool AreElementsOfSameArray(QualType ObjType,
+                                   const SubobjectDesignator &A,
+                                   const SubobjectDesignator &B) {
+  if (A.Entries.size() != B.Entries.size())
+    return false;
+
+  bool IsArray = A.MostDerivedArraySize != 0;
+  if (IsArray && A.MostDerivedPathLength != A.Entries.size())
+    // A is a subobject of the array element.
+    return false;
+
+  // If A (and B) designates an array element, the last entry will be the array
+  // index. That doesn't have to match. Otherwise, we're in the 'implicit array
+  // of length 1' case, and the entire path must match.
+  bool WasArrayIndex;
+  unsigned CommonLength = FindDesignatorMismatch(ObjType, A, B, WasArrayIndex);
+  return CommonLength >= A.Entries.size() - IsArray;
+}
+
 /// HandleLValueToRValueConversion - Perform an lvalue-to-rvalue conversion on
 /// the given lvalue. This can also be used for 'lvalue-to-lvalue' conversions
 /// for looking up the glvalue referred to by an entity of reference type.
@@ -1503,6 +1601,8 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
     // parameters are constant expressions even if they're non-const.
     // In C, such things can also be folded, although they are not ICEs.
     const VarDecl *VD = dyn_cast<VarDecl>(D);
+    if (const VarDecl *VDef = VD->getDefinition())
+      VD = VDef;
     if (!VD || VD->isInvalidDecl()) {
       Info.Diag(Loc);
       return false;
@@ -2252,12 +2352,35 @@ public:
   }
 
   RetTy VisitConditionalOperator(const ConditionalOperator *E) {
+    bool IsBcpCall = false;
+    // If the condition (ignoring parens) is a __builtin_constant_p call,
+    // the result is a constant expression if it can be folded without
+    // side-effects. This is an important GNU extension. See GCC PR38377
+    // for discussion.
+    if (const CallExpr *CallCE =
+          dyn_cast<CallExpr>(E->getCond()->IgnoreParenCasts()))
+      if (CallCE->isBuiltinCall() == Builtin::BI__builtin_constant_p)
+        IsBcpCall = true;
+
+    // Always assume __builtin_constant_p(...) ? ... : ... is a potential
+    // constant expression; we can't check whether it's potentially foldable.
+    if (Info.CheckingPotentialConstantExpression && IsBcpCall)
+      return false;
+
+    FoldConstant Fold(Info);
+
     bool BoolResult;
     if (!EvaluateAsBooleanCondition(E->getCond(), BoolResult, Info))
       return false;
 
     Expr *EvalExpr = BoolResult ? E->getTrueExpr() : E->getFalseExpr();
-    return StmtVisitorTy::Visit(EvalExpr);
+    if (!StmtVisitorTy::Visit(EvalExpr))
+      return false;
+
+    if (IsBcpCall)
+      Fold.Fold(Info);
+
+    return true;
   }
 
   RetTy VisitOpaqueValueExpr(const OpaqueValueExpr *E) {
@@ -2336,6 +2459,9 @@ public:
         return Error(E);
     } else
       return Error(E);
+
+    if (This && !This->checkSubobject(Info, E, CSK_This))
+      return false;
 
     const FunctionDecl *Definition = 0;
     Stmt *Body = FD->getBody(Definition);
@@ -4109,6 +4235,23 @@ static bool HasSameBase(const LValue &A, const LValue &B) {
          A.getLValueFrame() == B.getLValueFrame();
 }
 
+/// Perform the given integer operation, which is known to need at most BitWidth
+/// bits, and check for overflow in the original type (if that type was not an
+/// unsigned type).
+template<typename Operation>
+static APSInt CheckedIntArithmetic(EvalInfo &Info, const Expr *E,
+                                   const APSInt &LHS, const APSInt &RHS,
+                                   unsigned BitWidth, Operation Op) {
+  if (LHS.isUnsigned())
+    return Op(LHS, RHS);
+
+  APSInt Value(Op(LHS.extend(BitWidth), RHS.extend(BitWidth)), false);
+  APSInt Result = Value.trunc(LHS.getBitWidth());
+  if (Result.extend(BitWidth) != Value)
+    HandleOverflow(Info, E, Value, E->getType());
+  return Result;
+}
+
 bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
   if (E->isAssignmentOp())
     return Error(E);
@@ -4279,9 +4422,9 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
             (!RHSValue.Base && !RHSValue.Offset.isZero()))
           return Error(E);
         // It's implementation-defined whether distinct literals will have
-        // distinct addresses. In clang, we do not guarantee the addresses are
-        // distinct. However, we do know that the address of a literal will be
-        // non-null.
+        // distinct addresses. In clang, the result of such a comparison is
+        // unspecified, so it is not a constant expression. However, we do know
+        // that the address of a literal will be non-null.
         if ((IsLiteralLValue(LHSValue) || IsLiteralLValue(RHSValue)) &&
             LHSValue.Base && RHSValue.Base)
           return Error(E);
@@ -4296,11 +4439,22 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
         return Success(E->getOpcode() == BO_NE, E);
       }
 
-      // FIXME: Implement the C++11 restrictions:
-      //  - Pointer subtractions must be on elements of the same array.
-      //  - Pointer comparisons must be between members with the same access.
+      const CharUnits &LHSOffset = LHSValue.getLValueOffset();
+      const CharUnits &RHSOffset = RHSValue.getLValueOffset();
+
+      SubobjectDesignator &LHSDesignator = LHSValue.getLValueDesignator();
+      SubobjectDesignator &RHSDesignator = RHSValue.getLValueDesignator();
 
       if (E->getOpcode() == BO_Sub) {
+        // C++11 [expr.add]p6:
+        //   Unless both pointers point to elements of the same array object, or
+        //   one past the last element of the array object, the behavior is
+        //   undefined.
+        if (!LHSDesignator.Invalid && !RHSDesignator.Invalid &&
+            !AreElementsOfSameArray(getType(LHSValue.Base),
+                                    LHSDesignator, RHSDesignator))
+          CCEDiag(E, diag::note_constexpr_pointer_subtraction_not_same_array);
+
         QualType Type = E->getLHS()->getType();
         QualType ElementType = Type->getAs<PointerType>()->getPointeeType();
 
@@ -4308,13 +4462,81 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
         if (!HandleSizeof(Info, ElementType, ElementSize))
           return false;
 
-        CharUnits Diff = LHSValue.getLValueOffset() -
-                             RHSValue.getLValueOffset();
-        return Success(Diff / ElementSize, E);
+        // FIXME: LLVM and GCC both compute LHSOffset - RHSOffset at runtime,
+        // and produce incorrect results when it overflows. Such behavior
+        // appears to be non-conforming, but is common, so perhaps we should
+        // assume the standard intended for such cases to be undefined behavior
+        // and check for them.
+
+        // Compute (LHSOffset - RHSOffset) / Size carefully, checking for
+        // overflow in the final conversion to ptrdiff_t.
+        APSInt LHS(
+          llvm::APInt(65, (int64_t)LHSOffset.getQuantity(), true), false);
+        APSInt RHS(
+          llvm::APInt(65, (int64_t)RHSOffset.getQuantity(), true), false);
+        APSInt ElemSize(
+          llvm::APInt(65, (int64_t)ElementSize.getQuantity(), true), false);
+        APSInt TrueResult = (LHS - RHS) / ElemSize;
+        APSInt Result = TrueResult.trunc(Info.Ctx.getIntWidth(E->getType()));
+
+        if (Result.extend(65) != TrueResult)
+          HandleOverflow(Info, E, TrueResult, E->getType());
+        return Success(Result, E);
       }
 
-      const CharUnits &LHSOffset = LHSValue.getLValueOffset();
-      const CharUnits &RHSOffset = RHSValue.getLValueOffset();
+      // C++11 [expr.rel]p3:
+      //   Pointers to void (after pointer conversions) can be compared, with a
+      //   result defined as follows: If both pointers represent the same
+      //   address or are both the null pointer value, the result is true if the
+      //   operator is <= or >= and false otherwise; otherwise the result is
+      //   unspecified.
+      // We interpret this as applying to pointers to *cv* void.
+      if (LHSTy->isVoidPointerType() && LHSOffset != RHSOffset &&
+          E->isRelationalOp())
+        CCEDiag(E, diag::note_constexpr_void_comparison);
+
+      // C++11 [expr.rel]p2:
+      // - If two pointers point to non-static data members of the same object,
+      //   or to subobjects or array elements fo such members, recursively, the
+      //   pointer to the later declared member compares greater provided the
+      //   two members have the same access control and provided their class is
+      //   not a union.
+      //   [...]
+      // - Otherwise pointer comparisons are unspecified.
+      if (!LHSDesignator.Invalid && !RHSDesignator.Invalid &&
+          E->isRelationalOp()) {
+        bool WasArrayIndex;
+        unsigned Mismatch =
+          FindDesignatorMismatch(getType(LHSValue.Base), LHSDesignator,
+                                 RHSDesignator, WasArrayIndex);
+        // At the point where the designators diverge, the comparison has a
+        // specified value if:
+        //  - we are comparing array indices
+        //  - we are comparing fields of a union, or fields with the same access
+        // Otherwise, the result is unspecified and thus the comparison is not a
+        // constant expression.
+        if (!WasArrayIndex && Mismatch < LHSDesignator.Entries.size() &&
+            Mismatch < RHSDesignator.Entries.size()) {
+          const FieldDecl *LF = getAsField(LHSDesignator.Entries[Mismatch]);
+          const FieldDecl *RF = getAsField(RHSDesignator.Entries[Mismatch]);
+          if (!LF && !RF)
+            CCEDiag(E, diag::note_constexpr_pointer_comparison_base_classes);
+          else if (!LF)
+            CCEDiag(E, diag::note_constexpr_pointer_comparison_base_field)
+              << getAsBaseClass(LHSDesignator.Entries[Mismatch])
+              << RF->getParent() << RF;
+          else if (!RF)
+            CCEDiag(E, diag::note_constexpr_pointer_comparison_base_field)
+              << getAsBaseClass(RHSDesignator.Entries[Mismatch])
+              << LF->getParent() << LF;
+          else if (!LF->getParent()->isUnion() &&
+                   LF->getAccess() != RF->getAccess())
+            CCEDiag(E, diag::note_constexpr_pointer_comparison_differing_access)
+              << LF << LF->getAccess() << RF << RF->getAccess()
+              << LF->getParent();
+        }
+      }
+
       switch (E->getOpcode()) {
       default: llvm_unreachable("missing comparison operator");
       case BO_LT: return Success(LHSOffset < RHSOffset, E);
@@ -4326,6 +4548,45 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
       }
     }
   }
+
+  if (LHSTy->isMemberPointerType()) {
+    assert(E->isEqualityOp() && "unexpected member pointer operation");
+    assert(RHSTy->isMemberPointerType() && "invalid comparison");
+
+    MemberPtr LHSValue, RHSValue;
+
+    bool LHSOK = EvaluateMemberPointer(E->getLHS(), LHSValue, Info);
+    if (!LHSOK && Info.keepEvaluatingAfterFailure())
+      return false;
+
+    if (!EvaluateMemberPointer(E->getRHS(), RHSValue, Info) || !LHSOK)
+      return false;
+
+    // C++11 [expr.eq]p2:
+    //   If both operands are null, they compare equal. Otherwise if only one is
+    //   null, they compare unequal.
+    if (!LHSValue.getDecl() || !RHSValue.getDecl()) {
+      bool Equal = !LHSValue.getDecl() && !RHSValue.getDecl();
+      return Success(E->getOpcode() == BO_EQ ? Equal : !Equal, E);
+    }
+
+    //   Otherwise if either is a pointer to a virtual member function, the
+    //   result is unspecified.
+    if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(LHSValue.getDecl()))
+      if (MD->isVirtual())
+        CCEDiag(E, diag::note_constexpr_compare_virtual_mem_ptr) << MD;
+    if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(RHSValue.getDecl()))
+      if (MD->isVirtual())
+        CCEDiag(E, diag::note_constexpr_compare_virtual_mem_ptr) << MD;
+
+    //   Otherwise they compare equal if and only if they would refer to the
+    //   same member of the same most derived object or the same subobject if
+    //   they were dereferenced with a hypothetical object of the associated
+    //   class type.
+    bool Equal = LHSValue == RHSValue;
+    return Success(E->getOpcode() == BO_EQ ? Equal : !Equal, E);
+  }
+
   if (!LHSTy->isIntegralOrEnumerationType() ||
       !RHSTy->isIntegralOrEnumerationType()) {
     // We can't continue from here for non-integral types.
@@ -4396,42 +4657,76 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
   switch (E->getOpcode()) {
   default:
     return Error(E);
-  case BO_Mul: return Success(LHS * RHS, E);
-  case BO_Add: return Success(LHS + RHS, E);
-  case BO_Sub: return Success(LHS - RHS, E);
+  case BO_Mul:
+    return Success(CheckedIntArithmetic(Info, E, LHS, RHS,
+                                        LHS.getBitWidth() * 2,
+                                        std::multiplies<APSInt>()), E);
+  case BO_Add:
+    return Success(CheckedIntArithmetic(Info, E, LHS, RHS,
+                                        LHS.getBitWidth() + 1,
+                                        std::plus<APSInt>()), E);
+  case BO_Sub:
+    return Success(CheckedIntArithmetic(Info, E, LHS, RHS,
+                                        LHS.getBitWidth() + 1,
+                                        std::minus<APSInt>()), E);
   case BO_And: return Success(LHS & RHS, E);
   case BO_Xor: return Success(LHS ^ RHS, E);
   case BO_Or:  return Success(LHS | RHS, E);
   case BO_Div:
-    if (RHS == 0)
-      return Error(E, diag::note_expr_divide_by_zero);
-    return Success(LHS / RHS, E);
   case BO_Rem:
     if (RHS == 0)
       return Error(E, diag::note_expr_divide_by_zero);
-    return Success(LHS % RHS, E);
+    // Check for overflow case: INT_MIN / -1 or INT_MIN % -1. The latter is not
+    // actually undefined behavior in C++11 due to a language defect.
+    if (RHS.isNegative() && RHS.isAllOnesValue() &&
+        LHS.isSigned() && LHS.isMinSignedValue())
+      HandleOverflow(Info, E, -LHS.extend(LHS.getBitWidth() + 1), E->getType());
+    return Success(E->getOpcode() == BO_Rem ? LHS % RHS : LHS / RHS, E);
   case BO_Shl: {
-    // During constant-folding, a negative shift is an opposite shift.
+    // During constant-folding, a negative shift is an opposite shift. Such a
+    // shift is not a constant expression.
     if (RHS.isSigned() && RHS.isNegative()) {
+      CCEDiag(E, diag::note_constexpr_negative_shift) << RHS;
       RHS = -RHS;
       goto shift_right;
     }
 
   shift_left:
-    unsigned SA
-      = (unsigned) RHS.getLimitedValue(LHS.getBitWidth()-1);
+    // C++11 [expr.shift]p1: Shift width must be less than the bit width of the
+    // shifted type.
+    unsigned SA = (unsigned) RHS.getLimitedValue(LHS.getBitWidth()-1);
+    if (SA != RHS) {
+      CCEDiag(E, diag::note_constexpr_large_shift)
+        << RHS << E->getType() << LHS.getBitWidth();
+    } else if (LHS.isSigned()) {
+      // C++11 [expr.shift]p2: A signed left shift must have a non-negative
+      // operand, and must not overflow.
+      if (LHS.isNegative())
+        CCEDiag(E, diag::note_constexpr_lshift_of_negative) << LHS;
+      else if (LHS.countLeadingZeros() <= SA)
+        HandleOverflow(Info, E, LHS.extend(LHS.getBitWidth() + SA) << SA,
+                       E->getType());
+    }
+
     return Success(LHS << SA, E);
   }
   case BO_Shr: {
-    // During constant-folding, a negative shift is an opposite shift.
+    // During constant-folding, a negative shift is an opposite shift. Such a
+    // shift is not a constant expression.
     if (RHS.isSigned() && RHS.isNegative()) {
+      CCEDiag(E, diag::note_constexpr_negative_shift) << RHS;
       RHS = -RHS;
       goto shift_left;
     }
 
   shift_right:
-    unsigned SA =
-      (unsigned) RHS.getLimitedValue(LHS.getBitWidth()-1);
+    // C++11 [expr.shift]p1: Shift width must be less than the bit width of the
+    // shifted type.
+    unsigned SA = (unsigned) RHS.getLimitedValue(LHS.getBitWidth()-1);
+    if (SA != RHS)
+      CCEDiag(E, diag::note_constexpr_large_shift)
+        << RHS << E->getType() << LHS.getBitWidth();
+
     return Success(LHS >> SA, E);
   }
 
@@ -4605,7 +4900,11 @@ bool IntExprEvaluator::VisitUnaryOperator(const UnaryOperator *E) {
     if (!Visit(E->getSubExpr()))
       return false;
     if (!Result.isInt()) return Error(E);
-    return Success(-Result.getInt(), E);
+    const APSInt &Value = Result.getInt();
+    if (Value.isSigned() && Value.isMinSignedValue())
+      HandleOverflow(Info, E, -Value.extend(Value.getBitWidth() + 1),
+                     E->getType());
+    return Success(-Value, E);
   }
   case UO_Not: {
     if (!Visit(E->getSubExpr()))
@@ -4969,17 +5268,21 @@ bool FloatExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
   default: return Error(E);
   case BO_Mul:
     Result.multiply(RHS, APFloat::rmNearestTiesToEven);
-    return true;
+    break;
   case BO_Add:
     Result.add(RHS, APFloat::rmNearestTiesToEven);
-    return true;
+    break;
   case BO_Sub:
     Result.subtract(RHS, APFloat::rmNearestTiesToEven);
-    return true;
+    break;
   case BO_Div:
     Result.divide(RHS, APFloat::rmNearestTiesToEven);
-    return true;
+    break;
   }
+
+  if (Result.isInfinity() || Result.isNaN())
+    CCEDiag(E, diag::note_constexpr_float_arithmetic) << Result.isNaN();
+  return true;
 }
 
 bool FloatExprEvaluator::VisitFloatingLiteral(const FloatingLiteral *E) {

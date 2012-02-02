@@ -314,6 +314,15 @@ def warn_strlcpycat_wrong_size : Warning<
   InGroup<DiagGroup<"strlcpy-strlcat-size">>;
 def note_strlcpycat_wrong_size : Note<
   "change size argument to be the size of the destination">;
+  
+def warn_strncat_large_size : Warning<
+  "the value of the size argument in 'strncat' is too large, might lead to a " 
+  "buffer overflow">, InGroup<StrncatSize>, DefaultIgnore;
+def warn_strncat_src_size : Warning<"size argument in 'strncat' call appears " 
+  "to be size of the source">, InGroup<StrncatSize>, DefaultIgnore;
+def note_strncat_wrong_size : Note<
+  "change the argument to be the free space in the destination buffer minus " 
+  "the terminating null byte">;
 
 /// main()
 // static/inline main() are not errors in C, just in C++.
@@ -363,6 +372,14 @@ def warn_pragma_unused_expected_var_arg : Warning<
   "only variables can be arguments to '#pragma unused'">;
 def err_unsupported_pragma_weak : Error<
   "using '#pragma weak' to refer to an undeclared identifier is not yet supported">;
+def err_pragma_push_visibility_mismatch : Error<
+  "#pragma visibility push with no matching #pragma visibility pop">;
+def note_surrounding_namespace_ends_here : Note<
+  "surrounding namespace with visibility attribute ends here">;
+def err_pragma_pop_visibility_mismatch : Error<
+  "#pragma visibility pop with no matching #pragma visibility push">;
+def note_surrounding_namespace_starts_here : Note<
+  "surrounding namespace with visibility attribute starts here">;
 
 /// Objective-C parser diagnostics
 def err_duplicate_class_def : Error<
@@ -3309,9 +3326,11 @@ def err_arc_cast_requires_bridge : Error<
 def note_arc_bridge : Note<
   "use __bridge to convert directly (no change in ownership)">;
 def note_arc_bridge_transfer : Note<
-  "use __bridge_transfer to transfer ownership of a +1 %0 into ARC">;
+  "use %select{__bridge_transfer|CFBridgingRelease call}1 to transfer "
+  "ownership of a +1 %0 into ARC">;
 def note_arc_bridge_retained : Note<
-  "use __bridge_retained to make an ARC object available as a +1 %0">;
+  "use %select{__bridge_retained|CFBridgingRetain call}1 to make an "
+  "ARC object available as a +1 %0">;
 
 } // ARC Casting category
 
@@ -4066,9 +4085,11 @@ def err_capture_does_not_name_variable : Error<
   "%0 in capture list does not name a variable">;
 def err_capture_non_automatic_variable : Error<
   "%0 cannot be captured because it does not have automatic storage duration">;
-def err_implicit_this_capture : Error<
-  "'this' cannot be implicitly captured in this context">;
-
+def err_this_capture : Error<
+  "'this' cannot be %select{implicitly |}0captured in this context">;
+def err_lambda_capture_block : Error<
+  "__block variable %0 cannot be captured in a lambda">;
+  
 def err_operator_arrow_circular : Error<
   "circular pointer delegation detected">;
 def err_pseudo_dtor_base_not_scalar : Error<
