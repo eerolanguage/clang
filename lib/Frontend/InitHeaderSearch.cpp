@@ -329,19 +329,6 @@ void InitHeaderSearch::AddDefaultCIncludePaths(const llvm::Triple &triple,
 void InitHeaderSearch::
 AddDefaultCPlusPlusIncludePaths(const llvm::Triple &triple, const HeaderSearchOptions &HSOpts) {
   llvm::Triple::OSType os = triple.getOS();
-  StringRef CxxIncludeRoot(CXX_INCLUDE_ROOT);
-  if (CxxIncludeRoot != "") {
-    StringRef CxxIncludeArch(CXX_INCLUDE_ARCH);
-    if (CxxIncludeArch == "")
-      AddGnuCPlusPlusIncludePaths(CxxIncludeRoot, triple.str().c_str(),
-                                  CXX_INCLUDE_32BIT_DIR, CXX_INCLUDE_64BIT_DIR,
-                                  triple);
-    else
-      AddGnuCPlusPlusIncludePaths(CxxIncludeRoot, CXX_INCLUDE_ARCH,
-                                  CXX_INCLUDE_32BIT_DIR, CXX_INCLUDE_64BIT_DIR,
-                                  triple);
-    return;
-  }
   // FIXME: temporary hack: hard-coded paths.
 
   if (triple.isOSDarwin()) {
@@ -665,6 +652,14 @@ void clang::ApplyHeaderSearchOptions(HeaderSearch &HS,
   }
 
   Init.AddDefaultIncludePaths(Lang, Triple, HSOpts);
+
+  if (HSOpts.UseBuiltinIncludes) {
+    // Set up the builtin include directory in the module map.
+    llvm::sys::Path P(HSOpts.ResourceDir);
+    P.appendComponent("include");
+    if (const DirectoryEntry *Dir = HS.getFileMgr().getDirectory(P.str()))
+      HS.getModuleMap().setBuiltinIncludeDir(Dir);
+  }
 
   Init.Realize(Lang);
 }

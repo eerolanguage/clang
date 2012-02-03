@@ -276,11 +276,24 @@ Sema::HandlePropertyInClassExtension(Scope *S,
       L->AddedObjCPropertyInClassExtension(PDecl, /*OrigProp=*/0, CDecl);
     return PDecl;
   }
-  if (PIDecl->getType().getCanonicalType() 
-      != PDecl->getType().getCanonicalType()) {
-    Diag(AtLoc, 
-         diag::err_type_mismatch_continuation_class) << PDecl->getType();
-    Diag(PIDecl->getLocation(), diag::note_property_declare);
+  if (!Context.hasSameType(PIDecl->getType(), PDecl->getType())) {
+    bool IncompatibleObjC = false;
+    QualType ConvertedType;
+    // Relax the strict type matching for property type in continuation class.
+    // Allow property object type of continuation class to be different as long
+    // as it narrows the object type in its primary class property. Note that
+    // this conversion is safe only because the wider type is for a 'readonly'
+    // property in primary class and 'narrowed' type for a 'readwrite' property
+    // in continuation class.
+    if (!isa<ObjCObjectPointerType>(PIDecl->getType()) ||
+        !isa<ObjCObjectPointerType>(PDecl->getType()) ||
+        (!isObjCPointerConversion(PDecl->getType(), PIDecl->getType(), 
+                                  ConvertedType, IncompatibleObjC))
+        || IncompatibleObjC) {
+      Diag(AtLoc, 
+          diag::err_type_mismatch_continuation_class) << PDecl->getType();
+      Diag(PIDecl->getLocation(), diag::note_property_declare);
+    }
   }
     
   // The property 'PIDecl's readonly attribute will be over-ridden

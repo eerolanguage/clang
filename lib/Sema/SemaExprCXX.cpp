@@ -4232,6 +4232,8 @@ Sema::MaybeCreateExprWithCleanups(ExprResult SubExpr) {
 Expr *Sema::MaybeCreateExprWithCleanups(Expr *SubExpr) {
   assert(SubExpr && "sub expression can't be null!");
 
+  CleanupVarDeclMarking();
+
   unsigned FirstCleanup = ExprEvalContexts.back().NumCleanupObjects;
   assert(ExprCleanupObjects.size() >= FirstCleanup);
   assert(ExprNeedsCleanups || ExprCleanupObjects.size() == FirstCleanup);
@@ -4250,6 +4252,8 @@ Expr *Sema::MaybeCreateExprWithCleanups(Expr *SubExpr) {
 
 Stmt *Sema::MaybeCreateStmtWithCleanups(Stmt *SubStmt) {
   assert(SubStmt && "sub statement can't be null!");
+
+  CleanupVarDeclMarking();
 
   if (!ExprNeedsCleanups)
     return SubStmt;
@@ -4941,6 +4945,8 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
     LSI->ImpCaptureStyle = LambdaScopeInfo::ImpCap_LambdaByval;
   else if (Intro.Default == LCD_ByRef)
     LSI->ImpCaptureStyle = LambdaScopeInfo::ImpCap_LambdaByref;
+
+  LSI->Mutable = (Method->getTypeQualifiers() & Qualifiers::Const) == 0;
 
   // Handle explicit captures.
   for (llvm::SmallVector<LambdaCapture, 4>::const_iterator
