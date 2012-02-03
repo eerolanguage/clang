@@ -722,6 +722,13 @@ private:
       return PP.getSourceManager().isInSystemHeader(Loc);
   }
 
+  void InsertToken(const tok::TokenKind tokenKind) {
+    PP.EnterToken(Tok);
+    Tok.setKind(tokenKind);
+    Tok.setLength(0);
+    Tok.setIdentifierInfo(0);
+  }
+
   //===--------------------------------------------------------------------===//
   // Diagnostic Emission and Error recovery.
 

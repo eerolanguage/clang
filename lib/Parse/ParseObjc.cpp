@@ -30,7 +30,8 @@ using namespace clang;
 /// [OBJC]  objc-method-definition
 /// [OBJC]  '@' 'end'
 Parser::DeclGroupPtrTy Parser::ParseObjCAtDirectives() {
-  SourceLocation AtLoc = ConsumeToken(); // the "@"
+  SourceLocation AtLoc = Tok.is(tok::at) ? ConsumeToken() // the "@" 
+                                         : Tok.getLocation();
 
   if (Tok.is(tok::code_completion)) {
     Actions.CodeCompleteObjCAtDirective(getCurScope());
@@ -408,6 +409,21 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       return cutOffParsing();
     }
     
+    if (getLang().Eero) { // objc keywords without "@"s
+      switch (Tok.getKind()) {
+        case tok::kw_optional:
+        case tok::kw_required:
+        case tok::kw_property:
+        case tok::kw_end:
+        case tok::kw_implementation:
+        case tok::kw_interface:
+          InsertToken(tok::at);
+          break;
+        default: 
+          break; // do nothing
+      }
+    }
+
     // If we don't have an @ directive, parse it as a function definition.
     if (Tok.isNot(tok::at)) {
       // The code below does not consume '}'s because it is afraid of eating the
@@ -756,6 +772,9 @@ IdentifierInfo *Parser::ParseObjCSelectorPiece(SourceLocation &SelectorLoc) {
   case tok::kw_volatile:
   case tok::kw_wchar_t:
   case tok::kw_while:
+  case tok::kw_protocol: // eero
+  case tok::kw_end:      //
+  case tok::kw_selector: //
   case tok::kw__Bool:
   case tok::kw__Complex:
   case tok::kw___alignof:
@@ -1061,7 +1080,12 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       return 0;
     }
     
-    if (Tok.isNot(tok::identifier)) {
+    if (Tok.isNot(tok::identifier) && 
+        (!getLang().Eero || // Some headers use these as arg var names
+         !(Tok.is(tok::kw_interface) ||
+           Tok.is(tok::kw_protocol) ||
+           Tok.is(tok::kw_selector) ||
+           Tok.is(tok::kw_property)))) {
       Diag(Tok, diag::err_expected_ident); // missing argument name.
       break;
     }
@@ -1254,6 +1278,19 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
         << FixItHint::CreateRemoval(Tok.getLocation());
       ConsumeToken();
       continue;
+    }
+
+    if (getLang().Eero) { // objc keywords without "@"s
+      switch (Tok.getKind()) {
+        case tok::kw_private:
+        case tok::kw_public:
+        case tok::kw_protected:
+        case tok::kw_package:
+          InsertToken(tok::at);
+          break;
+        default: 
+          break; // do nothing
+      }
     }
 
     // Set the default visibility to private.
@@ -1791,16 +1828,16 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
   if (TryBody.isInvalid())
     TryBody = Actions.ActOnNullStmt(Tok.getLocation());
 
-  while (Tok.is(tok::at)) {
+  while (Tok.is(tok::at) || Tok.is(tok::kw_catch) || Tok.is(tok::kw_finally)) {
     // At this point, we need to lookahead to determine if this @ is the start
     // of an @catch or @finally.  We don't want to consume the @ token if this
     // is an @try or @encode or something else.
-    Token AfterAt = GetLookAheadToken(1);
+    Token AfterAt = Tok.is(tok::at) ? GetLookAheadToken(1) : Tok;
     if (!AfterAt.isObjCAtKeyword(tok::objc_catch) &&
         !AfterAt.isObjCAtKeyword(tok::objc_finally))
       break;
 
-    SourceLocation AtCatchFinallyLoc = ConsumeToken();
+    SourceLocation AtCatchFinallyLoc = Tok.is(tok::at) ? ConsumeToken() : Tok.getLocation();
     if (Tok.isObjCAtKeyword(tok::objc_catch)) {
       Decl *FirstPart = 0;
       ConsumeToken(); // consume catch

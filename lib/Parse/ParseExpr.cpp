@@ -1157,6 +1157,10 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     SourceLocation AtLoc = ConsumeToken();
     return ParseObjCAtExpression(AtLoc);
   }
+  case tok::kw_encode:    // only exist in eero
+  case tok::kw_protocol:  //
+  case tok::kw_selector:  //
+    return ParseObjCAtExpression(Tok.getLocation());
   case tok::caret:
     Res = ParseBlockLiteralExpression();
     break;

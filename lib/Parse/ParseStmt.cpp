@@ -99,6 +99,12 @@ Retry:
       return ParseObjCAtStatement(AtLoc);
     }
 
+  case tok::kw_synchronized:
+    return ParseObjCSynchronizedStmt(Tok.getLocation());
+
+  case tok::kw_autoreleasepool:
+    return ParseObjCAutoreleasePoolStmt(Tok.getLocation());
+
   case tok::code_completion:
     Actions.CodeCompleteOrdinaryName(getCurScope(), Sema::PCC_Statement);
     cutOffParsing();
@@ -222,6 +228,12 @@ Retry:
     return ParseExprStatement(attrs);
   }
 
+  case tok::kw_throw:
+    if (getLang().Eero)
+      return ParseObjCThrowStmt(Tok.getLocation());
+    else
+      ParseExprStatement(attrs);
+
   case tok::kw_case:                // C99 6.8.1: labeled-statement
     return ParseCaseStatement(attrs);
   case tok::kw_default:             // C99 6.8.1: labeled-statement
@@ -276,7 +288,10 @@ Retry:
   }
 
   case tok::kw_try:                 // C++ 15: try-block
+   if (!getLang().Eero)
     return ParseCXXTryBlock(attrs);
+   else
+    return ParseObjCTryStmt(Tok.getLocation());
 
   case tok::kw___try:
     return ParseSEHTryBlock(attrs);

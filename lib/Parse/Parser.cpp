@@ -583,6 +583,14 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     break;
   }
   case tok::at:
+  case tok::kw_class:
+  case tok::kw_interface:
+  case tok::kw_protocol:
+  case tok::kw_implementation:
+  case tok::kw_end:
+  case tok::kw_compatibility_alias:
+  case tok::kw_synthesize:
+  case tok::kw_dynamic:
     return ParseObjCAtDirectives();
   case tok::minus:
   case tok::plus:

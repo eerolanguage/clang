@@ -3898,6 +3898,14 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
 void Parser::ParseDirectDeclarator(Declarator &D) {
   DeclaratorScopeObj DeclScopeObj(*this, D.getCXXScopeSpec());
 
+  if (getLang().Eero && // Some headers use these keywords as var names
+      (Tok.is(tok::kw_interface) || 
+       Tok.is(tok::kw_protocol) ||
+       Tok.is(tok::kw_property) ||
+       Tok.is(tok::kw_selector) ||
+       Tok.is(tok::kw_end)))
+    Tok.setKind(tok::identifier);
+
   if (getLang().CPlusPlus && D.mayHaveIdentifier()) {
     // ParseDeclaratorInternal might already have parsed the scope.
     if (D.getCXXScopeSpec().isEmpty()) {
