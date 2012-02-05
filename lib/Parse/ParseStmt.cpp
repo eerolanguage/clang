@@ -569,6 +569,8 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
       ColonLoc = ConsumeToken();
       Diag(ColonLoc, diag::err_expected_colon_after) << "'case'"
         << FixItHint::CreateReplacement(ColonLoc, ":");
+    } else if (getLang().Eero) { // colons are optional
+      // TODO: force block scope
     } else {
       SourceLocation ExpectedLoc = PP.getLocForEndOfToken(PrevTokLocation);
       Diag(ExpectedLoc, diag::err_expected_colon_after) << "'case'"
@@ -598,7 +600,7 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
     }
 
     // Handle all case statements.
-  } while (Tok.is(tok::kw_case));
+  } while (Tok.is(tok::kw_case) || (getLang().Eero && Tok.is(tok::comma)));
 
   assert(!TopLevelCase.isInvalid() && "Should have parsed at least one case!");
 
