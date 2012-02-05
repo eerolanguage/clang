@@ -19,6 +19,7 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ASTMutationListener.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 
@@ -1346,7 +1347,7 @@ ObjCPropertyDecl *Sema::LookupPropertyDecl(const ObjCContainerDecl *CDecl,
 
 static IdentifierInfo * getDefaultSynthIvarName(ObjCPropertyDecl *Prop,
                                                 ASTContext &Ctx) {
-  llvm::SmallString<128> ivarName;
+  SmallString<128> ivarName;
   {
     llvm::raw_svector_ostream os(ivarName);
     os << '_' << Prop->getIdentifier()->getName();

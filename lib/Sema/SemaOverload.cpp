@@ -4763,6 +4763,13 @@ ExprResult Sema::PerformContextuallyConvertToObjCPointer(Expr *From) {
   return ExprError();
 }
 
+/// Determine whether the provided type is an integral type, or an enumeration
+/// type of a permitted flavor.
+static bool isIntegralOrEnumerationType(QualType T, bool AllowScopedEnum) {
+  return AllowScopedEnum ? T->isIntegralOrEnumerationType()
+                         : T->isIntegralOrUnscopedEnumerationType();
+}
+
 /// \brief Attempt to convert the given expression to an integral or
 /// enumeration type.
 ///
@@ -4797,6 +4804,9 @@ ExprResult Sema::PerformContextuallyConvertToObjCPointer(Expr *From) {
 /// \param ConvDiag The diagnostic to be emitted if we are calling a conversion
 /// function, which may be an extension in this case.
 ///
+/// \param AllowScopedEnumerations Specifies whether conversions to scoped
+/// enumerations should be considered.
+///
 /// \returns The expression, converted to an integral or enumeration type if
 /// successful.
 ExprResult
@@ -4807,7 +4817,8 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
                                      const PartialDiagnostic &ExplicitConvNote,
                                          const PartialDiagnostic &AmbigDiag,
                                          const PartialDiagnostic &AmbigNote,
-                                         const PartialDiagnostic &ConvDiag) {
+                                         const PartialDiagnostic &ConvDiag,
+                                         bool AllowScopedEnumerations) {
   // We can't perform any more checking for type-dependent expressions.
   if (From->isTypeDependent())
     return Owned(From);
@@ -4821,7 +4832,7 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
 
   // If the expression already has integral or enumeration type, we're golden.
   QualType T = From->getType();
-  if (T->isIntegralOrEnumerationType())
+  if (isIntegralOrEnumerationType(T, AllowScopedEnumerations))
     return DefaultLvalueConversion(From);
 
   // FIXME: Check for missing '()' if T is a function type?
@@ -4830,8 +4841,8 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
   // expression of integral or enumeration type.
   const RecordType *RecordTy = T->getAs<RecordType>();
   if (!RecordTy || !getLangOptions().CPlusPlus) {
-    Diag(Loc, NotIntDiag)
-      << T << From->getSourceRange();
+    if (NotIntDiag.getDiagID())
+      Diag(Loc, NotIntDiag) << T << From->getSourceRange();
     return Owned(From);
   }
 
@@ -4852,19 +4863,21 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
        I != E;
        ++I) {
     if (CXXConversionDecl *Conversion
-          = dyn_cast<CXXConversionDecl>((*I)->getUnderlyingDecl()))
-      if (Conversion->getConversionType().getNonReferenceType()
-            ->isIntegralOrEnumerationType()) {
+          = dyn_cast<CXXConversionDecl>((*I)->getUnderlyingDecl())) {
+      if (isIntegralOrEnumerationType(
+            Conversion->getConversionType().getNonReferenceType(),
+            AllowScopedEnumerations)) {
         if (Conversion->isExplicit())
           ExplicitConversions.addDecl(I.getDecl(), I.getAccess());
         else
           ViableConversions.addDecl(I.getDecl(), I.getAccess());
       }
+    }
   }
 
   switch (ViableConversions.size()) {
   case 0:
-    if (ExplicitConversions.size() == 1) {
+    if (ExplicitConversions.size() == 1 && ExplicitConvDiag.getDiagID()) {
       DeclAccessPair Found = ExplicitConversions[0];
       CXXConversionDecl *Conversion
         = cast<CXXConversionDecl>(Found->getUnderlyingDecl());
@@ -4935,6 +4948,9 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
   }
 
   default:
+    if (!AmbigDiag.getDiagID())
+      return Owned(From);
+
     Diag(Loc, AmbigDiag)
       << T << From->getSourceRange();
     for (unsigned I = 0, N = ViableConversions.size(); I != N; ++I) {
@@ -4947,9 +4963,9 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
     return Owned(From);
   }
 
-  if (!From->getType()->isIntegralOrEnumerationType())
-    Diag(Loc, NotIntDiag)
-      << From->getType() << From->getSourceRange();
+  if (!isIntegralOrEnumerationType(From->getType(), AllowScopedEnumerations) &&
+      NotIntDiag.getDiagID())
+    Diag(Loc, NotIntDiag) << From->getType() << From->getSourceRange();
 
   return DefaultLvalueConversion(From);
 }

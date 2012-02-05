@@ -18,6 +18,8 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 
 using namespace clang;
@@ -30,7 +32,7 @@ class CStringChecker : public Checker< eval::Call,
                                          check::DeadSymbols,
                                          check::RegionChanges
                                          > {
-  mutable llvm::OwningPtr<BugType> BT_Null, BT_Bounds,
+  mutable OwningPtr<BugType> BT_Null, BT_Bounds,
                                    BT_Overlap, BT_NotCString,
                                    BT_AdditionOverflow;
   mutable const char *CurrentFunctionDescription;
@@ -221,7 +223,7 @@ ProgramStateRef CStringChecker::checkNonNull(CheckerContext &C,
       BT_Null.reset(new BuiltinBug("API",
         "Null pointer argument in call to byte string function"));
 
-    llvm::SmallString<80> buf;
+    SmallString<80> buf;
     llvm::raw_svector_ostream os(buf);
     assert(CurrentFunctionDescription);
     os << "Null pointer argument in call to " << CurrentFunctionDescription;
@@ -293,7 +295,7 @@ ProgramStateRef CStringChecker::CheckLocation(CheckerContext &C,
       assert(CurrentFunctionDescription);
       assert(CurrentFunctionDescription[0] != '\0');
 
-      llvm::SmallString<80> buf;
+      SmallString<80> buf;
       llvm::raw_svector_ostream os(buf);
       os << (char)toupper(CurrentFunctionDescription[0])
          << &CurrentFunctionDescription[1]
@@ -667,7 +669,7 @@ SVal CStringChecker::getCStringLength(CheckerContext &C, ProgramStateRef &state,
           BT_NotCString.reset(new BuiltinBug("API",
             "Argument is not a null-terminated string."));
 
-        llvm::SmallString<120> buf;
+        SmallString<120> buf;
         llvm::raw_svector_ostream os(buf);
         assert(CurrentFunctionDescription);
         os << "Argument to " << CurrentFunctionDescription
@@ -724,7 +726,7 @@ SVal CStringChecker::getCStringLength(CheckerContext &C, ProgramStateRef &state,
         BT_NotCString.reset(new BuiltinBug("API",
           "Argument is not a null-terminated string."));
 
-      llvm::SmallString<120> buf;
+      SmallString<120> buf;
       llvm::raw_svector_ostream os(buf);
 
       assert(CurrentFunctionDescription);

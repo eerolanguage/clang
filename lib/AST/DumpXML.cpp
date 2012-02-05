@@ -39,8 +39,7 @@
 #include "clang/AST/TypeVisitor.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 
@@ -224,7 +223,7 @@ struct XMLDumper : public XMLDeclVisitor<XMLDumper>,
   //---- General utilities -------------------------------------------//
 
   void setPointer(StringRef prop, const void *p) {
-    llvm::SmallString<10> buffer;
+    SmallString<10> buffer;
     llvm::raw_svector_ostream os(buffer);
     os << p;
     os.flush();
@@ -240,7 +239,7 @@ struct XMLDumper : public XMLDeclVisitor<XMLDumper>,
   }
 
   void setInteger(StringRef prop, unsigned n) {
-    llvm::SmallString<10> buffer;
+    SmallString<10> buffer;
     llvm::raw_svector_ostream os(buffer);
     os << n;
     os.flush();

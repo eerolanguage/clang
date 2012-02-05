@@ -31,6 +31,18 @@ def err_cce_narrowing : Error<
   "%select{case value|enumerator value|non-type template argument}0 "
   "%select{cannot be narrowed from type %2 to %3|"
   "evaluates to %2, which cannot be narrowed to type %3}1">;
+def err_ice_not_integral : Error<
+  "integral constant expression must have integral or unscoped enumeration "
+  "type, not %0">;
+def err_ice_incomplete_type : Error<
+  "integral constant expression has incomplete class type %0">;
+def err_ice_explicit_conversion : Error<
+  "integral constant expression requires explicit conversion from %0 to %1">;
+def note_ice_conversion_here : Note<
+  "conversion to %select{integral|enumeration}0 type %1 declared here">;
+def err_ice_ambiguous_conversion : Error<
+  "ambiguous conversion from type %0 to an integral or unscoped "
+  "enumeration type">;
 
 // Semantic analysis of constant literals.
 def ext_predef_outside_function : Warning<
@@ -330,6 +342,8 @@ def warn_static_main : Warning<"'main' should not be declared static">,
     InGroup<Main>;
 def err_static_main : Error<"'main' is not allowed to be declared static">;
 def err_inline_main : Error<"'main' is not allowed to be declared inline">;
+def err_constexpr_main : Error<
+  "'main' is not allowed to be declared constexpr">;
 def err_main_template_decl : Error<"'main' cannot be a template">;
 def err_main_returns_nonint : Error<"'main' must return 'int'">;
 def err_main_surplus_args : Error<"too many parameters (%0) for 'main': "
@@ -1642,12 +1656,13 @@ def warn_no_unlock : Warning<
   "mutex '%0' is still locked at the end of function">,
   InGroup<ThreadSafety>, DefaultIgnore;
 // FIXME: improve the error message about locks not in scope
-def warn_lock_at_end_of_scope : Warning<
-  "mutex '%0' is still locked at the end of its scope">,
+def warn_lock_some_predecessors : Warning<
+  "mutex '%0' is not locked on every path through here">,
   InGroup<ThreadSafety>, DefaultIgnore;
 def warn_expecting_lock_held_on_loop : Warning<
   "expecting mutex '%0' to be locked at start of each loop">,
   InGroup<ThreadSafety>, DefaultIgnore;
+def note_locked_here : Note<"mutex acquired here">;
 def warn_lock_exclusive_and_shared : Warning<
   "mutex '%0' is locked exclusively and shared in the same scope">,
   InGroup<ThreadSafety>, DefaultIgnore;
@@ -2897,6 +2912,9 @@ def err_vm_func_decl : Error<
   "function declaration cannot have variably modified type">;
 def err_array_too_large : Error<
   "array is too large (%0 elements)">;
+def warn_array_new_too_large : Warning<"array is too large (%0 elements)">,
+  // FIXME PR11644: ", will throw std::bad_array_new_length at runtime"
+  InGroup<DiagGroup<"bad-array-new-length">>;
 
 // -Wpadded, -Wpacked
 def warn_padded_struct_field : Warning<
@@ -2912,6 +2930,9 @@ def warn_unnecessary_packed : Warning<
   "packed attribute is unnecessary for %0">, InGroup<Packed>, DefaultIgnore;
 
 def err_typecheck_negative_array_size : Error<"array size is negative">;
+def warn_typecheck_negative_array_new_size : Warning<"array size is negative">,
+  // FIXME PR11644: ", will throw std::bad_array_new_length at runtime"
+  InGroup<DiagGroup<"bad-array-new-length">>;
 def warn_typecheck_function_qualifiers : Warning<
   "qualifier on function type %0 has unspecified behavior">;
 def err_typecheck_invalid_restrict_not_pointer : Error<
@@ -3967,7 +3988,8 @@ def err_placement_new_non_placement_delete : Error<
   "'new' expression with placement arguments refers to non-placement "
   "'operator delete'">;
 def err_array_size_not_integral : Error<
-  "array size expression must have integral or enumerated type, not %0">;
+  "array size expression must have integral or %select{|unscoped }0"
+  "enumeration type, not %1">;
 def err_array_size_incomplete_type : Error<
   "array size expression has incomplete class type %0">;
 def err_array_size_explicit_conversion : Error<
@@ -4093,8 +4115,18 @@ def err_capture_non_automatic_variable : Error<
 def err_this_capture : Error<
   "'this' cannot be %select{implicitly |}0captured in this context">;
 def err_lambda_capture_block : Error<
-  "__block variable %0 cannot be captured in a lambda">;
-  
+  "__block variable %0 cannot be captured in a lambda expression">;
+def err_lambda_capture_anonymous_var : Error<
+  "unnamed variable cannot be implicitly captured in a lambda expression">;
+def err_lambda_capture_vm_type : Error<
+  "variable %0 with variably modified type cannot be captured in "
+  "a lambda expression">;
+def err_lambda_impcap : Error<
+  "variable %0 cannot be implicitly captured in a lambda with no "
+  "capture-default specified">;
+def note_lambda_decl : Note<"lambda expression begins here">;
+
+
 def err_operator_arrow_circular : Error<
   "circular pointer delegation detected">;
 def err_pseudo_dtor_base_not_scalar : Error<
@@ -4569,9 +4601,11 @@ def ext_in_class_initializer_non_constant : Extension<
 
 // C++ anonymous unions and GNU anonymous structs/unions
 def ext_anonymous_union : Extension<
-  "anonymous unions are a GNU extension in C">, InGroup<GNU>;
-def ext_anonymous_struct : Extension<
+  "anonymous unions are a C11 extension">, InGroup<C11>;
+def ext_gnu_anonymous_struct : Extension<
   "anonymous structs are a GNU extension">, InGroup<GNU>;
+def ext_c11_anonymous_struct : Extension<
+  "anonymous structs are a C11 extension">, InGroup<C11>;
 def err_anonymous_union_not_static : Error<
   "anonymous unions at namespace or global scope must be declared 'static'">;
 def err_anonymous_union_with_storage_spec : Error<

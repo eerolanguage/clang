@@ -27,6 +27,7 @@
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "llvm/ADT/SmallBitVector.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 using namespace clang;
 using namespace sema;
@@ -1887,7 +1888,6 @@ void Sema::NoteAllFoundTemplates(TemplateName Name) {
   }
 }
 
-
 QualType Sema::CheckTemplateIdType(TemplateName Name,
                                    SourceLocation TemplateLoc,
                                    TemplateArgumentListInfo &TemplateArgs) {
@@ -1919,18 +1919,17 @@ QualType Sema::CheckTemplateIdType(TemplateName Name,
   // Check that the template argument list is well-formed for this
   // template.
   SmallVector<TemplateArgument, 4> Converted;
+  bool ExpansionIntoFixedList = false;
   if (CheckTemplateArgumentList(Template, TemplateLoc, TemplateArgs,
-                                false, Converted))
+                                false, Converted, &ExpansionIntoFixedList))
     return QualType();
-
-  assert((Converted.size() == Template->getTemplateParameters()->size()) &&
-         "Converted template argument list is too short!");
 
   QualType CanonType;
 
   bool InstantiationDependent = false;
-  if (TypeAliasTemplateDecl *AliasTemplate
-        = dyn_cast<TypeAliasTemplateDecl>(Template)) {
+  TypeAliasTemplateDecl *AliasTemplate = 0;
+  if (!ExpansionIntoFixedList &&
+      (AliasTemplate = dyn_cast<TypeAliasTemplateDecl>(Template))) {
     // Find the canonical type for this type alias template specialization.
     TypeAliasDecl *Pattern = AliasTemplate->getTemplatedDecl();
     if (Pattern->isInvalidDecl())
@@ -2866,13 +2865,40 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param,
   return false;
 }
 
+/// \brief Diagnose an arity mismatch in the 
+static bool diagnoseArityMismatch(Sema &S, TemplateDecl *Template,
+                                  SourceLocation TemplateLoc,
+                                  TemplateArgumentListInfo &TemplateArgs) {
+  TemplateParameterList *Params = Template->getTemplateParameters();
+  unsigned NumParams = Params->size();
+  unsigned NumArgs = TemplateArgs.size();
+
+  SourceRange Range;
+  if (NumArgs > NumParams)
+    Range = SourceRange(TemplateArgs[NumParams].getLocation(), 
+                        TemplateArgs.getRAngleLoc());
+  S.Diag(TemplateLoc, diag::err_template_arg_list_different_arity)
+    << (NumArgs > NumParams)
+    << (isa<ClassTemplateDecl>(Template)? 0 :
+        isa<FunctionTemplateDecl>(Template)? 1 :
+        isa<TemplateTemplateParmDecl>(Template)? 2 : 3)
+    << Template << Range;
+  S.Diag(Template->getLocation(), diag::note_template_decl_here)
+    << Params->getSourceRange();
+  return true;
+}
+
 /// \brief Check that the given template argument list is well-formed
 /// for specializing the given template.
 bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
                                      SourceLocation TemplateLoc,
                                      TemplateArgumentListInfo &TemplateArgs,
                                      bool PartialTemplateArgs,
-                          SmallVectorImpl<TemplateArgument> &Converted) {
+                          SmallVectorImpl<TemplateArgument> &Converted,
+                                     bool *ExpansionIntoFixedList) {
+  if (ExpansionIntoFixedList)
+    *ExpansionIntoFixedList = false;
+
   TemplateParameterList *Params = Template->getTemplateParameters();
   unsigned NumParams = Params->size();
   unsigned NumArgs = TemplateArgs.size();
@@ -2882,27 +2908,7 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
 
   bool HasParameterPack =
     NumParams > 0 && Params->getParam(NumParams - 1)->isTemplateParameterPack();
-
-  if ((NumArgs > NumParams && !HasParameterPack) ||
-      (NumArgs < Params->getMinRequiredArguments() &&
-       !PartialTemplateArgs)) {
-    // FIXME: point at either the first arg beyond what we can handle,
-    // or the '>', depending on whether we have too many or too few
-    // arguments.
-    SourceRange Range;
-    if (NumArgs > NumParams)
-      Range = SourceRange(TemplateArgs[NumParams].getLocation(), RAngleLoc);
-    Diag(TemplateLoc, diag::err_template_arg_list_different_arity)
-      << (NumArgs > NumParams)
-      << (isa<ClassTemplateDecl>(Template)? 0 :
-          isa<FunctionTemplateDecl>(Template)? 1 :
-          isa<TemplateTemplateParmDecl>(Template)? 2 : 3)
-      << Template << Range;
-    Diag(Template->getLocation(), diag::note_template_decl_here)
-      << Params->getSourceRange();
-    Invalid = true;
-  }
-
+  
   // C++ [temp.arg]p1:
   //   [...] The type and form of each template-argument specified in
   //   a template-id shall match the type and form specified for the
@@ -2914,10 +2920,12 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
                                ParamEnd = Params->end();
   unsigned ArgIdx = 0;
   LocalInstantiationScope InstScope(*this, true);
+  bool SawPackExpansion = false;
   while (Param != ParamEnd) {
     if (ArgIdx < NumArgs) {
       // If we have an expanded parameter pack, make sure we don't have too
       // many arguments.
+      // FIXME: This really should fall out from the normal arity checking.
       if (NonTypeTemplateParmDecl *NTTP
                                 = dyn_cast<NonTypeTemplateParmDecl>(*Param)) {
         if (NTTP->isExpandedParameterPack() &&
@@ -2951,6 +2959,15 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
         // Move to the next template parameter.
         ++Param;
       }
+      
+      // If this template argument is a pack expansion, record that fact
+      // and break out; we can't actually check any more.
+      if (TemplateArgs[ArgIdx].getArgument().isPackExpansion()) {
+        SawPackExpansion = true;
+        ++ArgIdx;
+        break;
+      }
+      
       ++ArgIdx;
       continue;
     }
@@ -2970,7 +2987,7 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
     if ((*Param)->isTemplateParameterPack())
       break;
     
-    // We have a default template argument that we will use.
+    // Check whether we have a default argument.
     TemplateArgumentLoc Arg;
 
     // Retrieve the default template argument from the template
@@ -2979,10 +2996,9 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
     // (when the template parameter was part of a nested template) into
     // the default argument.
     if (TemplateTypeParmDecl *TTP = dyn_cast<TemplateTypeParmDecl>(*Param)) {
-      if (!TTP->hasDefaultArgument()) {
-        assert(Invalid && "Missing default argument");
-        break;
-      }
+      if (!TTP->hasDefaultArgument())
+        return diagnoseArityMismatch(*this, Template, TemplateLoc, 
+                                     TemplateArgs);
 
       TypeSourceInfo *ArgType = SubstDefaultTemplateArgument(*this,
                                                              Template,
@@ -2997,10 +3013,9 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
                                 ArgType);
     } else if (NonTypeTemplateParmDecl *NTTP
                  = dyn_cast<NonTypeTemplateParmDecl>(*Param)) {
-      if (!NTTP->hasDefaultArgument()) {
-        assert(Invalid && "Missing default argument");
-        break;
-      }
+      if (!NTTP->hasDefaultArgument())
+        return diagnoseArityMismatch(*this, Template, TemplateLoc, 
+                                     TemplateArgs);
 
       ExprResult E = SubstDefaultTemplateArgument(*this, Template,
                                                               TemplateLoc,
@@ -3016,10 +3031,9 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
       TemplateTemplateParmDecl *TempParm
         = cast<TemplateTemplateParmDecl>(*Param);
 
-      if (!TempParm->hasDefaultArgument()) {
-        assert(Invalid && "Missing default argument");
-        break;
-      }
+      if (!TempParm->hasDefaultArgument())
+        return diagnoseArityMismatch(*this, Template, TemplateLoc, 
+                                     TemplateArgs);
 
       NestedNameSpecifierLoc QualifierLoc;
       TemplateName Name = SubstDefaultTemplateArgument(*this, Template,
@@ -3057,11 +3071,68 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
     ++ArgIdx;
   }
 
+  // If we saw a pack expansion, then directly convert the remaining arguments,
+  // because we don't know what parameters they'll match up with.
+  if (SawPackExpansion) {
+    bool AddToArgumentPack
+      = Param != ParamEnd && (*Param)->isTemplateParameterPack();
+    while (ArgIdx < NumArgs) {
+      if (AddToArgumentPack)
+        ArgumentPack.push_back(TemplateArgs[ArgIdx].getArgument());
+      else
+        Converted.push_back(TemplateArgs[ArgIdx].getArgument());
+      ++ArgIdx;
+    }
+
+    // Push the argument pack onto the list of converted arguments.
+    if (AddToArgumentPack) {
+      if (ArgumentPack.empty())
+        Converted.push_back(TemplateArgument(0, 0));
+      else {
+        Converted.push_back(
+          TemplateArgument::CreatePackCopy(Context,
+                                           ArgumentPack.data(),
+                                           ArgumentPack.size()));
+        ArgumentPack.clear();
+      }      
+    } else if (ExpansionIntoFixedList) {
+      // We have expanded a pack into a fixed list.
+      *ExpansionIntoFixedList = true;
+    }
+
+    return Invalid;
+  }
+
+  // If we have any leftover arguments, then there were too many arguments.
+  // Complain and fail.
+  if (ArgIdx < NumArgs)
+    return diagnoseArityMismatch(*this, Template, TemplateLoc, TemplateArgs);
+  
+  // If we have an expanded parameter pack, make sure we don't have too
+  // many arguments.
+  // FIXME: This really should fall out from the normal arity checking.
+  if (Param != ParamEnd) {
+    if (NonTypeTemplateParmDecl *NTTP
+          = dyn_cast<NonTypeTemplateParmDecl>(*Param)) {
+      if (NTTP->isExpandedParameterPack() &&
+          ArgumentPack.size() < NTTP->getNumExpansionTypes()) {
+        Diag(TemplateLoc, diag::err_template_arg_list_different_arity)
+          << false
+          << (isa<ClassTemplateDecl>(Template)? 0 :
+              isa<FunctionTemplateDecl>(Template)? 1 :
+              isa<TemplateTemplateParmDecl>(Template)? 2 : 3)
+          << Template;
+        Diag(Template->getLocation(), diag::note_template_decl_here)
+          << Params->getSourceRange();
+        return true;
+      }
+    }
+  }
+  
   // Form argument packs for each of the parameter packs remaining.
   while (Param != ParamEnd) {
     // If we're checking a partial list of template arguments, don't fill
     // in arguments for non-template parameter packs.
-
     if ((*Param)->isTemplateParameterPack()) {
       if (!HasParameterPack)
         return true;
@@ -3073,7 +3144,8 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
                                                          ArgumentPack.size()));
         ArgumentPack.clear();
       }
-    }
+    } else if (!PartialTemplateArgs)
+      return diagnoseArityMismatch(*this, Template, TemplateLoc, TemplateArgs);
 
     ++Param;
   }
@@ -3841,11 +3913,11 @@ ExprResult Sema::CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
         << ArgType << Arg->getSourceRange();
       Diag(Param->getLocation(), diag::note_template_param_here);
       return ExprError();
-    } else if (!Arg->isValueDependent() &&
-               !Arg->isIntegerConstantExpr(Value, Context, &NonConstantLoc)) {
-      Diag(NonConstantLoc, diag::err_template_arg_not_ice)
-        << ArgType << Arg->getSourceRange();
-      return ExprError();
+    } else if (!Arg->isValueDependent()) {
+      Arg = VerifyIntegerConstantExpression(Arg, &Value,
+        PDiag(diag::err_template_arg_not_ice) << ArgType, false).take();
+      if (!Arg)
+        return ExprError();
     }
 
     // From here on out, all we care about are the unqualified forms
@@ -4961,9 +5033,6 @@ Sema::ActOnClassTemplateSpecialization(Scope *S, unsigned TagSpec,
                                 TemplateArgs, false, Converted))
     return true;
 
-  assert((Converted.size() == ClassTemplate->getTemplateParameters()->size()) &&
-         "Converted template argument list is too short!");
-
   // Find the class template (partial) specialization declaration that
   // corresponds to these arguments.
   if (isPartialSpecialization) {
@@ -5955,9 +6024,6 @@ Sema::ActOnExplicitInstantiation(Scope *S,
                                 TemplateArgs, false, Converted))
     return true;
 
-  assert((Converted.size() == ClassTemplate->getTemplateParameters()->size()) &&
-         "Converted template argument list is too short!");
-
   // Find the class template specialization declaration that
   // corresponds to these arguments.
   void *InsertPos = 0;
@@ -6878,7 +6944,7 @@ std::string
 Sema::getTemplateArgumentBindingsText(const TemplateParameterList *Params,
                                       const TemplateArgument *Args,
                                       unsigned NumArgs) {
-  llvm::SmallString<128> Str;
+  SmallString<128> Str;
   llvm::raw_svector_ostream Out(Str);
 
   if (!Params || Params->size() == 0 || NumArgs == 0)

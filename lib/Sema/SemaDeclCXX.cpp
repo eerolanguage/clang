@@ -32,6 +32,7 @@
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/STLExtras.h"
 #include <map>
 #include <set>
@@ -836,15 +837,16 @@ static void CheckConstexprCtorInitializer(Sema &SemaRef,
 /// the permitted types of statement. C++11 [dcl.constexpr]p3,p4.
 ///
 /// \return true if the body is OK, false if we have diagnosed a problem.
-bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body) {
+bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body,
+                                      bool IsInstantiation) {
   if (isa<CXXTryStmt>(Body)) {
-    // C++0x [dcl.constexpr]p3:
+    // C++11 [dcl.constexpr]p3:
     //  The definition of a constexpr function shall satisfy the following
     //  constraints: [...]
     // - its function-body shall be = delete, = default, or a
     //   compound-statement
     //
-    // C++0x [dcl.constexpr]p4:
+    // C++11 [dcl.constexpr]p4:
     //  In the definition of a constexpr constructor, [...]
     // - its function-body shall not be a function-try-block;
     Diag(Body->getLocStart(), diag::err_constexpr_function_try_block)
@@ -972,8 +974,23 @@ bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body) {
     }
   }
 
+  // C++11 [dcl.constexpr]p5:
+  //   if no function argument values exist such that the function invocation
+  //   substitution would produce a constant expression, the program is
+  //   ill-formed; no diagnostic required.
+  // C++11 [dcl.constexpr]p3:
+  //   - every constructor call and implicit conversion used in initializing the
+  //     return value shall be one of those allowed in a constant expression.
+  // C++11 [dcl.constexpr]p4:
+  //   - every constructor involved in initializing non-static data members and
+  //     base class sub-objects shall be a constexpr constructor.
+  //
+  // FIXME: We currently disable this check inside system headers, to work
+  // around early STL implementations which contain constexpr functions which
+  // can't produce constant expressions.
   llvm::SmallVector<PartialDiagnosticAt, 8> Diags;
-  if (!Expr::isPotentialConstantExpr(Dcl, Diags)) {
+  if (!Context.getSourceManager().isInSystemHeader(Dcl->getLocation()) &&
+      !IsInstantiation && !Expr::isPotentialConstantExpr(Dcl, Diags)) {
     Diag(Dcl->getLocation(), diag::err_constexpr_function_never_constant_expr)
       << isa<CXXConstructorDecl>(Dcl);
     for (size_t I = 0, N = Diags.size(); I != N; ++I)
@@ -2509,7 +2526,7 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
       // Create the iteration variable for this array index.
       IdentifierInfo *IterationVarName = 0;
       {
-        llvm::SmallString<8> Str;
+        SmallString<8> Str;
         llvm::raw_svector_ostream OS(Str);
         OS << "__i" << IndexVariables.size();
         IterationVarName = &SemaRef.Context.Idents.get(OS.str());
@@ -5808,9 +5825,6 @@ bool Sema::isStdInitializerList(QualType Ty, QualType *Element) {
     if (!Specialization)
       return false;
 
-    if (Specialization->getSpecializationKind() != TSK_ImplicitInstantiation)
-      return false;
-
     Template = Specialization->getSpecializedTemplate();
     Arguments = Specialization->getTemplateArgs().data();
   } else if (const TemplateSpecializationType *TST =
@@ -7638,7 +7652,7 @@ BuildSingleCopyAssign(Sema &S, SourceLocation Loc, QualType T,
   // Create the iteration variable.
   IdentifierInfo *IterationVarName = 0;
   {
-    llvm::SmallString<8> Str;
+    SmallString<8> Str;
     llvm::raw_svector_ostream OS(Str);
     OS << "__i" << Depth;
     IterationVarName = &S.Context.Idents.get(OS.str());
@@ -9903,10 +9917,16 @@ Decl *Sema::ActOnStaticAssertDeclaration(SourceLocation StaticAssertLoc,
   StringLiteral *AssertMessage = cast<StringLiteral>(AssertMessageExpr_);
 
   if (!AssertExpr->isTypeDependent() && !AssertExpr->isValueDependent()) {
+    // In a static_assert-declaration, the constant-expression shall be a
+    // constant expression that can be contextually converted to bool.
+    ExprResult Converted = PerformContextuallyConvertToBool(AssertExpr);
+    if (Converted.isInvalid())
+      return 0;
+
     llvm::APSInt Cond;
-    if (VerifyIntegerConstantExpression(AssertExpr, &Cond,
-                             diag::err_static_assert_expression_is_not_constant,
-                                        /*AllowFold=*/false))
+    if (VerifyIntegerConstantExpression(Converted.get(), &Cond,
+          PDiag(diag::err_static_assert_expression_is_not_constant),
+          /*AllowFold=*/false).isInvalid())
       return 0;
 
     if (!Cond)

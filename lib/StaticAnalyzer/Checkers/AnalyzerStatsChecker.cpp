@@ -19,6 +19,7 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -73,7 +74,7 @@ void AnalyzerStatsChecker::checkEndAnalysis(ExplodedGraph &G,
   unreachable--;
 
   // Generate the warning string
-  llvm::SmallString<128> buf;
+  SmallString<128> buf;
   llvm::raw_svector_ostream output(buf);
   PresumedLoc Loc = SM.getPresumedLoc(D->getLocation());
   if (Loc.isValid()) {

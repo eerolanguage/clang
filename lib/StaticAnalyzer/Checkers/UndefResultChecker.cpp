@@ -18,6 +18,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -26,7 +27,7 @@ namespace {
 class UndefResultChecker 
   : public Checker< check::PostStmt<BinaryOperator> > {
 
-  mutable llvm::OwningPtr<BugType> BT;
+  mutable OwningPtr<BugType> BT;
   
 public:
   void checkPostStmt(const BinaryOperator *B, CheckerContext &C) const;
@@ -46,7 +47,7 @@ void UndefResultChecker::checkPostStmt(const BinaryOperator *B,
     if (!BT)
       BT.reset(new BuiltinBug("Result of operation is garbage or undefined"));
 
-    llvm::SmallString<256> sbuf;
+    SmallString<256> sbuf;
     llvm::raw_svector_ostream OS(sbuf);
     const Expr *Ex = NULL;
     bool isLeft = true;

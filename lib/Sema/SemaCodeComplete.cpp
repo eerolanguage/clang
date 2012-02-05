@@ -26,6 +26,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
@@ -2473,7 +2474,7 @@ CodeCompletionResult::CreateCodeCompletionString(ASTContext &Ctx,
         Result.AddChunk(Chunk(CodeCompletionString::CK_Comma));
 
       if (MI->isVariadic() && (A+1) == AEnd) {
-        llvm::SmallString<32> Arg = (*A)->getName();
+        SmallString<32> Arg = (*A)->getName();
         if (MI->isC99Varargs())
           Arg += ", ...";
         else

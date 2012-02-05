@@ -23,6 +23,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ParentMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -75,7 +76,7 @@ class DeadStoreObs : public LiveVariables::Observer {
   AnalysisDeclContext* AC;
   ParentMap& Parents;
   llvm::SmallPtrSet<const VarDecl*, 20> Escaped;
-  llvm::OwningPtr<ReachableCode> reachableCode;
+  OwningPtr<ReachableCode> reachableCode;
   const CFGBlock *currentBlock;
 
   enum DeadStoreKind { Standard, Enclosing, DeadIncrement, DeadInit };
@@ -104,7 +105,7 @@ public:
     if (!reachableCode->isReachable(currentBlock))
       return;
 
-    llvm::SmallString<64> buf;
+    SmallString<64> buf;
     llvm::raw_svector_ostream os(buf);
     const char *BugType = 0;
 

@@ -17,6 +17,7 @@
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace clang;
 using namespace ento;
@@ -24,7 +25,7 @@ using namespace ento;
 namespace {
 class AttrNonNullChecker
   : public Checker< check::PreStmt<CallExpr> > {
-  mutable llvm::OwningPtr<BugType> BT;
+  mutable OwningPtr<BugType> BT;
 public:
 
   void checkPreStmt(const CallExpr *CE, CheckerContext &C) const;

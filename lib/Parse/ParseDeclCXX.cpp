@@ -18,6 +18,7 @@
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/PrettyDeclStackTrace.h"
+#include "llvm/ADT/SmallString.h"
 #include "RAIIObjectsForParser.h"
 using namespace clang;
 
@@ -265,7 +266,7 @@ Decl *Parser::ParseNamespaceAlias(SourceLocation NamespaceLoc,
 ///
 Decl *Parser::ParseLinkage(ParsingDeclSpec &DS, unsigned Context) {
   assert(Tok.is(tok::string_literal) && "Not a string literal!");
-  llvm::SmallString<8> LangBuffer;
+  SmallString<8> LangBuffer;
   bool Invalid = false;
   StringRef Lang = PP.getSpelling(Tok, LangBuffer, &Invalid);
   if (Invalid)

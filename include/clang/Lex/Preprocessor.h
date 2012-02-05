@@ -21,7 +21,6 @@
 #include "clang/Lex/TokenLexer.h"
 #include "clang/Lex/PTHManager.h"
 #include "clang/Basic/Builtins.h"
-#include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/DenseMap.h"
@@ -32,6 +31,10 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Allocator.h"
 #include <vector>
+
+namespace llvm {
+  template<unsigned InternalLen> class SmallString;
+}
 
 namespace clang {
 
@@ -57,7 +60,7 @@ class ModuleLoader;
 /// like the #include stack, token expansion, etc.
 ///
 class Preprocessor : public llvm::RefCountedBase<Preprocessor> {
-  DiagnosticsEngine        *Diags;
+  DiagnosticsEngine *Diags;
   LangOptions       &Features;
   const TargetInfo  *Target;
   FileManager       &FileMgr;
@@ -72,7 +75,7 @@ class Preprocessor : public llvm::RefCountedBase<Preprocessor> {
 
   /// PTH - An optional PTHManager object used for getting tokens from
   ///  a token cache rather than lexing the original source file.
-  llvm::OwningPtr<PTHManager> PTH;
+  OwningPtr<PTHManager> PTH;
 
   /// BP - A BumpPtrAllocator object used to quickly allocate and release
   ///  objects internal to the Preprocessor.
@@ -190,12 +193,12 @@ class Preprocessor : public llvm::RefCountedBase<Preprocessor> {
   /// CurLexer - This is the current top of the stack that we're lexing from if
   /// not expanding a macro and we are lexing directly from source code.
   ///  Only one of CurLexer, CurPTHLexer, or CurTokenLexer will be non-null.
-  llvm::OwningPtr<Lexer> CurLexer;
+  OwningPtr<Lexer> CurLexer;
 
   /// CurPTHLexer - This is the current top of stack that we're lexing from if
   ///  not expanding from a macro and we are lexing from a PTH cache.
   ///  Only one of CurLexer, CurPTHLexer, or CurTokenLexer will be non-null.
-  llvm::OwningPtr<PTHLexer> CurPTHLexer;
+  OwningPtr<PTHLexer> CurPTHLexer;
 
   /// CurPPLexer - This is the current top of the stack what we're lexing from
   ///  if not expanding a macro.  This is an alias for either CurLexer or
@@ -209,7 +212,7 @@ class Preprocessor : public llvm::RefCountedBase<Preprocessor> {
 
   /// CurTokenLexer - This is the current macro we are expanding, if we are
   /// expanding a macro.  One of CurLexer and CurTokenLexer must be null.
-  llvm::OwningPtr<TokenLexer> CurTokenLexer;
+  OwningPtr<TokenLexer> CurTokenLexer;
 
   /// \brief The kind of lexer we're currently working with.
   enum CurLexerKind {
@@ -725,12 +728,7 @@ public:
   bool isCodeCompletionReached() const { return CodeCompletionReached; }
 
   /// \brief Note that we hit the code-completion point.
-  void setCodeCompletionReached() {
-    assert(isCodeCompletionEnabled() && "Code-completion not enabled!");
-    CodeCompletionReached = true;
-    // Silence any diagnostics that occur after we hit the code-completion.
-    getDiagnostics().setSuppressAllDiagnostics(true);
-  }
+  void setCodeCompletionReached();
 
   /// \brief The location of the currently-active #pragma clang
   /// arc_cf_code_audited begin.  Returns an invalid location if there
@@ -760,13 +758,9 @@ public:
   /// Diag - Forwarding function for diagnostics.  This emits a diagnostic at
   /// the specified Token's location, translating the token's start
   /// position in the current buffer into a SourcePosition object for rendering.
-  DiagnosticBuilder Diag(SourceLocation Loc, unsigned DiagID) const {
-    return Diags->Report(Loc, DiagID);
-  }
+  DiagnosticBuilder Diag(SourceLocation Loc, unsigned DiagID) const;
 
-  DiagnosticBuilder Diag(const Token &Tok, unsigned DiagID) const {
-    return Diags->Report(Tok.getLocation(), DiagID);
-  }
+  DiagnosticBuilder Diag(const Token &Tok, unsigned DiagID) const;
 
   /// getSpelling() - Return the 'spelling' of the token at the given
   /// location; does not go up to the spelling location or down to the
@@ -1060,7 +1054,7 @@ public:
   /// This code concatenates and consumes tokens up to the '>' token.  It
   /// returns false if the > was found, otherwise it returns true if it finds
   /// and consumes the EOD marker.
-  bool ConcatenateIncludeName(llvm::SmallString<128> &FilenameBuffer,
+  bool ConcatenateIncludeName(SmallString<128> &FilenameBuffer,
                               SourceLocation &End);
 
   /// LexOnOffSwitch - Lex an on-off-switch (C99 6.10.6p2) and verify that it is

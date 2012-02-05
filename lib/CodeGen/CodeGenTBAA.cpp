@@ -22,6 +22,7 @@
 #include "llvm/Metadata.h"
 #include "llvm/Constants.h"
 #include "llvm/Type.h"
+#include "llvm/ADT/STLExtras.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -169,7 +170,7 @@ CodeGenTBAA::getTBAAInfo(QualType QTy) {
 
     // TODO: This is using the RTTI name. Is there a better way to get
     // a unique string for a type?
-    llvm::SmallString<256> OutName;
+    SmallString<256> OutName;
     llvm::raw_svector_ostream Out(OutName);
     MContext.mangleCXXRTTIName(QualType(ETy, 0), Out);
     Out.flush();

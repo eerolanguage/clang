@@ -57,6 +57,7 @@
 #include "clang/AST/Stmt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -375,7 +376,7 @@ void IdempotentOperationChecker::checkEndAnalysis(ExplodedGraph &G,
     }
 
     // Select the error message and SourceRanges to report.
-    llvm::SmallString<128> buf;
+    SmallString<128> buf;
     llvm::raw_svector_ostream os(buf);
     bool LHSRelevant = false, RHSRelevant = false;
     switch (A) {

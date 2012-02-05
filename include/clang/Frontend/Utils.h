@@ -15,13 +15,11 @@
 #define LLVM_CLANG_FRONTEND_UTILS_H
 
 #include "clang/Basic/Diagnostic.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/Support/raw_ostream.h"
-#include "clang/Basic/Diagnostic.h"
+#include "llvm/ADT/StringRef.h"
 
 namespace llvm {
+class raw_fd_ostream;
 class Triple;
 }
 

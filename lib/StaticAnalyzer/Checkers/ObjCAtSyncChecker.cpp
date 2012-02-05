@@ -20,6 +20,7 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Checkers/DereferenceChecker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace clang;
 using namespace ento;
@@ -27,8 +28,8 @@ using namespace ento;
 namespace {
 class ObjCAtSyncChecker
     : public Checker< check::PreStmt<ObjCAtSynchronizedStmt> > {
-  mutable llvm::OwningPtr<BuiltinBug> BT_null;
-  mutable llvm::OwningPtr<BuiltinBug> BT_undef;
+  mutable OwningPtr<BuiltinBug> BT_null;
+  mutable OwningPtr<BuiltinBug> BT_undef;
 
 public:
   void checkPreStmt(const ObjCAtSynchronizedStmt *S, CheckerContext &C) const;

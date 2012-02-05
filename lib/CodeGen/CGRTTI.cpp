@@ -116,7 +116,7 @@ public:
 llvm::GlobalVariable *
 RTTIBuilder::GetAddrOfTypeName(QualType Ty, 
                                llvm::GlobalVariable::LinkageTypes Linkage) {
-  llvm::SmallString<256> OutName;
+  SmallString<256> OutName;
   llvm::raw_svector_ostream Out(OutName);
   CGM.getCXXABI().getMangleContext().mangleCXXRTTIName(Ty, Out);
   Out.flush();
@@ -125,7 +125,8 @@ RTTIBuilder::GetAddrOfTypeName(QualType Ty,
   // We know that the mangled name of the type starts at index 4 of the
   // mangled name of the typename, so we can just index into it in order to
   // get the mangled name of the type.
-  llvm::Constant *Init = llvm::ConstantArray::get(VMContext, Name.substr(4));
+  llvm::Constant *Init = llvm::ConstantDataArray::getString(VMContext,
+                                                            Name.substr(4));
 
   llvm::GlobalVariable *GV = 
     CGM.CreateOrReplaceCXXRuntimeVariable(Name, Init->getType(), Linkage);
@@ -137,7 +138,7 @@ RTTIBuilder::GetAddrOfTypeName(QualType Ty,
 
 llvm::Constant *RTTIBuilder::GetAddrOfExternalRTTIDescriptor(QualType Ty) {
   // Mangle the RTTI name.
-  llvm::SmallString<256> OutName;
+  SmallString<256> OutName;
   llvm::raw_svector_ostream Out(OutName);
   CGM.getCXXABI().getMangleContext().mangleCXXRTTI(Ty, Out);
   Out.flush();
@@ -533,7 +534,7 @@ maybeUpdateRTTILinkage(CodeGenModule &CGM, llvm::GlobalVariable *GV,
   GV->setLinkage(Linkage);
 
   // Get the typename global.
-  llvm::SmallString<256> OutName;
+  SmallString<256> OutName;
   llvm::raw_svector_ostream Out(OutName);
   CGM.getCXXABI().getMangleContext().mangleCXXRTTIName(Ty, Out);
   Out.flush();
@@ -553,7 +554,7 @@ llvm::Constant *RTTIBuilder::BuildTypeInfo(QualType Ty, bool Force) {
   Ty = CGM.getContext().getCanonicalType(Ty);
 
   // Check if we've already emitted an RTTI descriptor for this type.
-  llvm::SmallString<256> OutName;
+  SmallString<256> OutName;
   llvm::raw_svector_ostream Out(OutName);
   CGM.getCXXABI().getMangleContext().mangleCXXRTTI(Ty, Out);
   Out.flush();

@@ -95,7 +95,7 @@ static void SetUpBuildDumpLog(const DiagnosticOptions &DiagOpts,
                               unsigned argc, const char* const *argv,
                               DiagnosticsEngine &Diags) {
   std::string ErrorInfo;
-  llvm::OwningPtr<raw_ostream> OS(
+  OwningPtr<raw_ostream> OS(
     new llvm::raw_fd_ostream(DiagOpts.DumpBuildInformation.c_str(), ErrorInfo));
   if (!ErrorInfo.empty()) {
     Diags.Report(diag::err_fe_unable_to_open_logfile)
@@ -148,7 +148,7 @@ static void SetupSerializedDiagnostics(const DiagnosticOptions &DiagOpts,
                                        DiagnosticsEngine &Diags,
                                        StringRef OutputFile) {
   std::string ErrorInfo;
-  llvm::OwningPtr<llvm::raw_fd_ostream> OS;
+  OwningPtr<llvm::raw_fd_ostream> OS;
   OS.reset(new llvm::raw_fd_ostream(OutputFile.str().c_str(), ErrorInfo,
                                     llvm::raw_fd_ostream::F_Binary));
   
@@ -264,7 +264,7 @@ void CompilerInstance::createPreprocessor() {
 
   // Set up the module path, including the hash for the
   // module-creation options.
-  llvm::SmallString<256> SpecificModuleCache(
+  SmallString<256> SpecificModuleCache(
                            getHeaderSearchOpts().ModuleCachePath);
   if (!getHeaderSearchOpts().DisableModuleHash)
     llvm::sys::path::append(SpecificModuleCache,
@@ -308,7 +308,7 @@ void CompilerInstance::createPCHExternalASTSource(StringRef Path,
                                                   bool DisablePCHValidation,
                                                   bool DisableStatCache,
                                                  void *DeserializationListener){
-  llvm::OwningPtr<ExternalASTSource> Source;
+  OwningPtr<ExternalASTSource> Source;
   bool Preamble = getPreprocessorOpts().PrecompiledPreambleBytes.first != 0;
   Source.reset(createPCHExternalASTSource(Path, getHeaderSearchOpts().Sysroot,
                                           DisablePCHValidation,
@@ -329,7 +329,7 @@ CompilerInstance::createPCHExternalASTSource(StringRef Path,
                                              ASTContext &Context,
                                              void *DeserializationListener,
                                              bool Preamble) {
-  llvm::OwningPtr<ASTReader> Reader;
+  OwningPtr<ASTReader> Reader;
   Reader.reset(new ASTReader(PP, Context,
                              Sysroot.empty() ? "" : Sysroot.c_str(),
                              DisablePCHValidation, DisableStatCache));
@@ -445,7 +445,7 @@ void CompilerInstance::clearOutputFiles(bool EraseFiles) {
         bool existed;
         llvm::sys::fs::remove(it->TempFilename, existed);
       } else {
-        llvm::SmallString<128> NewOutFile(it->Filename);
+        SmallString<128> NewOutFile(it->Filename);
 
         // If '-working-directory' was passed, the output filename should be
         // relative to that.
@@ -525,7 +525,7 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
     OutFile = "-";
   }
 
-  llvm::OwningPtr<llvm::raw_fd_ostream> OS;
+  OwningPtr<llvm::raw_fd_ostream> OS;
   std::string OSFile;
 
   if (UseTemporary && OutFile != "-") {
@@ -536,7 +536,7 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
     if ((llvm::sys::fs::exists(OutPath.str(), Exists) || !Exists) ||
         (OutPath.isRegularFile() && OutPath.canWrite())) {
       // Create a temporary file.
-      llvm::SmallString<128> TempPath;
+      SmallString<128> TempPath;
       TempPath = OutFile;
       TempPath += "-%%%%%%%%";
       int fd;
@@ -593,7 +593,7 @@ bool CompilerInstance::InitializeSourceManager(StringRef InputFile,
     }
     SourceMgr.createMainFileID(File, Kind);
   } else {
-    llvm::OwningPtr<llvm::MemoryBuffer> SB;
+    OwningPtr<llvm::MemoryBuffer> SB;
     if (llvm::MemoryBuffer::getSTDIN(SB)) {
       // FIXME: Give ec.message() in this diag.
       Diags.Report(diag::err_fe_error_reading_stdin);
@@ -761,7 +761,7 @@ static void compileModule(CompilerInstance &ImportingInstance,
   InputKind IK = getSourceInputKindFromOptions(*Invocation->getLangOpts());
 
   // Get or create the module map that we'll use to build this module.
-  llvm::SmallString<128> TempModuleMapFileName;
+  SmallString<128> TempModuleMapFileName;
   if (const FileEntry *ModuleMapFile
                                   = ModMap.getContainingModuleMapFile(Module)) {
     // Use the module map where this module resides.
@@ -890,7 +890,7 @@ Module *CompilerInstance::loadModule(SourceLocation ImportLoc,
       SmallVectorImpl<std::string>::iterator Pos
         = std::find(ModuleBuildPath.begin(), ModuleBuildPath.end(), ModuleName);
       if (Pos != ModuleBuildPath.end()) {
-        llvm::SmallString<256> CyclePath;
+        SmallString<256> CyclePath;
         for (; Pos != ModuleBuildPath.end(); ++Pos) {
           CyclePath += *Pos;
           CyclePath += " -> ";
@@ -935,7 +935,7 @@ Module *CompilerInstance::loadModule(SourceLocation ImportLoc,
         getASTContext().setASTMutationListener(
           getASTConsumer().GetASTMutationListener());
       }
-      llvm::OwningPtr<ExternalASTSource> Source;
+      OwningPtr<ExternalASTSource> Source;
       Source.reset(ModuleManager);
       getASTContext().setExternalSource(Source);
       if (hasSema())

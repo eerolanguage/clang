@@ -24,6 +24,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/Mangle.h"
 #include "clang/Basic/Builtins.h"
+#include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/SmallString.h"
@@ -241,6 +242,9 @@ ASTContext::ASTContext(LangOptions& LOpts, SourceManager &SM,
     LastSDM(0, 0),
     UniqueBlockByRefTypeID(0) 
 {
+  // Create a new allocator for partial diagnostics.
+  DiagAllocator = new (BumpAlloc) PartialDiagnosticStorageAllocator;
+
   if (size_reserve > 0) Types.reserve(size_reserve);
   TUDecl = TranslationUnitDecl::Create(*this);
   
@@ -285,6 +289,9 @@ ASTContext::~ASTContext() {
                                                     AEnd = DeclAttrs.end();
        A != AEnd; ++A)
     A->second->~AttrVec();
+
+  // Destroy the partial diagnostic allocator.
+  DiagAllocator->~PartialDiagnosticStorageAllocator();
 }
 
 void ASTContext::AddDeallocation(void (*Callback)(void*), void *Data) {
@@ -292,7 +299,7 @@ void ASTContext::AddDeallocation(void (*Callback)(void*), void *Data) {
 }
 
 void
-ASTContext::setExternalSource(llvm::OwningPtr<ExternalASTSource> &Source) {
+ASTContext::setExternalSource(OwningPtr<ExternalASTSource> &Source) {
   ExternalSource.reset(Source.take());
 }
 
@@ -1245,6 +1252,24 @@ unsigned ASTContext::CountNonClassIvars(const ObjCInterfaceDecl *OI) const {
     count += ImplDecl->ivar_size();
 
   return count;
+}
+
+bool ASTContext::isSentinelNullExpr(const Expr *E) {
+  if (!E)
+    return false;
+
+  // nullptr_t is always treated as null.
+  if (E->getType()->isNullPtrType()) return true;
+
+  if (E->getType()->isAnyPointerType() &&
+      E->IgnoreParenCasts()->isNullPointerConstant(*this,
+                                                Expr::NPC_ValueDependentIsNull))
+    return true;
+
+  // Unfortunately, __null has type 'int'.
+  if (isa<GNUNullExpr>(E)) return true;
+
+  return false;
 }
 
 /// \brief Get the implementation of ObjCInterfaceDecl,or NULL if none exists.
@@ -2432,6 +2457,17 @@ ASTContext::getTemplateSpecializationType(TemplateName Template,
                                        Underlying);
 }
 
+#ifndef NDEBUG
+static bool hasAnyPackExpansions(const TemplateArgument *Args,
+                                 unsigned NumArgs) {
+  for (unsigned I = 0; I != NumArgs; ++I)
+    if (Args[I].isPackExpansion())
+      return true;
+  
+  return true;
+}
+#endif
+
 QualType
 ASTContext::getTemplateSpecializationType(TemplateName Template,
                                           const TemplateArgument *Args,
@@ -2443,16 +2479,18 @@ ASTContext::getTemplateSpecializationType(TemplateName Template,
   if (QualifiedTemplateName *QTN = Template.getAsQualifiedTemplateName())
     Template = TemplateName(QTN->getTemplateDecl());
   
-  bool isTypeAlias = 
+  bool IsTypeAlias = 
     Template.getAsTemplateDecl() &&
     isa<TypeAliasTemplateDecl>(Template.getAsTemplateDecl());
-
   QualType CanonType;
   if (!Underlying.isNull())
     CanonType = getCanonicalType(Underlying);
   else {
-    assert(!isTypeAlias &&
-           "Underlying type for template alias must be computed by caller");
+    // We can get here with an alias template when the specialization contains
+    // a pack expansion that does not match up with a parameter pack.
+    assert((!IsTypeAlias || hasAnyPackExpansions(Args, NumArgs)) &&
+           "Caller must compute aliased type");
+    IsTypeAlias = false;
     CanonType = getCanonicalTemplateSpecializationType(Template, Args,
                                                        NumArgs);
   }
@@ -2462,13 +2500,11 @@ ASTContext::getTemplateSpecializationType(TemplateName Template,
   // we don't unique and don't want to lose.
   void *Mem = Allocate(sizeof(TemplateSpecializationType) +
                        sizeof(TemplateArgument) * NumArgs +
-                       (isTypeAlias ? sizeof(QualType) : 0),
+                       (IsTypeAlias? sizeof(QualType) : 0),
                        TypeAlignment);
   TemplateSpecializationType *Spec
-    = new (Mem) TemplateSpecializationType(Template,
-                                           Args, NumArgs,
-                                           CanonType,
-                                         isTypeAlias ? Underlying : QualType());
+    = new (Mem) TemplateSpecializationType(Template, Args, NumArgs, CanonType,
+                                         IsTypeAlias ? Underlying : QualType());
 
   Types.push_back(Spec);
   return QualType(Spec, 0);
@@ -2480,9 +2516,6 @@ ASTContext::getCanonicalTemplateSpecializationType(TemplateName Template,
                                                    unsigned NumArgs) const {
   assert(!Template.getAsDependentTemplateName() && 
          "No dependent template names here!");
-  assert((!Template.getAsTemplateDecl() ||
-          !isa<TypeAliasTemplateDecl>(Template.getAsTemplateDecl())) &&
-         "Underlying type for template alias must be computed by caller");
 
   // Look through qualified template names.
   if (QualifiedTemplateName *QTN = Template.getAsQualifiedTemplateName())
@@ -3933,7 +3966,7 @@ ASTContext::BuildByRefType(StringRef DeclName, QualType Ty) const {
   bool HasCopyAndDispose = BlockRequiresCopying(Ty);
 
   // FIXME: Move up
-  llvm::SmallString<36> Name;
+  SmallString<36> Name;
   llvm::raw_svector_ostream(Name) << "__Block_byref_" <<
                                   ++UniqueBlockByRefTypeID << '_' << DeclName;
   RecordDecl *T;

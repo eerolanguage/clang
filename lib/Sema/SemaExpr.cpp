@@ -249,7 +249,7 @@ void Sema::DiagnoseSentinelCalls(NamedDecl *D, SourceLocation Loc,
   Expr *sentinelExpr = args[numArgs - numArgsAfterSentinel - 1];
   if (!sentinelExpr) return;
   if (sentinelExpr->isValueDependent()) return;
-  if (isSentinelNullExpr(sentinelExpr)) return;
+  if (Context.isSentinelNullExpr(sentinelExpr)) return;
 
   // Pick a reasonable string to insert.  Optimistically use 'nil' or
   // 'NULL' if those are actually defined in the context.  Only use
@@ -277,24 +277,6 @@ void Sema::DiagnoseSentinelCalls(NamedDecl *D, SourceLocation Loc,
 
 SourceRange Sema::getExprRange(Expr *E) const {
   return E ? E->getSourceRange() : SourceRange();
-}
-
-bool Sema::isSentinelNullExpr(const Expr *E) const {
-  if (!E)
-    return false;
-
-  // nullptr_t is always treated as null.
-  if (E->getType()->isNullPtrType()) return true;
-
-  if (E->getType()->isAnyPointerType() &&
-      E->IgnoreParenCasts()->isNullPointerConstant(Context,
-                                            Expr::NPC_ValueDependentIsNull))
-    return true;
-
-  // Unfortunately, __null has type 'int'.
-  if (isa<GNUNullExpr>(E)) return true;
-
-  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2387,7 +2369,7 @@ ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
 }
 
 ExprResult Sema::ActOnCharacterConstant(const Token &Tok) {
-  llvm::SmallString<16> CharBuffer;
+  SmallString<16> CharBuffer;
   bool Invalid = false;
   StringRef ThisTok = PP.getSpelling(Tok, CharBuffer, &Invalid);
   if (Invalid)
@@ -2432,7 +2414,7 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok) {
                     Context.IntTy, Tok.getLocation()));
   }
 
-  llvm::SmallString<512> IntegerBuffer;
+  SmallString<512> IntegerBuffer;
   // Add padding so that NumericLiteralParser can overread by one character.
   IntegerBuffer.resize(Tok.getLength()+1);
   const char *ThisTokBegin = &IntegerBuffer[0];
@@ -2471,7 +2453,7 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok) {
     if ((result & APFloat::opOverflow) ||
         ((result & APFloat::opUnderflow) && Val.isZero())) {
       unsigned diagnostic;
-      llvm::SmallString<20> buffer;
+      SmallString<20> buffer;
       if (result & APFloat::opOverflow) {
         diagnostic = diag::warn_float_overflow;
         APFloat::getLargest(Format).toString(buffer);
@@ -6165,7 +6147,7 @@ static void DiagnoseBadShiftValues(Sema& S, ExprResult &LHS, ExprResult &RHS,
 
   // Print the bit representation of the signed integer as an unsigned
   // hexadecimal number.
-  llvm::SmallString<40> HexResult;
+  SmallString<40> HexResult;
   Result.toString(HexResult, 16, /*Signed =*/false, /*Literal =*/true);
 
   // If we are only missing a sign bit, this is less likely to result in actual
@@ -8562,11 +8544,11 @@ ExprResult Sema::ActOnChooseExpr(SourceLocation BuiltinLoc,
   } else {
     // The conditional expression is required to be a constant expression.
     llvm::APSInt condEval(32);
-    SourceLocation ExpLoc;
-    if (!CondExpr->isIntegerConstantExpr(condEval, Context, &ExpLoc))
-      return ExprError(Diag(ExpLoc,
-                       diag::err_typecheck_choose_expr_requires_constant)
-        << CondExpr->getSourceRange());
+    ExprResult CondICE = VerifyIntegerConstantExpression(CondExpr, &condEval,
+      PDiag(diag::err_typecheck_choose_expr_requires_constant), false);
+    if (CondICE.isInvalid())
+      return ExprError();
+    CondExpr = CondICE.take();
 
     // If the condition is > zero, then the AST type is the same as the LSHExpr.
     Expr *ActiveExpr = condEval.getZExtValue() ? LHSExpr : RHSExpr;
@@ -8765,7 +8747,7 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
     CapturingScopeInfo::Capture &Cap = BSI->Captures[i];
     if (Cap.isThisCapture())
       continue;
-    BlockDecl::Capture NewCap(Cap.getVariable(), Cap.isReferenceCapture(),
+    BlockDecl::Capture NewCap(Cap.getVariable(), Cap.isBlockCapture(),
                               Cap.isNested(), Cap.getCopyExpr());
     Captures.push_back(NewCap);
   }
@@ -9138,16 +9120,61 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
   return isInvalid;
 }
 
-bool Sema::VerifyIntegerConstantExpression(const Expr *E, llvm::APSInt *Result,
-                                           unsigned DiagID, bool AllowFold) {
+ExprResult Sema::VerifyIntegerConstantExpression(Expr *E,
+                                                 llvm::APSInt *Result) {
+  return VerifyIntegerConstantExpression(E, Result,
+      PDiag(diag::err_expr_not_ice) << LangOpts.CPlusPlus);
+}
+
+ExprResult Sema::VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
+                                                 PartialDiagnostic NotIceDiag,
+                                                 bool AllowFold,
+                                                 PartialDiagnostic FoldDiag) {
+  SourceLocation DiagLoc = E->getSourceRange().getBegin();
+
+  if (getLangOptions().CPlusPlus0x) {
+    // C++11 [expr.const]p5:
+    //   If an expression of literal class type is used in a context where an
+    //   integral constant expression is required, then that class type shall
+    //   have a single non-explicit conversion function to an integral or
+    //   unscoped enumeration type
+    ExprResult Converted;
+    if (NotIceDiag.getDiagID()) {
+      Converted = ConvertToIntegralOrEnumerationType(
+        DiagLoc, E,
+        PDiag(diag::err_ice_not_integral),
+        PDiag(diag::err_ice_incomplete_type),
+        PDiag(diag::err_ice_explicit_conversion),
+        PDiag(diag::note_ice_conversion_here),
+        PDiag(diag::err_ice_ambiguous_conversion),
+        PDiag(diag::note_ice_conversion_here),
+        PDiag(0),
+        /*AllowScopedEnumerations*/ false);
+    } else {
+      // The caller wants to silently enquire whether this is an ICE. Don't
+      // produce any diagnostics if it isn't.
+      Converted = ConvertToIntegralOrEnumerationType(
+        DiagLoc, E, PDiag(), PDiag(), PDiag(), PDiag(),
+        PDiag(), PDiag(), PDiag(), false);
+    }
+    if (Converted.isInvalid())
+      return Converted;
+    E = Converted.take();
+    if (!E->getType()->isIntegralOrUnscopedEnumerationType())
+      return ExprError();
+  } else if (!E->getType()->isIntegralOrUnscopedEnumerationType()) {
+    // An ICE must be of integral or unscoped enumeration type.
+    if (NotIceDiag.getDiagID())
+      Diag(DiagLoc, NotIceDiag) << E->getSourceRange();
+    return ExprError();
+  }
+
   // Circumvent ICE checking in C++11 to avoid evaluating the expression twice
   // in the non-ICE case.
-  if (!getLangOptions().CPlusPlus0x) {
-    if (E->isIntegerConstantExpr(Context)) {
-      if (Result)
-        *Result = E->EvaluateKnownConstInt(Context);
-      return false;
-    }
+  if (!getLangOptions().CPlusPlus0x && E->isIntegerConstantExpr(Context)) {
+    if (Result)
+      *Result = E->EvaluateKnownConstInt(Context);
+    return Owned(E);
   }
 
   Expr::EvalResult EvalResult;
@@ -9165,36 +9192,39 @@ bool Sema::VerifyIntegerConstantExpression(const Expr *E, llvm::APSInt *Result,
   if (Folded && getLangOptions().CPlusPlus0x && Notes.empty()) {
     if (Result)
       *Result = EvalResult.Val.getInt();
-    return false;
+    return Owned(E);
+  }
+
+  // If our only note is the usual "invalid subexpression" note, just point
+  // the caret at its location rather than producing an essentially
+  // redundant note.
+  if (Notes.size() == 1 && Notes[0].second.getDiagID() ==
+        diag::note_invalid_subexpr_in_const_expr) {
+    DiagLoc = Notes[0].first;
+    Notes.clear();
   }
 
   if (!Folded || !AllowFold) {
-    if (DiagID)
-      Diag(E->getSourceRange().getBegin(), DiagID) << E->getSourceRange();
-    else
-      Diag(E->getSourceRange().getBegin(), diag::err_expr_not_ice)
-        << E->getSourceRange() << LangOpts.CPlusPlus;
-
-    // We only show the notes if they're not the usual "invalid subexpression"
-    // or if they are actually in a subexpression.
-    if (Notes.size() != 1 ||
-        Notes[0].second.getDiagID() != diag::note_invalid_subexpr_in_const_expr
-        || Notes[0].first != E->IgnoreParens()->getExprLoc()) {
+    if (NotIceDiag.getDiagID()) {
+      Diag(DiagLoc, NotIceDiag) << E->getSourceRange();
       for (unsigned I = 0, N = Notes.size(); I != N; ++I)
         Diag(Notes[I].first, Notes[I].second);
     }
 
-    return true;
+    return ExprError();
   }
 
-  Diag(E->getSourceRange().getBegin(), diag::ext_expr_not_ice)
-    << E->getSourceRange() << LangOpts.CPlusPlus;
+  if (FoldDiag.getDiagID())
+    Diag(DiagLoc, FoldDiag) << E->getSourceRange();
+  else
+    Diag(DiagLoc, diag::ext_expr_not_ice)
+      << E->getSourceRange() << LangOpts.CPlusPlus;
   for (unsigned I = 0, N = Notes.size(); I != N; ++I)
     Diag(Notes[I].first, Notes[I].second);
 
   if (Result)
     *Result = EvalResult.Val.getInt();
-  return false;
+  return Owned(E);
 }
 
 namespace {
@@ -9458,10 +9488,22 @@ diagnoseUncapturableValueReference(Sema &S, SourceLocation loc,
     << var->getIdentifier();
 }
 
-static void tryCaptureVar(Sema &S, VarDecl *var,
-                          SourceLocation loc) {
-  // Check if the variable needs to be captured.
-  DeclContext *DC = S.CurContext;
+static bool shouldAddConstForScope(CapturingScopeInfo *CSI, VarDecl *VD) {
+  if (VD->hasAttr<BlocksAttr>())
+    return false;
+  if (isa<BlockScopeInfo>(CSI))
+    return true;
+  if (LambdaScopeInfo *LSI = dyn_cast<LambdaScopeInfo>(CSI))
+    return !LSI->Mutable;
+  return false;
+}
+
+// Check if the variable needs to be captured; if so, try to perform
+// the capture.
+// FIXME: Add support for explicit captures.
+void Sema::TryCaptureVar(VarDecl *var, SourceLocation loc,
+                         TryCaptureKind Kind) {
+  DeclContext *DC = CurContext;
   if (var->getDeclContext() == DC) return;
   if (!var->hasLocalStorage()) return;
 
@@ -9469,100 +9511,164 @@ static void tryCaptureVar(Sema &S, VarDecl *var,
   QualType type = var->getType();
   bool Nested = false;
 
-  unsigned functionScopesIndex = S.FunctionScopes.size() - 1;
+  unsigned functionScopesIndex = FunctionScopes.size() - 1;
   do {
-    // Only blocks (and eventually C++0x closures) can capture; other
+    // Only block literals and lambda expressions can capture; other
     // scopes don't work.
-    // FIXME: Make this function support lambdas!
-    if (!isa<BlockDecl>(DC))
-      return diagnoseUncapturableValueReference(S, loc, var, DC);
+    DeclContext *ParentDC;
+    if (isa<BlockDecl>(DC))
+      ParentDC = DC->getParent();
+    else if (isa<CXXMethodDecl>(DC) &&
+             cast<CXXRecordDecl>(DC->getParent())->isLambda())
+      ParentDC = DC->getParent()->getParent();
+    else
+      return diagnoseUncapturableValueReference(*this, loc, var, DC);
 
-    BlockScopeInfo *blockScope =
-      cast<BlockScopeInfo>(S.FunctionScopes[functionScopesIndex]);
-    assert(blockScope->TheDecl == static_cast<BlockDecl*>(DC));
+    CapturingScopeInfo *CSI =
+      cast<CapturingScopeInfo>(FunctionScopes[functionScopesIndex]);
 
-    // Check whether we've already captured it in this block.
-    if (blockScope->CaptureMap.count(var)) {
+    // Check whether we've already captured it.
+    if (CSI->CaptureMap.count(var)) {
+      // If we found a capture, any subcaptures are nested
       Nested = true;
+
+      if (shouldAddConstForScope(CSI, var))
+        type.addConst();
       break;
     }
 
     functionScopesIndex--;
-    DC = cast<BlockDecl>(DC)->getDeclContext();
+    DC = ParentDC;
   } while (var->getDeclContext() != DC);
 
-  bool byRef = var->hasAttr<BlocksAttr>();
+  bool hasBlocksAttr = var->hasAttr<BlocksAttr>();
 
   for (unsigned i = functionScopesIndex + 1,
-                e = S.FunctionScopes.size(); i != e; ++i) {
-    // Prohibit variably-modified types.
+                e = FunctionScopes.size(); i != e; ++i) {
+    CapturingScopeInfo *CSI = cast<CapturingScopeInfo>(FunctionScopes[i]);
+    bool isBlock = isa<BlockScopeInfo>(CSI);
+    bool isLambda = isa<LambdaScopeInfo>(CSI);
+
+    // Lambdas are not allowed to capture unnamed variables
+    // (e.g. anonymous unions).
+    // FIXME: The C++11 rule don't actually state this explicitly, but I'm
+    // assuming that's the intent.
+    if (isLambda && !var->getDeclName()) {
+      Diag(loc, diag::err_lambda_capture_anonymous_var);
+      Diag(var->getLocation(), diag::note_declared_at);
+      return;
+    }
+
+    // Prohibit variably-modified types; they're difficult to deal with.
     if (type->isVariablyModifiedType()) {
-      S.Diag(loc, diag::err_ref_vm_type);
-      S.Diag(var->getLocation(), diag::note_declared_at);
+      if (isBlock)
+        Diag(loc, diag::err_ref_vm_type);
+      else
+        Diag(loc, diag::err_lambda_capture_vm_type) << var->getDeclName();
+      Diag(var->getLocation(), diag::note_previous_decl) << var->getDeclName();
       return;
     }
 
-    // Prohibit arrays, even in __block variables, but not references to
-    // them.
-    if (type->isArrayType()) {
-      S.Diag(loc, diag::err_ref_array_type);
-      S.Diag(var->getLocation(), diag::note_declared_at);
+    // Blocks are not allowed to capture arrays.
+    if (isBlock && type->isArrayType()) {
+      Diag(loc, diag::err_ref_array_type);
+      Diag(var->getLocation(), diag::note_previous_decl) << var->getDeclName();
       return;
     }
 
-    // Build a copy expression.
+    // Lambdas are not allowed to capture __block variables; they don't
+    // support the expected semantics.
+    if (isLambda && hasBlocksAttr) {
+      Diag(loc, diag::err_lambda_capture_block) << var->getDeclName();
+      Diag(var->getLocation(), diag::note_previous_decl) << var->getDeclName();
+      return;
+    }
+
+    bool byRef;
+    bool isInnermostCapture = (i == e - 1);
+    if (isInnermostCapture && Kind == TryCapture_ExplicitByVal) {
+      byRef = false;
+    } else if (isInnermostCapture && Kind == TryCapture_ExplicitByRef) {
+      byRef = true;
+    } else if (CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_None) {
+      // No capture-default
+      Diag(loc, diag::err_lambda_impcap) << var->getDeclName();
+      Diag(var->getLocation(), diag::note_previous_decl) << var->getDeclName();
+      Diag(cast<LambdaScopeInfo>(CSI)->Lambda->getLocStart(),
+           diag::note_lambda_decl);
+      return;
+    } else if (CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_LambdaByval) {
+      // capture-default '='
+      byRef = false;
+    } else if (CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_LambdaByref) {
+      // capture-default '&'
+      byRef = true;
+    } else {
+      // A block captures __block variables in a special __block fashion, 
+      // variables of reference type by reference (in the sense of
+      // [expr.prim.lambda]), and other non-__block variables by copy.
+      assert(CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_Block);
+      byRef = hasBlocksAttr || type->isReferenceType();
+    }
+
+    // Build a copy expression if we are capturing by copy and the copy
+    // might be non-trivial.
     Expr *copyExpr = 0;
     const RecordType *rtype;
-    if (!byRef && S.getLangOptions().CPlusPlus && !type->isDependentType() &&
-        (rtype = type->getAs<RecordType>())) {
-
+    if (!byRef && getLangOptions().CPlusPlus &&
+        (rtype = type.getNonReferenceType()->getAs<RecordType>())) {
       // The capture logic needs the destructor, so make sure we mark it.
       // Usually this is unnecessary because most local variables have
       // their destructors marked at declaration time, but parameters are
       // an exception because it's technically only the call site that
       // actually requires the destructor.
       if (isa<ParmVarDecl>(var))
-        S.FinalizeVarWithDestructor(var, rtype);
+        FinalizeVarWithDestructor(var, rtype);
 
       // According to the blocks spec, the capture of a variable from
       // the stack requires a const copy constructor.  This is not true
       // of the copy/move done to move a __block variable to the heap.
-      type.addConst();
+      // There is no equivalent language in the C++11 specification of lambdas.
+      if (isBlock)
+        type.addConst();
 
-      Expr *declRef = new (S.Context) DeclRefExpr(var, type, VK_LValue, loc);
+      Expr *declRef = new (Context) DeclRefExpr(var, type, VK_LValue, loc);
       ExprResult result =
-        S.PerformCopyInitialization(
+        PerformCopyInitialization(
                         InitializedEntity::InitializeBlock(var->getLocation(),
                                                            type, false),
-                                    loc, S.Owned(declRef));
+                                    loc, Owned(declRef));
 
       // Build a full-expression copy expression if initialization
       // succeeded and used a non-trivial constructor.  Recover from
       // errors by pretending that the copy isn't necessary.
       if (!result.isInvalid() &&
           !cast<CXXConstructExpr>(result.get())->getConstructor()->isTrivial()) {
-        result = S.MaybeCreateExprWithCleanups(result);
+        result = MaybeCreateExprWithCleanups(result);
         copyExpr = result.take();
       }
     }
 
-    BlockScopeInfo *blockScope = cast<BlockScopeInfo>(S.FunctionScopes[i]);
-    blockScope->AddCapture(var, byRef, Nested, loc, copyExpr);
+    CSI->AddCapture(var, hasBlocksAttr, byRef, Nested, loc, copyExpr);
 
     Nested = true;
+    if (shouldAddConstForScope(CSI, var))
+      type.addConst();
   }
 }
 
 static void MarkVarDeclODRUsed(Sema &SemaRef, VarDecl *Var,
                                SourceLocation Loc) {
   // Keep track of used but undefined variables.
+  // FIXME: We shouldn't suppress this warning for static data members.
   if (Var->hasDefinition() == VarDecl::DeclarationOnly &&
-      Var->getLinkage() != ExternalLinkage) {
+      Var->getLinkage() != ExternalLinkage &&
+      !(Var->isStaticDataMember() && Var->hasInit())) {
     SourceLocation &old = SemaRef.UndefinedInternals[Var->getCanonicalDecl()];
     if (old.isInvalid()) old = Loc;
   }
 
-  tryCaptureVar(SemaRef, Var, Loc);
+  SemaRef.TryCaptureVar(Var, Loc);
 
   Var->setUsed(true);
 }

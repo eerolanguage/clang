@@ -20,6 +20,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SymbolManager.h"
 #include "llvm/ADT/ImmutableMap.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace clang;
 using namespace ento;
@@ -64,7 +65,7 @@ class StreamChecker : public Checker<eval::Call,
                  *II_fwrite, 
                  *II_fseek, *II_ftell, *II_rewind, *II_fgetpos, *II_fsetpos,  
                  *II_clearerr, *II_feof, *II_ferror, *II_fileno;
-  mutable llvm::OwningPtr<BuiltinBug> BT_nullfp, BT_illegalwhence,
+  mutable OwningPtr<BuiltinBug> BT_nullfp, BT_illegalwhence,
                                       BT_doubleclose, BT_ResourceLeak;
 
 public:

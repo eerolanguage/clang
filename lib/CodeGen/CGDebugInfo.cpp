@@ -21,8 +21,9 @@
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecordLayout.h"
-#include "clang/Basic/SourceManager.h"
+#include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/FileManager.h"
+#include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/Constants.h"
@@ -130,7 +131,7 @@ StringRef CGDebugInfo::getFunctionName(const FunctionDecl *FD) {
 }
 
 StringRef CGDebugInfo::getObjCMethodName(const ObjCMethodDecl *OMD) {
-  llvm::SmallString<256> MethodName;
+  SmallString<256> MethodName;
   llvm::raw_svector_ostream OS(MethodName);
   OS << (OMD->isInstanceMethod() ? '-' : '+') << '[';
   const DeclContext *DC = OMD->getDeclContext();
@@ -253,7 +254,7 @@ StringRef CGDebugInfo::getCurrentDirname() {
 
   if (!CWDName.empty())
     return CWDName;
-  llvm::SmallString<256> CWD;
+  SmallString<256> CWD;
   llvm::sys::fs::current_path(CWD);
   char *CompDirnamePtr = DebugInfoNames.Allocate<char>(CWD.size());
   memcpy(CompDirnamePtr, CWD.data(), CWD.size());
@@ -1353,6 +1354,7 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
     StringRef PropertySetter;
     unsigned PropertyAttributes = 0;
     ObjCPropertyDecl *PD = NULL;
+    llvm::MDNode *PropertyNode = NULL;
     if (ImpD)
       if (ObjCPropertyImplDecl *PImpD = 
           ImpD->FindPropertyImplIvarDecl(Field->getIdentifier()))
@@ -1362,7 +1364,12 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
       PropertyGetter = getSelectorName(PD->getGetterName());
       PropertySetter = getSelectorName(PD->getSetterName());
       PropertyAttributes = PD->getPropertyAttributes();
-    } 
+      PropertyNode =
+	DBuilder.createObjCProperty(PropertyName, PropertyGetter, 
+                                    PropertySetter,
+                                    PropertyAttributes);
+      EltTys.push_back(PropertyNode);
+    }
     FieldTy = DBuilder.createObjCIVar(FieldName, FieldDefUnit,
                                       FieldLine, FieldSize, FieldAlign,
                                       FieldOffset, Flags, FieldTy,
@@ -2396,7 +2403,7 @@ void CGDebugInfo::EmitDeclareOfBlockLiteralArgVariable(const CGBlockInfo &block,
     fields.push_back(fieldType);
   }
 
-  llvm::SmallString<36> typeName;
+  SmallString<36> typeName;
   llvm::raw_svector_ostream(typeName)
     << "__block_literal_" << CGM.getUniqueBlockCount();
 

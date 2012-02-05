@@ -170,7 +170,7 @@ private:
   llvm::BitstreamWriter Stream;
 
   /// \brief The name of the diagnostics file.
-  llvm::OwningPtr<llvm::raw_ostream> OS;
+  OwningPtr<llvm::raw_ostream> OS;
   
   /// \brief The set of constructed record abbreviations.
   AbbreviationMap Abbrevs;
@@ -179,7 +179,7 @@ private:
   RecordData Record;
 
   /// \brief A text buffer for rendering diagnostic text.
-  llvm::SmallString<256> diagBuf;
+  SmallString<256> diagBuf;
   
   /// \brief The collection of diagnostic categories used.
   llvm::DenseSet<unsigned> Categories;
@@ -584,7 +584,7 @@ void SDiagsRenderer::emitNote(SourceLocation Loc, StringRef Message) {
 void SDiagsRenderer::emitIncludeLocation(SourceLocation Loc,
                                          PresumedLoc PLoc) {
   // Generate a note indicating the include location.
-  llvm::SmallString<200> MessageStorage;
+  SmallString<200> MessageStorage;
   llvm::raw_svector_ostream Message(MessageStorage);
   Message << "in file included from " << PLoc.getFilename() << ':'
           << PLoc.getLine() << ":";

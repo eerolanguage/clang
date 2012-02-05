@@ -19,6 +19,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporter.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -159,7 +160,7 @@ void WalkAST::VisitCXXMemberCallExpr(CallExpr *CE) {
 }
 
 void WalkAST::ReportVirtualCall(const CallExpr *CE, bool isPure) {
-  llvm::SmallString<100> buf;
+  SmallString<100> buf;
   llvm::raw_svector_ostream os(buf);
   
   os << "Call Path : ";

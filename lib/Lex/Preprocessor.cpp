@@ -40,7 +40,7 @@
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Capacity.h"
@@ -336,6 +336,21 @@ void Preprocessor::CodeCompleteNaturalLanguage() {
   setCodeCompletionReached();
 }
 
+void Preprocessor::setCodeCompletionReached() {
+  assert(isCodeCompletionEnabled() && "Code-completion not enabled!");
+  CodeCompletionReached = true;
+  // Silence any diagnostics that occur after we hit the code-completion.
+  getDiagnostics().setSuppressAllDiagnostics(true);
+}
+
+DiagnosticBuilder Preprocessor::Diag(SourceLocation Loc, unsigned DiagID) const{
+  return Diags->Report(Loc, DiagID);
+}
+
+DiagnosticBuilder Preprocessor::Diag(const Token &Tok, unsigned DiagID) const {
+  return Diags->Report(Tok.getLocation(), DiagID);
+}
+
 /// getSpelling - This method is used to get the spelling of a token into a
 /// SmallVector. Note that the returned StringRef may not point to the
 /// supplied buffer if a copy can be avoided.
@@ -455,7 +470,7 @@ IdentifierInfo *Preprocessor::LookUpIdentifierInfo(Token &Identifier) const {
                                            Identifier.getLength()));
   } else {
     // Cleaning needed, alloca a buffer, clean into it, then use the buffer.
-    llvm::SmallString<64> IdentifierBuffer;
+    SmallString<64> IdentifierBuffer;
     StringRef CleanedStr = getSpelling(Identifier, IdentifierBuffer);
     II = getIdentifierInfo(CleanedStr);
   }

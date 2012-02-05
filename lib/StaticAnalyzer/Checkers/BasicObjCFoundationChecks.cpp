@@ -28,6 +28,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/ASTContext.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -70,7 +71,7 @@ static inline bool isNil(SVal X) {
 
 namespace {
   class NilArgChecker : public Checker<check::PreObjCMessage> {
-    mutable llvm::OwningPtr<APIMisuse> BT;
+    mutable OwningPtr<APIMisuse> BT;
 
     void WarnNilArg(CheckerContext &C,
                     const ObjCMessage &msg, unsigned Arg) const;
@@ -88,7 +89,7 @@ void NilArgChecker::WarnNilArg(CheckerContext &C,
     BT.reset(new APIMisuse("nil argument"));
   
   if (ExplodedNode *N = C.generateSink()) {
-    llvm::SmallString<128> sbuf;
+    SmallString<128> sbuf;
     llvm::raw_svector_ostream os(sbuf);
     os << "Argument to '" << GetReceiverNameType(msg) << "' method '"
        << msg.getSelector().getAsString() << "' cannot be nil";
@@ -141,7 +142,7 @@ void NilArgChecker::checkPreObjCMessage(ObjCMessage msg,
 
 namespace {
 class CFNumberCreateChecker : public Checker< check::PreStmt<CallExpr> > {
-  mutable llvm::OwningPtr<APIMisuse> BT;
+  mutable OwningPtr<APIMisuse> BT;
   mutable IdentifierInfo* II;
 public:
   CFNumberCreateChecker() : II(0) {}
@@ -315,7 +316,7 @@ void CFNumberCreateChecker::checkPreStmt(const CallExpr *CE,
   //
   if (ExplodedNode *N = SourceSize < TargetSize ? C.generateSink() 
                                                 : C.addTransition()) {
-    llvm::SmallString<128> sbuf;
+    SmallString<128> sbuf;
     llvm::raw_svector_ostream os(sbuf);
     
     os << (SourceSize == 8 ? "An " : "A ")
@@ -346,7 +347,7 @@ void CFNumberCreateChecker::checkPreStmt(const CallExpr *CE,
 
 namespace {
 class CFRetainReleaseChecker : public Checker< check::PreStmt<CallExpr> > {
-  mutable llvm::OwningPtr<APIMisuse> BT;
+  mutable OwningPtr<APIMisuse> BT;
   mutable IdentifierInfo *Retain, *Release;
 public:
   CFRetainReleaseChecker(): Retain(0), Release(0) {}
@@ -429,7 +430,7 @@ class ClassReleaseChecker : public Checker<check::PreObjCMessage> {
   mutable Selector retainS;
   mutable Selector autoreleaseS;
   mutable Selector drainS;
-  mutable llvm::OwningPtr<BugType> BT;
+  mutable OwningPtr<BugType> BT;
 
 public:
   void checkPreObjCMessage(ObjCMessage msg, CheckerContext &C) const;
@@ -460,7 +461,7 @@ void ClassReleaseChecker::checkPreObjCMessage(ObjCMessage msg,
     return;
   
   if (ExplodedNode *N = C.addTransition()) {
-    llvm::SmallString<200> buf;
+    SmallString<200> buf;
     llvm::raw_svector_ostream os(buf);
 
     os << "The '" << S.getAsString() << "' message should be sent to instances "
@@ -485,7 +486,7 @@ class VariadicMethodTypeChecker : public Checker<check::PreObjCMessage> {
   mutable Selector setWithObjectsS;
   mutable Selector initWithObjectsS;
   mutable Selector initWithObjectsAndKeysS;
-  mutable llvm::OwningPtr<BugType> BT;
+  mutable OwningPtr<BugType> BT;
 
   bool isVariadicMessage(const ObjCMessage &msg) const;
 
@@ -614,7 +615,7 @@ void VariadicMethodTypeChecker::checkPreObjCMessage(ObjCMessage msg,
     if (!errorNode.getValue())
       continue;
 
-    llvm::SmallString<128> sbuf;
+    SmallString<128> sbuf;
     llvm::raw_svector_ostream os(sbuf);
 
     if (const char *TypeName = GetReceiverNameType(msg))

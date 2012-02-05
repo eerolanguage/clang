@@ -14,11 +14,9 @@
 #ifndef LLVM_CLANG_AST_TYPE_H
 #define LLVM_CLANG_AST_TYPE_H
 
-#include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/ExceptionSpecificationType.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/Linkage.h"
-#include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/Visibility.h"
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/TemplateName.h"
@@ -94,6 +92,7 @@ namespace clang {
   class ExtQuals;
   class ExtQualsTypeCommonBase;
   struct PrintingPolicy;
+  class PartialDiagnostic;
 
   template <typename> class CanQual;
   typedef CanQual<Type> CanQualType;
@@ -3484,8 +3483,12 @@ class TemplateSpecializationType
 
   /// \brief - The number of template arguments named in this class
   /// template specialization.
-  unsigned NumArgs;
+  unsigned NumArgs : 31;
 
+  /// \brief Whether this template specialization type is a substituted
+  /// type alias.
+  bool TypeAlias : 1;
+    
   TemplateSpecializationType(TemplateName T,
                              const TemplateArgument *Args,
                              unsigned NumArgs, QualType Canon,
@@ -3527,9 +3530,23 @@ public:
     return isa<InjectedClassNameType>(getCanonicalTypeInternal());
   }
 
-  /// True if this template specialization type is for a type alias
-  /// template.
-  bool isTypeAlias() const;
+  /// \brief Determine if this template specialization type is for a type alias
+  /// template that has been substituted.
+  ///
+  /// Nearly every template specialization type whose template is an alias
+  /// template will be substituted. However, this is not the case when
+  /// the specialization contains a pack expansion but the template alias
+  /// does not have a corresponding parameter pack, e.g.,
+  ///
+  /// \code
+  /// template<typename T, typename U, typename V> struct S;
+  /// template<typename T, typename U> using A = S<T, int, U>;
+  /// template<typename... Ts> struct X {
+  ///   typedef A<Ts...> type; // not a type alias
+  /// };
+  /// \endcode
+  bool isTypeAlias() const { return TypeAlias; }
+    
   /// Get the aliased type, if this is a specialization of a type alias
   /// template.
   QualType getAliasedType() const {
@@ -4781,21 +4798,11 @@ inline const Type *Type::getBaseElementTypeUnsafe() const {
 
 /// Insertion operator for diagnostics.  This allows sending QualType's into a
 /// diagnostic with <<.
-inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
-                                           QualType T) {
-  DB.AddTaggedVal(reinterpret_cast<intptr_t>(T.getAsOpaquePtr()),
-                  DiagnosticsEngine::ak_qualtype);
-  return DB;
-}
+const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB, QualType T);
 
 /// Insertion operator for partial diagnostics.  This allows sending QualType's
 /// into a diagnostic with <<.
-inline const PartialDiagnostic &operator<<(const PartialDiagnostic &PD,
-                                           QualType T) {
-  PD.AddTaggedVal(reinterpret_cast<intptr_t>(T.getAsOpaquePtr()),
-                  DiagnosticsEngine::ak_qualtype);
-  return PD;
-}
+const PartialDiagnostic &operator<<(const PartialDiagnostic &PD, QualType T);
 
 // Helper class template that is used by Type::getAs to ensure that one does
 // not try to look through a qualified type to get to an array type.

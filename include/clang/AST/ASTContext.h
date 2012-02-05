@@ -18,7 +18,6 @@
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/OperatorKinds.h"
-#include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/VersionTuple.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/NestedNameSpecifier.h"
@@ -49,6 +48,7 @@ namespace clang {
   class ExternalASTSource;
   class ASTMutationListener;
   class IdentifierTable;
+  class PartialDiagnosticStorageAllocator;
   class SelectorTable;
   class SourceManager;
   class TargetInfo;
@@ -346,10 +346,10 @@ class ASTContext : public llvm::RefCountedBase<ASTContext> {
   mutable llvm::BumpPtrAllocator BumpAlloc;
 
   /// \brief Allocator for partial diagnostics.
-  PartialDiagnostic::StorageAllocator DiagAllocator;
+  PartialDiagnosticStorageAllocator *DiagAllocator;
 
   /// \brief The current C++ ABI.
-  llvm::OwningPtr<CXXABI> ABI;
+  OwningPtr<CXXABI> ABI;
   CXXABI *createCXXABI(const TargetInfo &T);
 
   /// \brief The logical -> physical address space map.
@@ -367,7 +367,7 @@ public:
   SelectorTable &Selectors;
   Builtin::Context &BuiltinInfo;
   mutable DeclarationNameTable DeclarationNames;
-  llvm::OwningPtr<ExternalASTSource> ExternalSource;
+  OwningPtr<ExternalASTSource> ExternalSource;
   ASTMutationListener *Listener;
 
   clang::PrintingPolicy getPrintingPolicy() const { return PrintingPolicy; }
@@ -391,8 +391,8 @@ public:
   /// Return the total memory used for various side tables.
   size_t getSideTableAllocatedMemory() const;
   
-  PartialDiagnostic::StorageAllocator &getDiagAllocator() {
-    return DiagAllocator;
+  PartialDiagnosticStorageAllocator &getDiagAllocator() {
+    return *DiagAllocator;
   }
 
   const TargetInfo &getTargetInfo() const { return *Target; }
@@ -573,7 +573,7 @@ public:
   /// The external AST source provides the ability to load parts of
   /// the abstract syntax tree as needed from some external storage,
   /// e.g., a precompiled header.
-  void setExternalSource(llvm::OwningPtr<ExternalASTSource> &Source);
+  void setExternalSource(OwningPtr<ExternalASTSource> &Source);
 
   /// \brief Retrieve a pointer to the external AST source associated
   /// with this AST context, if any.
@@ -1663,6 +1663,8 @@ public:
     Res = Value;
     return Res;
   }
+
+  bool isSentinelNullExpr(const Expr *E);
 
   /// \brief Get the implementation of ObjCInterfaceDecl,or NULL if none exists.
   ObjCImplementationDecl *getObjCImplementation(ObjCInterfaceDecl *D);

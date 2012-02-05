@@ -17,8 +17,7 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporter.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/StmtVisitor.h"
-#include <string>
-#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -253,7 +252,7 @@ void ASTFieldVisitor::Visit(FieldDecl *D) {
 }
 
 void ASTFieldVisitor::ReportError(QualType T) {
-  llvm::SmallString<1024> buf;
+  SmallString<1024> buf;
   llvm::raw_svector_ostream os(buf);
 
   os << "AST class '" << Root->getName() << "' has a field '"

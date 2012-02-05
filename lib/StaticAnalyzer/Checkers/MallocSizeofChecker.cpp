@@ -20,6 +20,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/AST/TypeLoc.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
@@ -174,7 +175,7 @@ public:
             TSI = i->ExplicitCastType;
           }
 
-          llvm::SmallString<64> buf;
+          SmallString<64> buf;
           llvm::raw_svector_ostream OS(buf);
 
           OS << "Result of '"

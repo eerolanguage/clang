@@ -19,6 +19,8 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
 #include "clang/AST/CharUnits.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace clang;
 using namespace ento;
@@ -26,7 +28,7 @@ using namespace ento;
 namespace {
 class ArrayBoundCheckerV2 : 
     public Checker<check::Location> {
-  mutable llvm::OwningPtr<BuiltinBug> BT;
+  mutable OwningPtr<BuiltinBug> BT;
       
   enum OOB_Kind { OOB_Precedes, OOB_Excedes, OOB_Tainted };
   
@@ -191,7 +193,7 @@ void ArrayBoundCheckerV2::reportOOB(CheckerContext &checkerContext,
   // FIXME: This diagnostics are preliminary.  We should get far better
   // diagnostics for explaining buffer overruns.
 
-  llvm::SmallString<256> buf;
+  SmallString<256> buf;
   llvm::raw_svector_ostream os(buf);
   os << "Out of bound memory access ";
   switch (kind) {

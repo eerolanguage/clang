@@ -19,14 +19,15 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "llvm/ADT/ImmutableList.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace clang;
 using namespace ento;
 
 namespace {
 class PthreadLockChecker : public Checker< check::PostStmt<CallExpr> > {
-  mutable llvm::OwningPtr<BugType> BT_doublelock;
-  mutable llvm::OwningPtr<BugType> BT_lor;
+  mutable OwningPtr<BugType> BT_doublelock;
+  mutable OwningPtr<BugType> BT_lor;
   enum LockingSemantics {
     NotApplicable = 0,
     PthreadSemantics,

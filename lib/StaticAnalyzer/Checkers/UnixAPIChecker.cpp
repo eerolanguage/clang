@@ -19,6 +19,8 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include <fcntl.h>
 
@@ -28,7 +30,7 @@ using llvm::Optional;
 
 namespace {
 class UnixAPIChecker : public Checker< check::PreStmt<CallExpr> > {
-  mutable llvm::OwningPtr<BugType> BT_open, BT_pthreadOnce, BT_mallocZero;
+  mutable OwningPtr<BugType> BT_open, BT_pthreadOnce, BT_mallocZero;
   mutable Optional<uint64_t> Val_O_CREAT;
 
 public:
@@ -61,7 +63,7 @@ private:
 // Utility functions.
 //===----------------------------------------------------------------------===//
 
-static inline void LazyInitialize(llvm::OwningPtr<BugType> &BT,
+static inline void LazyInitialize(OwningPtr<BugType> &BT,
                                   const char *name) {
   if (BT)
     return;
@@ -165,7 +167,7 @@ void UnixAPIChecker::CheckPthreadOnce(CheckerContext &C,
   if (!N)
     return;
 
-  llvm::SmallString<256> S;
+  SmallString<256> S;
   llvm::raw_svector_ostream os(S);
   os << "Call to 'pthread_once' uses";
   if (const VarRegion *VR = dyn_cast<VarRegion>(R))
@@ -216,7 +218,7 @@ bool UnixAPIChecker::ReportZeroByteAllocation(CheckerContext &C,
   LazyInitialize(BT_mallocZero,
     "Undefined allocation of 0 bytes (CERT MEM04-C; CWE-131)");
 
-  llvm::SmallString<256> S;
+  SmallString<256> S;
   llvm::raw_svector_ostream os(S);    
   os << "Call to '" << fn_name << "' has an allocation size of 0 bytes";
   BugReport *report = new BugReport(*BT_mallocZero, os.str(), N);

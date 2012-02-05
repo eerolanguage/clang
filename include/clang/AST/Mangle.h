@@ -27,6 +27,8 @@ namespace clang {
   class CXXConstructorDecl;
   class CXXDestructorDecl;
   class CXXMethodDecl;
+  class DeclContext;
+  class DiagnosticsEngine;
   class FunctionDecl;
   class NamedDecl;
   class ObjCMethodDecl;
@@ -58,7 +60,7 @@ public:
 
 private:
   StringRef String;
-  llvm::SmallString<256> Buffer;
+  SmallString<256> Buffer;
 };
 
 /// MangleContext - Context for tracking state which persists across multiple

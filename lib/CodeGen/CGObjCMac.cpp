@@ -2233,7 +2233,7 @@ void CGObjCMac::GenerateCategory(const ObjCCategoryImplDecl *OCD) {
   const ObjCCategoryDecl *Category =
     Interface->FindCategoryDeclaration(OCD->getIdentifier());
 
-  llvm::SmallString<256> ExtName;
+  SmallString<256> ExtName;
   llvm::raw_svector_ostream(ExtName) << Interface->getName() << '_'
                                      << OCD->getName();
 
@@ -2676,7 +2676,7 @@ llvm::Constant *CGObjCMac::EmitMethodList(Twine Name,
 
 llvm::Function *CGObjCCommonMac::GenerateMethod(const ObjCMethodDecl *OMD,
                                                 const ObjCContainerDecl *CD) {
-  llvm::SmallString<256> Name;
+  SmallString<256> Name;
   GetNameForMethod(OMD, CD, Name);
 
   CodeGenTypes &Types = CGM.getTypes();
@@ -3719,8 +3719,8 @@ llvm::Constant *CGObjCCommonMac::GetClassName(IdentifierInfo *Ident) {
 
   if (!Entry)
     Entry = CreateMetadataVar("\01L_OBJC_CLASS_NAME_",
-                          llvm::ConstantArray::get(VMContext,
-                                                   Ident->getNameStart()),
+                              llvm::ConstantDataArray::getString(VMContext,
+                                                         Ident->getNameStart()),
                               ((ObjCABI == 2) ?
                                "__TEXT,__objc_classname,cstring_literals" :
                                "__TEXT,__cstring,cstring_literals"),
@@ -3928,7 +3928,7 @@ void CGObjCCommonMac::BuildAggrIvarLayout(const ObjCImplementationDecl *OI,
 /// the given argument BitMap string container. Routine reads
 /// two containers, IvarsInfo and SkipIvars which are assumed to be
 /// filled already by the caller.
-llvm::Constant *CGObjCCommonMac::BuildIvarLayoutBitmap(std::string& BitMap) {
+llvm::Constant *CGObjCCommonMac::BuildIvarLayoutBitmap(std::string &BitMap) {
   unsigned int WordsToScan, WordsToSkip;
   llvm::Type *PtrTy = llvm::Type::getInt8PtrTy(VMContext);
   
@@ -4045,7 +4045,7 @@ llvm::Constant *CGObjCCommonMac::BuildIvarLayoutBitmap(std::string& BitMap) {
   
   llvm::GlobalVariable * Entry =
   CreateMetadataVar("\01L_OBJC_CLASS_NAME_",
-                    llvm::ConstantArray::get(VMContext, BitMap.c_str()),
+                    llvm::ConstantDataArray::getString(VMContext, BitMap,false),
                     ((ObjCABI == 2) ?
                      "__TEXT,__objc_classname,cstring_literals" :
                      "__TEXT,__cstring,cstring_literals"),
@@ -4134,7 +4134,7 @@ llvm::Constant *CGObjCCommonMac::GetMethodVarName(Selector Sel) {
   // FIXME: Avoid std::string copying.
   if (!Entry)
     Entry = CreateMetadataVar("\01L_OBJC_METH_VAR_NAME_",
-                        llvm::ConstantArray::get(VMContext, Sel.getAsString()),
+               llvm::ConstantDataArray::getString(VMContext, Sel.getAsString()),
                               ((ObjCABI == 2) ?
                                "__TEXT,__objc_methname,cstring_literals" :
                                "__TEXT,__cstring,cstring_literals"),
@@ -4156,7 +4156,7 @@ llvm::Constant *CGObjCCommonMac::GetMethodVarType(const FieldDecl *Field) {
 
   if (!Entry)
     Entry = CreateMetadataVar("\01L_OBJC_METH_VAR_TYPE_",
-                              llvm::ConstantArray::get(VMContext, TypeStr),
+                         llvm::ConstantDataArray::getString(VMContext, TypeStr),
                               ((ObjCABI == 2) ?
                                "__TEXT,__objc_methtype,cstring_literals" :
                                "__TEXT,__cstring,cstring_literals"),
@@ -4177,7 +4177,7 @@ llvm::Constant *CGObjCCommonMac::GetMethodVarType(const ObjCMethodDecl *D,
 
   if (!Entry)
     Entry = CreateMetadataVar("\01L_OBJC_METH_VAR_TYPE_",
-                              llvm::ConstantArray::get(VMContext, TypeStr),
+                         llvm::ConstantDataArray::getString(VMContext, TypeStr),
                               ((ObjCABI == 2) ?
                                "__TEXT,__objc_methtype,cstring_literals" :
                                "__TEXT,__cstring,cstring_literals"),
@@ -4192,8 +4192,8 @@ llvm::Constant *CGObjCCommonMac::GetPropertyName(IdentifierInfo *Ident) {
 
   if (!Entry)
     Entry = CreateMetadataVar("\01L_OBJC_PROP_NAME_ATTR_",
-                          llvm::ConstantArray::get(VMContext,
-                                                   Ident->getNameStart()),
+                        llvm::ConstantDataArray::getString(VMContext,
+                                                       Ident->getNameStart()),
                               "__TEXT,__cstring,cstring_literals",
                               1, true);
 
@@ -4251,7 +4251,7 @@ void CGObjCMac::FinishModule() {
   //
   // FIXME: It would be nice if we had an LLVM construct for this.
   if (!LazySymbols.empty() || !DefinedSymbols.empty()) {
-    llvm::SmallString<256> Asm;
+    SmallString<256> Asm;
     Asm += CGM.getModule().getModuleInlineAsm();
     if (!Asm.empty() && Asm.back() != '\n')
       Asm += '\n';
@@ -5252,7 +5252,7 @@ void CGObjCNonFragileABIMac::GenerateCategory(const ObjCCategoryImplDecl *OCD) {
   const ObjCCategoryDecl *Category =
     Interface->FindCategoryDeclaration(OCD->getIdentifier());
   if (Category) {
-    llvm::SmallString<256> ExtName;
+    SmallString<256> ExtName;
     llvm::raw_svector_ostream(ExtName) << Interface->getName() << "_$_"
                                        << OCD->getName();
     Values[4] = EmitProtocolList("\01l_OBJC_CATEGORY_PROTOCOLS_$_"
@@ -5634,7 +5634,7 @@ CGObjCNonFragileABIMac::EmitProtocolList(Twine Name,
     return llvm::Constant::getNullValue(ObjCTypes.ProtocolListnfABIPtrTy);
 
   // FIXME: We shouldn't need to do this lookup here, should we?
-  llvm::SmallString<256> TmpName;
+  SmallString<256> TmpName;
   Name.toVector(TmpName);
   llvm::GlobalVariable *GV =
     CGM.getModule().getGlobalVariable(TmpName.str(), true);

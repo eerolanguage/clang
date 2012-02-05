@@ -477,14 +477,14 @@ void FileManager::FixupRelativePath(SmallVectorImpl<char> &path) const {
       || llvm::sys::path::is_absolute(pathRef))
     return;
 
-  llvm::SmallString<128> NewPath(FileSystemOpts.WorkingDir);
+  SmallString<128> NewPath(FileSystemOpts.WorkingDir);
   llvm::sys::path::append(NewPath, pathRef);
   path = NewPath;
 }
 
 llvm::MemoryBuffer *FileManager::
 getBufferForFile(const FileEntry *Entry, std::string *ErrorStr) {
-  llvm::OwningPtr<llvm::MemoryBuffer> Result;
+  OwningPtr<llvm::MemoryBuffer> Result;
   llvm::error_code ec;
 
   const char *Filename = Entry->getName();
@@ -509,7 +509,7 @@ getBufferForFile(const FileEntry *Entry, std::string *ErrorStr) {
     return Result.take();
   }
 
-  llvm::SmallString<128> FilePath(Entry->getName());
+  SmallString<128> FilePath(Entry->getName());
   FixupRelativePath(FilePath);
   ec = llvm::MemoryBuffer::getFile(FilePath.str(), Result, Entry->getSize());
   if (ec && ErrorStr)
@@ -519,7 +519,7 @@ getBufferForFile(const FileEntry *Entry, std::string *ErrorStr) {
 
 llvm::MemoryBuffer *FileManager::
 getBufferForFile(StringRef Filename, std::string *ErrorStr) {
-  llvm::OwningPtr<llvm::MemoryBuffer> Result;
+  OwningPtr<llvm::MemoryBuffer> Result;
   llvm::error_code ec;
   if (FileSystemOpts.WorkingDir.empty()) {
     ec = llvm::MemoryBuffer::getFile(Filename, Result);
@@ -528,7 +528,7 @@ getBufferForFile(StringRef Filename, std::string *ErrorStr) {
     return Result.take();
   }
 
-  llvm::SmallString<128> FilePath(Filename);
+  SmallString<128> FilePath(Filename);
   FixupRelativePath(FilePath);
   ec = llvm::MemoryBuffer::getFile(FilePath.c_str(), Result);
   if (ec && ErrorStr)
@@ -549,7 +549,7 @@ bool FileManager::getStatValue(const char *Path, struct stat &StatBuf,
     return FileSystemStatCache::get(Path, StatBuf, FileDescriptor,
                                     StatCache.get());
 
-  llvm::SmallString<128> FilePath(Path);
+  SmallString<128> FilePath(Path);
   FixupRelativePath(FilePath);
 
   return FileSystemStatCache::get(FilePath.c_str(), StatBuf, FileDescriptor,
@@ -558,7 +558,7 @@ bool FileManager::getStatValue(const char *Path, struct stat &StatBuf,
 
 bool FileManager::getNoncachedStatValue(StringRef Path, 
                                         struct stat &StatBuf) {
-  llvm::SmallString<128> FilePath(Path);
+  SmallString<128> FilePath(Path);
   FixupRelativePath(FilePath);
 
   return ::stat(FilePath.c_str(), &StatBuf) != 0;

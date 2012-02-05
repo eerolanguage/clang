@@ -23,6 +23,7 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporter.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
@@ -145,7 +146,7 @@ void WalkAST::VisitCallExpr(CallExpr *CE) {
 
       StringRef DstName = getPrintableName(DstArg);
 
-      llvm::SmallString<256> S;
+      SmallString<256> S;
       llvm::raw_svector_ostream os(S);
       os << "Potential buffer overflow. ";
       if (!DstName.empty()) {

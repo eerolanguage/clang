@@ -17,6 +17,7 @@
 #include "clang/Rewrite/HTMLRewrite.h"
 #include "clang/Lex/TokenConcatenation.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/OwningPtr.h"
@@ -209,7 +210,7 @@ std::string html::EscapeText(const std::string& s, bool EscapeSpaces,
 
 static void AddLineNumber(RewriteBuffer &RB, unsigned LineNo,
                           unsigned B, unsigned E) {
-  llvm::SmallString<256> Str;
+  SmallString<256> Str;
   llvm::raw_svector_ostream OS(Str);
 
   OS << "<tr><td class=\"num\" id=\"LN"

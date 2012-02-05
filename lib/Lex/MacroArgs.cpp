@@ -15,7 +15,7 @@
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/LexDiagnostic.h"
-
+#include "llvm/ADT/SmallString.h"
 #include <algorithm>
 
 using namespace clang;
@@ -198,7 +198,7 @@ Token MacroArgs::StringifyArgument(const Token *ArgToks,
   const Token *ArgTokStart = ArgToks;
 
   // Stringify all the tokens.
-  llvm::SmallString<128> Result;
+  SmallString<128> Result;
   Result += "\"";
 
   bool isFirst = true;

@@ -184,7 +184,7 @@ std::string Darwin::ComputeEffectiveClangTriple(const ArgList &Args,
   unsigned Version[3];
   getTargetVersion(Version);
 
-  llvm::SmallString<16> Str;
+  SmallString<16> Str;
   llvm::raw_svector_ostream(Str)
     << (isTargetIPhoneOS() ? "ios" : "macosx")
     << Version[0] << "." << Version[1] << "." << Version[2];
@@ -1132,7 +1132,7 @@ Generic_GCC::GCCInstallationDetector::GCCInstallationDetector(
   SmallVector<std::string, 8> Prefixes(D.PrefixDirs.begin(),
                                        D.PrefixDirs.end());
 
-  llvm::SmallString<128> CxxInstallRoot(GCC_INSTALL_PREFIX);
+  SmallString<128> CxxInstallRoot(GCC_INSTALL_PREFIX);
   if (CxxInstallRoot != "") {
     if (CxxInstallRoot.back() == '/')
       llvm::sys::path::remove_filename(CxxInstallRoot); // remove the /
@@ -1823,7 +1823,7 @@ static bool IsUbuntu(enum LinuxDistro Distro) {
 }
 
 static LinuxDistro DetectLinuxDistro(llvm::Triple::ArchType Arch) {
-  llvm::OwningPtr<llvm::MemoryBuffer> File;
+  OwningPtr<llvm::MemoryBuffer> File;
   if (!llvm::MemoryBuffer::getFile("/etc/lsb-release", File)) {
     StringRef Data = File.get()->getBuffer();
     SmallVector<StringRef, 8> Lines;

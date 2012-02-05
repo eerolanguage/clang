@@ -17,6 +17,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
@@ -25,7 +26,7 @@ using namespace ento;
 namespace {
 class UndefCapturedBlockVarChecker
   : public Checker< check::PostStmt<BlockExpr> > {
- mutable llvm::OwningPtr<BugType> BT;
+ mutable OwningPtr<BugType> BT;
 
 public:
   void checkPostStmt(const BlockExpr *BE, CheckerContext &C) const;
@@ -83,7 +84,7 @@ UndefCapturedBlockVarChecker::checkPostStmt(const BlockExpr *BE,
           BT.reset(new BuiltinBug("uninitialized variable captured by block"));
 
         // Generate a bug report.
-        llvm::SmallString<128> buf;
+        SmallString<128> buf;
         llvm::raw_svector_ostream os(buf);
 
         os << "Variable '" << VD->getName() 

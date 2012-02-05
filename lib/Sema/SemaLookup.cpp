@@ -3668,7 +3668,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
     // Walk through identifiers in external identifier sources.
     if (IdentifierInfoLookup *External
                             = Context.Idents.getExternalIdentifierLookup()) {
-      llvm::OwningPtr<IdentifierIterator> Iter(External->getIdentifiers());
+      OwningPtr<IdentifierIterator> Iter(External->getIdentifiers());
       do {
         StringRef Name = Iter->Next();
         if (Name.empty())

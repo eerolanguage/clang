@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -verify %s -triple=i686-pc-linux-gnu
 
 #include <stddef.h>
 
@@ -61,13 +61,13 @@ struct abstract {
 
 void bad_news(int *ip)
 {
-  int i = 1;
+  int i = 1; // expected-note 2{{here}}
   (void)new; // expected-error {{expected a type}}
   (void)new 4; // expected-error {{expected a type}}
   (void)new () int; // expected-error {{expected expression}}
-  (void)new int[1.1]; // expected-error {{array size expression must have integral or enumerated type, not 'double'}}
-  (void)new int[1][i]; // expected-error {{only the first dimension}}
-  (void)new (int[1][i]); // expected-error {{only the first dimension}}
+  (void)new int[1.1]; // expected-error {{array size expression must have integral or enumeration type, not 'double'}}
+  (void)new int[1][i]; // expected-error {{only the first dimension}} expected-note {{read of non-const variable 'i' is not allowed in a constant expression}}
+  (void)new (int[1][i]); // expected-error {{only the first dimension}} expected-note {{read of non-const variable 'i' is not allowed in a constant expression}}
   (void)new (int[i]); // expected-warning {{when type is in parentheses}}
   (void)new int(*(S*)0); // expected-error {{no viable conversion from 'S' to 'int'}}
   (void)new int(1, 2); // expected-error {{excess elements in scalar initializer}}
@@ -77,7 +77,8 @@ void bad_news(int *ip)
   (void)new float*(ip); // expected-error {{cannot initialize a new value of type 'float *' with an lvalue of type 'int *'}}
   // Undefined, but clang should reject it directly.
   (void)new int[-1]; // expected-error {{array size is negative}}
-  (void)new int[*(S*)0]; // expected-error {{array size expression must have integral or enumerated type, not 'S'}}
+  (void)new int[2000000000]; // expected-error {{array is too large}}
+  (void)new int[*(S*)0]; // expected-error {{array size expression must have integral or enumeration type, not 'S'}}
   (void)::S::new int; // expected-error {{expected unqualified-id}}
   (void)new (0, 0) int; // expected-error {{no matching function for call to 'operator new'}}
   (void)new (0L) int; // expected-error {{call to 'operator new' is ambiguous}}

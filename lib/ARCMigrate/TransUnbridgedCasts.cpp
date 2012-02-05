@@ -38,6 +38,7 @@
 #include "clang/Sema/SemaDiagnostic.h"
 #include "clang/AST/ParentMap.h"
 #include "clang/Basic/SourceManager.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace arcmt;
@@ -48,7 +49,7 @@ namespace {
 class UnbridgedCastRewriter : public RecursiveASTVisitor<UnbridgedCastRewriter>{
   MigrationPass &Pass;
   IdentifierInfo *SelfII;
-  llvm::OwningPtr<ParentMap> StmtMap;
+  OwningPtr<ParentMap> StmtMap;
 
 public:
   UnbridgedCastRewriter(MigrationPass &pass) : Pass(pass) {
@@ -194,7 +195,7 @@ private:
       TA.insertAfterToken(CCE->getLParenLoc(), bridge);
     } else {
       SourceLocation insertLoc = E->getSubExpr()->getLocStart();
-      llvm::SmallString<128> newCast;
+      SmallString<128> newCast;
       newCast += '(';
       newCast += bridge;
       newCast += E->getType().getAsString(Pass.Ctx.getPrintingPolicy());

@@ -22,6 +22,7 @@
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/TypeLoc.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
@@ -2150,26 +2151,27 @@ void InitListChecker::UpdateStructuredListElement(InitListExpr *StructuredList,
 }
 
 /// Check that the given Index expression is a valid array designator
-/// value. This is essentailly just a wrapper around
+/// value. This is essentially just a wrapper around
 /// VerifyIntegerConstantExpression that also checks for negative values
 /// and produces a reasonable diagnostic if there is a
-/// failure. Returns true if there was an error, false otherwise.  If
-/// everything went okay, Value will receive the value of the constant
-/// expression.
-static bool
+/// failure. Returns the index expression, possibly with an implicit cast
+/// added, on success.  If everything went okay, Value will receive the
+/// value of the constant expression.
+static ExprResult
 CheckArrayDesignatorExpr(Sema &S, Expr *Index, llvm::APSInt &Value) {
   SourceLocation Loc = Index->getSourceRange().getBegin();
 
   // Make sure this is an integer constant expression.
-  if (S.VerifyIntegerConstantExpression(Index, &Value))
-    return true;
+  ExprResult Result = S.VerifyIntegerConstantExpression(Index, &Value);
+  if (Result.isInvalid())
+    return Result;
 
   if (Value.isSigned() && Value.isNegative())
     return S.Diag(Loc, diag::err_array_designator_negative)
       << Value.toString(10) << Index->getSourceRange();
 
   Value.setIsUnsigned(true);
-  return false;
+  return Result;
 }
 
 ExprResult Sema::ActOnDesignatedInitializer(Designation &Desig,
@@ -2194,9 +2196,9 @@ ExprResult Sema::ActOnDesignatedInitializer(Designation &Desig,
     case Designator::ArrayDesignator: {
       Expr *Index = static_cast<Expr *>(D.getArrayIndex());
       llvm::APSInt IndexValue;
-      if (!Index->isTypeDependent() &&
-          !Index->isValueDependent() &&
-          CheckArrayDesignatorExpr(*this, Index, IndexValue))
+      if (!Index->isTypeDependent() && !Index->isValueDependent())
+        Index = CheckArrayDesignatorExpr(*this, Index, IndexValue).take();
+      if (!Index)
         Invalid = true;
       else {
         Designators.push_back(ASTDesignator(InitExpressions.size(),
@@ -2216,10 +2218,13 @@ ExprResult Sema::ActOnDesignatedInitializer(Designation &Desig,
                             StartIndex->isValueDependent();
       bool EndDependent = EndIndex->isTypeDependent() ||
                           EndIndex->isValueDependent();
-      if ((!StartDependent &&
-           CheckArrayDesignatorExpr(*this, StartIndex, StartValue)) ||
-          (!EndDependent &&
-           CheckArrayDesignatorExpr(*this, EndIndex, EndValue)))
+      if (!StartDependent)
+        StartIndex =
+            CheckArrayDesignatorExpr(*this, StartIndex, StartValue).take();
+      if (!EndDependent)
+        EndIndex = CheckArrayDesignatorExpr(*this, EndIndex, EndValue).take();
+
+      if (!StartIndex || !EndIndex)
         Invalid = true;
       else {
         // Make sure we're comparing values with the same bit width.
@@ -2561,9 +2566,10 @@ InitializationSequence
                                    AccessSpecifier Access,
                                    QualType T,
                                    bool HadMultipleCandidates,
-                                   bool FromInitList) {
+                                   bool FromInitList, bool AsInitList) {
   Step S;
-  S.Kind = FromInitList ? SK_ListConstructorCall : SK_ConstructorInitialization;
+  S.Kind = FromInitList && !AsInitList ? SK_ListConstructorCall
+                                       : SK_ConstructorInitialization;
   S.Type = T;
   S.Function.HadMultipleCandidates = HadMultipleCandidates;
   S.Function.Function = Constructor;
@@ -2687,7 +2693,7 @@ static void MaybeProduceObjCObject(Sema &S,
 ///
 /// \return True if this was a special case, false otherwise.
 static bool TryListConstructionSpecialCases(Sema &S,
-                                            Expr **Args, unsigned NumArgs,
+                                            InitListExpr *List,
                                             CXXRecordDecl *DestRecordDecl,
                                             QualType DestType,
                                             InitializationSequence &Sequence) {
@@ -2695,7 +2701,7 @@ static bool TryListConstructionSpecialCases(Sema &S,
   //   List-initialization of an object of type T is defined as follows:
   //   - If the initializer list has no elements and T is a class type with
   //     a default constructor, the object is value-initialized.
-  if (NumArgs == 0) {
+  if (List->getNumInits() == 0) {
     if (CXXConstructorDecl *DefaultConstructor =
             S.LookupDefaultConstructor(DestRecordDecl)) {
       if (DefaultConstructor->isDeleted() ||
@@ -2708,11 +2714,11 @@ static bool TryListConstructionSpecialCases(Sema &S,
                 dyn_cast<FunctionTemplateDecl>(DefaultConstructor))
           S.AddTemplateOverloadCandidate(ConstructorTmpl, FoundDecl,
                                          /*ExplicitArgs*/ 0,
-                                         Args, NumArgs, CandidateSet,
+                                         0, 0, CandidateSet,
                                          /*SuppressUserConversions*/ false);
         else
           S.AddOverloadCandidate(DefaultConstructor, FoundDecl,
-                                 Args, NumArgs, CandidateSet,
+                                 0, 0, CandidateSet,
                                  /*SuppressUserConversions*/ false);
         Sequence.SetOverloadFailure(
                        InitializationSequence::FK_ListConstructorOverloadFailed,
@@ -2722,7 +2728,8 @@ static bool TryListConstructionSpecialCases(Sema &S,
                                                 DefaultConstructor->getAccess(),
                                                   DestType,
                                                   /*MultipleCandidates=*/false,
-                                                  /*FromInitList=*/true);
+                                                  /*FromInitList=*/true,
+                                                  /*AsInitList=*/false);
       return true;
     }
   }
@@ -2735,13 +2742,14 @@ static bool TryListConstructionSpecialCases(Sema &S,
     // later.
     InitializedEntity HiddenArray = InitializedEntity::InitializeTemporary(
         S.Context.getConstantArrayType(E,
-            llvm::APInt(S.Context.getTypeSize(S.Context.getSizeType()),NumArgs),
+            llvm::APInt(S.Context.getTypeSize(S.Context.getSizeType()),
+                        List->getNumInits()),
             ArrayType::Normal, 0));
     InitializedEntity Element = InitializedEntity::InitializeElement(S.Context,
         0, HiddenArray);
-    for (unsigned i = 0; i < NumArgs; ++i) {
+    for (unsigned i = 0, n = List->getNumInits(); i < n; ++i) {
       Element.setElementIndex(i);
-      if (!S.CanPerformCopyInitialization(Element, Args[i])) {
+      if (!S.CanPerformCopyInitialization(Element, List->getInit(i))) {
         Sequence.SetFailed(
             InitializationSequence::FK_InitListElementCopyFailure);
         return true;
@@ -2755,58 +2763,18 @@ static bool TryListConstructionSpecialCases(Sema &S,
   return false;
 }
 
-/// \brief Attempt initialization by constructor (C++ [dcl.init]), which
-/// enumerates the constructors of the initialized entity and performs overload
-/// resolution to select the best.
-/// If FromInitList is true, this is list-initialization of a non-aggregate
-/// class type.
-static void TryConstructorInitialization(Sema &S,
-                                         const InitializedEntity &Entity,
-                                         const InitializationKind &Kind,
-                                         Expr **Args, unsigned NumArgs,
-                                         QualType DestType,
-                                         InitializationSequence &Sequence,
-                                         bool FromInitList = false) {
-  // Check constructor arguments for self reference.
-  if (DeclaratorDecl *DD = Entity.getDecl())
-    // Parameters arguments are occassionially constructed with itself,
-    // for instance, in recursive functions.  Skip them.
-    if (!isa<ParmVarDecl>(DD))
-      for (unsigned i = 0; i < NumArgs; ++i)
-        S.CheckSelfReference(DD, Args[i]);
-
-  // Build the candidate set directly in the initialization sequence
-  // structure, so that it will persist if we fail.
-  OverloadCandidateSet &CandidateSet = Sequence.getFailedCandidateSet();
+static OverloadingResult
+ResolveConstructorOverload(Sema &S, SourceLocation DeclLoc,
+                           Expr **Args, unsigned NumArgs,
+                           OverloadCandidateSet &CandidateSet,
+                           DeclContext::lookup_iterator Con,
+                           DeclContext::lookup_iterator ConEnd,
+                           OverloadCandidateSet::iterator &Best,
+                           bool CopyInitializing, bool AllowExplicit,
+                           bool OnlyListConstructors) {
   CandidateSet.clear();
 
-  // Determine whether we are allowed to call explicit constructors or
-  // explicit conversion operators.
-  bool AllowExplicit = (Kind.getKind() == InitializationKind::IK_Direct ||
-                        Kind.getKind() == InitializationKind::IK_Value ||
-                        Kind.getKind() == InitializationKind::IK_Default);
-
-  // The type we're constructing needs to be complete.
-  if (S.RequireCompleteType(Kind.getLocation(), DestType, 0)) {
-    Sequence.SetFailed(InitializationSequence::FK_Incomplete);
-  }
-
-  const RecordType *DestRecordType = DestType->getAs<RecordType>();
-  assert(DestRecordType && "Constructor initialization requires record type");
-  CXXRecordDecl *DestRecordDecl
-    = cast<CXXRecordDecl>(DestRecordType->getDecl());
-
-  if (FromInitList &&
-      TryListConstructionSpecialCases(S, Args, NumArgs, DestRecordDecl,
-                                      DestType, Sequence))
-    return;
-
-  //   - Otherwise, if T is a class type, constructors are considered. The
-  //     applicable constructors are enumerated, and the best one is chosen
-  //     through overload resolution.
-  DeclContext::lookup_iterator Con, ConEnd;
-  for (llvm::tie(Con, ConEnd) = S.LookupConstructors(DestRecordDecl);
-       Con != ConEnd; ++Con) {
+  for (; Con != ConEnd; ++Con) {
     NamedDecl *D = *Con;
     DeclAccessPair FoundDecl = DeclAccessPair::make(D, D->getAccess());
     bool SuppressUserConversions = false;
@@ -2823,13 +2791,13 @@ static void TryConstructorInitialization(Sema &S,
       // If we're performing copy initialization using a copy constructor, we
       // suppress user-defined conversions on the arguments.
       // FIXME: Move constructors?
-      if (Kind.getKind() == InitializationKind::IK_Copy &&
-          Constructor->isCopyConstructor())
+      if (CopyInitializing && Constructor->isCopyConstructor())
         SuppressUserConversions = true;
     }
 
     if (!Constructor->isInvalidDecl() &&
-        (AllowExplicit || !Constructor->isExplicit())) {
+        (AllowExplicit || !Constructor->isExplicit()) &&
+        (!OnlyListConstructors || S.isInitListConstructor(Constructor))) {
       if (ConstructorTmpl)
         S.AddTemplateOverloadCandidate(ConstructorTmpl, FoundDecl,
                                        /*ExplicitArgs*/ 0,
@@ -2842,13 +2810,103 @@ static void TryConstructorInitialization(Sema &S,
     }
   }
 
-  SourceLocation DeclLoc = Kind.getLocation();
+  // Perform overload resolution and return the result.
+  return CandidateSet.BestViableFunction(S, DeclLoc, Best);
+}
 
-  // Perform overload resolution. If it fails, return the failed result.
+/// \brief Attempt initialization by constructor (C++ [dcl.init]), which
+/// enumerates the constructors of the initialized entity and performs overload
+/// resolution to select the best.
+/// If InitListSyntax is true, this is list-initialization of a non-aggregate
+/// class type.
+static void TryConstructorInitialization(Sema &S,
+                                         const InitializedEntity &Entity,
+                                         const InitializationKind &Kind,
+                                         Expr **Args, unsigned NumArgs,
+                                         QualType DestType,
+                                         InitializationSequence &Sequence,
+                                         bool InitListSyntax = false) {
+  assert((!InitListSyntax || (NumArgs == 1 && isa<InitListExpr>(Args[0]))) &&
+         "InitListSyntax must come with a single initializer list argument.");
+
+  // Check constructor arguments for self reference.
+  if (DeclaratorDecl *DD = Entity.getDecl())
+    // Parameters arguments are occassionially constructed with itself,
+    // for instance, in recursive functions.  Skip them.
+    if (!isa<ParmVarDecl>(DD))
+      for (unsigned i = 0; i < NumArgs; ++i)
+        S.CheckSelfReference(DD, Args[i]);
+
+  // The type we're constructing needs to be complete.
+  if (S.RequireCompleteType(Kind.getLocation(), DestType, 0)) {
+    Sequence.SetFailed(InitializationSequence::FK_Incomplete);
+    return;
+  }
+
+  const RecordType *DestRecordType = DestType->getAs<RecordType>();
+  assert(DestRecordType && "Constructor initialization requires record type");
+  CXXRecordDecl *DestRecordDecl
+    = cast<CXXRecordDecl>(DestRecordType->getDecl());
+
+  if (InitListSyntax &&
+      TryListConstructionSpecialCases(S, cast<InitListExpr>(Args[0]),
+                                      DestRecordDecl, DestType, Sequence))
+    return;
+
+  // Build the candidate set directly in the initialization sequence
+  // structure, so that it will persist if we fail.
+  OverloadCandidateSet &CandidateSet = Sequence.getFailedCandidateSet();
+
+  // Determine whether we are allowed to call explicit constructors or
+  // explicit conversion operators.
+  bool AllowExplicit = (Kind.getKind() == InitializationKind::IK_Direct ||
+                        Kind.getKind() == InitializationKind::IK_Value ||
+                        Kind.getKind() == InitializationKind::IK_Default);
+  bool CopyInitialization = Kind.getKind() == InitializationKind::IK_Copy;
+
+  //   - Otherwise, if T is a class type, constructors are considered. The
+  //     applicable constructors are enumerated, and the best one is chosen
+  //     through overload resolution.
+  DeclContext::lookup_iterator ConStart, ConEnd;
+  llvm::tie(ConStart, ConEnd) = S.LookupConstructors(DestRecordDecl);
+
+  OverloadingResult Result = OR_No_Viable_Function;
   OverloadCandidateSet::iterator Best;
-  if (OverloadingResult Result
-        = CandidateSet.BestViableFunction(S, DeclLoc, Best)) {
-    Sequence.SetOverloadFailure(FromInitList ?
+  bool AsInitializerList = false;
+
+  // C++11 [over.match.list]p1:
+  //   When objects of non-aggregate type T are list-initialized, overload
+  //   resolution selects the constructor in two phases:
+  //   - Initially, the candidate functions are the initializer-list
+  //     constructors of the class T and the argument list consists of the
+  //     initializer list as a single argument.
+  if (InitListSyntax) {
+    AsInitializerList = true;
+    Result = ResolveConstructorOverload(S, Kind.getLocation(), Args, NumArgs,
+                                        CandidateSet, ConStart, ConEnd, Best,
+                                        CopyInitialization, AllowExplicit,
+                                        /*OnlyListConstructor=*/true);
+
+    // Time to unwrap the init list.
+    InitListExpr *ILE = cast<InitListExpr>(Args[0]);
+    Args = ILE->getInits();
+    NumArgs = ILE->getNumInits();
+  }
+
+  // C++11 [over.match.list]p1:
+  //   - If no viable initializer-list constructor is found, overload resolution
+  //     is performed again, where the candidate functions are all the
+  //     constructors of the class T nad the argument list consists of the
+  //     elements of the initializer list.
+  if (Result == OR_No_Viable_Function) {
+    AsInitializerList = false;
+    Result = ResolveConstructorOverload(S, Kind.getLocation(), Args, NumArgs,
+                                        CandidateSet, ConStart, ConEnd, Best,
+                                        CopyInitialization, AllowExplicit,
+                                        /*OnlyListConstructors=*/false);
+  }
+  if (Result) {
+    Sequence.SetOverloadFailure(InitListSyntax ?
                       InitializationSequence::FK_ListConstructorOverloadFailed :
                       InitializationSequence::FK_ConstructorOverloadFailed,
                                 Result);
@@ -2873,7 +2931,7 @@ static void TryConstructorInitialization(Sema &S,
   Sequence.AddConstructorInitializationStep(CtorDecl,
                                             Best->FoundDecl.getAccess(),
                                             DestType, HadMultipleCandidates,
-                                            FromInitList);
+                                            InitListSyntax, AsInitializerList);
 }
 
 static bool
@@ -3004,11 +3062,11 @@ static void TryListInitialization(Sema &S,
     return;
   }
   if (DestType->isRecordType() && !DestType->isAggregateType()) {
-    if (S.getLangOptions().CPlusPlus0x)
-      TryConstructorInitialization(S, Entity, Kind, InitList->getInits(),
-                                   InitList->getNumInits(), DestType, Sequence,
-                                   /*FromInitList=*/true);
-    else
+    if (S.getLangOptions().CPlusPlus0x) {
+      Expr *Arg = InitList;
+      TryConstructorInitialization(S, Entity, Kind, &Arg, 1, DestType,
+                                   Sequence, /*InitListSyntax=*/true);
+    } else
       Sequence.SetFailed(InitializationSequence::FK_InitListBadDestinationType);
     return;
   }
@@ -5854,7 +5912,7 @@ static void DiagnoseNarrowingInInitList(Sema &S, InitializationSequence &Seq,
     break;
   }
 
-  llvm::SmallString<128> StaticCast;
+  SmallString<128> StaticCast;
   llvm::raw_svector_ostream OS(StaticCast);
   OS << "static_cast<";
   if (const TypedefType *TT = EntityType->getAs<TypedefType>()) {

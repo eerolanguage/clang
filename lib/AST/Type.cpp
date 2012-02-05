@@ -20,6 +20,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/TypeVisitor.h"
+#include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/Specifiers.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/StringExtras.h"
@@ -1884,7 +1885,7 @@ TemplateSpecializationType(TemplateName T,
          false,
          Canon.isNull()? T.containsUnexpandedParameterPack()
                        : Canon->containsUnexpandedParameterPack()),
-    Template(T), NumArgs(NumArgs) {
+    Template(T), NumArgs(NumArgs), TypeAlias(!AliasedType.isNull()) {
   assert(!T.getAsDependentTemplateName() && 
          "Use DependentTemplateSpecializationType for dependent template-name");
   assert((T.getKind() == TemplateName::Template ||
@@ -1923,10 +1924,7 @@ TemplateSpecializationType(TemplateName T,
   }
 
   // Store the aliased type if this is a type alias template specialization.
-  bool IsTypeAlias = !AliasedType.isNull();
-  assert(IsTypeAlias == isTypeAlias() &&
-         "allocated wrong size for type alias");
-  if (IsTypeAlias) {
+  if (TypeAlias) {
     TemplateArgument *Begin = reinterpret_cast<TemplateArgument *>(this + 1);
     *reinterpret_cast<QualType*>(Begin + getNumArgs()) = AliasedType;
   }
@@ -1941,11 +1939,6 @@ TemplateSpecializationType::Profile(llvm::FoldingSetNodeID &ID,
   T.Profile(ID);
   for (unsigned Idx = 0; Idx < NumArgs; ++Idx)
     Args[Idx].Profile(ID, Context);
-}
-
-bool TemplateSpecializationType::isTypeAlias() const {
-  TemplateDecl *D = Template.getAsTemplateDecl();
-  return D && isa<TypeAliasTemplateDecl>(D);
 }
 
 QualType
@@ -2316,4 +2309,18 @@ bool QualType::hasTrivialAssignment(ASTContext &Context, bool Copying) const {
                      Record->hasTrivialMoveAssignment();
   
   return true;
+}
+
+const DiagnosticBuilder &clang::operator<<(const DiagnosticBuilder &DB,
+                                           QualType T) {
+  DB.AddTaggedVal(reinterpret_cast<intptr_t>(T.getAsOpaquePtr()),
+                  DiagnosticsEngine::ak_qualtype);
+  return DB;
+}
+
+const PartialDiagnostic &clang::operator<<(const PartialDiagnostic &PD,
+                                           QualType T) {
+  PD.AddTaggedVal(reinterpret_cast<intptr_t>(T.getAsOpaquePtr()),
+                  DiagnosticsEngine::ak_qualtype);
+  return PD;
 }

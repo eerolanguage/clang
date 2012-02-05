@@ -20,13 +20,15 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/AST/CharUnits.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace clang;
 using namespace ento;
 
 namespace {
 class VLASizeChecker : public Checker< check::PreStmt<DeclStmt> > {
-  mutable llvm::OwningPtr<BugType> BT;
+  mutable OwningPtr<BugType> BT;
   enum VLASize_Kind { VLA_Garbage, VLA_Zero, VLA_Tainted };
 
   void reportBug(VLASize_Kind Kind,
@@ -50,7 +52,7 @@ void VLASizeChecker::reportBug(VLASize_Kind Kind,
   if (!BT)
     BT.reset(new BuiltinBug("Dangerous variable-length array (VLA) declaration"));
 
-  llvm::SmallString<256> buf;
+  SmallString<256> buf;
   llvm::raw_svector_ostream os(buf);
   os << "Declared variable-length array (VLA) ";
   switch (Kind) {

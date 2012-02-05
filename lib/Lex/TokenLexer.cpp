@@ -17,7 +17,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/LexDiagnostic.h"
-#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallString.h"
 using namespace clang;
 
 
@@ -450,7 +450,7 @@ void TokenLexer::Lex(Token &Tok) {
 /// are more ## after it, chomp them iteratively.  Return the result as Tok.
 /// If this returns true, the caller should immediately return the token.
 bool TokenLexer::PasteTokens(Token &Tok) {
-  llvm::SmallString<128> Buffer;
+  SmallString<128> Buffer;
   const char *ResultTokStrPtr = 0;
   SourceLocation StartLoc = Tok.getLocation();
   SourceLocation PasteOpLoc;
