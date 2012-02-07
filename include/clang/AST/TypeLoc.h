@@ -1218,6 +1218,7 @@ struct TemplateNameLocInfo {
 };
 
 struct TemplateSpecializationLocInfo : TemplateNameLocInfo {
+  SourceLocation TemplateKWLoc;
   SourceLocation LAngleLoc;
   SourceLocation RAngleLoc;
 };
@@ -1228,6 +1229,13 @@ class TemplateSpecializationTypeLoc :
                            TemplateSpecializationType,
                            TemplateSpecializationLocInfo> {
 public:
+  SourceLocation getTemplateKeywordLoc() const {
+    return getLocalData()->TemplateKWLoc;
+  }
+  void setTemplateKeywordLoc(SourceLocation Loc) {
+    getLocalData()->TemplateKWLoc = Loc;
+  }
+
   SourceLocation getLAngleLoc() const {
     return getLocalData()->LAngleLoc;
   }
@@ -1276,13 +1284,17 @@ public:
   }
 
   SourceRange getLocalSourceRange() const {
-    return SourceRange(getTemplateNameLoc(), getRAngleLoc());
+    if (getTemplateKeywordLoc().isValid())
+      return SourceRange(getTemplateKeywordLoc(), getRAngleLoc());
+    else
+      return SourceRange(getTemplateNameLoc(), getRAngleLoc());
   }
 
   void initializeLocal(ASTContext &Context, SourceLocation Loc) {
+    setTemplateKeywordLoc(Loc);
+    setTemplateNameLoc(Loc);
     setLAngleLoc(Loc);
     setRAngleLoc(Loc);
-    setTemplateNameLoc(Loc);
     initializeArgLocs(Context, getNumArgs(), getTypePtr()->getArgs(),
                       getArgInfos(), Loc);
   }
@@ -1480,10 +1492,8 @@ class AutoTypeLoc : public InheritingConcreteTypeLoc<TypeSpecTypeLoc,
 };
 
 struct ElaboratedLocInfo {
-  SourceLocation KeywordLoc;
-
-  /// \brief Opaque data pointer used to reconstruct a nested-name-specifier
-  /// from
+  SourceLocation ElaboratedKWLoc;
+  /// \brief Data associated with the nested-name-specifier location.
   void *QualifierData;
 };
 
@@ -1492,11 +1502,11 @@ class ElaboratedTypeLoc : public ConcreteTypeLoc<UnqualTypeLoc,
                                                  ElaboratedType,
                                                  ElaboratedLocInfo> {
 public:
-  SourceLocation getKeywordLoc() const {
-    return this->getLocalData()->KeywordLoc;
+  SourceLocation getElaboratedKeywordLoc() const {
+    return this->getLocalData()->ElaboratedKWLoc;
   }
-  void setKeywordLoc(SourceLocation Loc) {
-    this->getLocalData()->KeywordLoc = Loc;
+  void setElaboratedKeywordLoc(SourceLocation Loc) {
+    this->getLocalData()->ElaboratedKWLoc = Loc;
   }
 
   NestedNameSpecifierLoc getQualifierLoc() const {
@@ -1512,11 +1522,12 @@ public:
   }
 
   SourceRange getLocalSourceRange() const {
-    if (getKeywordLoc().isValid())
+    if (getElaboratedKeywordLoc().isValid())
       if (getQualifierLoc())
-        return SourceRange(getKeywordLoc(), getQualifierLoc().getEndLoc());
+        return SourceRange(getElaboratedKeywordLoc(),
+                           getQualifierLoc().getEndLoc());
       else
-        return SourceRange(getKeywordLoc());
+        return SourceRange(getElaboratedKeywordLoc());
     else
       return getQualifierLoc().getSourceRange();
   }
@@ -1542,9 +1553,6 @@ public:
 // type is some sort of TypeDeclTypeLoc.
 struct DependentNameLocInfo : ElaboratedLocInfo {
   SourceLocation NameLoc;
-
-  /// \brief Data associated with the nested-name-specifier location.
-  void *QualifierData;
 };
 
 class DependentNameTypeLoc : public ConcreteTypeLoc<UnqualTypeLoc,
@@ -1552,11 +1560,11 @@ class DependentNameTypeLoc : public ConcreteTypeLoc<UnqualTypeLoc,
                                                     DependentNameType,
                                                     DependentNameLocInfo> {
 public:
-  SourceLocation getKeywordLoc() const {
-    return this->getLocalData()->KeywordLoc;
+  SourceLocation getElaboratedKeywordLoc() const {
+    return this->getLocalData()->ElaboratedKWLoc;
   }
-  void setKeywordLoc(SourceLocation Loc) {
-    this->getLocalData()->KeywordLoc = Loc;
+  void setElaboratedKeywordLoc(SourceLocation Loc) {
+    this->getLocalData()->ElaboratedKWLoc = Loc;
   }
 
   NestedNameSpecifierLoc getQualifierLoc() const {
@@ -1579,8 +1587,8 @@ public:
   }
 
   SourceRange getLocalSourceRange() const {
-    if (getKeywordLoc().isValid())
-      return SourceRange(getKeywordLoc(), getNameLoc());
+    if (getElaboratedKeywordLoc().isValid())
+      return SourceRange(getElaboratedKeywordLoc(), getNameLoc());
     else
       return SourceRange(getQualifierLoc().getBeginLoc(), getNameLoc());
   }
@@ -1595,7 +1603,7 @@ public:
 };
 
 struct DependentTemplateSpecializationLocInfo : DependentNameLocInfo {
-  SourceLocation KeywordLoc;
+  SourceLocation TemplateKWLoc;
   SourceLocation LAngleLoc;
   SourceLocation RAngleLoc;
   // followed by a TemplateArgumentLocInfo[]
@@ -1607,11 +1615,11 @@ class DependentTemplateSpecializationTypeLoc :
                            DependentTemplateSpecializationType,
                            DependentTemplateSpecializationLocInfo> {
 public:
-  SourceLocation getKeywordLoc() const {
-    return this->getLocalData()->KeywordLoc;
+  SourceLocation getElaboratedKeywordLoc() const {
+    return this->getLocalData()->ElaboratedKWLoc;
   }
-  void setKeywordLoc(SourceLocation Loc) {
-    this->getLocalData()->KeywordLoc = Loc;
+  void setElaboratedKeywordLoc(SourceLocation Loc) {
+    this->getLocalData()->ElaboratedKWLoc = Loc;
   }
 
   NestedNameSpecifierLoc getQualifierLoc() const {
@@ -1638,10 +1646,17 @@ public:
     getLocalData()->QualifierData = QualifierLoc.getOpaqueData();
   }
 
-  SourceLocation getNameLoc() const {
+  SourceLocation getTemplateKeywordLoc() const {
+    return getLocalData()->TemplateKWLoc;
+  }
+  void setTemplateKeywordLoc(SourceLocation Loc) {
+    getLocalData()->TemplateKWLoc = Loc;
+  }
+
+  SourceLocation getTemplateNameLoc() const {
     return this->getLocalData()->NameLoc;
   }
-  void setNameLoc(SourceLocation Loc) {
+  void setTemplateNameLoc(SourceLocation Loc) {
     this->getLocalData()->NameLoc = Loc;
   }
 
@@ -1675,12 +1690,14 @@ public:
   }
 
   SourceRange getLocalSourceRange() const {
-    if (getKeywordLoc().isValid())
-      return SourceRange(getKeywordLoc(), getRAngleLoc());
+    if (getElaboratedKeywordLoc().isValid())
+      return SourceRange(getElaboratedKeywordLoc(), getRAngleLoc());
     else if (getQualifierLoc())
       return SourceRange(getQualifierLoc().getBeginLoc(), getRAngleLoc());
+    else if (getTemplateKeywordLoc().isValid())
+      return SourceRange(getTemplateKeywordLoc(), getRAngleLoc());
     else
-      return SourceRange(getNameLoc(), getRAngleLoc());
+      return SourceRange(getTemplateNameLoc(), getRAngleLoc());
   }
 
   void copy(DependentTemplateSpecializationTypeLoc Loc) {

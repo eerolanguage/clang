@@ -102,8 +102,10 @@ namespace CodeGen {
     /// void
     llvm::Type *VoidTy;
 
-    /// i8, i32, and i64
-    llvm::IntegerType *Int8Ty, *Int32Ty, *Int64Ty;
+    /// i8, i16, i32, and i64
+    llvm::IntegerType *Int8Ty, *Int16Ty, *Int32Ty, *Int64Ty;
+    /// float, double
+    llvm::Type *FloatTy, *DoubleTy;
 
     /// int
     llvm::IntegerType *IntTy;
@@ -568,11 +570,6 @@ public:
   /// requires no captures.
   llvm::Constant *GetAddrOfGlobalBlock(const BlockExpr *BE, const char *);
   
-  /// GetStringForStringLiteral - Return the appropriate bytes for a string
-  /// literal, properly padded to match the literal type. If only the address of
-  /// a constant is needed consider using GetAddrOfConstantStringLiteral.
-  std::string GetStringForStringLiteral(const StringLiteral *E);
-
   /// GetAddrOfConstantCFString - Return a pointer to a constant CFString object
   /// for the given string.
   llvm::Constant *GetAddrOfConstantCFString(const StringLiteral *Literal);

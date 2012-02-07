@@ -40,7 +40,7 @@ class ConstStructBuilder {
   bool Packed;
   CharUnits NextFieldOffsetInChars;
   CharUnits LLVMStructAlignment;
-  std::vector<llvm::Constant *> Elements;
+  SmallVector<llvm::Constant *, 32> Elements;
 public:
   static llvm::Constant *BuildStruct(CodeGenModule &CGM, CodeGenFunction *CGF,
                                      InitListExpr *ILE);
@@ -281,7 +281,7 @@ void ConstStructBuilder::AppendPadding(CharUnits PadSize) {
   if (PadSize.isZero())
     return;
 
-  llvm::Type *Ty = llvm::Type::getInt8Ty(CGM.getLLVMContext());
+  llvm::Type *Ty = CGM.Int8Ty;
   if (PadSize > CharUnits::One())
     Ty = llvm::ArrayType::get(Ty, PadSize.getQuantity());
 
@@ -301,7 +301,7 @@ void ConstStructBuilder::AppendTailPadding(CharUnits RecordSize) {
 }
 
 void ConstStructBuilder::ConvertStructToPacked() {
-  std::vector<llvm::Constant *> PackedElements;
+  SmallVector<llvm::Constant *, 16> PackedElements;
   CharUnits ElementOffsetInChars = CharUnits::Zero();
 
   for (unsigned i = 0, e = Elements.size(); i != e; ++i) {
@@ -317,7 +317,7 @@ void ConstStructBuilder::ConvertStructToPacked() {
       CharUnits NumChars =
         AlignedElementOffsetInChars - ElementOffsetInChars;
 
-      llvm::Type *Ty = llvm::Type::getInt8Ty(CGM.getLLVMContext());
+      llvm::Type *Ty = CGM.Int8Ty;
       if (NumChars > CharUnits::One())
         Ty = llvm::ArrayType::get(Ty, NumChars.getQuantity());
 
@@ -333,7 +333,7 @@ void ConstStructBuilder::ConvertStructToPacked() {
   assert(ElementOffsetInChars == NextFieldOffsetInChars &&
          "Packing the struct changed its size!");
 
-  Elements = PackedElements;
+  Elements.swap(PackedElements);
   LLVMStructAlignment = CharUnits::One();
   Packed = true;
 }
@@ -590,8 +590,8 @@ public:
 
       // Build a struct with the union sub-element as the first member,
       // and padded to the appropriate size
-      std::vector<llvm::Constant*> Elts;
-      std::vector<llvm::Type*> Types;
+      SmallVector<llvm::Constant*, 2> Elts;
+      SmallVector<llvm::Type*, 2> Types;
       Elts.push_back(C);
       Types.push_back(C->getType());
       unsigned CurSize = CGM.getTargetData().getTypeAllocSize(C->getType());
@@ -599,7 +599,7 @@ public:
 
       assert(CurSize <= TotalSize && "Union size mismatch!");
       if (unsigned NumPadBytes = TotalSize - CurSize) {
-        llvm::Type *Ty = llvm::Type::getInt8Ty(VMContext);
+        llvm::Type *Ty = CGM.Int8Ty;
         if (NumPadBytes > 1)
           Ty = llvm::ArrayType::get(Ty, NumPadBytes);
 
@@ -689,7 +689,6 @@ public:
          isa<ObjCEncodeExpr>(ILE->getInit(0))))
       return Visit(ILE->getInit(0));
 
-    std::vector<llvm::Constant*> Elts;
     llvm::ArrayType *AType =
         cast<llvm::ArrayType>(ConvertType(ILE->getType()));
     llvm::Type *ElemTy = AType->getElementType();
@@ -700,6 +699,8 @@ public:
     unsigned NumInitableElts = std::min(NumInitElements, NumElements);
 
     // Copy initializer elements.
+    std::vector<llvm::Constant*> Elts;
+    Elts.reserve(NumInitableElts + NumElements);
     unsigned i = 0;
     bool RewriteType = false;
     for (; i < NumInitableElts; ++i) {
@@ -727,7 +728,8 @@ public:
     if (RewriteType) {
       // FIXME: Try to avoid packing the array
       std::vector<llvm::Type*> Types;
-      for (unsigned i = 0; i < Elts.size(); ++i)
+      Types.reserve(NumInitableElts + NumElements);
+      for (unsigned i = 0, e = Elts.size(); i < e; ++i)
         Types.push_back(Elts[i]->getType());
       llvm::StructType *SType = llvm::StructType::get(AType->getContext(),
                                                             Types, true);
@@ -980,8 +982,7 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
   case APValue::LValue: {
     llvm::Type *DestTy = getTypes().ConvertTypeForMem(DestType);
     llvm::Constant *Offset =
-      llvm::ConstantInt::get(llvm::Type::getInt64Ty(VMContext),
-                             Value.getLValueOffset().getQuantity());
+      llvm::ConstantInt::get(Int64Ty, Value.getLValueOffset().getQuantity());
 
     llvm::Constant *C;
     if (APValue::LValueBase LVBase = Value.getLValueBase()) {
@@ -996,8 +997,7 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
 
       // Apply offset if necessary.
       if (!Offset->isNullValue()) {
-        llvm::Type *Type = llvm::Type::getInt8PtrTy(VMContext);
-        llvm::Constant *Casted = llvm::ConstantExpr::getBitCast(C, Type);
+        llvm::Constant *Casted = llvm::ConstantExpr::getBitCast(C, Int8PtrTy);
         Casted = llvm::ConstantExpr::getGetElementPtr(Casted, Offset);
         C = llvm::ConstantExpr::getBitCast(Casted, C->getType());
       }
@@ -1132,7 +1132,8 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
     if (!CommonElementType) {
       // FIXME: Try to avoid packing the array
       std::vector<llvm::Type*> Types;
-      for (unsigned i = 0; i < Elts.size(); ++i)
+      Types.reserve(NumElements);
+      for (unsigned i = 0, e = Elts.size(); i < e; ++i)
         Types.push_back(Elts[i]->getType());
       llvm::StructType *SType = llvm::StructType::get(VMContext, Types, true);
       return llvm::ConstantStruct::get(SType, Elts);
@@ -1172,7 +1173,7 @@ CodeGenModule::getMemberPointerConstant(const UnaryOperator *uo) {
 
 static void
 FillInNullDataMemberPointers(CodeGenModule &CGM, QualType T,
-                             std::vector<llvm::Constant *> &Elements,
+                             SmallVectorImpl<llvm::Constant *> &Elements,
                              uint64_t StartOffset) {
   assert(StartOffset % CGM.getContext().getCharWidth() == 0 && 
          "StartOffset not byte aligned!");
@@ -1239,8 +1240,7 @@ FillInNullDataMemberPointers(CodeGenModule &CGM, QualType T,
 
     // FIXME: hardcodes Itanium member pointer representation!
     llvm::Constant *NegativeOne =
-      llvm::ConstantInt::get(llvm::Type::getInt8Ty(CGM.getLLVMContext()),
-                             -1ULL, /*isSigned*/true);
+      llvm::ConstantInt::get(CGM.Int8Ty, -1ULL, /*isSigned*/true);
 
     // Fill in the null data member pointer.
     for (CharUnits I = StartIndex; I != EndIndex; ++I)
@@ -1353,14 +1353,13 @@ static llvm::Constant *EmitNullConstantForBase(CodeGenModule &CGM,
   unsigned numBaseElements = baseArrayType->getNumElements();
 
   // Fill in null data member pointers.
-  std::vector<llvm::Constant *> baseElements(numBaseElements);
+  SmallVector<llvm::Constant *, 16> baseElements(numBaseElements);
   FillInNullDataMemberPointers(CGM, CGM.getContext().getTypeDeclType(base),
                                baseElements, 0);
 
   // Now go through all other elements and zero them out.
   if (numBaseElements) {
-    llvm::Type *i8 = llvm::Type::getInt8Ty(CGM.getLLVMContext());
-    llvm::Constant *i8_zero = llvm::Constant::getNullValue(i8);
+    llvm::Constant *i8_zero = llvm::Constant::getNullValue(CGM.Int8Ty);
     for (unsigned i = 0; i != numBaseElements; ++i) {
       if (!baseElements[i])
         baseElements[i] = i8_zero;
@@ -1375,17 +1374,18 @@ llvm::Constant *CodeGenModule::EmitNullConstant(QualType T) {
     return llvm::Constant::getNullValue(getTypes().ConvertTypeForMem(T));
     
   if (const ConstantArrayType *CAT = Context.getAsConstantArrayType(T)) {
+    llvm::ArrayType *ATy =
+      cast<llvm::ArrayType>(getTypes().ConvertTypeForMem(T));
 
     QualType ElementTy = CAT->getElementType();
 
     llvm::Constant *Element = EmitNullConstant(ElementTy);
     unsigned NumElements = CAT->getSize().getZExtValue();
-    std::vector<llvm::Constant *> Array(NumElements);
-    for (unsigned i = 0; i != NumElements; ++i)
-      Array[i] = Element;
-
-    llvm::ArrayType *ATy =
-      cast<llvm::ArrayType>(getTypes().ConvertTypeForMem(T));
+    
+    if (Element->isNullValue())
+      return llvm::ConstantAggregateZero::get(ATy);
+    
+    SmallVector<llvm::Constant *, 8> Array(NumElements, Element);
     return llvm::ConstantArray::get(ATy, Array);
   }
 

@@ -288,7 +288,7 @@ ParsedType Sema::getTypeName(IdentifierInfo &II, SourceLocation NameLoc,
         
         T = getElaboratedType(ETK_None, *SS, T);
         ElaboratedTypeLoc ElabTL = Builder.push<ElaboratedTypeLoc>(T);
-        ElabTL.setKeywordLoc(SourceLocation());
+        ElabTL.setElaboratedKeywordLoc(SourceLocation());
         ElabTL.setQualifierLoc(SS->getWithLocInContext(Context));
         return CreateParsedType(T, Builder.getTypeSourceInfo(Context, T));
       } else {
@@ -9201,11 +9201,23 @@ void Sema::ActOnFields(Scope* S,
   if (EnclosingDecl->isInvalidDecl())
     return;
 
-  // Verify that all the fields are okay.
+  RecordDecl *Record = dyn_cast<RecordDecl>(EnclosingDecl);
+
+  // Start counting up the number of named members; make sure to include
+  // members of anonymous structs and unions in the total.
   unsigned NumNamedMembers = 0;
+  if (Record) {
+    for (RecordDecl::decl_iterator i = Record->decls_begin(),
+                                   e = Record->decls_end(); i != e; i++) {
+      if (IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(*i))
+        if (IFD->getDeclName())
+          ++NumNamedMembers;
+    }
+  }
+
+  // Verify that all the fields are okay.
   SmallVector<FieldDecl*, 32> RecFields;
 
-  RecordDecl *Record = dyn_cast<RecordDecl>(EnclosingDecl);
   bool ARCErrReported = false;
   for (llvm::ArrayRef<Decl *>::iterator i = Fields.begin(), end = Fields.end();
        i != end; ++i) {
@@ -9632,23 +9644,6 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
                                                          &EnumVal).take())) {
         // C99 6.7.2.2p2: Make sure we have an integer constant expression.
       } else {
-        if (!getLangOptions().CPlusPlus) {
-          // C99 6.7.2.2p2:
-          //   The expression that defines the value of an enumeration constant
-          //   shall be an integer constant expression that has a value
-          //   representable as an int.
-
-          // Complain if the value is not representable in an int.
-          if (!isRepresentableIntegerValue(Context, EnumVal, Context.IntTy))
-            Diag(IdLoc, diag::ext_enum_value_not_int)
-              << EnumVal.toString(10) << Val->getSourceRange()
-              << (EnumVal.isUnsigned() || EnumVal.isNonNegative());
-          else if (!Context.hasSameType(Val->getType(), Context.IntTy)) {
-            // Force the type of the expression to 'int'.
-            Val = ImpCastExprToType(Val, Context.IntTy, CK_IntegralCast).take();
-          }
-        }
-
         if (Enum->isFixed()) {
           EltTy = Enum->getIntegerType();
 
@@ -9664,12 +9659,28 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
               Diag(IdLoc, diag::err_enumerator_too_large) << EltTy;
           } else
             Val = ImpCastExprToType(Val, EltTy, CK_IntegralCast).take();
-        } else {
+        } else if (getLangOptions().CPlusPlus) {
           // C++11 [dcl.enum]p5:
           //   If the underlying type is not fixed, the type of each enumerator
           //   is the type of its initializing value:
           //     - If an initializer is specified for an enumerator, the 
           //       initializing value has the same type as the expression.
+          EltTy = Val->getType();
+        } else {
+          // C99 6.7.2.2p2:
+          //   The expression that defines the value of an enumeration constant
+          //   shall be an integer constant expression that has a value
+          //   representable as an int.
+
+          // Complain if the value is not representable in an int.
+          if (!isRepresentableIntegerValue(Context, EnumVal, Context.IntTy))
+            Diag(IdLoc, diag::ext_enum_value_not_int)
+              << EnumVal.toString(10) << Val->getSourceRange()
+              << (EnumVal.isUnsigned() || EnumVal.isNonNegative());
+          else if (!Context.hasSameType(Val->getType(), Context.IntTy)) {
+            // Force the type of the expression to 'int'.
+            Val = ImpCastExprToType(Val, Context.IntTy, CK_IntegralCast).take();
+          }
           EltTy = Val->getType();
         }
       }
@@ -9758,7 +9769,7 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
   if (!EltTy->isDependentType()) {
     // Make the enumerator value match the signedness and size of the 
     // enumerator's type.
-    EnumVal = EnumVal.zextOrTrunc(Context.getIntWidth(EltTy));
+    EnumVal = EnumVal.extOrTrunc(Context.getIntWidth(EltTy));
     EnumVal.setIsSigned(EltTy->isSignedIntegerOrEnumerationType());
   }
   

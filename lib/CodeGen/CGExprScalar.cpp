@@ -560,7 +560,7 @@ Value *ScalarExprEmitter::EmitScalarConversion(Value *Src, QualType SrcType,
   if (SrcType->isHalfType()) {
     Src = Builder.CreateCall(CGF.CGM.getIntrinsic(llvm::Intrinsic::convert_from_fp16), Src);
     SrcType = CGF.getContext().FloatTy;
-    SrcTy = llvm::Type::getFloatTy(VMContext);
+    SrcTy = CGF.FloatTy;
   }
 
   // Handle conversions to bool first, they are special: comparisons against 0.
@@ -628,7 +628,7 @@ Value *ScalarExprEmitter::EmitScalarConversion(Value *Src, QualType SrcType,
 
   // Cast to half via float
   if (DstType->isHalfType())
-    DstTy = llvm::Type::getFloatTy(VMContext);
+    DstTy = CGF.FloatTy;
 
   if (isa<llvm::IntegerType>(SrcTy)) {
     bool InputSigned = SrcType->isSignedIntegerOrEnumerationType();
@@ -1190,6 +1190,8 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
   case CK_VectorSplat: {
     llvm::Type *DstTy = ConvertType(DestTy);
     Value *Elt = Visit(const_cast<Expr*>(E));
+    Elt = EmitScalarConversion(Elt, E->getType(),
+                               DestTy->getAs<VectorType>()->getElementType());
 
     // Insert the element in element zero of an undef vector
     llvm::Value *UnV = llvm::UndefValue::get(DstTy);
@@ -1896,7 +1898,7 @@ Value *ScalarExprEmitter::EmitOverflowCheckedBinOp(const BinOpInfo &Ops) {
   Builder.SetInsertPoint(overflowBB);
 
   // Get the overflow handler.
-  llvm::Type *Int8Ty = llvm::Type::getInt8Ty(VMContext);
+  llvm::Type *Int8Ty = CGF.Int8Ty;
   llvm::Type *argTypes[] = { CGF.Int64Ty, CGF.Int64Ty, Int8Ty, Int8Ty };
   llvm::FunctionType *handlerTy =
       llvm::FunctionType::get(CGF.Int64Ty, argTypes, true);
@@ -2724,8 +2726,7 @@ Value *ScalarExprEmitter::VisitAsTypeExpr(AsTypeExpr *E) {
       Args.push_back(Builder.getInt32(2));
  
       if (numElementsDst == 4)
-        Args.push_back(llvm::UndefValue::get(
-                                             llvm::Type::getInt32Ty(CGF.getLLVMContext())));
+        Args.push_back(llvm::UndefValue::get(CGF.Int32Ty));
       
       llvm::Constant *Mask = llvm::ConstantVector::get(Args);
       
