@@ -21,9 +21,8 @@
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecordLayout.h"
-#include "clang/Basic/Diagnostic.h"
-#include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Basic/FileManager.h"
 #include "clang/Basic/Version.h"
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/Constants.h"
@@ -75,7 +74,7 @@ void CGDebugInfo::setLocation(SourceLocation Loc) {
     llvm::DILexicalBlockFile LBF = llvm::DILexicalBlockFile(LB);
     llvm::DIDescriptor D
       = DBuilder.createLexicalBlockFile(LBF.getScope(),
-					getOrCreateFile(CurLoc));
+                                        getOrCreateFile(CurLoc));
     llvm::MDNode *N = D;
     LexicalBlockStack.pop_back();
     LexicalBlockStack.push_back(N);
@@ -164,8 +163,8 @@ StringRef CGDebugInfo::getSelectorName(Selector S) {
 
 /// getClassName - Get class name including template argument list.
 StringRef 
-CGDebugInfo::getClassName(RecordDecl *RD) {
-  ClassTemplateSpecializationDecl *Spec
+CGDebugInfo::getClassName(const RecordDecl *RD) {
+  const ClassTemplateSpecializationDecl *Spec
     = dyn_cast<ClassTemplateSpecializationDecl>(RD);
   if (!Spec)
     return RD->getName();
@@ -483,27 +482,29 @@ llvm::DIType CGDebugInfo::CreateType(const PointerType *Ty,
 
 // Creates a forward declaration for a RecordDecl in the given context.
 llvm::DIType CGDebugInfo::createRecordFwdDecl(const RecordDecl *RD,
-					      llvm::DIDescriptor Ctx) {
+                                              llvm::DIDescriptor Ctx) {
 
   llvm::DIFile DefUnit = getOrCreateFile(RD->getLocation());
   unsigned Line = getLineNumber(RD->getLocation());
+  StringRef RDName = RD->getName();
+
+  // Get the tag.
   const CXXRecordDecl *CXXDecl = dyn_cast<CXXRecordDecl>(RD);
-  
-  if (CXXDecl)
-    return DBuilder.createClassType(Ctx, RD->getName(), DefUnit,
-				    Line, 0, 0, 0,
-				    llvm::DIType::FlagFwdDecl,
-				    llvm::DIType(), llvm::DIArray());
+  unsigned Tag = 0;
+  if (CXXDecl) {
+    RDName = getClassName(RD);
+    Tag = llvm::dwarf::DW_TAG_class_type;
+  }
   else if (RD->isStruct())
-    return DBuilder.createStructType(Ctx, RD->getName(), DefUnit,
-				     Line, 0, 0, llvm::DIType::FlagFwdDecl,
-				     llvm::DIArray());
+    Tag = llvm::dwarf::DW_TAG_structure_type;
   else if (RD->isUnion())
-    return DBuilder.createUnionType(Ctx, RD->getName(), DefUnit,
-				    Line, 0, 0, llvm::DIType::FlagFwdDecl,
-				    llvm::DIArray());
+    Tag = llvm::dwarf::DW_TAG_union_type;
   else
     llvm_unreachable("Unknown RecordDecl type!");
+
+  // Create the type.
+  return DBuilder.createForwardDecl(Tag, RDName, DefUnit,
+                                    Line);
 }
 
 // Walk up the context chain and create forward decls for record decls,
@@ -527,7 +528,7 @@ llvm::DIDescriptor CGDebugInfo::createContextChain(const Decl *Context) {
       llvm::DIDescriptor FDContext =
         createContextChain(cast<Decl>(RD->getDeclContext()));
       llvm::DIType Ty = createRecordFwdDecl(RD, FDContext);
-
+      TypeCache[QualType(RD->getTypeForDecl(),0).getAsOpaquePtr()] = Ty;
       RegionMap[Context] = llvm::WeakVH(Ty);
       return llvm::DIDescriptor(Ty);
     }
@@ -557,10 +558,10 @@ llvm::DIType CGDebugInfo::CreatePointeeType(QualType PointeeTy,
     RecordDecl *RD = RTy->getDecl();
     llvm::DIDescriptor FDContext =
       getContextDescriptor(cast<Decl>(RD->getDeclContext()));
-    return createRecordFwdDecl(RD, FDContext);
+    llvm::DIType DTy = createRecordFwdDecl(RD, FDContext);
+    TypeCache[PointeeTy.getAsOpaquePtr()] = DTy;
   }
   return getOrCreateType(PointeeTy, Unit);
-
 }
 
 llvm::DIType CGDebugInfo::CreatePointerLikeType(unsigned Tag,
@@ -1152,9 +1153,14 @@ llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty) {
 
   // If this is just a forward declaration, construct an appropriately
   // marked node and just return it.
-  if (!RD->getDefinition())
-    return createRecordFwdDecl(RD, RDContext);
+  if (!RD->getDefinition()) {
+    llvm::DIType FwdTy = createRecordFwdDecl(RD, RDContext);
+    TypeCache[QualType(Ty, 0).getAsOpaquePtr()] = FwdTy;
+    return FwdTy;
+  }
 
+  // Create a temporary type here - different than normal forward declared
+  // types.
   llvm::DIType FwdDecl = DBuilder.createTemporaryType(DefUnit);
 
   llvm::MDNode *MN = FwdDecl;
@@ -1307,8 +1313,18 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
     EltTys.push_back(InhTag);
   }
 
+  for (ObjCContainerDecl::prop_iterator I = ID->prop_begin(),
+         E = ID->prop_end(); I != E; ++I) {
+    const ObjCPropertyDecl *PD = *I;
+    llvm::MDNode *PropertyNode =
+      DBuilder.createObjCProperty(PD->getName(),
+                                  getSelectorName(PD->getGetterName()),
+                                  getSelectorName(PD->getSetterName()),
+                                  PD->getPropertyAttributes());
+    EltTys.push_back(PropertyNode);
+  }
+
   const ASTRecordLayout &RL = CGM.getContext().getASTObjCInterfaceLayout(ID);
-  ObjCImplementationDecl *ImpD = ID->getImplementation();
   unsigned FieldNo = 0;
   for (ObjCIvarDecl *Field = ID->all_declared_ivar_begin(); Field;
        Field = Field->getNextIvar(), ++FieldNo) {
@@ -1351,26 +1367,18 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
     else if (Field->getAccessControl() == ObjCIvarDecl::Private)
       Flags = llvm::DIDescriptor::FlagPrivate;
 
-    StringRef PropertyName;
-    StringRef PropertyGetter;
-    StringRef PropertySetter;
-    unsigned PropertyAttributes = 0;
-    ObjCPropertyDecl *PD = NULL;
     llvm::MDNode *PropertyNode = NULL;
-    if (ImpD)
+    if (ObjCImplementationDecl *ImpD = ID->getImplementation()) {
       if (ObjCPropertyImplDecl *PImpD = 
-          ImpD->FindPropertyImplIvarDecl(Field->getIdentifier()))
-        PD = PImpD->getPropertyDecl();
-    if (PD) {
-      PropertyName = PD->getName();
-      PropertyGetter = getSelectorName(PD->getGetterName());
-      PropertySetter = getSelectorName(PD->getSetterName());
-      PropertyAttributes = PD->getPropertyAttributes();
-      PropertyNode =
-	DBuilder.createObjCProperty(PropertyName, PropertyGetter, 
-                                    PropertySetter,
-                                    PropertyAttributes);
-      EltTys.push_back(PropertyNode);
+          ImpD->FindPropertyImplIvarDecl(Field->getIdentifier())) {
+        if (ObjCPropertyDecl *PD = PImpD->getPropertyDecl()) {
+          PropertyNode =
+            DBuilder.createObjCProperty(PD->getName(),
+                                        getSelectorName(PD->getGetterName()),
+                                        getSelectorName(PD->getSetterName()),
+                                        PD->getPropertyAttributes());
+        }
+      }
     }
     FieldTy = DBuilder.createObjCIVar(FieldName, FieldDefUnit,
                                       FieldLine, FieldSize, FieldAlign,
@@ -1623,7 +1631,7 @@ llvm::DIType CGDebugInfo::getTypeOrNull(QualType Ty) {
 
   // Unwrap the type as needed for debug information.
   Ty = UnwrapTypeForDebugInfo(Ty);
-  
+
   // Check for existing entry.
   llvm::DenseMap<void *, llvm::WeakVH>::iterator it =
     TypeCache.find(Ty.getAsOpaquePtr());
@@ -1655,14 +1663,14 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
   llvm::DIType Res = CreateTypeNode(Ty, Unit);
 
   // And update the type cache.
-  TypeCache[Ty.getAsOpaquePtr()] = Res;  
+  TypeCache[Ty.getAsOpaquePtr()] = Res;
   return Res;
 }
 
 /// getOrCreateLimitedType - Get the type from the cache or create a new
 /// limited type if necessary.
 llvm::DIType CGDebugInfo::getOrCreateLimitedType(QualType Ty,
-						 llvm::DIFile Unit) {
+                                                 llvm::DIFile Unit) {
   if (Ty.isNull())
     return llvm::DIType();
 
@@ -1979,11 +1987,11 @@ void CGDebugInfo::EmitLocation(CGBuilderTy &Builder, SourceLocation Loc) {
 void CGDebugInfo::CreateLexicalBlock(SourceLocation Loc) {
   llvm::DIDescriptor D =
     DBuilder.createLexicalBlock(LexicalBlockStack.empty() ?
-				llvm::DIDescriptor() :
-				llvm::DIDescriptor(LexicalBlockStack.back()),
-				getOrCreateFile(CurLoc),
-				getLineNumber(CurLoc),
-				getColumnNumber(CurLoc));
+                                llvm::DIDescriptor() :
+                                llvm::DIDescriptor(LexicalBlockStack.back()),
+                                getOrCreateFile(CurLoc),
+                                getLineNumber(CurLoc),
+                                getColumnNumber(CurLoc));
   llvm::MDNode *DN = D;
   LexicalBlockStack.push_back(DN);
 }
@@ -1999,8 +2007,8 @@ void CGDebugInfo::EmitLexicalBlockStart(CGBuilderTy &Builder, SourceLocation Loc
 
   // Emit a line table change for the current location inside the new scope.
   Builder.SetCurrentDebugLocation(llvm::DebugLoc::get(getLineNumber(Loc),
-  					      getColumnNumber(Loc),
-  					      LexicalBlockStack.back()));
+                                  getColumnNumber(Loc),
+                                  LexicalBlockStack.back()));
 }
 
 /// EmitLexicalBlockEnd - Constructs the debug code for exiting a declarative

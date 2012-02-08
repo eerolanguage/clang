@@ -646,6 +646,19 @@ bool IndexingContext::handleCXXRecordDecl(const CXXRecordDecl *RD,
     CXXDInfo.CXXClassInfo.bases = BaseList.getBases();
     CXXDInfo.CXXClassInfo.numBases = BaseList.getNumBases();
 
+    if (suppressRefs()) {
+      // Go through bases and mark them as referenced.
+      for (unsigned i = 0, e = BaseList.getNumBases(); i != e; ++i) {
+        const CXIdxBaseClassInfo *baseInfo = BaseList.getBases()[i];
+        if (baseInfo->base) {
+          const NamedDecl *BaseD = BaseList.BaseEntities[i].Dcl;
+          SourceLocation
+            Loc = SourceLocation::getFromRawEncoding(baseInfo->loc.int_data);
+          markEntityOccurrenceInFile(BaseD, Loc);
+        }
+      }
+    }
+
     return handleDecl(OrigD, OrigD->getLocation(), getCursor(OrigD), CXXDInfo);
   }
 
@@ -1012,7 +1025,7 @@ CXCursor IndexingContext::getRefCursor(const NamedDecl *D, SourceLocation Loc) {
   return clang_getNullCursor();
 }
 
-bool IndexingContext::shouldIgnoreIfImplicit(const NamedDecl *D) {
+bool IndexingContext::shouldIgnoreIfImplicit(const Decl *D) {
   if (isa<ObjCInterfaceDecl>(D))
     return false;
   if (isa<ObjCCategoryDecl>(D))

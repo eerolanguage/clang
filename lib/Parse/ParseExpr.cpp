@@ -1438,7 +1438,8 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       if (!LHS.isInvalid())
         LHS = Actions.ActOnMemberAccessExpr(getCurScope(), LHS.take(), OpLoc, 
                                             OpKind, SS, TemplateKWLoc, Name,
-                                            ObjCImpDecl, Tok.is(tok::l_paren));
+                                 CurParsedObjCImpl ? CurParsedObjCImpl->Dcl : 0,
+                                            Tok.is(tok::l_paren));
       break;
     }
     case tok::plusplus:    // postfix-expression: postfix-expression '++'

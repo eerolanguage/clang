@@ -559,6 +559,12 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   if ((*s == 'x' || *s == 'X') && (isxdigit(s[1]) || s[1] == '.' ||
                                    (Features.Eero && s[1] == '_'))) {
     s++;
+    if (!isxdigit(*s)) {
+      PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, s-ThisTokBegin), \
+        diag::err_hexconstant_requires_digits);
+      hadError = true;
+      return;
+    }
     radix = 16;
     DigitsBegin = s;
     if (Features.Eero) {                      // Eero accepts and ignores

@@ -13,14 +13,12 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclGroup.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/IntrusiveRefCntPtr.h"
 
 namespace clang {
   class FileEntry;
   class ObjCPropertyDecl;
   class ClassTemplateDecl;
   class FunctionTemplateDecl;
-  class Preprocessor;
   class TypeAliasTemplateDecl;
 
 namespace cxindex {
@@ -461,7 +459,7 @@ private:
 
   CXCursor getRefCursor(const NamedDecl *D, SourceLocation Loc);
 
-  static bool shouldIgnoreIfImplicit(const NamedDecl *D);
+  static bool shouldIgnoreIfImplicit(const Decl *D);
 };
 
 class ScratchAlloc {

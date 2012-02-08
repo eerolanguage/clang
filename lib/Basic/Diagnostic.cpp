@@ -119,7 +119,7 @@ void DiagnosticsEngine::Reset() {
 }
 
 void DiagnosticsEngine::SetDelayedDiagnostic(unsigned DiagID, StringRef Arg1,
-                                      StringRef Arg2) {
+                                             StringRef Arg2) {
   if (DelayedDiagID)
     return;
 
@@ -162,7 +162,7 @@ DiagnosticsEngine::GetDiagStatePointForLoc(SourceLocation L) const {
 /// \param The source location that this change of diagnostic state should
 /// take affect. It can be null if we are setting the latest state.
 void DiagnosticsEngine::setDiagnosticMapping(diag::kind Diag, diag::Mapping Map,
-                                      SourceLocation L) {
+                                             SourceLocation L) {
   assert(Diag < diag::DIAG_UPPER_LIMIT &&
          "Can only map builtin diagnostics");
   assert((Diags->isBuiltinWarningOrExtension(Diag) ||
@@ -243,6 +243,24 @@ bool DiagnosticsEngine::setDiagnosticGroupMapping(
   return false;
 }
 
+void DiagnosticsEngine::setDiagnosticWarningAsError(diag::kind Diag,
+                                                    bool Enabled) {
+  // If we are enabling this feature, just set the diagnostic mappings to map to
+  // errors.
+  if (Enabled) 
+    setDiagnosticMapping(Diag, diag::MAP_ERROR, SourceLocation());
+
+  // Otherwise, we want to set the diagnostic mapping's "no Werror" bit, and
+  // potentially downgrade anything already mapped to be a warning.
+  DiagnosticMappingInfo &Info = GetCurDiagState()->getOrAddMappingInfo(Diag);
+
+  if (Info.getMapping() == diag::MAP_ERROR ||
+      Info.getMapping() == diag::MAP_FATAL)
+    Info.setMapping(diag::MAP_WARNING);
+
+  Info.setNoWarningAsError(true);
+}
+
 bool DiagnosticsEngine::setDiagnosticGroupWarningAsError(StringRef Group,
                                                          bool Enabled) {
   // If we are enabling this feature, just set the diagnostic mappings to map to
@@ -271,6 +289,23 @@ bool DiagnosticsEngine::setDiagnosticGroupWarningAsError(StringRef Group,
   }
 
   return false;
+}
+
+void DiagnosticsEngine::setDiagnosticErrorAsFatal(diag::kind Diag,
+                                                  bool Enabled) {
+  // If we are enabling this feature, just set the diagnostic mappings to map to
+  // errors.
+  if (Enabled)
+    setDiagnosticMapping(Diag, diag::MAP_FATAL, SourceLocation());
+  
+  // Otherwise, we want to set the diagnostic mapping's "no Werror" bit, and
+  // potentially downgrade anything already mapped to be a warning.
+  DiagnosticMappingInfo &Info = GetCurDiagState()->getOrAddMappingInfo(Diag);
+  
+  if (Info.getMapping() == diag::MAP_FATAL)
+    Info.setMapping(diag::MAP_ERROR);
+  
+  Info.setNoErrorAsFatal(true);
 }
 
 bool DiagnosticsEngine::setDiagnosticGroupErrorAsFatal(StringRef Group,
@@ -842,14 +877,16 @@ bool DiagnosticConsumer::IncludeInDiagnosticCounts() const { return true; }
 
 void IgnoringDiagConsumer::anchor() { }
 
-PartialDiagnosticStorageAllocator::PartialDiagnosticStorageAllocator() {
+PartialDiagnostic::StorageAllocator::StorageAllocator() {
   for (unsigned I = 0; I != NumCached; ++I)
     FreeList[I] = Cached + I;
   NumFreeListEntries = NumCached;
 }
 
-PartialDiagnosticStorageAllocator::~PartialDiagnosticStorageAllocator() {
-  // Don't assert if we are in a CrashRecovery context, as this
-  // invariant may be invalidated during a crash.
-  assert((NumFreeListEntries == NumCached || llvm::CrashRecoveryContext::isRecoveringFromCrash()) && "A partial is on the lamb");
+PartialDiagnostic::StorageAllocator::~StorageAllocator() {
+  // Don't assert if we are in a CrashRecovery context, as this invariant may
+  // be invalidated during a crash.
+  assert((NumFreeListEntries == NumCached || 
+          llvm::CrashRecoveryContext::isRecoveringFromCrash()) && 
+         "A partial is on the lamb");
 }

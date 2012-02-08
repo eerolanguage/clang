@@ -18,6 +18,7 @@
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/OperatorKinds.h"
+#include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/VersionTuple.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/NestedNameSpecifier.h"
@@ -48,7 +49,6 @@ namespace clang {
   class ExternalASTSource;
   class ASTMutationListener;
   class IdentifierTable;
-  class PartialDiagnosticStorageAllocator;
   class SelectorTable;
   class SourceManager;
   class TargetInfo;
@@ -346,7 +346,7 @@ class ASTContext : public llvm::RefCountedBase<ASTContext> {
   mutable llvm::BumpPtrAllocator BumpAlloc;
 
   /// \brief Allocator for partial diagnostics.
-  PartialDiagnosticStorageAllocator *DiagAllocator;
+  PartialDiagnostic::StorageAllocator DiagAllocator;
 
   /// \brief The current C++ ABI.
   OwningPtr<CXXABI> ABI;
@@ -391,8 +391,8 @@ public:
   /// Return the total memory used for various side tables.
   size_t getSideTableAllocatedMemory() const;
   
-  PartialDiagnosticStorageAllocator &getDiagAllocator() {
-    return *DiagAllocator;
+  PartialDiagnostic::StorageAllocator &getDiagAllocator() {
+    return DiagAllocator;
   }
 
   const TargetInfo &getTargetInfo() const { return *Target; }
@@ -1132,6 +1132,11 @@ public:
   /// volatile, or restrict qualifiers.
   QualType getCVRQualifiedType(QualType T, unsigned CVR) const {
     return getQualifiedType(T, Qualifiers::fromCVRMask(CVR));
+  }
+
+  /// getQualifiedType - Un-split a SplitQualType.
+  QualType getQualifiedType(SplitQualType split) const {
+    return getQualifiedType(split.Ty, split.Quals);
   }
 
   /// getQualifiedType - Returns a type with additional qualifiers.

@@ -16,6 +16,7 @@
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/CanonicalType.h"
+#include "clang/Basic/PartialDiagnostic.h"
 
 namespace llvm {
   template <typename T> struct DenseMapInfo;
@@ -510,22 +511,32 @@ public:
   SourceLocation getEndLoc() const;
   /// getSourceRange - The range of the declaration name.
   SourceRange getSourceRange() const {
-    return SourceRange(getBeginLoc(), getEndLoc());
+    SourceLocation BeginLoc = getBeginLoc();
+    SourceLocation EndLoc = getEndLoc();
+    return SourceRange(BeginLoc, EndLoc.isValid() ? EndLoc : BeginLoc);
   }
 };
 
 /// Insertion operator for diagnostics.  This allows sending DeclarationName's
 /// into a diagnostic with <<.
-const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
-                                    DeclarationName N);
+inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
+                                           DeclarationName N) {
+  DB.AddTaggedVal(N.getAsOpaqueInteger(),
+                  DiagnosticsEngine::ak_declarationname);
+  return DB;
+}
 
 /// Insertion operator for partial diagnostics.  This allows binding
 /// DeclarationName's into a partial diagnostic with <<.
-const PartialDiagnostic &operator<<(const PartialDiagnostic &PD,
-                                    DeclarationName N);
+inline const PartialDiagnostic &operator<<(const PartialDiagnostic &PD,
+                                           DeclarationName N) {
+  PD.AddTaggedVal(N.getAsOpaqueInteger(),
+                  DiagnosticsEngine::ak_declarationname);
+  return PD;
+}
 
 inline raw_ostream &operator<<(raw_ostream &OS,
-                               DeclarationNameInfo DNInfo) {
+                                     DeclarationNameInfo DNInfo) {
   DNInfo.printName(OS);
   return OS;
 }

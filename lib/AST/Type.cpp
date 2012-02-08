@@ -20,7 +20,6 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/TypeVisitor.h"
-#include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/Specifiers.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/StringExtras.h"
@@ -198,27 +197,28 @@ const Type *Type::getArrayElementTypeNoTypeQual() const {
 /// concrete.
 QualType QualType::getDesugaredType(QualType T, const ASTContext &Context) {
   SplitQualType split = getSplitDesugaredType(T);
-  return Context.getQualifiedType(split.first, split.second);
+  return Context.getQualifiedType(split.Ty, split.Quals);
 }
 
-QualType QualType::getSingleStepDesugaredType(const ASTContext &Context) const {
-  QualifierCollector Qs;
-  
-  const Type *CurTy = Qs.strip(*this);
-  switch (CurTy->getTypeClass()) {
+QualType QualType::getSingleStepDesugaredTypeImpl(QualType type,
+                                                  const ASTContext &Context) {
+  SplitQualType split = type.split();
+  QualType desugar = split.Ty->getLocallyUnqualifiedSingleStepDesugaredType();
+  return Context.getQualifiedType(desugar, split.Quals);
+}
+
+QualType Type::getLocallyUnqualifiedSingleStepDesugaredType() const {
+  switch (getTypeClass()) {
 #define ABSTRACT_TYPE(Class, Parent)
 #define TYPE(Class, Parent) \
   case Type::Class: { \
-    const Class##Type *Ty = cast<Class##Type>(CurTy); \
-    if (!Ty->isSugared()) \
-      return *this; \
-    return Context.getQualifiedType(Ty->desugar(), Qs); \
-    break; \
+    const Class##Type *ty = cast<Class##Type>(this); \
+    if (!ty->isSugared()) return QualType(ty, 0); \
+    return ty->desugar(); \
   }
 #include "clang/AST/TypeNodes.def"
   }
-
-  return *this;
+  llvm_unreachable("bad type kind!");
 }
 
 SplitQualType QualType::getSplitDesugaredType(QualType T) {
@@ -246,21 +246,21 @@ SplitQualType QualType::getSplitUnqualifiedTypeImpl(QualType type) {
   SplitQualType split = type.split();
 
   // All the qualifiers we've seen so far.
-  Qualifiers quals = split.second;
+  Qualifiers quals = split.Quals;
 
   // The last type node we saw with any nodes inside it.
-  const Type *lastTypeWithQuals = split.first;
+  const Type *lastTypeWithQuals = split.Ty;
 
   while (true) {
     QualType next;
 
     // Do a single-step desugar, aborting the loop if the type isn't
     // sugared.
-    switch (split.first->getTypeClass()) {
+    switch (split.Ty->getTypeClass()) {
 #define ABSTRACT_TYPE(Class, Parent)
 #define TYPE(Class, Parent) \
     case Type::Class: { \
-      const Class##Type *ty = cast<Class##Type>(split.first); \
+      const Class##Type *ty = cast<Class##Type>(split.Ty); \
       if (!ty->isSugared()) goto done; \
       next = ty->desugar(); \
       break; \
@@ -271,9 +271,9 @@ SplitQualType QualType::getSplitUnqualifiedTypeImpl(QualType type) {
     // Otherwise, split the underlying type.  If that yields qualifiers,
     // update the information.
     split = next.split();
-    if (!split.second.empty()) {
-      lastTypeWithQuals = split.first;
-      quals.addConsistentQualifiers(split.second);
+    if (!split.Quals.empty()) {
+      lastTypeWithQuals = split.Ty;
+      quals.addConsistentQualifiers(split.Quals);
     }
   }
 
@@ -2309,24 +2309,4 @@ bool QualType::hasTrivialAssignment(ASTContext &Context, bool Copying) const {
                      Record->hasTrivialMoveAssignment();
   
   return true;
-}
-
-const DiagnosticBuilder &clang::operator<<(const DiagnosticBuilder &DB,
-                                           QualType T) {
-  DB.AddTaggedVal(reinterpret_cast<intptr_t>(T.getAsOpaquePtr()),
-                  DiagnosticsEngine::ak_qualtype);
-  return DB;
-}
-
-const PartialDiagnostic &clang::operator<<(const PartialDiagnostic &PD,
-                                           QualType T) {
-  PD.AddTaggedVal(reinterpret_cast<intptr_t>(T.getAsOpaquePtr()),
-                  DiagnosticsEngine::ak_qualtype);
-  return PD;
-}
-
-const DiagnosticBuilder &clang::operator<<(const DiagnosticBuilder &DB,
-                                           CanQualType T) {
-  DB << static_cast<QualType>(T);
-  return DB;
 }

@@ -433,7 +433,7 @@ std::string PredefinedExpr::ComputeName(IdentType IT, const Decl *CurrentDecl) {
 
     if (const ObjCCategoryImplDecl *CID =
         dyn_cast<ObjCCategoryImplDecl>(MD->getDeclContext()))
-      Out << '(' << CID << ')';
+      Out << '(' << *CID << ')';
 
     Out <<  ' ';
     Out << MD->getSelector().getAsString();
@@ -2017,6 +2017,16 @@ Expr::CanThrowResult Expr::CanThrow(ASTContext &C) const {
     if (CT == CT_Can)
       return CT;
     return MergeCanThrow(CT, CanSubExprsThrow(C, this));
+  }
+
+  case LambdaExprClass: {
+    const LambdaExpr *Lambda = cast<LambdaExpr>(this);
+    CanThrowResult CT = Expr::CT_Cannot;
+    for (LambdaExpr::capture_init_iterator Cap = Lambda->capture_init_begin(),
+                                        CapEnd = Lambda->capture_init_end();
+         Cap != CapEnd; ++Cap)
+      CT = MergeCanThrow(CT, (*Cap)->CanThrow(C));
+    return CT;
   }
 
   case CXXNewExprClass: {
