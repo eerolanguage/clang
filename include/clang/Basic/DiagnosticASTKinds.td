@@ -24,6 +24,7 @@ def note_constexpr_negative_shift : Note<"negative shift count %0">;
 def note_constexpr_large_shift : Note<
   "shift count %0 >= width of type %1 (%2 bit%s2)">;
 def note_constexpr_lshift_of_negative : Note<"left shift of negative value %0">;
+def note_constexpr_lshift_discards : Note<"signed left shift discards bits">;
 def note_constexpr_invalid_function : Note<
   "%select{non-constexpr|undefined}0 %select{function|constructor}1 %2 cannot "
   "be used in a constant expression">;
@@ -54,6 +55,9 @@ def note_constexpr_pointer_comparison_differing_access : Note<
   "specifiers (%1 vs %3) has unspecified value">;
 def note_constexpr_compare_virtual_mem_ptr : Note<
   "comparison of pointer to virtual member function %0 has unspecified value">;
+def note_constexpr_addr_of_incomplete : Note<
+  "cannot take address of object of incomplete class type %0 "
+  "in a constant expression">;
 def note_constexpr_past_end : Note<
   "dereferenced pointer past the end of %select{|subobject of }0"
   "%select{temporary|%2}1 is not a constant expression">;
@@ -81,6 +85,8 @@ def note_constexpr_ltor_volatile_type : Note<
 def note_constexpr_ltor_volatile_obj : Note<
   "read of volatile %select{temporary|object %1|member %1}0 is not allowed in "
   "a constant expression">;
+def note_constexpr_ltor_mutable : Note<
+  "read of mutable member %0 is not allowed in a constant expression">;
 def note_constexpr_ltor_non_const_int : Note<
   "read of non-const variable %0 is not allowed in a constant expression">;
 def note_constexpr_ltor_non_constexpr : Note<

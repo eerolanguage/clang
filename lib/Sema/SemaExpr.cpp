@@ -2094,6 +2094,15 @@ static bool shouldBuildBlockDeclRef(ValueDecl *D, Sema &S) {
   return S.getCurBlock() != 0;
 }
 
+/// \brief Determine whether the given lambda would capture the given
+/// variable by copy.
+static bool willCaptureByCopy(LambdaScopeInfo *LSI, VarDecl *Var) {
+  if (LSI->isCaptured(Var))
+    return LSI->getCapture(Var).isCopyCapture();
+
+  return LSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_LambdaByval;
+}
+
 static bool shouldAddConstQualToVarRef(ValueDecl *D, Sema &S) {
   VarDecl *var = dyn_cast<VarDecl>(D);
   if (!var)
@@ -2117,7 +2126,8 @@ static bool shouldAddConstQualToVarRef(ValueDecl *D, Sema &S) {
   // about decltype hints that it might apply in unevaluated contexts
   // as well... and there's precent in our blocks implementation.
   return !LSI->Mutable &&
-         S.ExprEvalContexts.back().Context != Sema::Unevaluated;
+         S.ExprEvalContexts.back().Context != Sema::Unevaluated &&
+         willCaptureByCopy(LSI, var);
 }
 
 static ExprResult BuildBlockDeclRefExpr(Sema &S, ValueDecl *VD,
@@ -9524,6 +9534,150 @@ static bool shouldAddConstForScope(CapturingScopeInfo *CSI, VarDecl *VD) {
   return false;
 }
 
+/// \brief Capture the given variable in the given lambda expression.
+static ExprResult captureInLambda(Sema &S, LambdaScopeInfo *LSI,
+                                  VarDecl *Var, QualType Type, 
+                                  SourceLocation Loc, bool ByRef) {
+  CXXRecordDecl *Lambda = LSI->Lambda;
+  QualType FieldType;
+  if (ByRef) {
+    // C++11 [expr.prim.lambda]p15:
+    //   An entity is captured by reference if it is implicitly or
+    //   explicitly captured but not captured by copy. It is
+    //   unspecified whether additional unnamed non-static data
+    //   members are declared in the closure type for entities
+    //   captured by reference.
+    FieldType = S.Context.getLValueReferenceType(Type.getNonReferenceType());
+  } else {
+    // C++11 [expr.prim.lambda]p14:
+    //   For each entity captured by copy, an unnamed non-static
+    //   data member is declared in the closure type. The
+    //   declaration order of these members is unspecified. The type
+    //   of such a data member is the type of the corresponding
+    //   captured entity if the entity is not a reference to an
+    //   object, or the referenced type otherwise. [Note: If the
+    //   captured entity is a reference to a function, the
+    //   corresponding data member is also a reference to a
+    //   function. - end note ]
+    if (const ReferenceType *RefType = Type->getAs<ReferenceType>()) {
+      if (!RefType->getPointeeType()->isFunctionType())
+        FieldType = RefType->getPointeeType();
+      else
+        FieldType = Type;
+    } else {
+      FieldType = Type;
+    }
+  }
+
+  // Build the non-static data member.
+  FieldDecl *Field
+    = FieldDecl::Create(S.Context, Lambda, Loc, Loc, 0, FieldType,
+                        S.Context.getTrivialTypeSourceInfo(FieldType, Loc),
+                        0, false, false);
+  Field->setImplicit(true);
+  Field->setAccess(AS_private);
+  Lambda->addDecl(Field);
+
+  // C++11 [expr.prim.lambda]p21:
+  //   When the lambda-expression is evaluated, the entities that
+  //   are captured by copy are used to direct-initialize each
+  //   corresponding non-static data member of the resulting closure
+  //   object. (For array members, the array elements are
+  //   direct-initialized in increasing subscript order.) These
+  //   initializations are performed in the (unspecified) order in
+  //   which the non-static data members are declared.
+  //
+  // FIXME: Introduce an initialization entity for lambda captures.
+      
+  // Introduce a new evaluation context for the initialization, so that
+  // temporaries introduced as part of the capture
+  S.PushExpressionEvaluationContext(Sema::PotentiallyEvaluated);
+
+  Expr *Ref = new (S.Context) DeclRefExpr(Var, Type.getNonReferenceType(),
+                                          VK_LValue, Loc);
+
+  // When the field has array type, create index variables for each
+  // dimension of the array. We use these index variables to subscript
+  // the source array, and other clients (e.g., CodeGen) will perform
+  // the necessary iteration with these index variables.
+  SmallVector<VarDecl *, 4> IndexVariables;
+  bool InitializingArray = false;
+  QualType BaseType = FieldType;
+  QualType SizeType = S.Context.getSizeType();
+  while (const ConstantArrayType *Array
+                        = S.Context.getAsConstantArrayType(BaseType)) {
+    InitializingArray = true;
+    
+    // Create the iteration variable for this array index.
+    IdentifierInfo *IterationVarName = 0;
+    {
+      SmallString<8> Str;
+      llvm::raw_svector_ostream OS(Str);
+      OS << "__i" << IndexVariables.size();
+      IterationVarName = &S.Context.Idents.get(OS.str());
+    }
+    VarDecl *IterationVar
+      = VarDecl::Create(S.Context, S.CurContext, Loc, Loc,
+                        IterationVarName, SizeType,
+                        S.Context.getTrivialTypeSourceInfo(SizeType, Loc),
+                        SC_None, SC_None);
+    IndexVariables.push_back(IterationVar);
+
+    // Create a reference to the iteration variable.
+    ExprResult IterationVarRef
+      = S.BuildDeclRefExpr(IterationVar, SizeType, VK_LValue, Loc);
+    assert(!IterationVarRef.isInvalid() &&
+           "Reference to invented variable cannot fail!");
+    IterationVarRef = S.DefaultLvalueConversion(IterationVarRef.take());
+    assert(!IterationVarRef.isInvalid() &&
+           "Conversion of invented variable cannot fail!");
+    
+    // Subscript the array with this iteration variable.
+    ExprResult Subscript = S.CreateBuiltinArraySubscriptExpr(
+                             Ref, Loc, IterationVarRef.take(), Loc);
+    if (Subscript.isInvalid()) {
+      S.CleanupVarDeclMarking();
+      S.DiscardCleanupsInEvaluationContext();
+      S.PopExpressionEvaluationContext();
+      return ExprError();
+    }
+
+    Ref = Subscript.take();
+    BaseType = Array->getElementType();
+  }
+
+  // Construct the entity that we will be initializing. For an array, this
+  // will be first element in the array, which may require several levels
+  // of array-subscript entities. 
+  SmallVector<InitializedEntity, 4> Entities;
+  Entities.reserve(1 + IndexVariables.size());
+  Entities.push_back(InitializedEntity::InitializeMember(Field));
+  for (unsigned I = 0, N = IndexVariables.size(); I != N; ++I)
+    Entities.push_back(InitializedEntity::InitializeElement(S.Context,
+                                                            0,
+                                                            Entities.back()));
+
+  InitializationKind InitKind
+    = InitializationKind::CreateDirect(Loc, Loc, Loc);
+  InitializationSequence Init(S, Entities.back(), InitKind, &Ref, 1);
+  ExprResult Result(true);
+  if (!Init.Diagnose(S, Entities.back(), InitKind, &Ref, 1))
+    Result = Init.Perform(S, Entities.back(), InitKind, 
+                          MultiExprArg(S, &Ref, 1));
+
+  // If this initialization requires any cleanups (e.g., due to a
+  // default argument to a copy constructor), note that for the
+  // lambda.
+  if (S.ExprNeedsCleanups)
+    LSI->ExprNeedsCleanups = true;
+
+  // Exit the expression evaluation context used for the capture.
+  S.CleanupVarDeclMarking();
+  S.DiscardCleanupsInEvaluationContext();
+  S.PopExpressionEvaluationContext();
+  return Result;
+}
+
 // Check if the variable needs to be captured; if so, try to perform
 // the capture.
 // FIXME: Add support for explicit captures.
@@ -9642,71 +9796,10 @@ void Sema::TryCaptureVar(VarDecl *var, SourceLocation loc,
     Expr *copyExpr = 0;
     const RecordType *rtype;
     if (isLambda) {
-      CXXRecordDecl *Lambda = cast<LambdaScopeInfo>(CSI)->Lambda;
-      QualType FieldType;
-      if (byRef) {
-        // C++11 [expr.prim.lambda]p15:
-        //   An entity is captured by reference if it is implicitly or
-        //   explicitly captured but not captured by copy. It is
-        //   unspecified whether additional unnamed non-static data
-        //   members are declared in the closure type for entities
-        //   captured by reference.
-        FieldType = Context.getLValueReferenceType(type.getNonReferenceType());
-      } else {
-        // C++11 [expr.prim.lambda]p14:
-        // 
-        //   For each entity captured by copy, an unnamed non-static
-        //   data member is declared in the closure type. The
-        //   declaration order of these members is unspecified. The type
-        //   of such a data member is the type of the corresponding
-        //   captured entity if the entity is not a reference to an
-        //   object, or the referenced type otherwise. [Note: If the
-        //   captured entity is a reference to a function, the
-        //   corresponding data member is also a reference to a
-        //   function. - end note ]
-        if (const ReferenceType *RefType
-                                      = type->getAs<ReferenceType>()) {
-          if (!RefType->getPointeeType()->isFunctionType())
-            FieldType = RefType->getPointeeType();
-          else
-            FieldType = type;
-        } else {
-          FieldType = type;
-        }
-      }
-
-      // Build the non-static data member.
-      FieldDecl *Field
-        = FieldDecl::Create(Context, Lambda, loc, loc, 0, FieldType,
-                            Context.getTrivialTypeSourceInfo(FieldType, loc),
-                            0, false, false);
-      Field->setImplicit(true);
-      Field->setAccess(AS_private);
-
-      // C++11 [expr.prim.lambda]p21:
-      //   When the lambda-expression is evaluated, the entities that
-      //   are captured by copy are used to direct-initialize each
-      //   corresponding non-static data member of the resulting closure
-      //   object. (For array members, the array elements are
-      //   direct-initialized in increasing subscript order.) These
-      //   initializations are performed in the (unspecified) order in
-      //   which the non-static data members are declared.
-      //
-      // FIXME: Introduce an initialization entity for lambda captures.
-      // FIXME: Totally broken for arrays.
-      Expr *Ref = new (Context) DeclRefExpr(var, type.getNonReferenceType(),
-                                            VK_LValue, loc);
-      InitializedEntity InitEntity
-        = InitializedEntity::InitializeMember(Field, /*Parent=*/0);
-      InitializationKind InitKind
-        = InitializationKind::CreateDirect(loc, loc, loc);
-      InitializationSequence Init(*this, InitEntity, InitKind, &Ref, 1);
-      if (!Init.Diagnose(*this, InitEntity, InitKind, &Ref, 1)) {
-        ExprResult Result = Init.Perform(*this, InitEntity, InitKind, 
-                                         MultiExprArg(*this, &Ref, 1));
-        if (!Result.isInvalid())
-          copyExpr = Result.take();
-      }
+      ExprResult Result = captureInLambda(*this, cast<LambdaScopeInfo>(CSI), 
+                                          var, type, loc, byRef);
+      if (!Result.isInvalid())
+        copyExpr = Result.take();
     } else if (!byRef && getLangOptions().CPlusPlus &&
         (rtype = type.getNonReferenceType()->getAs<RecordType>())) {
       // The capture logic needs the destructor, so make sure we mark it.
@@ -9722,8 +9815,6 @@ void Sema::TryCaptureVar(VarDecl *var, SourceLocation loc,
       // of the copy/move done to move a __block variable to the heap.
       type.addConst();
 
-      // FIXME: Add an initialized entity for lambda capture.
-      // FIXME: Won't work for arrays, although we do need this behavior.
       Expr *declRef = new (Context) DeclRefExpr(var, type, VK_LValue, loc);
       ExprResult result =
         PerformCopyInitialization(

@@ -5802,6 +5802,17 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
         Context.BuiltinInfo.ForgetBuiltin(BuiltinID, Context.Idents);
       }
     }
+  
+    // If this function is declared as being extern "C", then check to see if 
+    // the function returns a UDT (class, struct, or union type) that is not C
+    // compatible, and if it does, warn the user.
+    if (NewFD->isExternC()) {
+      QualType R = NewFD->getResultType();
+      if (!R.isPODType(Context) && 
+          !R->isVoidType())
+        Diag( NewFD->getLocation(), diag::warn_return_value_udt ) 
+          << NewFD << R;
+    }
   }
   return Redeclaration;
 }
@@ -7266,7 +7277,8 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
       computeNRVO(Body, getCurFunction());
     }
     
-    assert(FD == getCurFunctionDecl() && "Function parsing confused");
+    assert((FD == getCurFunctionDecl() || getCurLambda()->CallOperator == FD) &&
+           "Function parsing confused");
   } else if (ObjCMethodDecl *MD = dyn_cast_or_null<ObjCMethodDecl>(dcl)) {
     assert(MD == getCurMethodDecl() && "Method parsing confused");
     MD->setBody(Body);

@@ -1453,6 +1453,13 @@ static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
         O = &O->getArrayFiller();
       ObjType = CAT->getElementType();
     } else if (const FieldDecl *Field = getAsField(Sub.Entries[I])) {
+      if (Field->isMutable()) {
+        Info.Diag(E->getExprLoc(), diag::note_constexpr_ltor_mutable, 1)
+          << Field;
+        Info.Note(Field->getLocation(), diag::note_declared_at);
+        return false;
+      }
+
       // Next subobject is a class, struct or union field.
       RecordDecl *RD = ObjType->castAs<RecordType>()->getDecl();
       if (RD->isUnion()) {
@@ -2937,6 +2944,18 @@ bool PointerExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
 }
 
 bool PointerExprEvaluator::VisitUnaryAddrOf(const UnaryOperator *E) {
+  QualType SrcTy = E->getSubExpr()->getType();
+  // In C++, taking the address of an object of incomplete class type has
+  // undefined behavior if the complete class type has an overloaded operator&.
+  // DR1458 makes such expressions non-constant.
+  if (Info.getLangOpts().CPlusPlus &&
+      SrcTy->isRecordType() && SrcTy->isIncompleteType()) {
+    const RecordType *RT = SrcTy->getAs<RecordType>();
+    Info.CCEDiag(E->getExprLoc(), diag::note_constexpr_addr_of_incomplete, 1)
+      << SrcTy;
+    Info.Note(RT->getDecl()->getLocation(), diag::note_forward_declaration)
+      << RT->getDecl();
+  }
   return EvaluateLValue(E->getSubExpr(), Result, Info);
 }
 
@@ -4704,12 +4723,11 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
         << RHS << E->getType() << LHS.getBitWidth();
     } else if (LHS.isSigned()) {
       // C++11 [expr.shift]p2: A signed left shift must have a non-negative
-      // operand, and must not overflow.
+      // operand, and must not overflow the corresponding unsigned type.
       if (LHS.isNegative())
         CCEDiag(E, diag::note_constexpr_lshift_of_negative) << LHS;
-      else if (LHS.countLeadingZeros() <= SA)
-        HandleOverflow(Info, E, LHS.extend(LHS.getBitWidth() + SA) << SA,
-                       E->getType());
+      else if (LHS.countLeadingZeros() < SA)
+        CCEDiag(E, diag::note_constexpr_lshift_discards);
     }
 
     return Success(LHS << SA, E);
