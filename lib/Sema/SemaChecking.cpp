@@ -1369,6 +1369,13 @@ bool Sema::SemaCheckStringLiteral(const Expr *E, Expr **Args,
 
   E = E->IgnoreParenCasts();
 
+  if (E->isNullPointerConstant(Context, Expr::NPC_ValueDependentIsNotNull))
+    // Technically -Wformat-nonliteral does not warn about this case.
+    // The behavior of printf and friends in this case is implementation
+    // dependent.  Ideally if the format string cannot be null then
+    // it should have a 'nonnull' attribute in the function prototype.
+    return true;
+
   switch (E->getStmtClass()) {
   case Stmt::BinaryConditionalOperatorClass:
   case Stmt::ConditionalOperatorClass: {
@@ -1380,13 +1387,6 @@ bool Sema::SemaCheckStringLiteral(const Expr *E, Expr **Args,
                                  format_idx, firstDataArg, Type,
                                  inFunctionCall);
   }
-
-  case Stmt::IntegerLiteralClass:
-    // Technically -Wformat-nonliteral does not warn about this case.
-    // The behavior of printf and friends in this case is implementation
-    // dependent.  Ideally if the format string cannot be null then
-    // it should have a 'nonnull' attribute in the function prototype.
-    return true;
 
   case Stmt::ImplicitCastExprClass: {
     E = cast<ImplicitCastExpr>(E)->getSubExpr();
@@ -4185,7 +4185,7 @@ void AnalyzeImplicitConversions(Sema &S, Expr *OrigE, SourceLocation CC) {
   BinaryOperator *BO = dyn_cast<BinaryOperator>(E);
   bool IsLogicalOperator = BO && BO->isLogicalOp();
   for (Stmt::child_range I = E->children(); I; ++I) {
-    Expr *ChildExpr = dyn_cast<Expr>(*I);
+    Expr *ChildExpr = dyn_cast_or_null<Expr>(*I);
     if (!ChildExpr)
       continue;
 

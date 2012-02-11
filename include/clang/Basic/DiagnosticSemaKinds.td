@@ -3720,22 +3720,11 @@ def err_invalid_this_use : Error<
 def err_invalid_member_use_in_static_method : Error<
   "invalid use of member %0 in static member function">;
 def err_invalid_qualified_function_type : Error<
-  "type qualifier is not allowed on this function">;
-def err_invalid_ref_qualifier_function_type : Error<
-  "ref-qualifier '%select{&&|&}0' is only allowed on non-static member functions,"
-  " member function pointers, and typedefs of function types">;
-def ext_qualified_function_type_template_arg : ExtWarn<
-  "template argument of '%0' qualified function type is a GNU extension">, 
-  InGroup<GNU>;
-
-def err_invalid_qualified_function_pointer : Error<
-  "type qualifier is not allowed on this function %select{pointer|reference}0">;
-def err_invalid_qualified_typedef_function_type_use : Error<
-  "a qualified function type cannot be used to declare a "
-  "%select{static member|nonmember}0 function">;
-def err_invalid_ref_qualifier_typedef_function_type_use : Error<
-  "%select{static member|nonmember}0 function cannot have a ref-qualifier "
-  "'%select{&&|&}1'">;
+  "%select{static |non-}0member function %select{of type %2 |}1"
+  "cannot have '%3' qualifier">;
+def err_compound_qualified_function_type : Error<
+  "%select{block pointer|pointer|reference}0 to function type %select{%2 |}1"
+  "cannot have '%3' qualifier">;
 
 def err_ref_qualifier_overload : Error<
   "cannot overload a member function %select{without a ref-qualifier|with "
@@ -4099,13 +4088,12 @@ def err_throw_incomplete_ptr : Error<
 def err_return_in_constructor_handler : Error<
   "return in the catch of a function try block of a constructor is illegal">;
 
-def err_lambda_unsupported : Error<"lambda expressions are not supported yet">;
 def err_capture_more_than_once : Error<
   "%0 can appear only once in a capture list">;
 def err_reference_capture_with_reference_default : Error<
   "'&' cannot precede a capture when the capture default is '&'">;
 def err_this_capture_with_copy_default : Error<
-  "'this' cannot appear in a capture list when the capture default is '='">;
+  "'this' cannot be explicitly captured when the capture default is '='">;
 def err_copy_capture_with_copy_default : Error<
   "'&' must precede a capture when the capture default is '='">;
 def err_capture_does_not_name_variable : Error<
@@ -4125,7 +4113,16 @@ def err_lambda_impcap : Error<
   "variable %0 cannot be implicitly captured in a lambda with no "
   "capture-default specified">;
 def note_lambda_decl : Note<"lambda expression begins here">;
-
+def err_lambda_unevaluated_operand : Error<
+  "lambda expression in an unevaluated operand">;
+def ext_lambda_implies_void_return : ExtWarn<
+  "C++11 requires lambda with omitted result type to consist of a single "
+  "return statement">,
+  InGroup<DiagGroup<"lambda-return">>;
+def err_lambda_return_init_list : Error<
+  "cannot deduce lambda return type from initializer list">;
+def err_lambda_capture_default_arg : Error<
+  "lambda expression in default argument cannot capture any entity">;
 
 def err_operator_arrow_circular : Error<
   "circular pointer delegation detected">;

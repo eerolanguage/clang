@@ -102,6 +102,7 @@ namespace clang {
   class InitializedEntity;
   class IntegerLiteral;
   class LabelStmt;
+  class LambdaExpr;
   class LangOptions;
   class LocalInstantiationScope;
   class LookupResult;
@@ -560,6 +561,10 @@ public:
 
     llvm::SmallPtrSet<Expr*, 8> SavedMaybeODRUseExprs;
 
+    /// \brief The lambdas that are present within this context, if it
+    /// is indeed an unevaluated context.
+    llvm::SmallVector<LambdaExpr *, 2> Lambdas;
+
     ExpressionEvaluationContextRecord(ExpressionEvaluationContext Context,
                                       unsigned NumCleanupObjects,
                                       bool ParentNeedsCleanups)
@@ -770,8 +775,8 @@ public:
                               SourceLocation AttrLoc);
   QualType BuildFunctionType(QualType T,
                              QualType *ParamTypes, unsigned NumParamTypes,
-                             bool Variadic, unsigned Quals,
-                             RefQualifierKind RefQualifier,
+                             bool Variadic, bool HasTrailingReturn,
+                             unsigned Quals, RefQualifierKind RefQualifier,
                              SourceLocation Loc, DeclarationName Entity,
                              FunctionType::ExtInfo Info);
   QualType BuildMemberPointerType(QualType T, QualType Class,
@@ -1967,7 +1972,7 @@ public:
                                   ObjCContainerDecl* IDecl,
                                   bool &IncompleteImpl,
                                   bool ImmediateClass,
-                                  bool WarnExactMatch=false);
+                                  bool WarnCategoryMethodImpl=false);
 
   /// CheckCategoryVsClassMethodMatches - Checks that methods implemented in
   /// category matches with those implemented in its primary class and
@@ -2254,9 +2259,6 @@ public:
   bool CanUseDecl(NamedDecl *D);
   bool DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
                          const ObjCInterfaceDecl *UnknownObjCClass=0);
-  AvailabilityResult DiagnoseAvailabilityOfDecl(NamedDecl *D, 
-                              SourceLocation Loc,
-                              const ObjCInterfaceDecl *UnknownObjCClass);
   std::string getDeletedOrUnavailableSuffix(const FunctionDecl *FD);
   bool DiagnosePropertyAccessorMismatch(ObjCPropertyDecl *PD,
                                         ObjCMethodDecl *Getter,

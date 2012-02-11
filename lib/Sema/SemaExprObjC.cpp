@@ -1280,9 +1280,6 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
         Method = LookupFactoryMethodInGlobalPool(Sel, 
                                                  SourceRange(LBracLoc, RBracLoc),
                                                  receiverIsId);
-      if (Method)
-        DiagnoseAvailabilityOfDecl(Method, Loc, 0);
-      
     } else if (ReceiverType->isObjCClassType() ||
                ReceiverType->isObjCQualifiedClassType()) {
       // Handle messages to Class.

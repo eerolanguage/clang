@@ -18,6 +18,7 @@
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/AnalysisBasedWarnings.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTMutationListener.h"
 #include "clang/AST/CXXInheritance.h"
 #include "clang/AST/DeclObjC.h"
@@ -65,8 +66,7 @@ bool Sema::CanUseDecl(NamedDecl *D) {
   return true;
 }
 
-AvailabilityResult 
-Sema::DiagnoseAvailabilityOfDecl(
+static AvailabilityResult DiagnoseAvailabilityOfDecl(Sema &S,
                               NamedDecl *D, SourceLocation Loc,
                               const ObjCInterfaceDecl *UnknownObjCClass) {
   // See if this declaration is unavailable or deprecated.
@@ -85,22 +85,22 @@ Sema::DiagnoseAvailabilityOfDecl(
       break;
             
     case AR_Deprecated:
-      EmitDeprecationWarning(D, Message, Loc, UnknownObjCClass);
+      S.EmitDeprecationWarning(D, Message, Loc, UnknownObjCClass);
       break;
             
     case AR_Unavailable:
-      if (getCurContextAvailability() != AR_Unavailable) {
+      if (S.getCurContextAvailability() != AR_Unavailable) {
         if (Message.empty()) {
           if (!UnknownObjCClass)
-            Diag(Loc, diag::err_unavailable) << D->getDeclName();
+            S.Diag(Loc, diag::err_unavailable) << D->getDeclName();
           else
-            Diag(Loc, diag::warn_unavailable_fwdclass_message) 
+            S.Diag(Loc, diag::warn_unavailable_fwdclass_message) 
               << D->getDeclName();
         }
         else 
-          Diag(Loc, diag::err_unavailable_message) 
+          S.Diag(Loc, diag::err_unavailable_message) 
             << D->getDeclName() << Message;
-          Diag(D->getLocation(), diag::note_unavailable_here) 
+          S.Diag(D->getLocation(), diag::note_unavailable_here) 
           << isa<FunctionDecl>(D) << false;
       }
       break;
@@ -155,7 +155,7 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
       return true;
     }
   }
-  DiagnoseAvailabilityOfDecl(D, Loc, UnknownObjCClass);
+  DiagnoseAvailabilityOfDecl(*this, D, Loc, UnknownObjCClass);
 
   // Warn if this is used but marked unused.
   if (D->hasAttr<UnusedAttr>())
@@ -9282,6 +9282,12 @@ namespace {
       return BaseTransform::TransformUnaryOperator(E);
     }
 
+    /// \brief Transform the capture expressions in the lambda
+    /// expression.
+    ExprResult TransformLambdaExpr(LambdaExpr *E) {
+      // Lambdas never need to be transformed.
+      return E;
+    }
   };
 }
 
@@ -9307,6 +9313,29 @@ Sema::PushExpressionEvaluationContext(ExpressionEvaluationContext NewContext) {
 void Sema::PopExpressionEvaluationContext() {
   ExpressionEvaluationContextRecord& Rec = ExprEvalContexts.back();
 
+  if (!Rec.Lambdas.empty()) {
+    if (Rec.Context == Unevaluated) {
+      // C++11 [expr.prim.lambda]p2:
+      //   A lambda-expression shall not appear in an unevaluated operand
+      //   (Clause 5).
+      for (unsigned I = 0, N = Rec.Lambdas.size(); I != N; ++I)
+        Diag(Rec.Lambdas[I]->getLocStart(), 
+             diag::err_lambda_unevaluated_operand);
+    } else {
+      // Mark the capture expressions odr-used. This was deferred
+      // during lambda expression creation.
+      for (unsigned I = 0, N = Rec.Lambdas.size(); I != N; ++I) {
+        LambdaExpr *Lambda = Rec.Lambdas[I];
+        for (LambdaExpr::capture_init_iterator 
+                  C = Lambda->capture_init_begin(),
+               CEnd = Lambda->capture_init_end();
+             C != CEnd; ++C) {
+          MarkDeclarationsReferencedInExpr(*C);
+        }
+      }
+    }
+  }
+
   // When are coming out of an unevaluated context, clear out any
   // temporaries that we may have created as part of the evaluation of
   // the expression in that context: they aren't relevant because they
@@ -9317,7 +9346,6 @@ void Sema::PopExpressionEvaluationContext() {
     ExprNeedsCleanups = Rec.ParentNeedsCleanups;
     CleanupVarDeclMarking();
     std::swap(MaybeODRUseExprs, Rec.SavedMaybeODRUseExprs);
-
   // Otherwise, merge the contexts together.
   } else {
     ExprNeedsCleanups |= Rec.ParentNeedsCleanups;
@@ -9456,8 +9484,11 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
         // expression evaluator needing to call back into Sema if it sees a
         // call to such a function.
         InstantiateFunctionDefinition(Loc, Func);
-      else
+      else {
         PendingInstantiations.push_back(std::make_pair(Func, Loc));
+        // Notify the consumer that a function was implicitly instantiated.
+        Consumer.HandleCXXImplicitFunctionInstantiation(Func);
+      }
     }
   } else {
     // Walk redefinitions, as some of them may be instantiable.
@@ -9589,12 +9620,17 @@ static ExprResult captureInLambda(Sema &S, LambdaScopeInfo *LSI,
   //
   // FIXME: Introduce an initialization entity for lambda captures.
       
-  // Introduce a new evaluation context for the initialization, so that
-  // temporaries introduced as part of the capture
+  // Introduce a new evaluation context for the initialization, so
+  // that temporaries introduced as part of the capture are retained
+  // to be re-"exported" from the lambda expression itself.
   S.PushExpressionEvaluationContext(Sema::PotentiallyEvaluated);
 
+  // C++ [expr.prim.labda]p12:
+  //   An entity captured by a lambda-expression is odr-used (3.2) in
+  //   the scope containing the lambda-expression.
   Expr *Ref = new (S.Context) DeclRefExpr(Var, Type.getNonReferenceType(),
                                           VK_LValue, Loc);
+  Var->setUsed(true);
 
   // When the field has array type, create index variables for each
   // dimension of the array. We use these index variables to subscript
@@ -9968,7 +10004,7 @@ void Sema::MarkMemberReferenced(MemberExpr *E) {
   MarkExprReferenced(*this, E->getMemberLoc(), E->getMemberDecl(), E);
 }
 
-/// \brief Perform marking for a reference to an aribitrary declaration.  It
+/// \brief Perform marking for a reference to an arbitrary declaration.  It
 /// marks the declaration referenced, and performs odr-use checking for functions
 /// and variables. This method should not be used when building an normal
 /// expression which refers to a variable.

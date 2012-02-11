@@ -138,6 +138,40 @@ private:
   static bool SummarizeValue(raw_ostream &os, SVal V);
   static bool SummarizeRegion(raw_ostream &os, const MemRegion *MR);
   void ReportBadFree(CheckerContext &C, SVal ArgVal, SourceRange range) const;
+
+  /// The bug visitor which allows us to print extra diagnostics along the
+  /// BugReport path. For example, showing the allocation site of the leaked
+  /// region.
+  class MallocBugVisitor : public BugReporterVisitor {
+  protected:
+    // The allocated region symbol tracked by the main analysis.
+    SymbolRef Sym;
+
+  public:
+    MallocBugVisitor(SymbolRef S) : Sym(S) {}
+    virtual ~MallocBugVisitor() {}
+
+    void Profile(llvm::FoldingSetNodeID &ID) const {
+      static int X = 0;
+      ID.AddPointer(&X);
+      ID.AddPointer(Sym);
+    }
+
+    inline bool isAllocated(const RefState *S, const RefState *SPrev) {
+      // Did not track -> allocated. Other state (released) -> allocated.
+      return ((S && S->isAllocated()) && (!SPrev || !SPrev->isAllocated()));
+    }
+
+    inline bool isReleased(const RefState *S, const RefState *SPrev) {
+      // Did not track -> released. Other state (allocated) -> released.
+      return ((S && S->isReleased()) && (!SPrev || !SPrev->isReleased()));
+    }
+
+    PathDiagnosticPiece *VisitNode(const ExplodedNode *N,
+                                   const ExplodedNode *PrevN,
+                                   BugReporterContext &BRC,
+                                   BugReport &BR);
+  };
 };
 } // end anonymous namespace
 
@@ -221,7 +255,7 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
       if (A->getType().getTypePtr()->isAnyPointerType()) {
         SymbolRef Sym = State->getSVal(A, C.getLocationContext()).getAsSymbol();
         if (!Sym)
-          return;
+          continue;
         checkEscape(Sym, A, C);
         checkUseAfterFree(Sym, C, A);
       }
@@ -265,7 +299,11 @@ ProgramStateRef MallocChecker::MallocMemAux(CheckerContext &C,
   state = state->bindDefault(retVal, Init);
 
   // Set the region's extent equal to the Size parameter.
-  const SymbolicRegion *R = cast<SymbolicRegion>(retVal.getAsRegion());
+  const SymbolicRegion *R =
+      dyn_cast_or_null<SymbolicRegion>(retVal.getAsRegion());
+  if (!R || !isa<DefinedOrUnknownSVal>(Size))
+    return 0;
+
   DefinedOrUnknownSVal Extent = R->getExtent(svalBuilder);
   DefinedOrUnknownSVal DefinedSize = cast<DefinedOrUnknownSVal>(Size);
   DefinedOrUnknownSVal extentMatchesSize =
@@ -304,13 +342,14 @@ void MallocChecker::FreeMemAttr(CheckerContext &C, const CallExpr *CE,
 }
 
 ProgramStateRef MallocChecker::FreeMemAux(CheckerContext &C,
-                                              const CallExpr *CE,
-                                              ProgramStateRef state,
-                                              unsigned Num,
-                                              bool Hold) const {
+                                          const CallExpr *CE,
+                                          ProgramStateRef state,
+                                          unsigned Num,
+                                          bool Hold) const {
   const Expr *ArgExpr = CE->getArg(Num);
   SVal ArgVal = state->getSVal(ArgExpr, C.getLocationContext());
-
+  if (!isa<DefinedOrUnknownSVal>(ArgVal))
+    return 0;
   DefinedOrUnknownSVal location = cast<DefinedOrUnknownSVal>(ArgVal);
 
   // Check for null dereferences.
@@ -352,7 +391,6 @@ ProgramStateRef MallocChecker::FreeMemAux(CheckerContext &C,
   
   const MemSpaceRegion *MS = R->getMemorySpace();
   
-  // TODO: Pessimize this. should be behinds a flag!
   // Parameters, locals, statics, and globals shouldn't be freed.
   if (!(isa<UnknownSpaceRegion>(MS) || isa<HeapSpaceRegion>(MS))) {
     // FIXME: at the time this code was written, malloc() regions were
@@ -389,9 +427,9 @@ ProgramStateRef MallocChecker::FreeMemAux(CheckerContext &C,
         BT_DoubleFree.reset(
           new BuiltinBug("Double free",
                          "Try to free a memory block that has been released"));
-      // FIXME: should find where it's freed last time.
       BugReport *R = new BugReport(*BT_DoubleFree, 
                                    BT_DoubleFree->getDescription(), N);
+      R->addVisitor(new MallocBugVisitor(Sym));
       C.EmitReport(R);
     }
     return 0;
@@ -532,8 +570,10 @@ void MallocChecker::ReallocMem(CheckerContext &C, const CallExpr *CE) const {
   ProgramStateRef state = C.getState();
   const Expr *arg0Expr = CE->getArg(0);
   const LocationContext *LCtx = C.getLocationContext();
-  DefinedOrUnknownSVal arg0Val 
-    = cast<DefinedOrUnknownSVal>(state->getSVal(arg0Expr, LCtx));
+  SVal Arg0Val = state->getSVal(arg0Expr, LCtx);
+  if (!isa<DefinedOrUnknownSVal>(Arg0Val))
+    return;
+  DefinedOrUnknownSVal arg0Val = cast<DefinedOrUnknownSVal>(Arg0Val);
 
   SValBuilder &svalBuilder = C.getSValBuilder();
 
@@ -546,8 +586,10 @@ void MallocChecker::ReallocMem(CheckerContext &C, const CallExpr *CE) const {
     return;
 
   // Get the value of the size argument.
-  DefinedOrUnknownSVal Arg1Val = 
-    cast<DefinedOrUnknownSVal>(state->getSVal(Arg1, LCtx));
+  SVal Arg1ValG = state->getSVal(Arg1, LCtx);
+  if (!isa<DefinedOrUnknownSVal>(Arg1ValG))
+    return;
+  DefinedOrUnknownSVal Arg1Val = cast<DefinedOrUnknownSVal>(Arg1ValG);
 
   // Compare the size argument to 0.
   DefinedOrUnknownSVal SizeZero =
@@ -618,12 +660,13 @@ void MallocChecker::checkDeadSymbols(SymbolReaper &SymReaper,
   RegionStateTy::Factory &F = state->get_context<RegionState>();
 
   bool generateReport = false;
-  
+  llvm::SmallVector<SymbolRef, 2> Errors;
   for (RegionStateTy::iterator I = RS.begin(), E = RS.end(); I != E; ++I) {
     if (SymReaper.isDead(I->first)) {
-      if (I->second.isAllocated())
+      if (I->second.isAllocated()) {
         generateReport = true;
-
+        Errors.push_back(I->first);
+      }
       // Remove the dead symbol from the map.
       RS = F.remove(RS, I->first);
 
@@ -632,15 +675,16 @@ void MallocChecker::checkDeadSymbols(SymbolReaper &SymReaper,
   
   ExplodedNode *N = C.addTransition(state->set<RegionState>(RS));
 
-  // FIXME: This does not handle when we have multiple leaks at a single
-  // place.
   if (N && generateReport) {
     if (!BT_Leak)
       BT_Leak.reset(new BuiltinBug("Memory leak",
-              "Allocated memory never released. Potential memory leak."));
-    // FIXME: where it is allocated.
-    BugReport *R = new BugReport(*BT_Leak, BT_Leak->getDescription(), N);
-    C.EmitReport(R);
+          "Allocated memory never released. Potential memory leak."));
+    for (llvm::SmallVector<SymbolRef, 2>::iterator
+          I = Errors.begin(), E = Errors.end(); I != E; ++I) {
+      BugReport *R = new BugReport(*BT_Leak, BT_Leak->getDescription(), N);
+      R->addVisitor(new MallocBugVisitor(*I));
+      C.EmitReport(R);
+    }
   }
 }
 
@@ -657,6 +701,7 @@ void MallocChecker::checkEndPath(CheckerContext &Ctx) const {
           BT_Leak.reset(new BuiltinBug("Memory leak",
                     "Allocated memory never released. Potential memory leak."));
         BugReport *R = new BugReport(*BT_Leak, BT_Leak->getDescription(), N);
+        R->addVisitor(new MallocBugVisitor(I->first));
         Ctx.EmitReport(R);
       }
     }
@@ -713,12 +758,13 @@ bool MallocChecker::checkUseAfterFree(SymbolRef Sym, CheckerContext &C,
   if (RS && RS->isReleased()) {
     if (ExplodedNode *N = C.addTransition()) {
       if (!BT_UseFree)
-        BT_UseFree.reset(new BuiltinBug("Use dynamically allocated memory "
+        BT_UseFree.reset(new BuiltinBug("Use of dynamically allocated memory "
             "after it is freed."));
 
       BugReport *R = new BugReport(*BT_UseFree, BT_UseFree->getDescription(),N);
       if (S)
         R->addRange(S->getSourceRange());
+      R->addVisitor(new MallocBugVisitor(Sym));
       C.EmitReport(R);
       return true;
     }
@@ -742,6 +788,8 @@ void MallocChecker::checkBind(SVal location, SVal val,
   // structure does not transfer ownership.
 
   ProgramStateRef state = C.getState();
+  if (!isa<DefinedOrUnknownSVal>(location))
+    return;
   DefinedOrUnknownSVal l = cast<DefinedOrUnknownSVal>(location);
 
   // Check for null dereferences.
@@ -792,6 +840,43 @@ void MallocChecker::checkBind(SVal location, SVal val,
     }
   }
 }
+
+PathDiagnosticPiece *
+MallocChecker::MallocBugVisitor::VisitNode(const ExplodedNode *N,
+                                           const ExplodedNode *PrevN,
+                                           BugReporterContext &BRC,
+                                           BugReport &BR) {
+  const RefState *RS = N->getState()->get<RegionState>(Sym);
+  const RefState *RSPrev = PrevN->getState()->get<RegionState>(Sym);
+  if (!RS && !RSPrev)
+    return 0;
+
+  // We expect the interesting locations be StmtPoints corresponding to call
+  // expressions. We do not support indirect function calls as of now.
+  const CallExpr *CE = 0;
+  if (isa<StmtPoint>(N->getLocation()))
+    CE = dyn_cast<CallExpr>(cast<StmtPoint>(N->getLocation()).getStmt());
+  if (!CE)
+    return 0;
+  const FunctionDecl *funDecl = CE->getDirectCallee();
+  if (!funDecl)
+    return 0;
+
+  // Find out if this is an interesting point and what is the kind.
+  const char *Msg = 0;
+  if (isAllocated(RS, RSPrev))
+    Msg = "Memory is allocated here";
+  else if (isReleased(RS, RSPrev))
+    Msg = "Memory is released here";
+  if (!Msg)
+    return 0;
+
+  // Generate the extra diagnostic.
+  PathDiagnosticLocation Pos(CE, BRC.getSourceManager(),
+                             N->getLocationContext());
+  return new PathDiagnosticEventPiece(Pos, Msg);
+}
+
 
 #define REGISTER_CHECKER(name) \
 void ento::register##name(CheckerManager &mgr) {\

@@ -3132,122 +3132,51 @@ void RewriteModernObjC::RewriteObjCInternalStruct(ObjCInterfaceDecl *CDecl,
   if (ObjCSynthesizedStructs.count(CDecl))
     return;
   ObjCInterfaceDecl *RCDecl = CDecl->getSuperClass();
-  int NumIvars = CDecl->ivar_size();
+  SmallVector<ObjCIvarDecl *, 8> IVars;
+  for (ObjCIvarDecl *IVD = CDecl->all_declared_ivar_begin();
+       IVD; IVD = IVD->getNextIvar()) {
+    // Ignore unnamed bit-fields.
+    if (!IVD->getDeclName())
+      continue;
+    IVars.push_back(IVD);
+  }
   SourceLocation LocStart = CDecl->getLocStart();
   SourceLocation LocEnd = CDecl->getEndOfDefinitionLoc();
-
+  
   const char *startBuf = SM->getCharacterData(LocStart);
   const char *endBuf = SM->getCharacterData(LocEnd);
-
+  
   // If no ivars and no root or if its root, directly or indirectly,
   // have no ivars (thus not synthesized) then no need to synthesize this class.
-  if ((!CDecl->isThisDeclarationADefinition() || NumIvars == 0) &&
+  if ((!CDecl->isThisDeclarationADefinition() || IVars.size() == 0) &&
       (!RCDecl || !ObjCSynthesizedStructs.count(RCDecl))) {
     endBuf += Lexer::MeasureTokenLength(LocEnd, *SM, LangOpts);
     ReplaceText(LocStart, endBuf-startBuf, Result);
     return;
   }
-
-  // FIXME: This has potential of causing problem. If
-  // SynthesizeObjCInternalStruct is ever called recursively.
+  
   Result += "\nstruct ";
   Result += CDecl->getNameAsString();
-  if (LangOpts.MicrosoftExt)
-    Result += "_IMPL";
-
-  if (NumIvars > 0) {
-    const char *cursor = strchr(startBuf, '{');
-    assert((cursor && endBuf)
-           && "SynthesizeObjCInternalStruct - malformed @interface");
-    // If the buffer contains preprocessor directives, we do more fine-grained
-    // rewrites. This is intended to fix code that looks like (which occurs in
-    // NSURL.h, for example):
-    //
-    // #ifdef XYZ
-    // @interface Foo : NSObject
-    // #else
-    // @interface FooBar : NSObject
-    // #endif
-    // {
-    //    int i;
-    // }
-    // @end
-    //
-    // This clause is segregated to avoid breaking the common case.
-    if (BufferContainsPPDirectives(startBuf, cursor)) {
-      SourceLocation L = RCDecl ? CDecl->getSuperClassLoc() :
-                                  CDecl->getAtStartLoc();
-      const char *endHeader = SM->getCharacterData(L);
-      endHeader += Lexer::MeasureTokenLength(L, *SM, LangOpts);
-
-      if (CDecl->protocol_begin() != CDecl->protocol_end()) {
-        // advance to the end of the referenced protocols.
-        while (endHeader < cursor && *endHeader != '>') endHeader++;
-        endHeader++;
-      }
-      // rewrite the original header
-      ReplaceText(LocStart, endHeader-startBuf, Result);
-    } else {
-      // rewrite the original header *without* disturbing the '{'
-      ReplaceText(LocStart, cursor-startBuf, Result);
-    }
-    if (RCDecl && ObjCSynthesizedStructs.count(RCDecl)) {
-      Result = "\n    struct ";
-      Result += RCDecl->getNameAsString();
-      Result += "_IMPL ";
-      Result += RCDecl->getNameAsString();
-      Result += "_IVARS;\n";
-
-      // insert the super class structure definition.
-      SourceLocation OnePastCurly =
-        LocStart.getLocWithOffset(cursor-startBuf+1);
-      InsertText(OnePastCurly, Result);
-    }
-    cursor++; // past '{'
-
-    // Now comment out any visibility specifiers.
-    while (cursor < endBuf) {
-      if (*cursor == '@') {
-        SourceLocation atLoc = LocStart.getLocWithOffset(cursor-startBuf);
-        // Skip whitespace.
-        for (++cursor; cursor[0] == ' ' || cursor[0] == '\t'; ++cursor)
-          /*scan*/;
-
-        // FIXME: presence of @public, etc. inside comment results in
-        // this transformation as well, which is still correct c-code.
-        if (!strncmp(cursor, "public", strlen("public")) ||
-            !strncmp(cursor, "private", strlen("private")) ||
-            !strncmp(cursor, "package", strlen("package")) ||
-            !strncmp(cursor, "protected", strlen("protected")))
-          InsertText(atLoc, "// ");
-      }
-      // FIXME: If there are cases where '<' is used in ivar declaration part
-      // of user code, then scan the ivar list and use needToScanForQualifiers
-      // for type checking.
-      else if (*cursor == '<') {
-        SourceLocation atLoc = LocStart.getLocWithOffset(cursor-startBuf);
-        InsertText(atLoc, "/* ");
-        cursor = strchr(cursor, '>');
-        cursor++;
-        atLoc = LocStart.getLocWithOffset(cursor-startBuf);
-        InsertText(atLoc, " */");
-      } else if (*cursor == '^') { // rewrite block specifier.
-        SourceLocation caretLoc = LocStart.getLocWithOffset(cursor-startBuf);
-        ReplaceText(caretLoc, 1, "*");
-      }
-      cursor++;
-    }
-    // Don't forget to add a ';'!!
-    InsertText(LocEnd.getLocWithOffset(1), ";");
-  } else { // we don't have any instance variables - insert super struct.
-    endBuf += Lexer::MeasureTokenLength(LocEnd, *SM, LangOpts);
-    Result += " {\n    struct ";
-    Result += RCDecl->getNameAsString();
-    Result += "_IMPL ";
-    Result += RCDecl->getNameAsString();
-    Result += "_IVARS;\n};\n";
-    ReplaceText(LocStart, endBuf-startBuf, Result);
+  Result += "_IMPL {\n";
+  
+  if (RCDecl) {
+    Result += "\tstruct "; Result += RCDecl->getNameAsString();
+    Result += "_IMPL "; Result += RCDecl->getNameAsString();
+    Result += "_IVARS;\n";
   }
+  
+  for (unsigned i = 0, e = IVars.size(); i < e; i++) {
+    ObjCIvarDecl *IvarDecl = IVars[i];
+    QualType Type = IvarDecl->getType();
+    std::string TypeString(Type.getAsString(Context->getPrintingPolicy()));
+    Result += "\t";
+    Result += TypeString; Result += " "; Result += IvarDecl->getNameAsString();
+    Result += ";\n";
+  }
+  Result += "};\n";
+  endBuf += Lexer::MeasureTokenLength(LocEnd, *SM, LangOpts);
+  ReplaceText(LocStart, endBuf-startBuf, Result);
+
   // Mark this struct as having been generated.
   if (!ObjCSynthesizedStructs.insert(CDecl))
     llvm_unreachable("struct already synthesize- SynthesizeObjCInternalStruct");
@@ -5213,6 +5142,63 @@ void RewriteModernObjC::RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
 ///   const char ** extendedMethodTypes;
 /// }
 
+/// struct _ivar_t {
+///   unsigned long int *offset;  // pointer to ivar offset location
+///   const char *name;
+///   const char *type;
+///   uint32_t alignment;
+///   uint32_t size;
+/// }
+
+/// struct _ivar_list_t {
+///   uint32 entsize;  // sizeof(struct _ivar_t)
+///   uint32 count;
+///   struct _ivar_t list[count];
+/// }
+
+/// struct _class_ro_t {
+///   uint32_t const flags;
+///   uint32_t const instanceStart;
+///   uint32_t const instanceSize;
+///   uint32_t const reserved;  // only when building for 64bit targets
+///   const uint8_t * const ivarLayout;
+///   const char *const name;
+///   const struct _method_list_t * const baseMethods;
+///   const struct _objc_protocol_list *const baseProtocols;
+///   const struct _ivar_list_t *const ivars;
+///   const uint8_t * const weakIvarLayout;
+///   const struct _prop_list_t * const properties;
+/// }
+
+/// struct _class_t {
+///   struct _class_t *isa;
+///   struct _class_t * const superclass;
+///   void *cache;
+///   IMP *vtable;
+///   struct class_ro_t *ro;
+/// }
+
+/// struct _category_t {
+///   const char * const name;
+///   struct _class_t *const cls;
+///   const struct _method_list_t * const instance_methods;
+///   const struct _method_list_t * const class_methods;
+///   const struct _protocol_list_t * const protocols;
+///   const struct _prop_list_t * const properties;
+/// }
+
+/// MessageRefTy - LLVM for:
+/// struct _message_ref_t {
+///   IMP messenger;
+///   SEL name;
+/// };
+
+/// SuperMessageRefTy - LLVM for:
+/// struct _super_message_ref_t {
+///   SUPER_IMP messenger;
+///   SEL name;
+/// };
+
 static void WriteModernMetadataDeclarations(std::string &Result) {
   static bool meta_data_declared = false;
   if (meta_data_declared)
@@ -5245,6 +5231,45 @@ static void WriteModernMetadataDeclarations(std::string &Result) {
   Result += "\tconst char ** extendedMethodTypes;\n";
   Result += "};\n";
   
+  Result += "\nstruct _ivar_t {\n";
+  Result += "\tunsigned long int *offset;  // pointer to ivar offset location\n";
+  Result += "\tconst char *name;\n";
+  Result += "\tconst char *type;\n";
+  Result += "\tunsigned int alignment;\n";
+  Result += "\tunsigned int  size;\n";
+  Result += "};\n";
+  
+  Result += "\nstruct _class_ro_t {\n";
+  Result += "\tunsigned int const flags;\n";
+  Result += "\tunsigned int instanceStart;\n";
+  Result += "\tunsigned int const instanceSize;\n";
+  Result += "\tunsigned int const reserved;  // only when building for 64bit targets\n";
+  Result += "\tconst unsigned char * const ivarLayout;\n";
+  Result += "\tconst char *const name;\n";
+  Result += "\tconst struct _method_list_t * const baseMethods;\n";
+  Result += "\tconst struct _objc_protocol_list *const baseProtocols;\n";
+  Result += "\tconst struct _ivar_list_t *const ivars;\n";
+  Result += "\tconst unsigned char *const weakIvarLayout;\n";
+  Result += "\tconst struct _prop_list_t *const properties;\n";
+  Result += "};\n";
+  
+  Result += "\nstruct _class_t {\n";
+  Result += "\tstruct _class_t *isa;\n";
+  Result += "\tstruct _class_t *const superclass;\n";
+  Result += "\tvoid *cache;\n";
+  Result += "\tvoid *vtable;\n";
+  Result += "\tstruct class_ro_t *ro;\n";
+  Result += "};\n";
+  
+  Result += "\nstruct _category_t {\n";
+  Result += "\tconst char * const name;\n";
+  Result += "\tstruct _class_t *const cls;\n";
+  Result += "\tconst struct _method_list_t *const instance_methods;\n";
+  Result += "\tconst struct _method_list_t *const class_methods;\n";
+  Result += "\tconst struct _protocol_list_t *const protocols;\n";
+  Result += "\tconst struct _prop_list_t *const properties;\n";
+  Result += "};\n";
+  
   meta_data_declared = true;
 }
 
@@ -5274,6 +5299,16 @@ static void Write__prop_list_t_TypeDecl(std::string &Result,
   Result += "\tunsigned int count_of_properties;\n";
   Result += "\tstruct _prop_t prop_list[";
   Result += utostr(property_count); Result += "];\n";
+  Result += "}";
+}
+
+static void Write__ivar_list_t_TypeDecl(std::string &Result,
+                                        unsigned int ivar_count) {
+  Result += "struct /*_ivar_list_t*/"; Result += " {\n";
+  Result += "\tunsigned int entsize;  // sizeof(struct _prop_t)\n";
+  Result += "\tunsigned int count;\n";
+  Result += "\tstruct _ivar_t ivar_list[";
+  Result += utostr(ivar_count); Result += "];\n";
   Result += "}";
 }
 
@@ -5391,6 +5426,49 @@ static void Write__extendedMethodTypes_initializer(RewriteModernObjC &RewriteObj
     else {
       Result += ",\n";
     }
+  }
+}
+
+static void Write__ivar_list_t_initializer(RewriteModernObjC &RewriteObj,
+                                           ASTContext *Context, std::string &Result,
+                                           ArrayRef<ObjCIvarDecl *> Ivars,
+                                           StringRef VarName,
+                                           StringRef ClassName) {
+  if (Ivars.size() > 0) {
+    Result += "\nstatic ";
+    Write__ivar_list_t_TypeDecl(Result, Ivars.size());
+    Result += " "; Result += VarName;
+    Result += ClassName;
+    Result += " __attribute__ ((used, section (\"__DATA,__objc_const\"))) = {\n";
+    Result += "\t"; Result += "sizeof(_ivar_t)"; Result += ",\n";
+    Result += "\t"; Result += utostr(Ivars.size()); Result += ",\n";
+    for (unsigned i =0, e = Ivars.size(); i < e; i++) {
+      ObjCIvarDecl *IvarDecl = Ivars[i];
+      if (i == 0)
+        Result += "\t{{";
+      else
+        Result += "\t {";
+      // FIXME: // pointer to ivar offset location
+      Result += "(unsigned long int *)0, ";
+      
+      Result += "\""; Result += IvarDecl->getName(); Result += "\", ";
+      std::string IvarTypeString, QuoteIvarTypeString;
+      Context->getObjCEncodingForType(IvarDecl->getType(), IvarTypeString,
+                                      IvarDecl);
+      RewriteObj.QuoteDoublequotes(IvarTypeString, QuoteIvarTypeString);
+      Result += "\""; Result += QuoteIvarTypeString; Result += "\", ";
+      
+      // FIXME: what should the alignment be?
+      unsigned Align = 0;  
+      Result += llvm::utostr(Align); Result += ", ";
+      CharUnits Size = Context->getTypeSizeInChars(IvarDecl->getType());
+      Result += llvm::utostr(Size.getQuantity());
+      if (i  == e-1)
+        Result += "}}\n";
+      else
+        Result += "},\n";
+    }
+    Result += "};\n";
   }
 }
 
@@ -5597,33 +5675,29 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
   ObjCInterfaceDecl *CDecl = IDecl->getClassInterface();
   
   // Explicitly declared @interface's are already synthesized.
-  if (CDecl->isImplicitInterfaceDecl()) {
-    // FIXME: Implementation of a class with no @interface (legacy) does not
-    // produce correct synthesis as yet.
-    RewriteObjCInternalStruct(CDecl, Result);
+  if (CDecl->isImplicitInterfaceDecl())
+    assert(false && 
+           "Legacy implicit interface rewriting not supported in moder abi");
+  WriteModernMetadataDeclarations(Result);
+  SmallVector<ObjCIvarDecl *, 8> IVars;
+  
+  for (ObjCIvarDecl *IVD = CDecl->all_declared_ivar_begin();
+      IVD; IVD = IVD->getNextIvar()) {
+    // Ignore unnamed bit-fields.
+    if (!IVD->getDeclName())
+      continue;
+    IVars.push_back(IVD);
   }
   
+  Write__ivar_list_t_initializer(*this, Context, Result, IVars, 
+                                 "_OBJC_INSTANCE_VARIABLES_",
+                                 CDecl->getNameAsString());
+  
+  // FIXME. Handle modern abi's private ivars declared in @implementation.
   // Build _objc_ivar_list metadata for classes ivars if needed
-  unsigned NumIvars = !IDecl->ivar_empty()
-  ? IDecl->ivar_size()
-  : (CDecl ? CDecl->ivar_size() : 0);
+  unsigned NumIvars = CDecl->ivar_size();
+  
   if (NumIvars > 0) {
-    static bool objc_ivar = false;
-    if (!objc_ivar) {
-      /* struct _objc_ivar {
-       char *ivar_name;
-       char *ivar_type;
-       int ivar_offset;
-       };
-       */
-      Result += "\nstruct _objc_ivar {\n";
-      Result += "\tchar *ivar_name;\n";
-      Result += "\tchar *ivar_type;\n";
-      Result += "\tint ivar_offset;\n";
-      Result += "};\n";
-      
-      objc_ivar = true;
-    }
     
     /* struct {
      int ivar_count;

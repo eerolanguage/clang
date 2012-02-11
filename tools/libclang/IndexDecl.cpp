@@ -213,10 +213,42 @@ public:
     return true;
   }
 
+  bool VisitUsingDecl(UsingDecl *D) {
+    // FIXME: Parent for the following is CXIdxEntity_Unexposed with no USR,
+    // we should do better.
+
+    IndexCtx.indexNestedNameSpecifierLoc(D->getQualifierLoc(), D);
+    for (UsingDecl::shadow_iterator
+           I = D->shadow_begin(), E = D->shadow_end(); I != E; ++I) {
+      IndexCtx.handleReference((*I)->getUnderlyingDecl(), D->getLocation(),
+                               D, D->getLexicalDeclContext());
+    }
+    return true;
+  }
+
+  bool VisitUsingDirectiveDecl(UsingDirectiveDecl *D) {
+    // FIXME: Parent for the following is CXIdxEntity_Unexposed with no USR,
+    // we should do better.
+
+    IndexCtx.indexNestedNameSpecifierLoc(D->getQualifierLoc(), D);
+    IndexCtx.handleReference(D->getNominatedNamespaceAsWritten(),
+                             D->getLocation(), D, D->getLexicalDeclContext());
+    return true;
+  }
+
   bool VisitClassTemplateDecl(ClassTemplateDecl *D) {
     IndexCtx.handleClassTemplate(D);
     if (D->isThisDeclarationADefinition())
       IndexCtx.indexDeclContext(D->getTemplatedDecl());
+    return true;
+  }
+
+  bool VisitClassTemplateSpecializationDecl(
+                                           ClassTemplateSpecializationDecl *D) {
+    // FIXME: Notify subsequent callbacks that info comes from implicit
+    // instantiation.
+    if (D->isThisDeclarationADefinition())
+      IndexCtx.indexTagDecl(D);
     return true;
   }
 

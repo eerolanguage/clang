@@ -15,6 +15,7 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/SemaInternal.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/AST/ExprCXX.h"
 using namespace clang;
 using namespace sema;
@@ -32,7 +33,7 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
                                                /*IdLoc=*/Intro.Range.getBegin(),
                                                /*Id=*/0);
   Class->startDefinition();
-  Class->setLambda(true);
+  Class->makeLambda();
   CurContext->addDecl(Class);
 
   // Build the call operator; we don't really have all the relevant information
@@ -46,6 +47,7 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
     //   If a lambda-expression does not include a lambda-declarator, it is as 
     //   if the lambda-declarator were ().
     FunctionProtoType::ExtProtoInfo EPI;
+    EPI.HasTrailingReturn = true;
     EPI.TypeQuals |= DeclSpec::TQ_const;
     MethodTy = Context.getFunctionType(Context.DependentTy,
                                        /*Args=*/0, /*NumArgs=*/0, EPI);
@@ -101,8 +103,10 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
                             /*isConstExpr=*/false,
                             EndLoc);
   Method->setAccess(AS_public);
-  Class->addDecl(Method);
-  Method->setLexicalDeclContext(DC); // FIXME: Minor hack.
+
+  // Temporarily set the lexical declaration context to the current
+  // context, so that the Scope stack matches the lexical nesting.
+  Method->setLexicalDeclContext(DC);
 
   // Attributes on the lambda apply to the method.  
   ProcessDeclAttributes(CurScope, Method, ParamInfo);
@@ -122,10 +126,13 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
   LSI->Mutable = (Method->getTypeQualifiers() & Qualifiers::Const) == 0;
  
   // Handle explicit captures.
+  SourceLocation PrevCaptureLoc
+    = Intro.Default == LCD_None? Intro.Range.getBegin() : Intro.DefaultLoc;
   for (llvm::SmallVector<LambdaCapture, 4>::const_iterator
          C = Intro.Captures.begin(), 
          E = Intro.Captures.end(); 
-       C != E; ++C) {
+       C != E; 
+       PrevCaptureLoc = C->Loc, ++C) {
     if (C->Kind == LCK_This) {
       // C++11 [expr.prim.lambda]p8:
       //   An identifier or this shall not appear more than once in a 
@@ -133,7 +140,9 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
       if (LSI->isCXXThisCaptured()) {
         Diag(C->Loc, diag::err_capture_more_than_once) 
           << "'this'"
-          << SourceRange(LSI->getCXXThisCapture().getLocation());
+          << SourceRange(LSI->getCXXThisCapture().getLocation())
+          << FixItHint::CreateRemoval(
+               SourceRange(PP.getLocForEndOfToken(PrevCaptureLoc), C->Loc));
         continue;
       }
 
@@ -141,7 +150,9 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
       //   If a lambda-capture includes a capture-default that is =, the 
       //   lambda-capture shall not contain this [...].
       if (Intro.Default == LCD_ByCopy) {
-        Diag(C->Loc, diag::err_this_capture_with_copy_default);
+        Diag(C->Loc, diag::err_this_capture_with_copy_default)
+          << FixItHint::CreateRemoval(
+               SourceRange(PP.getLocForEndOfToken(PrevCaptureLoc), C->Loc));
         continue;
       }
 
@@ -166,10 +177,14 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
     //   If a lambda-capture includes a capture-default that is =, [...]
     //   each identifier it contains shall be preceded by &.
     if (C->Kind == LCK_ByRef && Intro.Default == LCD_ByRef) {
-      Diag(C->Loc, diag::err_reference_capture_with_reference_default);
+      Diag(C->Loc, diag::err_reference_capture_with_reference_default)
+        << FixItHint::CreateRemoval(
+             SourceRange(PP.getLocForEndOfToken(PrevCaptureLoc), C->Loc));
       continue;
     } else if (C->Kind == LCK_ByCopy && Intro.Default == LCD_ByCopy) {
-      Diag(C->Loc, diag::err_copy_capture_with_copy_default);
+      Diag(C->Loc, diag::err_copy_capture_with_copy_default)
+        << FixItHint::CreateRemoval(
+             SourceRange(PP.getLocForEndOfToken(PrevCaptureLoc), C->Loc));
       continue;
     }
 
@@ -210,7 +225,9 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
     if (LSI->isCaptured(Var)) {
       Diag(C->Loc, diag::err_capture_more_than_once) 
         << C->Id
-        << SourceRange(LSI->getCapture(Var).getLocation());
+        << SourceRange(LSI->getCapture(Var).getLocation())
+        << FixItHint::CreateRemoval(
+             SourceRange(PP.getLocForEndOfToken(PrevCaptureLoc), C->Loc));
       continue;
     }
 
@@ -289,11 +306,13 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc,
   llvm::SmallVector<Expr *, 4> CaptureInits;
   LambdaCaptureDefault CaptureDefault;
   CXXRecordDecl *Class;
+  CXXMethodDecl *CallOperator;
   SourceRange IntroducerRange;
   bool ExplicitParams;
   bool LambdaExprNeedsCleanups;
   {
     LambdaScopeInfo *LSI = getCurLambda();
+    CallOperator = LSI->CallOperator;
     Class = LSI->Lambda;
     IntroducerRange = LSI->IntroducerRange;
     ExplicitParams = LSI->ExplicitParams;
@@ -342,25 +361,135 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc,
       break;
     }
 
-    // Finalize the lambda class.
-    SmallVector<Decl*, 4> Fields(Class->field_begin(), Class->field_end());
-    ActOnFields(0, Class->getLocation(), Class, Fields, 
-                SourceLocation(), SourceLocation(), 0);
-    CheckCompletedCXXClass(Class);
+    // C++11 [expr.prim.lambda]p4:
+    //   If a lambda-expression does not include a
+    //   trailing-return-type, it is as if the trailing-return-type
+    //   denotes the following type:
+    // FIXME: Assumes current resolution to core issue 975.
+    if (LSI->HasImplicitReturnType) {
+      //   - if there are no return statements in the
+      //     compound-statement, or all return statements return
+      //     either an expression of type void or no expression or
+      //     braced-init-list, the type void;
+      if (LSI->ReturnType.isNull()) {
+        LSI->ReturnType = Context.VoidTy;
+      } else {
+        // C++11 [expr.prim.lambda]p4:
+        //   - if the compound-statement is of the form
+        //
+        //       { attribute-specifier-seq[opt] return expression ; }
+        //
+        //     the type of the returned expression after
+        //     lvalue-to-rvalue conversion (4.1), array-to-pointer
+        //     conver- sion (4.2), and function-to-pointer conversion
+        //     (4.3);
+        //
+        // Since we're accepting the resolution to a post-C++11 core
+        // issue with a non-trivial extension, provide a warning (by
+        // default).
+        CompoundStmt *CompoundBody = cast<CompoundStmt>(Body);
+        if (!(CompoundBody->size() == 1 &&
+              isa<ReturnStmt>(*CompoundBody->body_begin())) &&
+            !Context.hasSameType(LSI->ReturnType, Context.VoidTy))
+          Diag(IntroducerRange.getBegin(), 
+               diag::ext_lambda_implies_void_return);
+      }
+
+      // Create a function type with the inferred return type.
+      const FunctionProtoType *Proto
+        = CallOperator->getType()->getAs<FunctionProtoType>();
+      QualType FunctionTy
+        = Context.getFunctionType(LSI->ReturnType,
+                                  Proto->arg_type_begin(),
+                                  Proto->getNumArgs(),
+                                  Proto->getExtProtoInfo());
+      CallOperator->setType(FunctionTy);
+    }
+
+    // C++11 [expr.prim.lambda]p6:
+    //   The closure type for a lambda-expression with no lambda-capture
+    //   has a public non-virtual non-explicit const conversion function
+    //   to pointer to function having the same parameter and return
+    //   types as the closure type's function call operator.
+    if (Captures.empty() && CaptureDefault == LCD_None) {
+      const FunctionProtoType *Proto
+        = CallOperator->getType()->getAs<FunctionProtoType>(); 
+      QualType FunctionPtrTy;
+      {
+        FunctionProtoType::ExtProtoInfo ExtInfo = Proto->getExtProtoInfo();
+        ExtInfo.TypeQuals = 0;
+        QualType FunctionTy
+          = Context.getFunctionType(Proto->getResultType(),
+                                    Proto->arg_type_begin(),
+                                    Proto->getNumArgs(),
+                                    ExtInfo);
+        FunctionPtrTy = Context.getPointerType(FunctionTy);
+      }
+
+      FunctionProtoType::ExtProtoInfo ExtInfo;
+      ExtInfo.TypeQuals = Qualifiers::Const;
+      QualType ConvTy = Context.getFunctionType(FunctionPtrTy, 0, 0, ExtInfo);
+
+      SourceLocation Loc = IntroducerRange.getBegin();
+      DeclarationName Name
+        = Context.DeclarationNames.getCXXConversionFunctionName(
+            Context.getCanonicalType(FunctionPtrTy));
+      DeclarationNameLoc NameLoc;
+      NameLoc.NamedType.TInfo = Context.getTrivialTypeSourceInfo(FunctionPtrTy,
+                                                                 Loc);
+      CXXConversionDecl *Conversion 
+        = CXXConversionDecl::Create(Context, Class, Loc, 
+                                    DeclarationNameInfo(Name, Loc, NameLoc),
+                                    ConvTy, 
+                                    Context.getTrivialTypeSourceInfo(ConvTy, 
+                                                                     Loc),
+                                    /*isInline=*/false, /*isExplicit=*/false,
+                                    /*isConstexpr=*/false, Body->getLocEnd());
+      Conversion->setAccess(AS_public);
+      Conversion->setImplicit(true);
+      Class->addDecl(Conversion);
+    }
 
     // C++ [expr.prim.lambda]p7:
     //   The lambda-expression's compound-statement yields the
     //   function-body (8.4) of the function call operator [...].
-    ActOnFinishFunctionBody(LSI->CallOperator, Body, /*IsInstantation=*/false);
+    ActOnFinishFunctionBody(CallOperator, Body, /*IsInstantation=*/false);
+
+    // Finalize the lambda class.
+    SmallVector<Decl*, 4> Fields(Class->field_begin(), Class->field_end());
+    CallOperator->setLexicalDeclContext(Class);
+    Class->addDecl(CallOperator);
+    ActOnFields(0, Class->getLocation(), Class, Fields, 
+                SourceLocation(), SourceLocation(), 0);
+    CheckCompletedCXXClass(Class);
+
   }
 
   if (LambdaExprNeedsCleanups)
     ExprNeedsCleanups = true;
 
-  Expr *Lambda = LambdaExpr::Create(Context, Class, IntroducerRange, 
-                                    CaptureDefault, Captures, ExplicitParams, 
-                                    CaptureInits, Body->getLocEnd());
-  Diag(StartLoc, diag::err_lambda_unsupported);
+  LambdaExpr *Lambda = LambdaExpr::Create(Context, Class, IntroducerRange, 
+                                          CaptureDefault, Captures, 
+                                          ExplicitParams, CaptureInits, 
+                                          Body->getLocEnd());
+  Class->setLambda(Lambda);
+
+  // C++11 [expr.prim.lambda]p2:
+  //   A lambda-expression shall not appear in an unevaluated operand
+  //   (Clause 5).
+  switch (ExprEvalContexts.back().Context) {
+  case Unevaluated:
+    // We don't actually diagnose this case immediately, because we
+    // could be within a context where we might find out later that
+    // the expression is potentially evaluated (e.g., for typeid).
+    ExprEvalContexts.back().Lambdas.push_back(Lambda);
+    break;
+
+  case ConstantEvaluated:
+  case PotentiallyEvaluated:
+  case PotentiallyEvaluatedIfUsed:
+    break;
+  }
 
   return MaybeBindToTemporary(Lambda);
 }

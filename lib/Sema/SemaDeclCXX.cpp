@@ -16,6 +16,7 @@
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/ScopeInfo.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTMutationListener.h"
@@ -61,6 +62,7 @@ namespace {
     bool VisitExpr(Expr *Node);
     bool VisitDeclRefExpr(DeclRefExpr *DRE);
     bool VisitCXXThisExpr(CXXThisExpr *ThisE);
+    bool VisitLambdaExpr(LambdaExpr *Lambda);
   };
 
   /// VisitExpr - Visit all of the children of this expression.
@@ -109,6 +111,17 @@ namespace {
     return S->Diag(ThisE->getSourceRange().getBegin(),
                    diag::err_param_default_argument_references_this)
                << ThisE->getSourceRange();
+  }
+
+  bool CheckDefaultArgumentVisitor::VisitLambdaExpr(LambdaExpr *Lambda) {
+    // C++11 [expr.lambda.prim]p13:
+    //   A lambda-expression appearing in a default argument shall not
+    //   implicitly or explicitly capture any entity.
+    if (Lambda->capture_begin() == Lambda->capture_end())
+      return false;
+
+    return S->Diag(Lambda->getLocStart(), 
+                   diag::err_lambda_capture_default_arg);
   }
 }
 
@@ -815,7 +828,11 @@ static void CheckConstexprCtorInitializer(Sema &SemaRef,
                                           bool &Diagnosed) {
   if (Field->isUnnamedBitfield())
     return;
-  
+
+  if (Field->isAnonymousStructOrUnion() &&
+      Field->getType()->getAsCXXRecordDecl()->isEmpty())
+    return;
+
   if (!Inits.count(Field)) {
     if (!Diagnosed) {
       SemaRef.Diag(Dcl->getLocation(), diag::err_constexpr_ctor_missing_init);
@@ -901,11 +918,14 @@ bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body,
   if (const CXXConstructorDecl *Constructor
         = dyn_cast<CXXConstructorDecl>(Dcl)) {
     const CXXRecordDecl *RD = Constructor->getParent();
-    // - every non-static data member and base class sub-object shall be
-    //   initialized;
+    // DR1359:
+    // - every non-variant non-static data member and base class sub-object
+    //   shall be initialized;
+    // - if the class is a non-empty union, or for each non-empty anonymous
+    //   union member of a non-union class, exactly one non-static data member
+    //   shall be initialized;
     if (RD->isUnion()) {
-      // DR1359: Exactly one member of a union shall be initialized.
-      if (Constructor->getNumCtorInitializers() == 0) {
+      if (Constructor->getNumCtorInitializers() == 0 && !RD->isEmpty()) {
         Diag(Dcl->getLocation(), diag::err_constexpr_union_ctor_no_init);
         return false;
       }
@@ -9215,6 +9235,9 @@ void Sema::AddCXXDirectInitializerToDecl(Decl *RealDecl,
     Diag(PrevInit->getLocation(), diag::note_previous_definition);
     return;
   } 
+
+  if (VDecl->hasLocalStorage())
+    getCurFunction()->setHasBranchProtectedScope();
 
   bool IsDependent = false;
   for (unsigned I = 0, N = Exprs.size(); I != N; ++I) {

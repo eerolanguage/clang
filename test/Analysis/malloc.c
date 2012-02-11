@@ -84,13 +84,13 @@ void pr6293() {
 void f7() {
   char *x = (char*) malloc(4);
   free(x);
-  x[0] = 'a'; // expected-warning{{Use dynamically allocated memory after it is freed.}}
+  x[0] = 'a'; // expected-warning{{Use of dynamically allocated memory after it is freed.}}
 }
 
 void f7_realloc() {
   char *x = (char*) malloc(4);
   realloc(x,0);
-  x[0] = 'a'; // expected-warning{{Use dynamically allocated memory after it is freed.}}
+  x[0] = 'a'; // expected-warning{{Use of dynamically allocated memory after it is freed.}}
 }
 
 void PR6123() {
@@ -186,7 +186,7 @@ void mallocEscapeFreeUse() {
   int *p = malloc(12);
   myfoo(p);
   free(p);
-  myfoo(p); // expected-warning{{Use dynamically allocated memory after it is freed.}}
+  myfoo(p); // expected-warning{{Use of dynamically allocated memory after it is freed.}}
 }
 
 int *myalloc();
@@ -212,7 +212,7 @@ void mallocBindFreeUse() {
   int *x = malloc(12);
   int *y = x;
   free(y);
-  myfoo(x); // expected-warning{{Use dynamically allocated memory after it is freed.}}
+  myfoo(x); // expected-warning{{Use of dynamically allocated memory after it is freed.}}
 }
 
 void mallocEscapeMalloc() {
@@ -233,10 +233,137 @@ void mallocFreeMalloc() {
   free(p);
 }
 
-void MallocFreeUse_params() {
+void mallocFreeUse_params() {
   int *p = malloc(12);
   free(p);
-  myfoo(p); //expected-warning{{Use dynamically allocated memory after it is freed}}
-  myfooint(*p); //expected-warning{{Use dynamically allocated memory after it is freed}}
+  myfoo(p); //expected-warning{{Use of dynamically allocated memory after it is freed}}
+  myfooint(*p); //expected-warning{{Use of dynamically allocated memory after it is freed}}
 }
 
+void mallocFailedOrNot() {
+  int *p = malloc(12);
+  if (!p)
+    free(p);
+  else
+    free(p);
+}
+
+struct StructWithInt {
+  int g;
+};
+void nonSymbolAsFirstArg(int *pp, struct StructWithInt *p);
+
+void mallocEscapeFooNonSymbolArg() {
+  struct StructWithInt *p = malloc(sizeof(struct StructWithInt));
+  nonSymbolAsFirstArg(&p->g, p);
+  return; // no warning
+}
+
+
+int *Gl;
+struct GlStTy {
+  int *x;
+};
+
+struct GlStTy GlS = {0};
+
+void GlobalFree() {
+  free(Gl);
+}
+
+void GlobalMalloc() {
+  Gl = malloc(12);
+}
+
+void GlobalStructMalloc() {
+  int *a = malloc(12);
+  GlS.x = a;
+}
+
+void GlobalStructMallocFree() {
+  int *a = malloc(12);
+  GlS.x = a;
+  free(GlS.x);
+}
+
+
+// Below are the known false positives.
+
+// TODO: There should be no warning here.
+extern void exit(int) __attribute__ ((__noreturn__));
+void mallocExit(int *g) {
+  struct xx *p = malloc(12);
+
+  if (g != 0) {
+    exit(1); // expected-warning{{Allocated memory never released. Potential memory leak}}
+  }
+  free(p);
+  return;
+}
+
+
+// TODO: There should be no warning here.
+extern void __assert_fail (__const char *__assertion, __const char *__file,
+    unsigned int __line, __const char *__function)
+     __attribute__ ((__noreturn__));
+#define assert(expr) \
+  ((expr)  ? (void)(0)  : __assert_fail (#expr, __FILE__, __LINE__, __func__))
+void mallocAssert(int *g) {
+  struct xx *p = malloc(12);
+
+  assert(g != 0); // expected-warning{{Allocated memory never released. Potential memory leak}}
+  free(p);
+  return;
+}
+
+// TODO: There should be no warning here.
+unsigned takePtrToPtr(int **p);
+void PassTheAddrOfAllocatedData(int *g, int f) {
+  int *p = malloc(12);
+  // This call is causing the problem.
+  if (takePtrToPtr(&p))
+    f++; // expected-warning{{Allocated memory never released. Potential memory leak}}
+  free(p); // expected-warning{{Allocated memory never released. Potential memory leak}}
+}
+
+// TODO: There should be no warning here.
+void reallocFails(int *g, int f) {
+  char *p = malloc(12);
+  char *r = realloc(p, 12+1);
+  if (!r) {
+    free(p); // expected-warning {{Try to free a memory block that has been released}}
+  } else {
+    free(r);
+  }
+}
+
+// TODO: There should be no warning here. This one might be difficult to get rid of.
+void dependsOnValueOfPtr(int *g, unsigned f) {
+  int *p;
+
+  if (f) {
+    p = g;
+  } else {
+    p = malloc(12);
+  }
+
+  if (p != g)
+    free(p);
+  else
+    return; // expected-warning{{Allocated memory never released. Potential memory leak}}
+  return;
+}
+
+// TODO: Should this be a warning?
+// Here we are returning a pointer one past the allocated value. An idiom which
+// can be used for implementing special malloc. The correct uses of this might
+// be rare enough so that we could keep this as a warning.
+static void *specialMalloc(int n){
+  int *p;
+  p = malloc( n+8 );
+  if( p ){
+    p[0] = n;
+    p++;
+  }
+  return p;// expected-warning {{Allocated memory never released. Potential memory leak.}}
+}

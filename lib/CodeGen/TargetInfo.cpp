@@ -3065,9 +3065,10 @@ llvm::Type* MipsABIInfo::HandleAggregates(QualType Ty) const {
   if (Ty->isComplexType())
     return CGT.ConvertType(Ty);
 
-  const RecordType *RT = Ty->getAsStructureType();
+  const RecordType *RT = Ty->getAs<RecordType>();
 
-  if (!RT)
+  // Unions are passed in integer registers.
+  if (!RT || !RT->isStructureOrClassType())
     return 0;
 
   const RecordDecl *RD = RT->getDecl();
@@ -3080,6 +3081,8 @@ llvm::Type* MipsABIInfo::HandleAggregates(QualType Ty) const {
   llvm::IntegerType *I64 = llvm::IntegerType::get(getVMContext(), 64);
   SmallVector<llvm::Type*, 8> ArgList;
 
+  // Iterate over fields in the struct/class and check if there are any aligned
+  // double fields.
   for (RecordDecl::field_iterator i = RD->field_begin(), e = RD->field_end();
        i != e; ++i, ++idx) {
     const QualType Ty = (*i)->getType();
@@ -3101,7 +3104,7 @@ llvm::Type* MipsABIInfo::HandleAggregates(QualType Ty) const {
     LastOffset = Offset + 64;
   }
 
-  // This structure doesn't have an aligned double field.
+  // This struct/class doesn't have an aligned double field.
   if (!LastOffset)
     return 0;
 
@@ -3173,27 +3176,40 @@ MipsABIInfo::classifyArgumentType(QualType Ty, uint64_t &Offset) const {
 
 llvm::Type*
 MipsABIInfo::returnAggregateInRegs(QualType RetTy, uint64_t Size) const {
-  const RecordType *RT = RetTy->getAsStructureType();
+  const RecordType *RT = RetTy->getAs<RecordType>();
   SmallVector<llvm::Type*, 2> RTList;
 
-  if (RT) {
+  if (RT && RT->isStructureOrClassType()) {
     const RecordDecl *RD = RT->getDecl();
-    RecordDecl::field_iterator b = RD->field_begin(), e = RD->field_end(), i;
+    const ASTRecordLayout &Layout = getContext().getASTRecordLayout(RD);
+    unsigned FieldCnt = Layout.getFieldCount();
 
-    for (i = b; (i != e) && (std::distance(b, i) < 2); ++i) {
-      const BuiltinType *BT = (*i)->getType()->getAs<BuiltinType>();
+    // N32/64 returns struct/classes in floating point registers if the
+    // following conditions are met:
+    // 1. The size of the struct/class is no larger than 128-bit.
+    // 2. The struct/class has one or two fields all of which are floating
+    //    point types.
+    // 3. The offset of the first field is zero (this follows what gcc does). 
+    //
+    // Any other composite results are returned in integer registers.
+    //
+    if (FieldCnt && (FieldCnt <= 2) && !Layout.getFieldOffset(0)) {
+      RecordDecl::field_iterator b = RD->field_begin(), e = RD->field_end();
+      for (; b != e; ++b) {
+        const BuiltinType *BT = (*b)->getType()->getAs<BuiltinType>();
 
-      if (!BT || !BT->isFloatingPoint())
-        break;
+        if (!BT || !BT->isFloatingPoint())
+          break;
 
-      RTList.push_back(CGT.ConvertType((*i)->getType()));
+        RTList.push_back(CGT.ConvertType((*b)->getType()));
+      }
+
+      if (b == e)
+        return llvm::StructType::get(getVMContext(), RTList,
+                                     RD->hasAttr<PackedAttr>());
+
+      RTList.clear();
     }
-
-    if (i == e)
-      return llvm::StructType::get(getVMContext(), RTList,
-                                   RD->hasAttr<PackedAttr>());
-
-    RTList.clear();
   }
 
   RTList.push_back(llvm::IntegerType::get(getVMContext(),

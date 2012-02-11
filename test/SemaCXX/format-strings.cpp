@@ -39,3 +39,16 @@ void h(int *i) {
   printf(foo.gettext("%d"), i); // expected-warning{{format specifies type 'int' but the argument has type 'int *'}}
   printf(Foo::gettext_static("%d"), i); // expected-warning{{format specifies type 'int' but the argument has type 'int *'}}
 }
+
+// Test handling __null for format string literal checking.
+extern "C" {
+  int test_null_format(const char *format, ...) __attribute__((__format__ (__printf__, 1, 2)));
+}
+
+void rdar8269537(const char *f)
+{
+  test_null_format(false); // expected-warning {{null from a constant boolean}}
+  test_null_format(0); // no-warning
+  test_null_format(__null); // no-warning
+  test_null_format(f); // expected-warning {{not a string literal}}
+}
