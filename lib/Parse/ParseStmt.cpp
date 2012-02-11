@@ -759,7 +759,12 @@ bool Parser::IsValidIndentation(unsigned short column) {
 StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   const bool Eero = getLang().Eero && !InSystemHeader(Tok.getLocation());
   if (Eero) {
-    InsertToken(tok::l_brace);
+    if (Tok.isAtStartOfLine()) {
+      InsertToken(tok::l_brace);
+    } else {
+      Diag(Tok, diag::err_expected) << "newline";
+      return ParseStatement(); // TODO: flush the rest of the line instead?
+    }
   }
   PrettyStackTraceLoc CrashInfo(PP.getSourceManager(),
                                 Tok.getLocation(),
@@ -1030,13 +1035,8 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
   StmtResult ThenStmt;
   if (!Eero)
     ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc);
-  else if (Tok.isAtStartOfLine())    
+  else
     ThenStmt = ParseCompoundStatement(attrs);
-  else {
-    Diag(Tok, diag::err_expected) << "newline";
-    Diag(IfLoc, diag::note_using);
-    ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc); // TODO: flush?
-  }
 
   // Pop the 'if' scope if needed.
   InnerScope.Exit();
@@ -1279,7 +1279,11 @@ StmtResult Parser::ParseWhileStatement(ParsedAttributes &attrs,
                         C99orCXX && Tok.isNot(tok::l_brace));
 
   // Read the body statement.
-  StmtResult Body(ParseStatement(TrailingElseLoc));
+  StmtResult Body;
+  if (!getLang().Eero || InSystemHeader(WhileLoc))
+    Body = ParseStatement(TrailingElseLoc);
+  else
+    Body = ParseCompoundStatement(attrs);
 
   // Pop the body scope if needed.
   InnerScope.Exit();
@@ -1324,7 +1328,11 @@ StmtResult Parser::ParseDoStatement(ParsedAttributes &attrs) {
                         Tok.isNot(tok::l_brace));
 
   // Read the body statement.
-  StmtResult Body(ParseStatement());
+  StmtResult Body;
+  if (!getLang().Eero || InSystemHeader(DoLoc))
+    Body = ParseStatement();
+  else
+    Body = ParseCompoundStatement(attrs);
 
   // Pop the body scope if needed.
   InnerScope.Exit();
@@ -1604,7 +1612,11 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
                         C99orCXXorObjC && Tok.isNot(tok::l_brace));
 
   // Read the body statement.
-  StmtResult Body(ParseStatement(TrailingElseLoc));
+  StmtResult Body;
+  if (!getLang().Eero || InSystemHeader(ForLoc))
+    Body = ParseStatement(TrailingElseLoc);
+  else
+    Body = ParseCompoundStatement(attrs);
 
   // Pop the body scope if needed.
   InnerScope.Exit();
