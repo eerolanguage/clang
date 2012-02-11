@@ -970,6 +970,7 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
 
   assert(Tok.is(tok::kw_if) && "Not an if stmt!");
   SourceLocation IfLoc = ConsumeToken();  // eat the 'if'.
+  const bool Eero = getLang().Eero && !InSystemHeader(IfLoc);
 
   if (Tok.isNot(tok::l_paren)) {
     Diag(Tok, diag::err_expected_lparen_after) << "if";
@@ -1026,7 +1027,16 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
   SourceLocation ThenStmtLoc = Tok.getLocation();
 
   SourceLocation InnerStatementTrailingElseLoc;
-  StmtResult ThenStmt(ParseStatement(&InnerStatementTrailingElseLoc));
+  StmtResult ThenStmt;
+  if (!Eero)
+    ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc);
+  else if (Tok.isAtStartOfLine())    
+    ThenStmt = ParseCompoundStatement(attrs);
+  else {
+    Diag(Tok, diag::err_expected) << "newline";
+    Diag(IfLoc, diag::note_using);
+    ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc); // TODO: flush?
+  }
 
   // Pop the 'if' scope if needed.
   InnerScope.Exit();
@@ -1036,7 +1046,17 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
   SourceLocation ElseStmtLoc;
   StmtResult ElseStmt;
 
-  if (Tok.is(tok::kw_else)) {
+  // For Eero, looked for "else"s associated with previous "if"s. For other
+  // languages, process all of them.
+  bool ProcessElseStatement;
+  if (Tok.is(tok::kw_else) &&
+      (!Eero || Column(Tok.getLocation()) == indentationPositions.back())) {
+    ProcessElseStatement = true;
+  } else {
+    ProcessElseStatement = false;
+  }
+
+  if (ProcessElseStatement) {
     if (TrailingElseLoc)
       *TrailingElseLoc = Tok.getLocation();
 
@@ -1055,7 +1075,18 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
     ParseScope InnerScope(this, Scope::DeclScope,
                           C99orCXX && Tok.isNot(tok::l_brace));
 
-    ElseStmt = ParseStatement();
+    if (Eero) {
+      if (Tok.isAtStartOfLine()) { // line break after "else"
+        ElseStmt = ParseCompoundStatement(attrs);
+        ProcessElseStatement = false;
+      } else if (Tok.isNot(tok::kw_if)) { // only "else if" on same line is ok
+        Diag(Tok, diag::err_expected) << "newline or \"if\"";
+        Diag(ElseLoc, diag::note_using);
+      }
+    }
+
+    if (ProcessElseStatement)
+      ElseStmt = ParseStatement();
 
     // Pop the 'else' scope if needed.
     InnerScope.Exit();
