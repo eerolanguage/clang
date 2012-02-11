@@ -196,6 +196,9 @@ class Parser : public CodeCompletionHandler {
 
   IdentifierInfo *getSEHExceptKeyword();
 
+  /// Used for Eero off-side (Python-like) indentation tracking.
+  SmallVector<unsigned short, 48> indentationPositions; // TODO: 48 levels ok?
+
 public:
   Parser(Preprocessor &PP, Sema &Actions);
   ~Parser();
@@ -722,6 +725,10 @@ private:
     Tok.setKind(tokenKind);
     Tok.setLength(0);
     Tok.setIdentifierInfo(0);
+  }
+
+  unsigned Column(const SourceLocation& Loc) {
+    return PP.getSourceManager().getExpansionColumnNumber(Loc);
   }
 
   //===--------------------------------------------------------------------===//
@@ -1260,6 +1267,10 @@ private:
   };
   ObjCImplParsingDataRAII *CurParsedObjCImpl;
 
+  // For Eero, since parsing cannot be deferred
+  typedef SmallVector<Decl*, 2> ParsedObjCMethodContainer;
+  ParsedObjCMethodContainer ParsedObjCMethods;
+
   DeclGroupPtrTy ParseObjCAtImplementationDeclaration(SourceLocation AtLoc);
   DeclGroupPtrTy ParseObjCAtEndDeclaration(SourceRange atEnd);
   Decl *ParseObjCAtAliasDeclaration(SourceLocation atLoc);
@@ -1621,6 +1632,10 @@ private:
   StmtResult ParseObjCSynchronizedStmt(SourceLocation atLoc);
   StmtResult ParseObjCAutoreleasePoolStmt(SourceLocation atLoc);
 
+  //===--------------------------------------------------------------------===//
+  // Eero Statements
+
+  bool IsValidIndentation(unsigned short column);
 
   //===--------------------------------------------------------------------===//
   // C99 6.7: Declarations.

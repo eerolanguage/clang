@@ -380,6 +380,11 @@ def err_declaration_does_not_declare_param : Error<
   "declaration does not declare a parameter">;
 def err_no_matching_param : Error<"parameter named %0 is missing">;
 
+/// Eero parser diagnostics
+def err_ambiguous_indentation : Error<"ambiguous indentation">;
+def err_expected : Error<"expected %0">;
+def err_not_allowed : Error<"%0 not allowed here">;
+
 /// C++ parser diagnostics
 def err_expected_unqualified_id : Error<
   "expected %select{identifier|unqualified-id}0">;

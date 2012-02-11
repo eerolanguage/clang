@@ -727,6 +727,20 @@ bool Parser::isDeclarationAfterDeclarator() {
 /// declarator, indicates the start of a function definition.
 bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   assert(Declarator.isFunctionDeclarator() && "Isn't a function declarator");
+  // Check for Eero function definition or declaration
+  if (getLang().Eero && !InSystemHeader(Tok.getLocation())) {
+    if (!Tok.isAtStartOfLine()) {
+      Diag(Tok, diag::err_expected) << "newline";
+      while (!Tok.isAtStartOfLine()) // flush the rest of the
+        ConsumeAnyToken();           // line
+    }
+    if (Column(Tok.getLocation()) >   // look for indentation
+        Column(Declarator.getSourceRange().getBegin())) {
+      return true;
+    } else {
+      return false;
+    }
+  }
   if (Tok.is(tok::l_brace))   // int X() {}
     return true;
   
@@ -865,7 +879,14 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   if (FTI.isKNRPrototype())
     ParseKNRParamDeclarations(D);
 
-
+  if (getLang().Eero && !InSystemHeader(Tok.getLocation())) {
+    if (Tok.isAtStartOfLine()) {
+      SourceLocation FuncStartLoc = D.getDeclSpec().getSourceRange().getBegin();
+      indentationPositions.push_back(Column(FuncStartLoc));
+    } else {
+      Diag(Tok, diag::err_expected) << "newline";
+    }
+  } else
   // We should have either an opening brace or, in a C++ constructor,
   // we may have a colon.
   if (Tok.isNot(tok::l_brace) && 

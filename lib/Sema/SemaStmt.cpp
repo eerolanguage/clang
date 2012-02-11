@@ -302,6 +302,21 @@ void Sema::ActOnCaseStmtBody(Stmt *caseStmt, Stmt *SubStmt) {
   CS->setSubStmt(SubStmt);
 }
 
+// For Eero. Switch cases and defaults automatically break.
+StmtResult 
+Sema::AddBreakToCaseOrDefaultBlock(Stmt *SubStmt) {
+  SourceRange sourceRange = SubStmt->getSourceRange();
+  BreakStmt *breakStmt = new (Context) BreakStmt(sourceRange.getEnd());
+  Stmt *Statements[] = { SubStmt, breakStmt };
+  CompoundStmt *SubStmtWithBreak = 
+      new (Context) CompoundStmt(Context, 
+                                 Statements, 
+                                 2, // statement body + inserted break
+                                 sourceRange.getBegin(),
+                                 sourceRange.getEnd());
+  return SubStmtWithBreak;
+}
+
 StmtResult
 Sema::ActOnDefaultStmt(SourceLocation DefaultLoc, SourceLocation ColonLoc,
                        Stmt *SubStmt, Scope *CurScope) {

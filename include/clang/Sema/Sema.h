@@ -2091,6 +2091,9 @@ public:
                                    SourceLocation ColonLoc);
   void ActOnCaseStmtBody(Stmt *CaseStmt, Stmt *SubStmt);
 
+  // For Eero -- automatically break every case/default
+  StmtResult AddBreakToCaseOrDefaultBlock(Stmt *SubStmt);
+
   StmtResult ActOnDefaultStmt(SourceLocation DefaultLoc,
                                       SourceLocation ColonLoc,
                                       Stmt *SubStmt, Scope *CurScope);

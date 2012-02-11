@@ -240,6 +240,13 @@ Retry:
     return ParseDefaultStatement(attrs);
 
   case tok::l_brace:                // C99 6.8.2: compound-statement
+    if (getLang().Eero && 
+        Tok.getLength() != 0 && // if not an inserted left brace
+        !InSystemHeader(Tok.getLocation())) {
+      Diag(Tok, diag::err_not_allowed) << "'{'";
+      ConsumeAnyToken(); // eat it and move on
+      return StmtError();
+    }
     return ParseCompoundStatement(attrs);
   case tok::semi: {                 // C99 6.8.3p3: expression[opt] ';'
     bool HasLeadingEmptyMacro = Tok.hasLeadingEmptyMacro();
@@ -496,6 +503,7 @@ StmtResult Parser::ParseLabeledStatement(ParsedAttributes &attrs) {
 StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
                                       ExprResult Expr) {
   assert((MissingCase || Tok.is(tok::kw_case)) && "Not a case stmt!");
+  SourceLocation FirstCaseLoc = Tok.getLocation(); // used by Eero
   // FIXME: Use attributes?
 
   // It is very very common for code to contain many case statements recursively
@@ -564,13 +572,13 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
     if (Tok.is(tok::colon)) {
       ColonLoc = ConsumeToken();
 
+    } else if (getLang().Eero) { // colons are optional
+      // TODO: check for newline?
     // Treat "case blah;" as a typo for "case blah:".
     } else if (Tok.is(tok::semi)) {
       ColonLoc = ConsumeToken();
       Diag(ColonLoc, diag::err_expected_colon_after) << "'case'"
         << FixItHint::CreateReplacement(ColonLoc, ":");
-    } else if (getLang().Eero) { // colons are optional
-      // TODO: force block scope
     } else {
       SourceLocation ExpectedLoc = PP.getLocForEndOfToken(PrevTokLocation);
       Diag(ExpectedLoc, diag::err_expected_colon_after) << "'case'"
@@ -607,6 +615,11 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
   // If we found a non-case statement, start by parsing it.
   StmtResult SubStmt;
 
+  if (getLang().Eero && !InSystemHeader(FirstCaseLoc)) {
+    SubStmt = ParseCompoundStatement(attrs);
+    if (!SubStmt.isInvalid())
+      SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
+  } else
   if (Tok.isNot(tok::r_brace)) {
     SubStmt = ParseStatement();
   } else {
@@ -643,6 +656,8 @@ StmtResult Parser::ParseDefaultStatement(ParsedAttributes &attrs) {
   if (Tok.is(tok::colon)) {
     ColonLoc = ConsumeToken();
 
+  } else if (getLang().Eero) { // colons are optional
+    // TODO: check for newline?
   // Treat "default;" as a typo for "default:".
   } else if (Tok.is(tok::semi)) {
     ColonLoc = ConsumeToken();
@@ -655,14 +670,20 @@ StmtResult Parser::ParseDefaultStatement(ParsedAttributes &attrs) {
     ColonLoc = ExpectedLoc;
   }
 
-  // Diagnose the common error "switch (X) {... default: }", which is not valid.
+  StmtResult SubStmt;
+  if (getLang().Eero && !InSystemHeader(DefaultLoc)) {
+    SubStmt = ParseCompoundStatement(attrs);
+    if (!SubStmt.isInvalid())
+      SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
+  } else  // Diagnose the common error "switch (X) {... default: }", which is not valid.
   if (Tok.is(tok::r_brace)) {
     SourceLocation AfterColonLoc = PP.getLocForEndOfToken(ColonLoc);
     Diag(AfterColonLoc, diag::err_label_end_of_compound_statement);
     return StmtError();
+  } else {
+    SubStmt = ParseStatement();
   }
 
-  StmtResult SubStmt(ParseStatement());
   if (SubStmt.isInvalid())
     return StmtError();
 
@@ -707,7 +728,7 @@ StmtResult Parser::ParseCompoundStatement(ParsedAttributes &attrs,
                                           unsigned ScopeFlags) {
   //FIXME: Use attributes?
 
-  assert(Tok.is(tok::l_brace) && "Not a compount stmt!");
+  assert((Tok.is(tok::l_brace) || getLang().Eero) && "Not a compount stmt!");
 
   // Enter a scope to hold everything within the compound stmt.  Compound
   // statements can always hold declarations.
@@ -717,12 +738,29 @@ StmtResult Parser::ParseCompoundStatement(ParsedAttributes &attrs,
   return ParseCompoundStatementBody(isStmtExpr);
 }
 
+/// For Eero off-side rule support. Determine if an indentation level
+/// is valid (previously established) for the current scope.
+bool Parser::IsValidIndentation(unsigned short column) {
+  if (column < indentationPositions.front()) // to the left of first indent
+    return true;
+  else {
+    for (size_t i = 0; i < indentationPositions.size(); i++) {
+      if (column == indentationPositions[i])
+        return true;
+    }
+    return false;
+  }
+}
 
 /// ParseCompoundStatementBody - Parse a sequence of statements and invoke the
 /// ActOnCompoundStmt action.  This expects the '{' to be the current token, and
 /// consume the '}' at the end of the block.  It does not manipulate the scope
 /// stack.
 StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
+  const bool Eero = getLang().Eero && !InSystemHeader(Tok.getLocation());
+  if (Eero) {
+    InsertToken(tok::l_brace);
+  }
   PrettyStackTraceLoc CrashInfo(PP.getSourceManager(),
                                 Tok.getLocation(),
                                 "in compound statement ('{}')");
@@ -765,6 +803,8 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       Stmts.push_back(R.release());
   }
 
+  bool newScope = true; // Eero, for off-side rule support
+
   while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
     if (Tok.is(tok::annot_pragma_unused)) {
       HandlePragmaUnused();
@@ -776,6 +816,30 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       ParseMicrosoftIfExistsStatement(Stmts);
       continue;
     }
+
+    if (Eero && Tok.isAtStartOfLine()) { // main off-side rule logic
+      unsigned column = Column(Tok.getLocation());      
+      if (!indentationPositions.empty()) {
+        if (newScope && column > indentationPositions.back()) {
+          // do nothing since block has been indented further to the right
+        } else if (!newScope && column == indentationPositions.back()) {
+          // do nothing since no change in indentation level
+        } else if (column < indentationPositions.back() &&
+                   IsValidIndentation(column)) {
+          // block has been "dedented" to a previous level
+          InsertToken(tok::r_brace);
+          break;
+        } else {
+          Diag(Tok, diag::err_ambiguous_indentation);
+          SkipUntil(tok::eof, false, true); // subsequent scopes likely off,
+          return StmtError();               // so abandon the rest of the file
+        }
+      }
+      if (newScope) {
+        newScope = false;
+        indentationPositions.push_back(column);
+      }
+    }    
 
     StmtResult R;
     if (Tok.isNot(tok::kw___extension__)) {
@@ -825,6 +889,14 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   }
 
   // We broke out of the while loop because we found a '}' or EOF.
+  if (Eero && !indentationPositions.empty()) { // using off-side rule
+    indentationPositions.pop_back();
+    if (Tok.is(tok::eof)) { // exit compound body 
+      InsertToken(tok::r_brace);
+    } else if (Tok.getLength() != 0) { // if not an inserted right brace
+      Diag(Tok, diag::err_not_allowed) << "'}'";
+    }
+  }
   if (Tok.isNot(tok::r_brace)) {
     Diag(Tok, diag::err_expected_rbrace);
     Diag(T.getOpenLocation(), diag::note_matching) << "{";
@@ -1095,7 +1167,12 @@ StmtResult Parser::ParseSwitchStatement(ParsedAttributes &attrs,
                         C99orCXX && Tok.isNot(tok::l_brace));
 
   // Read the body statement.
-  StmtResult Body(ParseStatement(TrailingElseLoc));
+  StmtResult Body;
+  if (!getLang().Eero || InSystemHeader(SwitchLoc)) {
+    Body = ParseStatement(TrailingElseLoc);
+  } else {
+    Body = ParseCompoundStatement(attrs);
+  }
 
   // Pop the scopes.
   InnerScope.Exit();
@@ -1954,7 +2031,7 @@ bool Parser::ParseAsmOperandsOpt(SmallVectorImpl<IdentifierInfo *> &Names,
 }
 
 Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
-  assert(Tok.is(tok::l_brace));
+  assert(Tok.is(tok::l_brace) || getLang().Eero);
   SourceLocation LBraceLoc = Tok.getLocation();
 
   if (PP.isCodeCompletionEnabled()) {

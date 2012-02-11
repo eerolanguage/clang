@@ -977,6 +977,8 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                                   tok::TokenKind mType,
                                   tok::ObjCKeywordKind MethodImplKind,
                                   bool MethodDefinition) {
+  const bool Eero = getLang().Eero && !InSystemHeader(mLoc);
+
   ParsingDeclRAIIObject PD(*this);
 
   if (Tok.is(tok::code_completion)) {
@@ -1114,6 +1116,10 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       return 0;
     }
     
+    if (Eero && Tok.isAtStartOfLine()) { // TODO: this will change
+      break;
+    }
+
     // Check for another keyword selector.
     SelIdent = ParseObjCSelectorPiece(selLoc);
     if (!SelIdent && Tok.isNot(tok::colon))
@@ -1569,6 +1575,11 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
     }
   }
 
+  if (getLang().Eero) { // their parsing was not deferred
+    for (size_t i = 0; i < ParsedObjCMethods.size(); ++i)
+      DeclsInGroup.push_back(ParsedObjCMethods[i]);
+    ParsedObjCMethods.clear();
+  }
   DeclsInGroup.push_back(ObjCImpDecl);
   return Actions.BuildDeclaratorGroup(
            DeclsInGroup.data(), DeclsInGroup.size(), false);
@@ -1604,6 +1615,7 @@ Parser::ObjCImplParsingDataRAII::~ObjCImplParsingDataRAII() {
 void Parser::ObjCImplParsingDataRAII::finish(SourceRange AtEnd) {
   assert(!Finished);
   P.Actions.DefaultSynthesizeProperties(P.getCurScope(), Dcl);
+
   for (size_t i = 0; i < LateParsedObjCMethods.size(); ++i)
     P.ParseLexedObjCMethodDefs(*LateParsedObjCMethods[i]);
 
@@ -1785,7 +1797,7 @@ Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
   }
 
   // Require a compound statement.
-  if (Tok.isNot(tok::l_brace)) {
+  if (Tok.isNot(tok::l_brace) && !getLang().Eero) {
     if (!operand.isInvalid())
       Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
@@ -1826,7 +1838,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
   bool catch_or_finally_seen = false;
 
   ConsumeToken(); // consume try
-  if (Tok.isNot(tok::l_brace)) {
+  if (Tok.isNot(tok::l_brace) && !getLang().Eero) {
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
   }
@@ -1874,7 +1886,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
           SkipUntil(tok::r_paren, true, false);
 
         StmtResult CatchBody(true);
-        if (Tok.is(tok::l_brace))
+        if (Tok.is(tok::l_brace) || getLang().Eero)
           CatchBody = ParseCompoundStatementBody();
         else
           Diag(Tok, diag::err_expected_lbrace);
@@ -1900,7 +1912,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
       ParseScope FinallyScope(this, Scope::DeclScope);
 
       StmtResult FinallyBody(true);
-      if (Tok.is(tok::l_brace))
+      if (Tok.is(tok::l_brace) || getLang().Eero)
         FinallyBody = ParseCompoundStatementBody();
       else
         Diag(Tok, diag::err_expected_lbrace);
@@ -1928,7 +1940,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
 StmtResult
 Parser::ParseObjCAutoreleasePoolStmt(SourceLocation atLoc) {
   ConsumeToken(); // consume autoreleasepool
-  if (Tok.isNot(tok::l_brace)) {
+  if (Tok.isNot(tok::l_brace) && !getLang().Eero) {
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
   }
@@ -1948,10 +1960,51 @@ Parser::ParseObjCAutoreleasePoolStmt(SourceLocation atLoc) {
 ///   objc-method-def: objc-method-proto ';'[opt] '{' body '}'
 ///
 Decl *Parser::ParseObjCMethodDefinition() {
+  if (getLang().Eero) {
+    indentationPositions.push_back(Column(Tok.getLocation()));
+  }
   Decl *MDecl = ParseObjCMethodPrototype();
 
   PrettyDeclStackTraceEntry CrashInfo(Actions, MDecl, Tok.getLocation(),
                                       "parsing Objective-C method");
+
+  if (getLang().Eero) { // do this the pre-3.0 way, since we can't defer
+    SourceLocation BodyStartLoc = Tok.getLocation();
+
+    // Allow the rest of sema to find private method decl implementations.
+    if (MDecl)
+      Actions.AddAnyMethodToGlobalPool(MDecl);
+
+    // Enter a scope for the method body.
+    ParseScope BodyScope(this,
+                         Scope::ObjCMethodScope|Scope::FnScope|Scope::DeclScope);
+      
+    // Tell the actions module that we have entered a method definition with the
+    // specified Declarator for the method.
+    Actions.ActOnStartOfObjCMethodDef(getCurScope(), MDecl);
+      
+    if (PP.isCodeCompletionEnabled()) {
+      if (trySkippingFunctionBodyForCodeCompletion()) {
+          BodyScope.Exit();
+          return Actions.ActOnFinishFunctionBody(MDecl, 0);
+      }
+    }
+      
+    StmtResult FnBody(ParseCompoundStatementBody());  
+    // If the function body could not be parsed, make a bogus compoundstmt.
+    if (FnBody.isInvalid())
+      FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyStartLoc,
+                                         MultiStmtArg(Actions), false);
+      
+    // Leave the function body scope.
+    BodyScope.Exit();
+
+    Decl *result = Actions.ActOnFinishFunctionBody(MDecl, FnBody.take());
+    ParsedObjCMethods.push_back(result);
+
+    // *** leave now ***
+    return MDecl;
+  }
 
   // parse optional ';'
   if (Tok.is(tok::semi)) {
