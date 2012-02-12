@@ -2375,3 +2375,36 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     Actions.ActOnBlockError(CaretLoc, getCurScope());
   return move(Result);
 }
+
+/// Eero method to parse and treat a nested function as a block.
+///
+ExprResult Parser::ParseNestedFunctionAsBlock(ParsingDeclSpec &DS,
+                                              ParsingDeclarator &D) {
+  // Save off the function signature for the block
+  DeclaratorChunk FunctionInfo = D.getTypeObject(0);
+  
+  // Turn the function decl into a block pointer decl 
+  D.AddInnermostTypeInfo(
+      DeclaratorChunk::getBlockPointer(DS.getTypeQualifiers(),
+                                       SourceLocation()));
+  
+  SourceLocation DeclaratorLoc = D.getSourceRange().getBegin();
+  
+  ParseScope BlockScope(this, Scope::BlockScope | Scope::FnScope |
+                              Scope::BreakScope | Scope::ContinueScope |
+                              Scope::DeclScope);
+  
+  Declarator ParamInfo(DS, Declarator::BlockLiteralContext);
+  ParamInfo.SetSourceRange(D.getSourceRange());
+  ParamInfo.AddTypeInfo(FunctionInfo, DS.getAttributes(), DeclaratorLoc);
+  
+  Actions.ActOnBlockStart(DeclaratorLoc, getCurScope());
+  Actions.ActOnBlockArguments(ParamInfo, getCurScope());  
+  
+  SourceLocation BodyStartLoc = Tok.getLocation();
+  StmtResult Body = ParseCompoundStatementBody(); 
+  BlockScope.Exit();
+  
+  return Actions.ActOnBlockStmtExpr(BodyStartLoc, Body.take(), getCurScope());
+}
+

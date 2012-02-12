@@ -1096,6 +1096,28 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
     }
   }
 
+  // Eero "nested functions" (const blocks, really)
+  if (getLang().Eero && !AllowFunctionDefinitions && 
+       D.isFunctionDeclarator() && isStartOfFunctionDefinition(D)) {
+
+    // Parse and convert the function to a block
+    ExprResult FuncAsBlock(ParseNestedFunctionAsBlock(DS, D));
+
+    // Create and initialize the block variable
+    Decl *TheDecl = ParseDeclarationAfterDeclarator(D);
+    Actions.AddInitializerToDecl(TheDecl, 
+                                 FuncAsBlock.take(), 
+                                 false, false);
+
+    // Also make the variable itself a const
+    ValueDecl* valdecl = cast<ValueDecl>(TheDecl);
+    QualType vartype = valdecl->getType();
+    vartype.addConst();
+    valdecl->setType(vartype);
+
+    return Actions.ConvertDeclToDeclGroup(TheDecl);
+  }
+
   if (ParseAttributesAfterDeclarator(D))
     return DeclGroupPtrTy();
 
