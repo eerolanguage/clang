@@ -767,7 +767,6 @@ Sema::BuildCXXTypeConstructExpr(TypeSourceInfo *TInfo,
   unsigned NumExprs = exprs.size();
   Expr **Exprs = (Expr**)exprs.get();
   SourceLocation TyBeginLoc = TInfo->getTypeLoc().getBeginLoc();
-  SourceRange FullRange = SourceRange(TyBeginLoc, RParenLoc);
 
   if (Ty->isDependentType() ||
       CallExpr::hasAnyTypeDependentArguments(Exprs, NumExprs)) {
@@ -778,6 +777,12 @@ Sema::BuildCXXTypeConstructExpr(TypeSourceInfo *TInfo,
                                                     Exprs, NumExprs,
                                                     RParenLoc));
   }
+
+  bool ListInitialization = LParenLoc.isInvalid();
+  assert((!ListInitialization || (NumExprs == 1 && isa<InitListExpr>(Exprs[0])))
+         && "List initialization must have initializer list as expression.");
+  SourceRange FullRange = SourceRange(TyBeginLoc,
+      ListInitialization ? Exprs[0]->getSourceRange().getEnd() : RParenLoc);
 
   if (Ty->isArrayType())
     return ExprError(Diag(TyBeginLoc,
@@ -797,7 +802,7 @@ Sema::BuildCXXTypeConstructExpr(TypeSourceInfo *TInfo,
   // If the expression list is a single expression, the type conversion
   // expression is equivalent (in definedness, and if defined in meaning) to the
   // corresponding cast expression.
-  if (NumExprs == 1) {
+  if (NumExprs == 1 && !ListInitialization) {
     Expr *Arg = Exprs[0];
     exprs.release();
     return BuildCXXFunctionalCastExpr(TInfo, LParenLoc, Arg, RParenLoc);
@@ -805,12 +810,27 @@ Sema::BuildCXXTypeConstructExpr(TypeSourceInfo *TInfo,
 
   InitializedEntity Entity = InitializedEntity::InitializeTemporary(TInfo);
   InitializationKind Kind
-    = NumExprs ? InitializationKind::CreateDirect(TyBeginLoc,
-                                                  LParenLoc, RParenLoc)
+    = NumExprs ? ListInitialization
+                    ? InitializationKind::CreateDirectList(TyBeginLoc)
+                    : InitializationKind::CreateDirect(TyBeginLoc,
+                                                       LParenLoc, RParenLoc)
                : InitializationKind::CreateValue(TyBeginLoc,
                                                  LParenLoc, RParenLoc);
   InitializationSequence InitSeq(*this, Entity, Kind, Exprs, NumExprs);
   ExprResult Result = InitSeq.Perform(*this, Entity, Kind, move(exprs));
+
+  if (!Result.isInvalid() && ListInitialization &&
+      isa<InitListExpr>(Result.get())) {
+    // If the list-initialization doesn't involve a constructor call, we'll get
+    // the initializer-list (with corrected type) back, but that's not what we
+    // want, since it will be treated as an initializer list in further
+    // processing. Explicitly insert a cast here.
+    InitListExpr *List = cast<InitListExpr>(Result.take());
+    Result = Owned(CXXFunctionalCastExpr::Create(Context, List->getType(),
+                                    Expr::getValueKindForType(TInfo->getType()),
+                                                 TInfo, TyBeginLoc, CK_NoOp,
+                                                 List, /*Path=*/0, RParenLoc));
+  }
 
   // FIXME: Improve AST representation?
   return move(Result);
@@ -872,11 +892,24 @@ static bool doesUsualArrayDeleteWantSize(Sema &S, SourceLocation loc,
   return (del->getNumParams() == 2);
 }
 
-/// ActOnCXXNew - Parsed a C++ 'new' expression (C++ 5.3.4), as in e.g.:
+/// \brief Parsed a C++ 'new' expression (C++ 5.3.4).
+
+/// E.g.:
 /// @code new (memory) int[size][4] @endcode
 /// or
 /// @code ::new Foo(23, "hello") @endcode
-/// For the interpretation of this heap of arguments, consult the base version.
+///
+/// \param StartLoc The first location of the expression.
+/// \param UseGlobal True if 'new' was prefixed with '::'.
+/// \param PlacementLParen Opening paren of the placement arguments.
+/// \param PlacementArgs Placement new arguments.
+/// \param PlacementRParen Closing paren of the placement arguments.
+/// \param TypeIdParens If the type is in parens, the source range.
+/// \param D The type to be allocated, as well as array dimensions.
+/// \param ConstructorLParen Opening paren of the constructor args, empty if
+///                          initializer-list syntax is used.
+/// \param ConstructorArgs Constructor/initialization arguments.
+/// \param ConstructorRParen Closing paren of the constructor args.
 ExprResult
 Sema::ActOnCXXNew(SourceLocation StartLoc, bool UseGlobal,
                   SourceLocation PlacementLParen, MultiExprArg PlacementArgs,
@@ -968,21 +1001,25 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
                             diag::err_auto_new_ctor_multiple_expressions)
                        << AllocType << TypeRange);
     }
+    Expr *Deduce = ConstructorArgs.get()[0];
+    if (ConstructorLParen.isInvalid()) {
+      return ExprError(Diag(Deduce->getSourceRange().getBegin(),
+                            diag::err_auto_new_requires_parens)
+                       << AllocType << TypeRange);
+    }
     TypeSourceInfo *DeducedType = 0;
-    if (DeduceAutoType(AllocTypeInfo, ConstructorArgs.get()[0], DeducedType) ==
+    if (DeduceAutoType(AllocTypeInfo, Deduce, DeducedType) ==
             DAR_Failed)
       return ExprError(Diag(StartLoc, diag::err_auto_new_deduction_failure)
-                       << AllocType
-                       << ConstructorArgs.get()[0]->getType()
-                       << TypeRange
-                       << ConstructorArgs.get()[0]->getSourceRange());
+                       << AllocType << Deduce->getType()
+                       << TypeRange << Deduce->getSourceRange());
     if (!DeducedType)
       return ExprError();
 
     AllocTypeInfo = DeducedType;
     AllocType = AllocTypeInfo->getType();
   }
-  
+
   // Per C++0x [expr.new]p5, the type being constructed may be a
   // typedef of an array type.
   if (!ArraySize) {
@@ -997,6 +1034,17 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
 
   if (CheckAllocatedType(AllocType, TypeRange.getBegin(), TypeRange))
     return ExprError();
+
+  bool ListInitialization = ConstructorLParen.isInvalid() &&
+                            ConstructorArgs.size() > 0;
+  assert((!ListInitialization || (ConstructorArgs.size() == 1 &&
+                                  isa<InitListExpr>(ConstructorArgs.get()[0])))
+         && "List initialization means a braced-init-list for arguments.");
+  if (ListInitialization && isStdInitializerList(AllocType, 0)) {
+    Diag(AllocTypeInfo->getTypeLoc().getBeginLoc(),
+         diag::warn_dangling_std_initializer_list)
+      << /*at end of FE*/0 << ConstructorArgs.get()[0]->getSourceRange();
+  }
 
   // In ARC, infer 'retaining' for the allocated 
   if (getLangOptions().ObjCAutoRefCount &&
@@ -1153,7 +1201,7 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
     }
   }
 
-  bool Init = ConstructorLParen.isValid();
+  bool Init = ConstructorLParen.isValid() || ConstructorArgs.size() > 0;
   // --- Choosing a constructor ---
   CXXConstructorDecl *Constructor = 0;
   bool HadMultipleCandidates = false;
@@ -1172,7 +1220,7 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
 
   if (!AllocType->isDependentType() &&
       !Expr::hasAnyTypeDependentArguments(ConsArgs, NumConsArgs)) {
-    // C++0x [expr.new]p15:
+    // C++11 [expr.new]p15:
     //   A new-expression that creates an object of type T initializes that
     //   object as follows:
     InitializationKind Kind
@@ -1182,9 +1230,12 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
       = !Init? InitializationKind::CreateDefault(TypeRange.getBegin())
     //     - Otherwise, the new-initializer is interpreted according to the
     //       initialization rules of 8.5 for direct-initialization.
-             : InitializationKind::CreateDirect(TypeRange.getBegin(),
-                                                ConstructorLParen,
-                                                ConstructorRParen);
+             : ListInitialization ? InitializationKind::CreateDirectList(
+                                                          TypeRange.getBegin())
+                                  : InitializationKind::CreateDirect(
+                                                          TypeRange.getBegin(),
+                                                          ConstructorLParen,
+                                                          ConstructorRParen);
 
     InitializedEntity Entity
       = InitializedEntity::InitializeNew(StartLoc, AllocType);

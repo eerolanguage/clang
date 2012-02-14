@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/Template.h"
 #include "clang/Basic/OpenCL.h"
@@ -4242,19 +4243,14 @@ bool Sema::RequireCompleteType(SourceLocation Loc, QualType T,
 /// @param PD The partial diagnostic that will be printed out if T is not a
 /// literal type.
 ///
-/// @param AllowIncompleteType If true, an incomplete type will be considered
-/// acceptable.
-///
 /// @returns @c true if @p T is not a literal type and a diagnostic was emitted,
 /// @c false otherwise.
 bool Sema::RequireLiteralType(SourceLocation Loc, QualType T,
-                              const PartialDiagnostic &PD,
-                              bool AllowIncompleteType) {
+                              const PartialDiagnostic &PD) {
   assert(!T->isDependentType() && "type should not be dependent");
 
-  bool Incomplete = RequireCompleteType(Loc, T, 0);
-  if (T->isLiteralType() ||
-      (AllowIncompleteType && Incomplete && !T->isVoidType()))
+  RequireCompleteType(Loc, T, 0);
+  if (T->isLiteralType())
     return false;
 
   if (PD.getDiagID() == 0)
@@ -4272,8 +4268,9 @@ bool Sema::RequireLiteralType(SourceLocation Loc, QualType T,
   const CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
 
   // If the class has virtual base classes, then it's not an aggregate, and
-  // cannot have any constexpr constructors, so is non-literal. This is better
-  // to diagnose than the resulting absence of constexpr constructors.
+  // cannot have any constexpr constructors or a trivial default constructor,
+  // so is non-literal. This is better to diagnose than the resulting absence
+  // of constexpr constructors.
   if (RD->getNumVBases()) {
     Diag(RD->getLocation(), diag::note_non_literal_virtual_base)
       << RD->isStruct() << RD->getNumVBases();
@@ -4281,29 +4278,9 @@ bool Sema::RequireLiteralType(SourceLocation Loc, QualType T,
            E = RD->vbases_end(); I != E; ++I)
       Diag(I->getSourceRange().getBegin(),
            diag::note_constexpr_virtual_base_here) << I->getSourceRange();
-  } else if (!RD->isAggregate() && !RD->hasConstexprNonCopyMoveConstructor()) {
+  } else if (!RD->isAggregate() && !RD->hasConstexprNonCopyMoveConstructor() &&
+             !RD->hasTrivialDefaultConstructor()) {
     Diag(RD->getLocation(), diag::note_non_literal_no_constexpr_ctors) << RD;
-
-    switch (RD->getTemplateSpecializationKind()) {
-    case TSK_Undeclared:
-    case TSK_ExplicitSpecialization:
-      break;
-
-    case TSK_ImplicitInstantiation:
-    case TSK_ExplicitInstantiationDeclaration:
-    case TSK_ExplicitInstantiationDefinition:
-      // If the base template had constexpr constructors which were
-      // instantiated as non-constexpr constructors, explain why.
-      for (CXXRecordDecl::ctor_iterator I = RD->ctor_begin(),
-           E = RD->ctor_end(); I != E; ++I) {
-        if ((*I)->isCopyConstructor() || (*I)->isMoveConstructor())
-          continue;
-
-        FunctionDecl *Base = (*I)->getInstantiatedFromMemberFunction();
-        if (Base && Base->isConstexpr())
-          CheckConstexprFunctionDecl(*I, CCK_NoteNonConstexprInstantiation);
-      }
-    }
   } else if (RD->hasNonLiteralTypeFieldsOrBases()) {
     for (CXXRecordDecl::base_class_const_iterator I = RD->bases_begin(),
          E = RD->bases_end(); I != E; ++I) {
@@ -4316,9 +4293,11 @@ bool Sema::RequireLiteralType(SourceLocation Loc, QualType T,
     }
     for (CXXRecordDecl::field_iterator I = RD->field_begin(),
          E = RD->field_end(); I != E; ++I) {
-      if (!(*I)->getType()->isLiteralType()) {
+      if (!(*I)->getType()->isLiteralType() ||
+          (*I)->getType().isVolatileQualified()) {
         Diag((*I)->getLocation(), diag::note_non_literal_field)
-          << RD << (*I) << (*I)->getType();
+          << RD << (*I) << (*I)->getType()
+          << (*I)->getType().isVolatileQualified();
         return true;
       }
     }
@@ -4368,12 +4347,106 @@ QualType Sema::BuildTypeofExprType(Expr *E, SourceLocation Loc) {
   return Context.getTypeOfExprType(E);
 }
 
+/// getDecltypeForExpr - Given an expr, will return the decltype for
+/// that expression, according to the rules in C++11
+/// [dcl.type.simple]p4 and C++11 [expr.lambda.prim]p18.
+static QualType getDecltypeForExpr(Sema &S, Expr *E) {
+  if (E->isTypeDependent())
+    return S.Context.DependentTy;
+
+  // C++11 [dcl.type.simple]p4:
+  //   The type denoted by decltype(e) is defined as follows:
+  //
+  //     - if e is an unparenthesized id-expression or an unparenthesized class
+  //       member access (5.2.5), decltype(e) is the type of the entity named 
+  //       by e. If there is no such entity, or if e names a set of overloaded 
+  //       functions, the program is ill-formed;
+  if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E)) {
+    if (const ValueDecl *VD = dyn_cast<ValueDecl>(DRE->getDecl()))
+      return VD->getType();
+  }
+  if (const MemberExpr *ME = dyn_cast<MemberExpr>(E)) {
+    if (const FieldDecl *FD = dyn_cast<FieldDecl>(ME->getMemberDecl()))
+      return FD->getType();
+  }
+  
+  // C++11 [expr.lambda.prim]p18:
+  //   Every occurrence of decltype((x)) where x is a possibly
+  //   parenthesized id-expression that names an entity of automatic
+  //   storage duration is treated as if x were transformed into an
+  //   access to a corresponding data member of the closure type that
+  //   would have been declared if x were an odr-use of the denoted
+  //   entity.
+  using namespace sema;
+  if (S.getCurLambda()) {
+    if (isa<ParenExpr>(E)) {
+      if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E->IgnoreParens())) {
+        if (VarDecl *Var = dyn_cast<VarDecl>(DRE->getDecl())) {
+          QualType T = Var->getType();
+          unsigned FunctionScopesIndex;
+          bool Nested;
+          // Determine whether we can capture this variable.
+          if (S.canCaptureVariable(Var, DRE->getLocation(), 
+                                   /*Explicit=*/false, /*Diagnose=*/false, 
+                                   T, FunctionScopesIndex, Nested)) {
+            // Outer lambda scopes may have an effect on the type of a
+            // capture. Walk the captures outside-in to determine
+            // whether they can add 'const' to a capture by copy.
+            if (FunctionScopesIndex == S.FunctionScopes.size())
+              --FunctionScopesIndex;
+            for (unsigned I = FunctionScopesIndex, 
+                          E = S.FunctionScopes.size();
+                 I != E; ++I) {
+              LambdaScopeInfo *LSI
+                = dyn_cast<LambdaScopeInfo>(S.FunctionScopes[I]);
+              if (!LSI)
+                continue;
+
+              bool ByRef = false;
+              if (LSI->isCaptured(Var))
+                ByRef = LSI->getCapture(Var).isReferenceCapture();
+              else
+                ByRef = (LSI->ImpCaptureStyle
+                           == CapturingScopeInfo::ImpCap_LambdaByref);
+
+              T = S.getLambdaCaptureFieldType(T, ByRef);
+              if (!ByRef && !LSI->Mutable)
+                T.addConst();
+            }
+
+            if (!T->isReferenceType())
+              T = S.Context.getLValueReferenceType(T);
+            return T;
+          }
+        }
+      }
+    }
+  }
+
+
+  // C++11 [dcl.type.simple]p4:
+  //   [...]
+  QualType T = E->getType();
+  switch (E->getValueKind()) {
+  //     - otherwise, if e is an xvalue, decltype(e) is T&&, where T is the 
+  //       type of e;
+  case VK_XValue: T = S.Context.getRValueReferenceType(T); break;
+  //     - otherwise, if e is an lvalue, decltype(e) is T&, where T is the 
+  //       type of e;
+  case VK_LValue: T = S.Context.getLValueReferenceType(T); break;
+  //  - otherwise, decltype(e) is the type of e.
+  case VK_RValue: break;
+  }
+  
+  return T;
+}
+
 QualType Sema::BuildDecltypeType(Expr *E, SourceLocation Loc) {
   ExprResult ER = CheckPlaceholderExpr(E);
   if (ER.isInvalid()) return QualType();
   E = ER.take();
   
-  return Context.getDecltypeType(E);
+  return Context.getDecltypeType(E, getDecltypeForExpr(*this, E));
 }
 
 QualType Sema::BuildUnaryTransformType(QualType BaseType,

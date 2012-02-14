@@ -732,6 +732,14 @@ namespace {
     /// this declaration.
     Decl *TransformDecl(SourceLocation Loc, Decl *D);
 
+    void transformAttrs(Decl *Old, Decl *New) { 
+      SemaRef.InstantiateAttrs(TemplateArgs, Old, New);
+    }
+
+    void transformedLocalDecl(Decl *Old, Decl *New) {
+      SemaRef.CurrentInstantiationScope->InstantiatedLocal(Old, New);
+    }
+    
     /// \brief Transform the definition of the given declaration by
     /// instantiating it.
     Decl *TransformDefinition(SourceLocation Loc, Decl *D);
@@ -1833,14 +1841,16 @@ Sema::InstantiateClass(SourceLocation PointOfInstantiation,
     FieldDecl *NewField = FieldsWithMemberInitializers[I].second;
     Expr *OldInit = OldField->getInClassInitializer();
 
-    SourceLocation LParenLoc, RParenLoc;
-    ASTOwningVector<Expr*> NewArgs(*this);
-    if (InstantiateInitializer(OldInit, TemplateArgs, LParenLoc, NewArgs,
-                               RParenLoc))
+    ExprResult NewInit = SubstInitializer(OldInit, TemplateArgs,
+                                          /*CXXDirectInit=*/false);
+    if (NewInit.isInvalid())
       NewField->setInvalidDecl();
     else {
-      assert(NewArgs.size() == 1 && "wrong number of in-class initializers");
-      ActOnCXXInClassMemberInitializer(NewField, LParenLoc, NewArgs[0]);
+      Expr *Init = NewInit.take();
+      assert(Init && "no-argument initializer in class");
+      assert(!isa<ParenListExpr>(Init) && "call-style init in class");
+      ActOnCXXInClassMemberInitializer(NewField,
+                                       Init->getSourceRange().getBegin(), Init);
     }
   }
 

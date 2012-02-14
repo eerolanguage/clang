@@ -1394,6 +1394,9 @@ public:
   void EmitCtorPrologue(const CXXConstructorDecl *CD, CXXCtorType Type,
                         FunctionArgList &Args);
 
+  void EmitInitializerForField(FieldDecl *Field, LValue LHS, Expr *Init,
+                               ArrayRef<VarDecl *> ArrayIndexes);
+
   /// InitializeVTablePointer - Initialize the vtable pointer of the given
   /// subobject.
   ///
@@ -2361,7 +2364,8 @@ public:
 
   /// EmitCXXGlobalVarDeclInit - Create the initializer for a C++
   /// variable with global storage.
-  void EmitCXXGlobalVarDeclInit(const VarDecl &D, llvm::Constant *DeclPtr);
+  void EmitCXXGlobalVarDeclInit(const VarDecl &D, llvm::Constant *DeclPtr,
+                                bool PerformInit);
 
   /// EmitCXXGlobalDtorRegistration - Emits a call to register the global ptr
   /// with the C++ runtime so that its destructor will be called at exit.
@@ -2373,7 +2377,8 @@ public:
   /// possible to prove that an initialization will be done exactly
   /// once, e.g. with a static local variable or a static data member
   /// of a class template.
-  void EmitCXXGuardedInit(const VarDecl &D, llvm::GlobalVariable *DeclPtr);
+  void EmitCXXGuardedInit(const VarDecl &D, llvm::GlobalVariable *DeclPtr,
+                          bool PerformInit);
 
   /// GenerateCXXGlobalInitFunc - Generates code for initializing global
   /// variables.
@@ -2389,7 +2394,8 @@ public:
 
   void GenerateCXXGlobalVarDeclInitFunc(llvm::Function *Fn,
                                         const VarDecl *D,
-                                        llvm::GlobalVariable *Addr);
+                                        llvm::GlobalVariable *Addr,
+                                        bool PerformInit);
 
   void EmitCXXConstructExpr(const CXXConstructExpr *E, AggValueSlot Dest);
   

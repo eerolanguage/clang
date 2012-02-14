@@ -142,7 +142,8 @@ def PoundPragmaMessage : DiagGroup<"#pragma-messages">,
                          DiagCategory<"#pragma message Directive">;
 def : DiagGroup<"pointer-to-int-cast">;
 def : DiagGroup<"redundant-decls">;
-def ReturnType : DiagGroup<"return-type">;
+def ReturnTypeCLinkage : DiagGroup<"return-type-c-linkage">;
+def ReturnType : DiagGroup<"return-type", [ReturnTypeCLinkage]>;
 def BindToTemporaryCopy : DiagGroup<"bind-to-temporary-copy",
                                     [CXX98CompatBindToTemporaryCopy]>;
 def SelfAssignment : DiagGroup<"self-assign">;
@@ -259,7 +260,8 @@ def ParenthesesOnEquality : DiagGroup<"parentheses-equality">;
 def Parentheses : DiagGroup<"parentheses",
                             [LogicalOpParentheses,
                              BitwiseOpParentheses,
-                             ParenthesesOnEquality]>;
+                             ParenthesesOnEquality,
+                             DanglingElse]>;
 
 // -Wconversion has its own warnings, but we split a few out for
 // legacy reasons:
@@ -331,7 +333,7 @@ def Most : DiagGroup<"most", [
 def ThreadSafety : DiagGroup<"thread-safety">;
 
 // -Wall is -Wmost -Wparentheses -Wdangling-else -Wswitch
-def : DiagGroup<"all", [DanglingElse, Most, Parentheses, Switch]>;
+def : DiagGroup<"all", [Most, Parentheses, Switch]>;
 
 // Aliases.
 def : DiagGroup<"", [Extra]>;                   // -W = -Wextra

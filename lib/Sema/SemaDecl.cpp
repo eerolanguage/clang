@@ -2142,9 +2142,8 @@ void Sema::mergeObjCMethodDecls(ObjCMethodDecl *newMethod,
 /// emitting diagnostics as appropriate.
 ///
 /// Declarations using the auto type specifier (C++ [decl.spec.auto]) call back
-/// to here in AddInitializerToDecl and AddCXXDirectInitializerToDecl. We can't
-/// check them before the initializer is attached.
-///
+/// to here in AddInitializerToDecl. We can't check them before the initializer
+/// is attached.
 void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old) {
   if (New->isInvalidDecl() || Old->isInvalidDecl())
     return;
@@ -4368,6 +4367,13 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
     return false;
   }
 
+  if (NewVD->isConstexpr() && !T->isDependentType() &&
+      RequireLiteralType(NewVD->getLocation(), T,
+                         PDiag(diag::err_constexpr_var_non_literal))) {
+    NewVD->setInvalidDecl();
+    return false;
+  }
+
   if (!Previous.empty()) {
     MergeVarDecl(NewVD, Previous);
     return true;
@@ -5376,10 +5382,6 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
             Previous.getResultKind() != LookupResult::FoundOverloaded) &&
            "previous declaration set still overloaded");
 
-    if (NewFD->isConstexpr() && !NewFD->isInvalidDecl() &&
-        !CheckConstexprFunctionDecl(NewFD, CCK_Declaration))
-      NewFD->setInvalidDecl();
-
     NamedDecl *PrincipalDecl = (FunctionTemplate
                                 ? cast<NamedDecl>(FunctionTemplate)
                                 : NewFD);
@@ -6011,17 +6013,6 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   if (RealDecl == 0 || RealDecl->isInvalidDecl())
     return;
 
-  // Check for self-references within variable initializers.
-  if (VarDecl *vd = dyn_cast<VarDecl>(RealDecl)) {
-    // Variables declared within a function/method body are handled
-    // by a dataflow analysis.
-    if (!vd->hasLocalStorage() && !vd->isStaticLocal())
-      CheckSelfReference(RealDecl, Init);    
-  }
-  else {
-    CheckSelfReference(RealDecl, Init);
-  }
-
   if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(RealDecl)) {
     // With declarators parsed the way they are, the parser cannot
     // distinguish between a normal initializer and a pure-specifier.
@@ -6046,12 +6037,44 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     return;
   }
 
+  // Check for self-references within variable initializers.
+  // Variables declared within a function/method body are handled
+  // by a dataflow analysis.
+  if (!VDecl->hasLocalStorage() && !VDecl->isStaticLocal())
+    CheckSelfReference(RealDecl, Init);
+
+  ParenListExpr *CXXDirectInit = dyn_cast<ParenListExpr>(Init);
+
   // C++11 [decl.spec.auto]p6. Deduce the type which 'auto' stands in for.
   if (TypeMayContainAuto && VDecl->getType()->getContainedAutoType()) {
+    Expr *DeduceInit = Init;
+    // Initializer could be a C++ direct-initializer. Deduction only works if it
+    // contains exactly one expression.
+    if (CXXDirectInit) {
+      if (CXXDirectInit->getNumExprs() == 0) {
+        // It isn't possible to write this directly, but it is possible to
+        // end up in this situation with "auto x(some_pack...);"
+        Diag(CXXDirectInit->getSourceRange().getBegin(),
+             diag::err_auto_var_init_no_expression)
+          << VDecl->getDeclName() << VDecl->getType()
+          << VDecl->getSourceRange();
+        RealDecl->setInvalidDecl();
+        return;
+      } else if (CXXDirectInit->getNumExprs() > 1) {
+        Diag(CXXDirectInit->getExpr(1)->getSourceRange().getBegin(),
+             diag::err_auto_var_init_multiple_expressions)
+          << VDecl->getDeclName() << VDecl->getType()
+          << VDecl->getSourceRange();
+        RealDecl->setInvalidDecl();
+        return;
+      } else {
+        DeduceInit = CXXDirectInit->getExpr(0);
+      }
+    }
     TypeSourceInfo *DeducedType = 0;
-    if (DeduceAutoType(VDecl->getTypeSourceInfo(), Init, DeducedType) ==
+    if (DeduceAutoType(VDecl->getTypeSourceInfo(), DeduceInit, DeducedType) ==
             DAR_Failed)
-      DiagnoseAutoDeductionFailure(VDecl, Init);
+      DiagnoseAutoDeductionFailure(VDecl, DeduceInit);
     if (!DeducedType) {
       RealDecl->setInvalidDecl();
       return;
@@ -6076,24 +6099,25 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     return;
   }
 
+  if (!VDecl->getType()->isDependentType()) {
+    // A definition must end up with a complete type, which means it must be
+    // complete with the restriction that an array type might be completed by
+    // the initializer; note that later code assumes this restriction.
+    QualType BaseDeclType = VDecl->getType();
+    if (const ArrayType *Array = Context.getAsIncompleteArrayType(BaseDeclType))
+      BaseDeclType = Array->getElementType();
+    if (RequireCompleteType(VDecl->getLocation(), BaseDeclType,
+                            diag::err_typecheck_decl_incomplete_type)) {
+      RealDecl->setInvalidDecl();
+      return;
+    }
 
-  // A definition must end up with a complete type, which means it must be
-  // complete with the restriction that an array type might be completed by the
-  // initializer; note that later code assumes this restriction.
-  QualType BaseDeclType = VDecl->getType();
-  if (const ArrayType *Array = Context.getAsIncompleteArrayType(BaseDeclType))
-    BaseDeclType = Array->getElementType();
-  if (RequireCompleteType(VDecl->getLocation(), BaseDeclType,
-                          diag::err_typecheck_decl_incomplete_type)) {
-    RealDecl->setInvalidDecl();
-    return;
+    // The variable can not have an abstract class type.
+    if (RequireNonAbstractType(VDecl->getLocation(), VDecl->getType(),
+                               diag::err_abstract_type_in_decl,
+                               AbstractVariableType))
+      VDecl->setInvalidDecl();
   }
-
-  // The variable can not have an abstract class type.
-  if (RequireNonAbstractType(VDecl->getLocation(), VDecl->getType(),
-                             diag::err_abstract_type_in_decl,
-                             AbstractVariableType))
-    VDecl->setInvalidDecl();
 
   const VarDecl *Def;
   if ((Def = VDecl->getDefinition()) && Def != VDecl) {
@@ -6150,15 +6174,24 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   if (!VDecl->isInvalidDecl()) {
     InitializedEntity Entity = InitializedEntity::InitializeVariable(VDecl);
     InitializationKind Kind
-      = DirectInit ? InitializationKind::CreateDirect(VDecl->getLocation(),
-                                                      Init->getLocStart(),
-                                                      Init->getLocEnd())
+      = DirectInit ?
+          CXXDirectInit ? InitializationKind::CreateDirect(VDecl->getLocation(),
+                                                           Init->getLocStart(),
+                                                           Init->getLocEnd())
+                        : InitializationKind::CreateDirectList(
+                                                          VDecl->getLocation())
                    : InitializationKind::CreateCopy(VDecl->getLocation(),
                                                     Init->getLocStart());
 
-    InitializationSequence InitSeq(*this, Entity, Kind, &Init, 1);
+    Expr **Args = &Init;
+    unsigned NumArgs = 1;
+    if (CXXDirectInit) {
+      Args = CXXDirectInit->getExprs();
+      NumArgs = CXXDirectInit->getNumExprs();
+    }
+    InitializationSequence InitSeq(*this, Entity, Kind, Args, NumArgs);
     ExprResult Result = InitSeq.Perform(*this, Entity, Kind,
-                                              MultiExprArg(*this, &Init, 1),
+                                              MultiExprArg(*this, Args,NumArgs),
                                               &DclT);
     if (Result.isInvalid()) {
       VDecl->setInvalidDecl();
@@ -6221,8 +6254,8 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     if (DclT->isDependentType()) {
 
     // Allow any 'static constexpr' members, whether or not they are of literal
-    // type. We separately check that the initializer is a constant expression,
-    // which implicitly requires the member to be of literal type.
+    // type. We separately check that every constexpr variable is of literal
+    // type.
     } else if (VDecl->isConstexpr()) {
 
     // Require constness.
@@ -6292,6 +6325,28 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     // C99 6.7.8p4. All file scoped initializers need to be constant.
     if (!getLangOptions().CPlusPlus && !VDecl->isInvalidDecl())
       CheckForConstantInitializer(Init, DclT);
+  }
+
+  // We will represent direct-initialization similarly to copy-initialization:
+  //    int x(1);  -as-> int x = 1;
+  //    ClassType x(a,b,c); -as-> ClassType x = ClassType(a,b,c);
+  //
+  // Clients that want to distinguish between the two forms, can check for
+  // direct initializer using VarDecl::getInitStyle().
+  // A major benefit is that clients that don't particularly care about which
+  // exactly form was it (like the CodeGen) can handle both cases without
+  // special case code.
+
+  // C++ 8.5p11:
+  // The form of initialization (using parentheses or '=') is generally
+  // insignificant, but does matter when the entity being initialized has a
+  // class type.
+  if (CXXDirectInit) {
+    assert(DirectInit && "Call-style initializer must be direct init.");
+    VDecl->setInitStyle(VarDecl::CallInit);
+  } else if (DirectInit) {
+    // This must be list-initialization. No other way is direct-initialization.
+    VDecl->setInitStyle(VarDecl::ListInit);
   }
 
   CheckCompleteVariableDeclaration(VDecl);
@@ -6524,8 +6579,11 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl,
                                       MultiExprArg(*this, 0, 0));
     if (Init.isInvalid())
       Var->setInvalidDecl();
-    else if (Init.get())
+    else if (Init.get()) {
       Var->setInit(MaybeCreateExprWithCleanups(Init.get()));
+      // This is important for template substitution.
+      Var->setInitStyle(VarDecl::CallInit);
+    }
 
     CheckCompleteVariableDeclaration(Var);
   }
@@ -7325,8 +7383,9 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
       ActivePolicy = &WP;
     }
 
-    if (FD && FD->isConstexpr() && !FD->isInvalidDecl() &&
-        !CheckConstexprFunctionBody(FD, Body, IsInstantiation))
+    if (!IsInstantiation && FD && FD->isConstexpr() && !FD->isInvalidDecl() &&
+        (!CheckConstexprFunctionDecl(FD) ||
+         !CheckConstexprFunctionBody(FD, Body)))
       FD->setInvalidDecl();
 
     assert(ExprCleanupObjects.empty() && "Leftover temporaries in function");

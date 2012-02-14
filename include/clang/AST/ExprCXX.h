@@ -812,6 +812,7 @@ private:
   unsigned NumArgs : 16;
   bool Elidable : 1;
   bool HadMultipleCandidates : 1;
+  bool ListInitialization : 1;
   bool ZeroInitialization : 1;
   unsigned ConstructKind : 2;
   Stmt **Args;
@@ -822,32 +823,36 @@ protected:
                    CXXConstructorDecl *d, bool elidable,
                    Expr **args, unsigned numargs,
                    bool HadMultipleCandidates,
-                   bool ZeroInitialization = false,
-                   ConstructionKind ConstructKind = CK_Complete,
-                   SourceRange ParenRange = SourceRange());
+                   bool ListInitialization,
+                   bool ZeroInitialization,
+                   ConstructionKind ConstructKind,
+                   SourceRange ParenRange);
 
   /// \brief Construct an empty C++ construction expression.
   CXXConstructExpr(StmtClass SC, EmptyShell Empty)
-    : Expr(SC, Empty), Constructor(0), NumArgs(0), Elidable(0),
-      HadMultipleCandidates(false), ZeroInitialization(0),
-      ConstructKind(0), Args(0) { }
+    : Expr(SC, Empty), Constructor(0), NumArgs(0), Elidable(false),
+      HadMultipleCandidates(false), ListInitialization(false),
+      ZeroInitialization(false), ConstructKind(0), Args(0)
+  { }
 
 public:
   /// \brief Construct an empty C++ construction expression.
   explicit CXXConstructExpr(EmptyShell Empty)
     : Expr(CXXConstructExprClass, Empty), Constructor(0),
-      NumArgs(0), Elidable(0), HadMultipleCandidates(false),
-      ZeroInitialization(0), ConstructKind(0), Args(0) { }
+      NumArgs(0), Elidable(false), HadMultipleCandidates(false),
+      ListInitialization(false), ZeroInitialization(false),
+      ConstructKind(0), Args(0)
+  { }
 
   static CXXConstructExpr *Create(ASTContext &C, QualType T,
                                   SourceLocation Loc,
                                   CXXConstructorDecl *D, bool Elidable,
                                   Expr **Args, unsigned NumArgs,
                                   bool HadMultipleCandidates,
-                                  bool ZeroInitialization = false,
-                                  ConstructionKind ConstructKind = CK_Complete,
-                                  SourceRange ParenRange = SourceRange());
-
+                                  bool ListInitialization,
+                                  bool ZeroInitialization,
+                                  ConstructionKind ConstructKind,
+                                  SourceRange ParenRange);
 
   CXXConstructorDecl* getConstructor() const { return Constructor; }
   void setConstructor(CXXConstructorDecl *C) { Constructor = C; }
@@ -863,6 +868,10 @@ public:
   /// an overloaded set having size greater than 1.
   bool hadMultipleCandidates() const { return HadMultipleCandidates; }
   void setHadMultipleCandidates(bool V) { HadMultipleCandidates = V; }
+
+  /// \brief Whether this constructor call was written as list-initialization.
+  bool isListInitialization() const { return ListInitialization; }
+  void setListInitialization(bool V) { ListInitialization = V; }
 
   /// \brief Whether this construction first requires
   /// zero-initialization before the initializer is called.
@@ -1039,12 +1048,9 @@ class LambdaExpr : public Expr {
   /// \brief The source range that covers the lambda introducer ([...]).
   SourceRange IntroducerRange;
 
-  /// \brief The number of captures in this lambda.
+  /// \brief The number of captures.
   unsigned NumCaptures : 16;
-
-  /// \brief The number of explicit captures in this lambda.
-  unsigned NumExplicitCaptures : 13;
-
+  
   /// \brief The default capture kind, which is a value of type
   /// LambdaCaptureDefault.
   unsigned CaptureDefault : 2;
@@ -1053,6 +1059,13 @@ class LambdaExpr : public Expr {
   /// implicit (and empty) parameter list.
   unsigned ExplicitParams : 1;
 
+  /// \brief Whether this lambda had the result type explicitly specified.
+  unsigned ExplicitResultType : 1;
+  
+  /// \brief Whether there are any array index variables stored at the end of
+  /// this lambda expression.
+  unsigned HasArrayIndexVars : 1;
+  
   /// \brief The location of the closing brace ('}') that completes
   /// the lambda.
   /// 
@@ -1063,11 +1076,9 @@ class LambdaExpr : public Expr {
   /// module file just to determine the source range.
   SourceLocation ClosingBrace;
 
-  // Note: The Create method allocates storage after the LambdaExpr
-  // object, which contains the captures, followed by the capture
-  // initializers, and finally the body of the lambda. The capture
-  // initializers and lambda body are placed next to each other so
-  // that the children() function can visit all of them easily.
+  // Note: The capture initializers are stored directly after the lambda
+  // expression, along with the index variables used to initialize by-copy
+  // array captures.
 
 public:
   /// \brief Describes the capture of either a variable or 'this'.
@@ -1075,10 +1086,10 @@ public:
     llvm::PointerIntPair<VarDecl *, 2> VarAndBits;
     SourceLocation Loc;
     SourceLocation EllipsisLoc;
-
+    
     friend class ASTStmtReader;
     friend class ASTStmtWriter;
-
+    
   public:
     /// \brief Create a new capture.
     ///
@@ -1151,13 +1162,26 @@ private:
              LambdaCaptureDefault CaptureDefault,
              ArrayRef<Capture> Captures,
              bool ExplicitParams,
+             bool ExplicitResultType,
              ArrayRef<Expr *> CaptureInits,
+             ArrayRef<VarDecl *> ArrayIndexVars,
+             ArrayRef<unsigned> ArrayIndexStarts,
              SourceLocation ClosingBrace);
 
   Stmt **getStoredStmts() const {
-    LambdaExpr *This = const_cast<LambdaExpr *>(this);
-    return reinterpret_cast<Stmt **>(reinterpret_cast<Capture *>(This + 1)
-                                     + NumCaptures);
+    return reinterpret_cast<Stmt **>(const_cast<LambdaExpr *>(this) + 1);
+  }
+  
+  /// \brief Retrieve the mapping from captures to the first array index
+  /// variable.
+  unsigned *getArrayIndexStarts() const {
+    return reinterpret_cast<unsigned *>(getStoredStmts() + NumCaptures + 1);
+  }
+  
+  /// \brief Retrieve the complete set of array-index variables.
+  VarDecl **getArrayIndexVars() const {
+    return reinterpret_cast<VarDecl **>(
+             getArrayIndexStarts() + NumCaptures + 1);
   }
 
 public:
@@ -1168,7 +1192,10 @@ public:
                             LambdaCaptureDefault CaptureDefault,
                             ArrayRef<Capture> Captures,
                             bool ExplicitParams,
+                            bool ExplicitResultType,
                             ArrayRef<Expr *> CaptureInits,
+                            ArrayRef<VarDecl *> ArrayIndexVars,
+                            ArrayRef<unsigned> ArrayIndexStarts,
                             SourceLocation ClosingBrace);
 
   /// \brief Determine the default capture kind for this lambda.
@@ -1181,39 +1208,30 @@ public:
   typedef const Capture *capture_iterator;
 
   /// \brief Retrieve an iterator pointing to the first lambda capture.
-  capture_iterator capture_begin() const {
-    return reinterpret_cast<const Capture *>(this + 1);
-  }
+  capture_iterator capture_begin() const;
 
   /// \brief Retrieve an iterator pointing past the end of the
   /// sequence of lambda captures.
-  capture_iterator capture_end() const {
-    return capture_begin() + NumCaptures;
-  }
+  capture_iterator capture_end() const;
 
+  /// \brief Determine the number of captures in this lambda.
+  unsigned capture_size() const { return NumCaptures; }
+  
   /// \brief Retrieve an iterator pointing to the first explicit
   /// lambda capture.
-  capture_iterator explicit_capture_begin() const {
-    return capture_begin();
-  }
+  capture_iterator explicit_capture_begin() const;
 
   /// \brief Retrieve an iterator pointing past the end of the sequence of
   /// explicit lambda captures.
-  capture_iterator explicit_capture_end() const {
-    return capture_begin() + NumExplicitCaptures;
-  }
+  capture_iterator explicit_capture_end() const;
 
   /// \brief Retrieve an iterator pointing to the first implicit
   /// lambda capture.
-  capture_iterator implicit_capture_begin() const {
-    return explicit_capture_end();
-  }
+  capture_iterator implicit_capture_begin() const;
 
   /// \brief Retrieve an iterator pointing past the end of the sequence of
   /// implicit lambda captures.
-  capture_iterator implicit_capture_end() const {
-    return capture_end();
-  }
+  capture_iterator implicit_capture_end() const;
 
   /// \brief Iterator that walks over the capture initialization
   /// arguments.
@@ -1228,9 +1246,16 @@ public:
   /// \brief Retrieve the iterator pointing one past the last
   /// initialization argument for this lambda expression.
   capture_init_iterator capture_init_end() const {
-    return capture_init_begin() + NumCaptures;
+    return capture_init_begin() + NumCaptures;    
   }
 
+  /// \brief Retrieve the set of index variables used in the capture 
+  /// initializer of an array captured by copy.
+  ///
+  /// \param Iter The iterator that points at the capture initializer for 
+  /// which we are extracting the corresponding index variables.
+  ArrayRef<VarDecl *> getCaptureInitIndexVars(capture_init_iterator Iter) const;
+  
   /// \brief Retrieve the source range covering the lambda introducer,
   /// which contains the explicit capture list surrounded by square
   /// brackets ([...]).
@@ -1258,6 +1283,9 @@ public:
   /// list vs. an implicit (empty) parameter list.
   bool hasExplicitParameters() const { return ExplicitParams; }
 
+  /// \brief Whether this lambda had its result type explicitly specified.
+  bool hasExplicitResultType() const { return ExplicitResultType; }
+  
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == LambdaExprClass;
   }
@@ -1267,7 +1295,7 @@ public:
     return SourceRange(IntroducerRange.getBegin(), ClosingBrace);
   }
 
-  child_range children() { 
+  child_range children() {
     return child_range(getStoredStmts(), getStoredStmts() + NumCaptures + 1);
   }
 

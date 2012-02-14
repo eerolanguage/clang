@@ -186,7 +186,7 @@ static void ExpandArgsFromBuf(const char *Arg,
                               SmallVectorImpl<const char*> &ArgVector,
                               std::set<std::string> &SavedStrings) {
   const char *FName = Arg + 1;
-  llvm::OwningPtr<llvm::MemoryBuffer> MemBuf;
+  OwningPtr<llvm::MemoryBuffer> MemBuf;
   if (llvm::MemoryBuffer::getFile(FName, MemBuf)) {
     ArgVector.push_back(SaveStringInSet(SavedStrings, Arg));
     return;
@@ -388,7 +388,7 @@ int main(int argc_, const char **argv_) {
   // the installed path. We do this manually, because we want to support that
   // path being a symlink.
   {
-    llvm::SmallString<128> InstalledPath(argv[0]);
+    SmallString<128> InstalledPath(argv[0]);
 
     // Do a PATH lookup, if there are no directory components.
     if (llvm::sys::path::filename(InstalledPath) == InstalledPath) {
@@ -448,7 +448,7 @@ int main(int argc_, const char **argv_) {
     argv.insert(&argv[1], ExtraArgs.begin(), ExtraArgs.end());
   }
 
-  llvm::OwningPtr<Compilation> C(TheDriver.BuildCompilation(argv));
+  OwningPtr<Compilation> C(TheDriver.BuildCompilation(argv));
   int Res = 0;
   const Command *FailingCommand = 0;
   if (C.get())

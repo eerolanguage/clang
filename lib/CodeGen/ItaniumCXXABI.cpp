@@ -121,7 +121,7 @@ public:
                        llvm::Value *&AllocPtr, CharUnits &CookieSize);
 
   void EmitGuardedInit(CodeGenFunction &CGF, const VarDecl &D,
-                       llvm::GlobalVariable *DeclPtr);
+                       llvm::GlobalVariable *DeclPtr, bool PerformInit);
 };
 
 class ARMCXXABI : public ItaniumCXXABI {
@@ -979,7 +979,8 @@ static llvm::Constant *getGuardAcquireFn(CodeGenModule &CGM,
     llvm::FunctionType::get(CGM.getTypes().ConvertType(CGM.getContext().IntTy),
                             GuardPtrTy, /*isVarArg=*/false);
   
-  return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_acquire");
+  return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_acquire",
+                                   llvm::Attribute::NoUnwind);
 }
 
 static llvm::Constant *getGuardReleaseFn(CodeGenModule &CGM,
@@ -988,7 +989,8 @@ static llvm::Constant *getGuardReleaseFn(CodeGenModule &CGM,
   llvm::FunctionType *FTy =
     llvm::FunctionType::get(CGM.VoidTy, GuardPtrTy, /*isVarArg=*/false);
   
-  return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_release");
+  return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_release",
+                                   llvm::Attribute::NoUnwind);
 }
 
 static llvm::Constant *getGuardAbortFn(CodeGenModule &CGM,
@@ -997,7 +999,8 @@ static llvm::Constant *getGuardAbortFn(CodeGenModule &CGM,
   llvm::FunctionType *FTy =
     llvm::FunctionType::get(CGM.VoidTy, GuardPtrTy, /*isVarArg=*/false);
   
-  return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_abort");
+  return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_abort",
+                                   llvm::Attribute::NoUnwind);
 }
 
 namespace {
@@ -1016,7 +1019,8 @@ namespace {
 /// just special-case it at particular places.
 void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
                                     const VarDecl &D,
-                                    llvm::GlobalVariable *GV) {
+                                    llvm::GlobalVariable *GV,
+                                    bool PerformInit) {
   CGBuilderTy &Builder = CGF.Builder;
 
   // We only need to use thread-safe statics for local variables;
@@ -1129,7 +1133,7 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
   }
 
   // Emit the initializer and add a global destructor if appropriate.
-  CGF.EmitCXXGlobalVarDeclInit(D, GV);
+  CGF.EmitCXXGlobalVarDeclInit(D, GV, PerformInit);
 
   if (threadsafe) {
     // Pop the guard-abort cleanup if we pushed one.

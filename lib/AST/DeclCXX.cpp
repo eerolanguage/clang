@@ -35,7 +35,6 @@ AccessSpecDecl *AccessSpecDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   return new (Mem) AccessSpecDecl(EmptyShell());
 }
 
-
 CXXRecordDecl::DefinitionData::DefinitionData(CXXRecordDecl *D)
   : UserDeclaredConstructor(false), UserDeclaredCopyConstructor(false),
     UserDeclaredMoveConstructor(false), UserDeclaredCopyAssignment(false),
@@ -80,6 +79,16 @@ CXXRecordDecl *CXXRecordDecl::Create(const ASTContext &C, TagKind TK,
   // FIXME: DelayTypeCreation seems like such a hack
   if (!DelayTypeCreation)
     C.getTypeDeclType(R, PrevDecl);
+  return R;
+}
+
+CXXRecordDecl *CXXRecordDecl::CreateLambda(const ASTContext &C, DeclContext *DC,
+                                           SourceLocation Loc) {
+  CXXRecordDecl* R = new (C) CXXRecordDecl(CXXRecord, TTK_Class, DC, Loc, Loc,
+                                           0, 0);
+  R->IsBeingDefined = true;
+  R->DefinitionData = new (C) struct LambdaDefinitionData(R);
+  C.getTypeDeclType(R, /*PrevDecl=*/0);
   return R;
 }
 
@@ -799,8 +808,8 @@ NotASpecialMember:;
       data().IsStandardLayout = false;
     }
 
-    // Record if this field is the first non-literal field or base.
-    if (!hasNonLiteralTypeFieldsOrBases() && !T->isLiteralType())
+    // Record if this field is the first non-literal or volatile field or base.
+    if (!T->isLiteralType() || T.isVolatileQualified())
       data().HasNonLiteralTypeFieldsOrBases = true;
 
     if (Field->hasInClassInitializer()) {
@@ -969,24 +978,15 @@ bool CXXRecordDecl::isCLike() const {
   return isPOD() && data().HasOnlyCMembers;
 }
 
-void CXXRecordDecl::setLambda(LambdaExpr *Lambda) {
-  if (!Lambda)
-    return;
-
-  data().IsLambda = true;
-  getASTContext().Lambdas[this] = Lambda;
-}
-
 void CXXRecordDecl::getCaptureFields(
        llvm::DenseMap<const VarDecl *, FieldDecl *> &Captures,
        FieldDecl *&ThisCapture) const {
   Captures.clear();
   ThisCapture = 0;
 
-  LambdaExpr *Lambda = getASTContext().Lambdas[this];
+  LambdaDefinitionData &Lambda = getLambdaData();
   RecordDecl::field_iterator Field = field_begin();
-  for (LambdaExpr::capture_iterator C = Lambda->capture_begin(), 
-                                 CEnd = Lambda->capture_end();
+  for (LambdaExpr::Capture *C = Lambda.Captures, *CEnd = C + Lambda.NumCaptures;
        C != CEnd; ++C, ++Field) {
     if (C->capturesThis()) {
       ThisCapture = *Field;

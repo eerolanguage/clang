@@ -1304,8 +1304,8 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
         Diag(ConsumeToken(), diag::err_deleted_non_function);
     } else if (Tok.is(tok::kw_default)) {
       if (D.isFunctionDeclarator())
-        Diag(Tok, diag::err_default_delete_in_multiple_declaration)
-          << 1 /* delete */;
+        Diag(ConsumeToken(), diag::err_default_delete_in_multiple_declaration)
+          << 0 /* default */;
       else
         Diag(ConsumeToken(), diag::err_default_special_members);
     } else {
@@ -1366,10 +1366,11 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
         ExitScope();
       }
 
-      Actions.AddCXXDirectInitializerToDecl(ThisDecl, T.getOpenLocation(),
-                                            move_arg(Exprs),
-                                            T.getCloseLocation(),
-                                            TypeContainsAuto);
+      ExprResult Initializer = Actions.ActOnParenListExpr(T.getOpenLocation(),
+                                                          T.getCloseLocation(),
+                                                          move_arg(Exprs));
+      Actions.AddInitializerToDecl(ThisDecl, Initializer.take(),
+                                   /*DirectInit=*/true, TypeContainsAuto);
     }
   } else if (getLang().CPlusPlus0x && Tok.is(tok::l_brace)) {
     // Parse C++0x braced-init-list.

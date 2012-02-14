@@ -22,7 +22,6 @@
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/ExternalSemaSource.h"
 #include "clang/Sema/LocInfoType.h"
-#include "clang/Sema/MultiInitializer.h"
 #include "clang/Sema/TypoCorrection.h"
 #include "clang/Sema/Weak.h"
 #include "clang/AST/Expr.h"
@@ -836,8 +835,7 @@ public:
                                          PartialDiagnostic> Note);
 
   bool RequireLiteralType(SourceLocation Loc, QualType T,
-                          const PartialDiagnostic &PD,
-                          bool AllowIncompleteType = false);
+                          const PartialDiagnostic &PD);
 
   QualType getElaboratedType(ElaboratedTypeKeyword Keyword,
                              const CXXScopeSpec &SS, QualType T);
@@ -1012,23 +1010,8 @@ public:
                                      bool &AddToScope);
   bool AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD);
 
-  /// \brief The kind of constexpr declaration checking we are performing.
-  ///
-  /// The kind affects which diagnostics (if any) are emitted if the function
-  /// does not satisfy the requirements of a constexpr function declaration.
-  enum CheckConstexprKind {
-    /// \brief Check a constexpr function declaration, and produce errors if it
-    /// does not satisfy the requirements.
-    CCK_Declaration,
-    /// \brief Check a constexpr function template instantiation.
-    CCK_Instantiation,
-    /// \brief Produce notes explaining why an instantiation was not constexpr.
-    CCK_NoteNonConstexprInstantiation
-  };
-  bool CheckConstexprFunctionDecl(const FunctionDecl *FD,
-                                  CheckConstexprKind CCK);
-  bool CheckConstexprFunctionBody(const FunctionDecl *FD, Stmt *Body,
-                                  bool IsInstantiation);
+  bool CheckConstexprFunctionDecl(const FunctionDecl *FD);
+  bool CheckConstexprFunctionBody(const FunctionDecl *FD, Stmt *Body);
 
   void DiagnoseHiddenVirtualMethods(CXXRecordDecl *DC, CXXMethodDecl *MD);
   // Returns true if the function declaration is a redeclaration
@@ -2294,6 +2277,34 @@ public:
   void UpdateMarkingForLValueToRValue(Expr *E);
   void CleanupVarDeclMarking();
 
+  /// \brief Determine whether we can capture the given variable in
+  /// the given scope.
+  ///
+  /// \param Explicit Whether this is an explicit capture (vs. an
+  /// implicit capture).
+  ///
+  /// \param Diagnose Diagnose errors that occur when attempting to perform
+  /// the capture.
+  ///
+  /// \param Var The variable to check for capture.
+  ///
+  /// \param Type Will be set to the type used to perform the capture.
+  ///
+  /// \param FunctionScopesIndex Will be set to the index of the first 
+  /// scope in which capture will need to be performed.
+  ///
+  /// \param Nested Whether this will be a nested capture.
+  bool canCaptureVariable(VarDecl *Var, SourceLocation Loc, bool Explicit,
+                          bool Diagnose, QualType &Type, 
+                          unsigned &FunctionScopesIndex, bool &Nested);
+
+  /// \brief Determine the type of the field that will capture the
+  /// given variable in a lambda expression.
+  ///
+  /// \param T The type of the variable being captured.
+  /// \param ByRef Whether we are capturing by reference or by value.
+  QualType getLambdaCaptureFieldType(QualType T, bool ByRef);
+
   enum TryCaptureKind {
     TryCapture_Implicit, TryCapture_ExplicitByVal, TryCapture_ExplicitByRef
   };
@@ -2398,9 +2409,9 @@ public:
   ExprResult ActOnNumericConstant(const Token &Tok);
   ExprResult ActOnCharacterConstant(const Token &Tok);
   ExprResult ActOnParenExpr(SourceLocation L, SourceLocation R, Expr *E);
-  ExprResult ActOnParenOrParenListExpr(SourceLocation L,
-                                       SourceLocation R,
-                                       MultiExprArg Val);
+  ExprResult ActOnParenListExpr(SourceLocation L,
+                                SourceLocation R,
+                                MultiExprArg Val);
 
   /// ActOnStringLiteral - The specified tokens were lexed as pasted string
   /// fragments (e.g. "foo" "bar" L"baz").
@@ -2779,15 +2790,6 @@ public:
                               SourceLocation UsingLoc,
                               UnqualifiedId &Name,
                               TypeResult Type);
-
-  /// AddCXXDirectInitializerToDecl - This action is called immediately after
-  /// ActOnDeclarator, when a C++ direct initializer is present.
-  /// e.g: "int x(1);"
-  void AddCXXDirectInitializerToDecl(Decl *Dcl,
-                                     SourceLocation LParenLoc,
-                                     MultiExprArg Exprs,
-                                     SourceLocation RParenLoc,
-                                     bool TypeMayContainAuto);
 
   /// InitializeVarWithConstructor - Creates an CXXConstructExpr
   /// and sets it as the initializer for the the passed in VarDecl.
@@ -3476,6 +3478,31 @@ public:
   /// initializer for the declaration 'Dcl'.
   void ActOnCXXExitDeclInitializer(Scope *S, Decl *Dcl);
 
+  /// \brief Create a new lambda closure type.
+  CXXRecordDecl *createLambdaClosureType(SourceRange IntroducerRange);
+  
+  /// \brief Start the definition of a lambda expression.
+  CXXMethodDecl *startLambdaDefinition(CXXRecordDecl *Class,
+                                       SourceRange IntroducerRange,
+                                       TypeSourceInfo *MethodType,
+                                       SourceLocation EndLoc);
+  
+  /// \brief Introduce the scope for a lambda expression.
+  sema::LambdaScopeInfo *enterLambdaScope(CXXMethodDecl *CallOperator,
+                                          SourceRange IntroducerRange,
+                                          LambdaCaptureDefault CaptureDefault,
+                                          bool ExplicitParams,
+                                          bool ExplicitResultType,
+                                          bool Mutable);
+  
+  /// \brief Note that we have finished the explicit captures for the
+  /// given lambda.
+  void finishLambdaExplicitCaptures(sema::LambdaScopeInfo *LSI);
+  
+  /// \brief Introduce the lambda parameters into scope.
+  void addLambdaParameters(CXXMethodDecl *CallOperator, Scope *CurScope,
+                           llvm::ArrayRef<ParmVarDecl *> Params);
+  
   /// ActOnStartOfLambdaDefinition - This is called just before we start
   /// parsing the body of a lambda; it analyzes the explicit captures and 
   /// arguments, and sets up various data-structures for the body of the
@@ -3485,12 +3512,13 @@ public:
 
   /// ActOnLambdaError - If there is an error parsing a lambda, this callback
   /// is invoked to pop the information about the lambda.
-  void ActOnLambdaError(SourceLocation StartLoc, Scope *CurScope);
+  void ActOnLambdaError(SourceLocation StartLoc, Scope *CurScope,
+                        bool IsInstantiation = false);
 
   /// ActOnLambdaExpr - This is called when the body of a lambda expression
   /// was successfully completed.
   ExprResult ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
-                             Scope *CurScope);
+                             Scope *CurScope, bool IsInstantiation = false);
 
   // ParseObjCStringLiteral - Parse Objective-C string literals.
   ExprResult ParseObjCStringLiteral(SourceLocation *AtLocs,
@@ -3585,21 +3613,21 @@ public:
                                     ParsedType TemplateTypeTy,
                                     const DeclSpec &DS,
                                     SourceLocation IdLoc,
-                                    const MultiInitializer &Init,
+                                    Expr *Init,
                                     SourceLocation EllipsisLoc);
 
   MemInitResult BuildMemberInitializer(ValueDecl *Member,
-                                       const MultiInitializer &Args,
+                                       Expr *Init,
                                        SourceLocation IdLoc);
 
   MemInitResult BuildBaseInitializer(QualType BaseType,
                                      TypeSourceInfo *BaseTInfo,
-                                     const MultiInitializer &Args,
+                                     Expr *Init,
                                      CXXRecordDecl *ClassDecl,
                                      SourceLocation EllipsisLoc);
 
   MemInitResult BuildDelegatingInitializer(TypeSourceInfo *TInfo,
-                                           const MultiInitializer &Args,
+                                           Expr *Init,
                                            CXXRecordDecl *ClassDecl);
 
   bool SetDelegatingInitializer(CXXConstructorDecl *Constructor,
@@ -5197,6 +5225,10 @@ public:
   Decl *SubstDecl(Decl *D, DeclContext *Owner,
                   const MultiLevelTemplateArgumentList &TemplateArgs);
 
+  ExprResult SubstInitializer(Expr *E,
+                       const MultiLevelTemplateArgumentList &TemplateArgs,
+                       bool CXXDirectInit);
+
   bool
   SubstBaseSpecifiers(CXXRecordDecl *Instantiation,
                       CXXRecordDecl *Pattern,
@@ -5270,11 +5302,6 @@ public:
   void InstantiateMemInitializers(CXXConstructorDecl *New,
                                   const CXXConstructorDecl *Tmpl,
                             const MultiLevelTemplateArgumentList &TemplateArgs);
-  bool InstantiateInitializer(Expr *Init,
-                            const MultiLevelTemplateArgumentList &TemplateArgs,
-                              SourceLocation &LParenLoc,
-                              ASTOwningVector<Expr*> &NewArgs,
-                              SourceLocation &RParenLoc);
 
   NamedDecl *FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
                           const MultiLevelTemplateArgumentList &TemplateArgs);

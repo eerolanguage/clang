@@ -1151,10 +1151,13 @@ Parser::ParseCXXTypeConstructExpression(const DeclSpec &DS) {
          && "Expected '(' or '{'!");
 
   if (Tok.is(tok::l_brace)) {
-
-    // FIXME: Convert to a proper type construct expression.
-    return ParseBraceInitializer();
-
+    ExprResult Init = ParseBraceInitializer();
+    if (Init.isInvalid())
+      return Init;
+    Expr *InitList = Init.take();
+    return Actions.ActOnCXXTypeConstructExpr(TypeRep, SourceLocation(),
+                                             MultiExprArg(&InitList, 1),
+                                             SourceLocation());
   } else {
     GreaterThanIsOperatorScope G(GreaterThanIsOperator, true);
 
@@ -2182,8 +2185,10 @@ Parser::ParseCXXNewExpression(bool UseGlobal, SourceLocation Start) {
   } else if (Tok.is(tok::l_brace) && getLang().CPlusPlus0x) {
     Diag(Tok.getLocation(),
          diag::warn_cxx98_compat_generalized_initializer_lists);
-    // FIXME: Have to communicate the init-list to ActOnCXXNew.
-    ParseBraceInitializer();
+    ExprResult InitList = ParseBraceInitializer();
+    if (InitList.isInvalid())
+      return InitList;
+    ConstructorArgs.push_back(InitList.take());
   }
 
   return Actions.ActOnCXXNew(Start, UseGlobal, PlacementLParen,

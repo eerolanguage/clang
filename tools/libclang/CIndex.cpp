@@ -2457,7 +2457,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
     llvm::CrashRecoveryContextReleaseRefCleanup<DiagnosticsEngine> >
     DiagCleanup(Diags.getPtr());
 
-  llvm::OwningPtr<std::vector<ASTUnit::RemappedFile> >
+  OwningPtr<std::vector<ASTUnit::RemappedFile> >
     RemappedFiles(new std::vector<ASTUnit::RemappedFile>());
 
   // Recover resources if we crash before exiting this function.
@@ -2472,7 +2472,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
                                             Buffer));
   }
 
-  llvm::OwningPtr<std::vector<const char *> > 
+  OwningPtr<std::vector<const char *> >
     Args(new std::vector<const char*>());
 
   // Recover resources if we crash before exiting this method.
@@ -2516,7 +2516,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
   }
   
   unsigned NumErrors = Diags->getClient()->getNumErrors();
-  llvm::OwningPtr<ASTUnit> Unit(
+  OwningPtr<ASTUnit> Unit(
     ASTUnit::LoadFromCommandLine(Args->size() ? &(*Args)[0] : 0 
                                  /* vector::data() not portable */,
                                  Args->size() ? (&(*Args)[0] + Args->size()) :0,
@@ -2658,7 +2658,7 @@ static void clang_reparseTranslationUnit_Impl(void *UserData) {
   ASTUnit *CXXUnit = static_cast<ASTUnit *>(TU->TUData);
   ASTUnit::ConcurrencyCheck Check(*CXXUnit);
   
-  llvm::OwningPtr<std::vector<ASTUnit::RemappedFile> >
+  OwningPtr<std::vector<ASTUnit::RemappedFile> >
     RemappedFiles(new std::vector<ASTUnit::RemappedFile>());
   
   // Recover resources if we crash before exiting this function.
@@ -2898,7 +2898,7 @@ static CXString getDeclSpelling(Decl *D) {
   if (isa<UsingDirectiveDecl>(D))
     return createCXString("");
   
-  llvm::SmallString<1024> S;
+  SmallString<1024> S;
   llvm::raw_svector_ostream os(S);
   ND->printName(os);
   
@@ -3040,7 +3040,7 @@ CXString clang_getCursorDisplayName(CXCursor C) {
     D = FunTmpl->getTemplatedDecl();
   
   if (FunctionDecl *Function = dyn_cast<FunctionDecl>(D)) {
-    llvm::SmallString<64> Str;
+    SmallString<64> Str;
     llvm::raw_svector_ostream OS(Str);
     OS << *Function;
     if (Function->getPrimaryTemplate())
@@ -3062,7 +3062,7 @@ CXString clang_getCursorDisplayName(CXCursor C) {
   }
   
   if (ClassTemplateDecl *ClassTemplate = dyn_cast<ClassTemplateDecl>(D)) {
-    llvm::SmallString<64> Str;
+    SmallString<64> Str;
     llvm::raw_svector_ostream OS(Str);
     OS << *ClassTemplate;
     OS << "<";
@@ -3098,7 +3098,7 @@ CXString clang_getCursorDisplayName(CXCursor C) {
     if (TypeSourceInfo *TSInfo = ClassSpec->getTypeAsWritten())
       return createCXString(TSInfo->getType().getAsString(Policy));
     
-    llvm::SmallString<64> Str;
+    SmallString<64> Str;
     llvm::raw_svector_ostream OS(Str);
     OS << *ClassSpec;
     OS << TemplateSpecializationType::PrintTemplateArgumentList(
@@ -5448,7 +5448,7 @@ CXTUResourceUsage clang_getCXTUResourceUsage(CXTranslationUnit TU) {
   }
   
   ASTUnit *astUnit = static_cast<ASTUnit*>(TU->TUData);
-  llvm::OwningPtr<MemUsageEntries> entries(new MemUsageEntries());
+  OwningPtr<MemUsageEntries> entries(new MemUsageEntries());
   ASTContext &astContext = astUnit->getASTContext();
   
   // How much memory is used by AST nodes and types?

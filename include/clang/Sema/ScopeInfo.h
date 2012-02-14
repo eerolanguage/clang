@@ -22,11 +22,13 @@
 namespace clang {
 
 class BlockDecl;
+class CXXMethodDecl;
 class IdentifierInfo;
 class LabelDecl;
 class ReturnStmt;
 class Scope;
 class SwitchStmt;
+class VarDecl;
 
 namespace sema {
 
@@ -299,6 +301,13 @@ public:
   /// \brief Whether any of the capture expressions requires cleanups.
   bool ExprNeedsCleanups;
 
+  /// \brief Variables used to index into by-copy array captures.
+  llvm::SmallVector<VarDecl *, 4> ArrayIndexVars;
+
+  /// \brief Offsets into the ArrayIndexVars array at which each capture starts
+  /// its list of array index variables.
+  llvm::SmallVector<unsigned, 4> ArrayIndexStarts;
+  
   LambdaScopeInfo(DiagnosticsEngine &Diag, CXXRecordDecl *Lambda,
                   CXXMethodDecl *CallOperator)
     : CapturingScopeInfo(Diag, ImpCap_None), Lambda(Lambda),
