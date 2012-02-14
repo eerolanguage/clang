@@ -303,6 +303,9 @@ class Preprocessor : public llvm::RefCountedBase<Preprocessor> {
   /// \c createPreprocessingRecord() prior to preprocessing.
   PreprocessingRecord *Record;
 
+  /// Whether currently in a system header
+  bool inSystemHeader;
+
 private:  // Cached tokens state.
   typedef SmallVector<Token, 1> CachedTokensTy;
 
@@ -1053,6 +1056,9 @@ public:
   /// isInPrimaryFile - Return true if we're in the top-level file, not in a
   /// #include.
   bool isInPrimaryFile() const;
+
+  /// isInSystemHeader - Return true if we're in a system header
+  bool isInSystemHeader() const { return inSystemHeader; }
 
   /// ConcatenateIncludeName - Handle cases where the #include name is expanded
   /// from a macro as multiple tokens, which need to be glued together.  This

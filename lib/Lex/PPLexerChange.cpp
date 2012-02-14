@@ -119,6 +119,13 @@ void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
   CurDirLookup = CurDir;
   if (CurLexerKind != CLK_LexAfterModuleImport)
     CurLexerKind = CLK_Lexer;
+
+  // Update system header flag
+  if (!CurLexer->Is_PragmaLexer) {
+    inSystemHeader = 
+        (SourceMgr.getFileCharacteristic(CurLexer->getFileLoc()) !=
+         SrcMgr::C_User);
+  }
   
   // Notify the client, if desired, that we are in a new source file.
   if (Callbacks && !CurLexer->Is_PragmaLexer) {
@@ -294,6 +301,17 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
     
     // We're done with the #included file.
     RemoveTopOfLexerStack();
+
+    // Update system header flag
+    if (!isEndOfMacro) {
+      if (IncludeMacroStack.empty()) { // back to primary file
+        inSystemHeader = false;
+      } else if (CurLexer && !CurLexer->Is_PragmaLexer) {
+        inSystemHeader = 
+            (SourceMgr.getFileCharacteristic(CurLexer->getFileLoc()) !=
+             SrcMgr::C_User);
+      }
+    }
 
     // Notify the client, if desired, that we are in a new source file.
     if (Callbacks && !isEndOfMacro && CurPPLexer) {

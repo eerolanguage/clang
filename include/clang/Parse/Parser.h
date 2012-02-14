@@ -713,11 +713,13 @@ private:
   //===--------------------------------------------------------------------===//
   // Eero convenience methods
 
-  bool InSystemHeader(const SourceLocation& Loc) {
-    if (PP.isInPrimaryFile())
-      return false;
-    else 
-      return PP.getSourceManager().isInSystemHeader(Loc);
+  // TODO: remove this function after more testing is done
+  inline bool InSystemHeader(const SourceLocation&) {
+    return PP.isInSystemHeader();
+//  if (PP.isInPrimaryFile())
+//    return false;
+//  else 
+//    return PP.getSourceManager().isInSystemHeader(Loc);
   }
 
   void InsertToken(const tok::TokenKind tokenKind) {
