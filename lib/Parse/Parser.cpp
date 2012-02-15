@@ -1672,6 +1672,7 @@ bool Parser::BalancedDelimiterTracker::consumeOpen() {
   if (P.Tok.is(Kind)) {
     P.QuantityTracker.push(Kind);
     Cleanup = true;
+    optional = false; // the closing delim is no longer optional
     if (P.QuantityTracker.getDepth(Kind) < MaxDepth) {
       LOpen = P.ConsumeAnyToken();
       return false;
@@ -1686,6 +1687,8 @@ bool Parser::BalancedDelimiterTracker::consumeOpen() {
 bool Parser::BalancedDelimiterTracker::expectAndConsume(unsigned DiagID, 
                                             const char *Msg,
                                             tok::TokenKind SkipToToc ) {
+  if (optional) 
+    return false;
   LOpen = P.Tok.getLocation();
   if (!P.ExpectAndConsume(Kind, DiagID, Msg, SkipToToc)) {
     P.QuantityTracker.push(Kind);
@@ -1701,6 +1704,8 @@ bool Parser::BalancedDelimiterTracker::expectAndConsume(unsigned DiagID,
 }
 
 bool Parser::BalancedDelimiterTracker::consumeClose() {
+  if (optional) 
+    return false;
   if (P.Tok.is(Close)) {
     LClose = P.ConsumeAnyToken();
     if (Cleanup)

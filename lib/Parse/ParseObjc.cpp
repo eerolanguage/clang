@@ -1777,18 +1777,19 @@ StmtResult Parser::ParseObjCThrowStmt(SourceLocation atLoc) {
 StmtResult
 Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
   ConsumeToken(); // consume synchronized
-  if (Tok.isNot(tok::l_paren)) {
+  if (Tok.isNot(tok::l_paren) && !getLang().Eero) {
     Diag(Tok, diag::err_expected_lparen_after) << "@synchronized";
     return StmtError();
   }
 
   // The operand is surrounded with parentheses.
-  ConsumeParen();  // '('
+  if (!getLang().Eero)
+    ConsumeParen();  // '('
   ExprResult operand(ParseExpression());
 
   if (Tok.is(tok::r_paren)) {
     ConsumeParen();  // ')'
-  } else {
+  } else if (!getLang().Eero) {
     if (!operand.isInvalid())
       Diag(Tok, diag::err_expected_rparen);
 
@@ -1863,6 +1864,12 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
     if (Tok.isObjCAtKeyword(tok::objc_catch)) {
       Decl *FirstPart = 0;
       ConsumeToken(); // consume catch
+      // Just inject an optional paren, since it would be very messy otherwise
+      bool l_paren_inserted = false;
+      if (getLang().Eero && Tok.isNot(tok::l_paren)) {
+        InsertToken(tok::l_paren); 
+        l_paren_inserted = true;
+      }
       if (Tok.is(tok::l_paren)) {
         ConsumeParen();
         ParseScope CatchScope(this, Scope::DeclScope|Scope::AtCatchScope);
@@ -1879,6 +1886,9 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
           ConsumeToken(); // consume '...'
 
         SourceLocation RParenLoc;
+        // Inject a right paren if the left was
+        if (getLang().Eero && l_paren_inserted)
+          InsertToken(tok::r_paren); 
 
         if (Tok.is(tok::r_paren))
           RParenLoc = ConsumeParen();
