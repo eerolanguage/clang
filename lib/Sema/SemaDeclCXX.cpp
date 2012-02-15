@@ -585,11 +585,25 @@ void Sema::CheckCXXDefaultArguments(FunctionDecl *FD) {
   unsigned NumParams = FD->getNumParams();
   unsigned p;
 
+  bool IsLambda = FD->getOverloadedOperator() == OO_Call &&
+                  isa<CXXMethodDecl>(FD) &&
+                  cast<CXXMethodDecl>(FD)->getParent()->isLambda();
+              
   // Find first parameter with a default argument
   for (p = 0; p < NumParams; ++p) {
     ParmVarDecl *Param = FD->getParamDecl(p);
-    if (Param->hasDefaultArg())
+    if (Param->hasDefaultArg()) {
+      // C++11 [expr.prim.lambda]p5:
+      //   [...] Default arguments (8.3.6) shall not be specified in the 
+      //   parameter-declaration-clause of a lambda-declarator.
+      //
+      // FIXME: Core issue 974 strikes this sentence, we only provide an
+      // extension warning.
+      if (IsLambda)
+        Diag(Param->getLocation(), diag::ext_lambda_default_arguments)
+          << Param->getDefaultArgRange();
       break;
+    }
   }
 
   // C++ [dcl.fct.default]p4:
@@ -8218,10 +8232,14 @@ void Sema::DefineImplicitCopyAssignment(SourceLocation CurrentLocation,
     CopyAssignOperator->setInvalidDecl();
     return;
   }
-  
-  StmtResult Body = ActOnCompoundStmt(Loc, Loc, move_arg(Statements),
-                                            /*isStmtExpr=*/false);
-  assert(!Body.isInvalid() && "Compound statement creation cannot fail");
+
+  StmtResult Body;
+  {
+    CompoundScopeRAII CompoundScope(*this);
+    Body = ActOnCompoundStmt(Loc, Loc, move_arg(Statements),
+                             /*isStmtExpr=*/false);
+    assert(!Body.isInvalid() && "Compound statement creation cannot fail");
+  }
   CopyAssignOperator->setBody(Body.takeAs<Stmt>());
 
   if (ASTMutationListener *L = getASTMutationListener()) {
@@ -8650,10 +8668,14 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
     MoveAssignOperator->setInvalidDecl();
     return;
   }
-  
-  StmtResult Body = ActOnCompoundStmt(Loc, Loc, move_arg(Statements),
-                                            /*isStmtExpr=*/false);
-  assert(!Body.isInvalid() && "Compound statement creation cannot fail");
+
+  StmtResult Body;
+  {
+    CompoundScopeRAII CompoundScope(*this);
+    Body = ActOnCompoundStmt(Loc, Loc, move_arg(Statements),
+                             /*isStmtExpr=*/false);
+    assert(!Body.isInvalid() && "Compound statement creation cannot fail");
+  }
   MoveAssignOperator->setBody(Body.takeAs<Stmt>());
 
   if (ASTMutationListener *L = getASTMutationListener()) {
@@ -8852,9 +8874,10 @@ void Sema::DefineImplicitCopyConstructor(SourceLocation CurrentLocation,
       << CXXCopyConstructor << Context.getTagDeclType(ClassDecl);
     CopyConstructor->setInvalidDecl();
   }  else {
+    Sema::CompoundScopeRAII CompoundScope(*this);
     CopyConstructor->setBody(ActOnCompoundStmt(CopyConstructor->getLocation(),
                                                CopyConstructor->getLocation(),
-                                               MultiStmtArg(*this, 0, 0), 
+                                               MultiStmtArg(*this, 0, 0),
                                                /*isStmtExpr=*/false)
                                                               .takeAs<Stmt>());
     CopyConstructor->setImplicitlyDefined(true);
@@ -9006,9 +9029,10 @@ void Sema::DefineImplicitMoveConstructor(SourceLocation CurrentLocation,
       << CXXMoveConstructor << Context.getTagDeclType(ClassDecl);
     MoveConstructor->setInvalidDecl();
   }  else {
+    Sema::CompoundScopeRAII CompoundScope(*this);
     MoveConstructor->setBody(ActOnCompoundStmt(MoveConstructor->getLocation(),
                                                MoveConstructor->getLocation(),
-                                               MultiStmtArg(*this, 0, 0), 
+                                               MultiStmtArg(*this, 0, 0),
                                                /*isStmtExpr=*/false)
                                                               .takeAs<Stmt>());
     MoveConstructor->setImplicitlyDefined(true);
@@ -9159,8 +9183,7 @@ Sema::CompleteConstructorCall(CXXConstructorDecl *Constructor,
   bool Invalid = GatherArgumentsForCall(Loc, Constructor,
                                         Proto, 0, Args, NumArgs, AllArgs, 
                                         CallType);
-  for (unsigned i =0, size = AllArgs.size(); i < size; i++)
-    ConvertedArgs.push_back(AllArgs[i]);
+  ConvertedArgs.append(AllArgs.begin(), AllArgs.end());
   return Invalid;
 }
 

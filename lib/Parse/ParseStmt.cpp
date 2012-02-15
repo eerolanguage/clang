@@ -774,6 +774,8 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   if (T.consumeOpen())
     return StmtError();
 
+  Sema::CompoundScopeRAII CompoundScope(Actions);
+
   StmtVector Stmts(Actions);
 
   // "__label__ X, Y, Z;" is the GNU "Local Label" extension.  These are
@@ -1209,9 +1211,14 @@ StmtResult Parser::ParseSwitchStatement(ParsedAttributes &attrs,
   InnerScope.Exit();
   SwitchScope.Exit();
 
-  if (Body.isInvalid())
+  if (Body.isInvalid()) {
     // FIXME: Remove the case statement list from the Switch statement.
-    Body = Actions.ActOnNullStmt(Tok.getLocation());
+
+    // Put the synthesized null statement on the same line as the end of switch
+    // condition.
+    SourceLocation SynthesizedNullStmtLocation = Cond.get()->getLocEnd();
+    Body = Actions.ActOnNullStmt(SynthesizedNullStmtLocation);
+  }
 
   return Actions.ActOnFinishSwitchStmt(SwitchLoc, Switch.get(), Body.get());
 }
@@ -2093,9 +2100,11 @@ Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
   StmtResult FnBody(ParseCompoundStatementBody());
 
   // If the function body could not be parsed, make a bogus compoundstmt.
-  if (FnBody.isInvalid())
+  if (FnBody.isInvalid()) {
+    Sema::CompoundScopeRAII CompoundScope(Actions);
     FnBody = Actions.ActOnCompoundStmt(LBraceLoc, LBraceLoc,
                                        MultiStmtArg(Actions), false);
+  }
 
   BodyScope.Exit();
   return Actions.ActOnFinishFunctionBody(Decl, FnBody.take());
@@ -2130,9 +2139,11 @@ Decl *Parser::ParseFunctionTryBlock(Decl *Decl, ParseScope &BodyScope) {
   StmtResult FnBody(ParseCXXTryBlockCommon(TryLoc));
   // If we failed to parse the try-catch, we just give the function an empty
   // compound statement as the body.
-  if (FnBody.isInvalid())
+  if (FnBody.isInvalid()) {
+    Sema::CompoundScopeRAII CompoundScope(Actions);
     FnBody = Actions.ActOnCompoundStmt(LBraceLoc, LBraceLoc,
                                        MultiStmtArg(Actions), false);
+  }
 
   BodyScope.Exit();
   return Actions.ActOnFinishFunctionBody(Decl, FnBody.take());

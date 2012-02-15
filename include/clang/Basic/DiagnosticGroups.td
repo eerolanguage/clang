@@ -104,6 +104,7 @@ def LocalTypeTemplateArgs : DiagGroup<"local-type-template-args",
                                       [CXX98CompatLocalTypeTemplateArgs]>;
 def MalformedWarningCheck : DiagGroup<"malformed-warning-check">;
 def Main : DiagGroup<"main">;
+def MainReturnType : DiagGroup<"main-return-type">;
 def MissingBraces : DiagGroup<"missing-braces">;
 def MissingDeclarations: DiagGroup<"missing-declarations">;
 def : DiagGroup<"missing-format-attribute">;
@@ -182,6 +183,7 @@ def : DiagGroup<"strict-overflow=5">;
 def : DiagGroup<"strict-overflow">;
 
 def InvalidOffsetof : DiagGroup<"invalid-offsetof">;
+def LambdaExtensions : DiagGroup<"lambda-extensions">;
 def : DiagGroup<"strict-prototypes">;
 def StrictSelector : DiagGroup<"strict-selector-match">;
 def MethodDuplicate : DiagGroup<"duplicate-method-match">;

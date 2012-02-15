@@ -3,12 +3,15 @@
 
 typedef __typeof(sizeof(int)) size_t;
 void *malloc(size_t);
+void *valloc(size_t);
 void free(void *);
 void *realloc(void *ptr, size_t size);
+void *reallocf(void *ptr, size_t size);
 void *calloc(size_t nmemb, size_t size);
 
 void myfoo(int *p);
 void myfooint(int p);
+char *fooRetPtr();
 
 void f1() {
   int *p = malloc(12);
@@ -149,6 +152,39 @@ void reallocRadar6337483_4() {
       free(buf2);
     }
 }
+
+int *reallocfTest1() {
+  int *q = malloc(12);
+  q = reallocf(q, 20);
+  return q; // no warning - returning the allocated value
+}
+
+void reallocfRadar6337483_4() {
+    char *buf = malloc(100);
+    char *buf2 = (char*)reallocf(buf, 0x1000000);
+    if (!buf2) {
+      return;  // no warning - reallocf frees even on failure
+    } else {
+      free(buf2);
+    }
+}
+
+void reallocfRadar6337483_3() {
+    char * buf = malloc(100);
+    char * tmp;
+    tmp = (char*)reallocf(buf, 0x1000000);
+    if (!tmp) {
+        free(buf); // expected-warning {{Try to free a memory block that has been released}}
+        return;
+    }
+    buf = tmp;
+    free(buf);
+}
+
+void reallocfPtrZero1() {
+  char *r = reallocf(0, 12); // expected-warning {{Allocated memory never released.}}
+}
+
 
 // This case tests that storing malloc'ed memory to a static variable which is
 // then returned is not leaked.  In the absence of known contracts for functions
@@ -406,6 +442,23 @@ void mallocFailedOrNotLeak() {
     return; // expected-warning {{Allocated memory never released. Potential memory leak.}}
 }
 
+void mallocAssignment() {
+  char *p = malloc(12);
+  p = fooRetPtr(); // expected-warning {{leak}}
+}
+
+int vallocTest() {
+  char *mem = valloc(12);
+  return 0; // expected-warning {{Allocated memory never released. Potential memory leak.}}
+}
+
+void vallocEscapeFreeUse() {
+  int *p = valloc(12);
+  myfoo(p);
+  free(p);
+  myfoo(p); // expected-warning{{Use of dynamically allocated memory after it is freed.}}
+}
+
 int *Gl;
 struct GlStTy {
   int *x;
@@ -539,3 +592,11 @@ static void *specialMalloc(int n){
   }
   return p;// expected-warning {{Allocated memory never released. Potential memory leak.}}
 }
+
+// TODO: This is a false positve that should be fixed by making CString checker smarter.
+void symbolLostWithStrcpy(char *s) {
+  char *p = malloc(12);
+  p = strcpy(p, s);
+  free(p);// expected-warning {{leak}}
+}
+

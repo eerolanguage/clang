@@ -113,15 +113,26 @@ int array0[__is_scalar(nullptr_t)? 1 : -1];
 int array1[__is_pod(nullptr_t)? 1 : -1];
 int array2[sizeof(nullptr_t) == sizeof(void*)? 1 : -1];
 
-// FIXME: when we implement constexpr, this will be testable.
-#if 0
 int relational0[nullptr < nullptr? -1 : 1];
 int relational1[nullptr > nullptr? -1 : 1];
 int relational2[nullptr <= nullptr? 1 : -1];
 int relational3[nullptr >= nullptr? 1 : -1];
 int equality[nullptr == nullptr? 1 : -1];
 int inequality[nullptr != nullptr? -1 : 1];
-#endif
+
+int relational0_a[0 < nullptr? -1 : 1];
+int relational1_a[0 > nullptr? -1 : 1];
+int relational2_a[0 <= nullptr? 1 : -1];
+int relational3_a[0 >= nullptr? 1 : -1];
+int equality_a[0 == nullptr? 1 : -1];
+int inequality_a[0 != nullptr? -1 : 1];
+
+int relationalnullptr_b[nullptr < 0? -1 : 1];
+int relational1_b[nullptr > 0? -1 : 1];
+int relational2_b[nullptr <= 0? 1 : -1];
+int relational3_b[nullptr >= 0? 1 : -1];
+int equality_b[nullptr == 0? 1 : -1];
+int inequality_b[nullptr != 0? -1 : 1];
 
 namespace overloading {
   int &f1(int*);
@@ -160,4 +171,15 @@ namespace templates {
   struct X2 {};
   
   X2<nullptr, nullptr, nullptr, nullptr> x2;
+}
+
+namespace null_pointer_constant {
+
+// Pending implementation of core issue 903, ensure we don't allow any of the
+// C++11 constant evaluation semantics in null pointer constants.
+struct S { int n; };
+constexpr int null() { return 0; }
+void *p = S().n; // expected-error {{cannot initialize}}
+void *q = null(); // expected-error {{cannot initialize}}
+
 }

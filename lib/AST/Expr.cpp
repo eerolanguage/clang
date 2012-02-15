@@ -1053,6 +1053,11 @@ void CastExpr::CheckCastConsistency() const {
     assert(getSubExpr()->getType()->isBlockPointerType());
     goto CheckNoBasePath;
 
+  case CK_ReinterpretMemberPointer:
+    assert(getType()->isMemberPointerType());
+    assert(getSubExpr()->getType()->isMemberPointerType());
+    goto CheckNoBasePath;
+
   case CK_BitCast:
     // Arbitrary casts to C pointer types count as bitcasts.
     // Otherwise, we should only have block and ObjC pointer casts
@@ -1156,6 +1161,8 @@ const char *CastExpr::getCastKindName() const {
     return "BaseToDerivedMemberPointer";
   case CK_DerivedToBaseMemberPointer:
     return "DerivedToBaseMemberPointer";
+  case CK_ReinterpretMemberPointer:
+    return "ReinterpretMemberPointer";
   case CK_UserDefinedConversion:
     return "UserDefinedConversion";
   case CK_ConstructorConversion:
@@ -2728,11 +2735,18 @@ Expr::isNullPointerConstant(ASTContext &Ctx,
     return NPCK_NotNull;
 
   // If we have an integer constant expression, we need to *evaluate* it and
-  // test for the value 0.
-  llvm::APSInt Result;
-  bool IsNull = isIntegerConstantExpr(Result, Ctx) && Result == 0;
+  // test for the value 0. Don't use the C++11 constant expression semantics
+  // for this, for now; once the dust settles on core issue 903, we might only
+  // allow a literal 0 here in C++11 mode.
+  if (Ctx.getLangOptions().CPlusPlus0x) {
+    if (!isCXX98IntegralConstantExpr(Ctx))
+      return NPCK_NotNull;
+  } else {
+    if (!isIntegerConstantExpr(Ctx))
+      return NPCK_NotNull;
+  }
 
-  return (IsNull ? NPCK_ZeroInteger : NPCK_NotNull);
+  return (EvaluateKnownConstInt(Ctx) == 0) ? NPCK_ZeroInteger : NPCK_NotNull;
 }
 
 /// \brief If this expression is an l-value for an Objective C
