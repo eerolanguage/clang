@@ -1141,24 +1141,24 @@ def err_temp_copy_no_viable : Error<
   "no viable constructor %select{copying variable|copying parameter|"
   "returning object|throwing object|copying member subobject|copying array "
   "element|allocating object|copying temporary|initializing base subobject|"
-  "initializing vector element}0 of type %1">;
+  "initializing vector element|capturing value}0 of type %1">;
 def ext_rvalue_to_reference_temp_copy_no_viable : ExtWarn<
   "no viable constructor %select{copying variable|copying parameter|"
   "returning object|throwing object|copying member subobject|copying array "
   "element|allocating object|copying temporary|initializing base subobject|"
-  "initializing vector element}0 of type %1; C++98 requires a copy "
+  "initializing vector element|capturing value}0 of type %1; C++98 requires a copy "
   "constructor when binding a reference to a temporary">,
   InGroup<BindToTemporaryCopy>;
 def err_temp_copy_ambiguous : Error<
   "ambiguous constructor call when %select{copying variable|copying "
   "parameter|returning object|throwing object|copying member subobject|copying "
   "array element|allocating object|copying temporary|initializing base subobject|"
-  "initializing vector element}0 of type %1">;
+  "initializing vector element|capturing value}0 of type %1">;
 def err_temp_copy_deleted : Error<
   "%select{copying variable|copying parameter|returning object|throwing "
   "object|copying member subobject|copying array element|allocating object|"
-  "copying temporary|initializing base subobject|initializing vector element}0 "
-  "of type %1 invokes deleted constructor">;
+  "copying temporary|initializing base subobject|initializing vector element|"
+  "capturing value}0 of type %1 invokes deleted constructor">;
 def err_temp_copy_incomplete : Error<
   "copying a temporary object of incomplete type %0">;
 def warn_cxx98_compat_temp_copy : Warning<
@@ -2104,6 +2104,10 @@ def err_ref_init_ambiguous : Error<
   "reference initialization of type %0 with initializer of type %1 is ambiguous">;
 def err_ovl_deleted_init : Error<
   "call to %select{unavailable|deleted}0 constructor of %1">;
+def err_ovl_deleted_special_init : Error<
+  "call to implicitly-deleted %select{default constructor|copy constructor|"
+  "move constructor|copy assignment operator|move assignment operator|"
+  "destructor|function}0 of %1">;
 def err_ovl_ambiguous_oper_unary : Error<
   "use of overloaded operator '%0' is ambiguous (operand type %1)">;
 def err_ovl_ambiguous_oper_binary : Error<
@@ -2111,6 +2115,10 @@ def err_ovl_ambiguous_oper_binary : Error<
 def err_ovl_no_viable_oper : Error<"no viable overloaded '%0'">;
 def err_ovl_deleted_oper : Error<
   "overload resolution selected %select{unavailable|deleted}0 operator '%1'%2">;
+def err_ovl_deleted_special_oper : Error<
+  "overload resolution selected implicitly-deleted %select{default constructor|"
+  "copy constructor|move constructor|copy assignment operator|move assignment "
+  "operator|destructor|'%1'}0%2">;
 def err_ovl_no_viable_subscript :
     Error<"no viable overloaded operator[] for type %0">;
 def err_ovl_no_oper :
@@ -3542,7 +3550,11 @@ def err_array_init_non_constant_array : Error<
   "cannot initialize array of type %0 with non-constant array of type %1">;
 def ext_array_init_copy : Extension<
   "initialization of an array of type %0 from a compound literal of type %1 is "
-  "a GNU extension">;
+  "a GNU extension">, InGroup<GNU>;
+// This is intentionally not disabled by -Wno-gnu.
+def ext_array_init_parens : ExtWarn<
+  "parenthesized initialization of a member array is a GNU extension">,
+  InGroup<DiagGroup<"gnu-array-member-paren-init">>, DefaultError;
 def warn_deprecated_string_literal_conversion : Warning<
   "conversion from string literal to %0 is deprecated">, InGroup<DeprecatedWritableStr>;
 def err_realimag_invalid_type : Error<"invalid type %0 to %1 operator">;
@@ -4045,6 +4057,23 @@ let CategoryName = "Lambda Issue" in {
   def ext_lambda_default_arguments : ExtWarn<
     "C++11 forbids default arguments for lambda expressions">,
     InGroup<LambdaExtensions>;
+  def err_noreturn_lambda_has_return_expr : Error<
+    "lambda declared 'noreturn' should not return">;
+  def warn_maybe_falloff_nonvoid_lambda : Warning<
+    "control may reach end of non-void lambda">,
+    InGroup<ReturnType>;
+  def warn_falloff_nonvoid_lambda : Warning<
+    "control reaches end of non-void lambda">,
+    InGroup<ReturnType>;
+  def err_access_lambda_capture : Error<
+    // The ERRORs represent other special members that aren't constructors, in
+    // hopes that someone will bother noticing and reporting if they appear
+    "capture of variable '%0' as type %1 calls %select{private|protected}3 "
+    "%select{default |copy |move |*ERROR* |*ERROR* |*ERROR* |}2constructor">,
+    AccessControl;
+  def note_lambda_to_block_conv : Note<
+    "implicit capture of lambda object due to conversion to block pointer "
+    "here">;
 }
 
 def err_operator_arrow_circular : Error<
@@ -4142,8 +4171,8 @@ def err_typecheck_convert_incompatible : Error<
   "%select{none|const|restrict|const and restrict|volatile|const and volatile|"
   "volatile and restrict|const, volatile, and restrict}6)}4">;
 def err_typecheck_missing_return_type_incompatible : Error<
-  "return type %0 must match previous return type %1 when block"
-  " literal has unspecified explicit return type">;
+  "return type %0 must match previous return type %1 when %select{block "
+  "literal|lambda expression}2 has unspecified explicit return type">;
 
 def warn_incompatible_qualified_id : Warning<
   "%select{assigning to|passing|returning|converting|initializing|sending|casting}2"
@@ -4293,6 +4322,8 @@ def err_typecheck_call_too_many_args_at_most : Error<
   "expected at most %1, have %2">;
 def note_callee_decl : Note<
   "%0 declared here">;
+def note_defined_here : Note<"%0 defined here">;
+
 def warn_call_wrong_number_of_arguments : Warning<
   "too %select{few|many}0 arguments in call to %1">;
 def err_atomic_builtin_must_be_pointer : Error<

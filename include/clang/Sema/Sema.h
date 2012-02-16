@@ -3079,6 +3079,10 @@ public:
   /// class.
   void ForceDeclarationOfImplicitMembers(CXXRecordDecl *Class);
 
+  /// \brief Determine whether the given function is an implicitly-deleted
+  /// special member function.
+  bool isImplicitlyDeleted(FunctionDecl *FD);
+  
   /// MaybeBindToTemporary - If the passed in expression has a record type with
   /// a non-trivial destructor, this will return CXXBindTemporaryExpr. Otherwise
   /// it simply returns the passed in expression.
@@ -3561,6 +3565,26 @@ public:
   ExprResult ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
                              Scope *CurScope, bool IsInstantiation = false);
 
+  /// \brief Define the "body" of the conversion from a lambda object to a 
+  /// function pointer.
+  ///
+  /// This routine doesn't actually define a sensible body; rather, it fills
+  /// in the initialization expression needed to copy the lambda object into
+  /// the block, and IR generation actually generates the real body of the
+  /// block pointer conversion.
+  void DefineImplicitLambdaToFunctionPointerConversion(
+         SourceLocation CurrentLoc, CXXConversionDecl *Conv);
+
+  /// \brief Define the "body" of the conversion from a lambda object to a 
+  /// block pointer.
+  ///
+  /// This routine doesn't actually define a sensible body; rather, it fills
+  /// in the initialization expression needed to copy the lambda object into
+  /// the block, and IR generation actually generates the real body of the
+  /// block pointer conversion.
+  void DefineImplicitLambdaToBlockPointerConversion(SourceLocation CurrentLoc,
+                                                    CXXConversionDecl *Conv);
+  
   // ParseObjCStringLiteral - Parse Objective-C string literals.
   ExprResult ParseObjCStringLiteral(SourceLocation *AtLocs,
                                     Expr **Strings,
@@ -6315,6 +6339,8 @@ public:
   void CodeCompleteConstructorInitializer(Decl *Constructor,
                                           CXXCtorInitializer** Initializers,
                                           unsigned NumInitializers);
+  void CodeCompleteLambdaIntroducer(Scope *S, LambdaIntroducer &Intro,
+                                    bool AfterAmpersand);
 
   void CodeCompleteObjCAtDirective(Scope *S);
   void CodeCompleteObjCAtVisibility(Scope *S);

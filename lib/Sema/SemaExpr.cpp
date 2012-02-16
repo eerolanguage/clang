@@ -9447,6 +9447,13 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
         else
           DefineImplicitMoveAssignment(Loc, MethodDecl);
       }
+    } else if (isa<CXXConversionDecl>(MethodDecl) &&
+               MethodDecl->getParent()->isLambda()) {
+      CXXConversionDecl *Conversion = cast<CXXConversionDecl>(MethodDecl);
+      if (Conversion->isLambdaToBlockPointerConversion())
+        DefineImplicitLambdaToBlockPointerConversion(Loc, Conversion);
+      else
+        DefineImplicitLambdaToFunctionPointerConversion(Loc, Conversion);
     } else if (MethodDecl->isVirtual())
       MarkVTableUsed(Loc, MethodDecl->getParent());
   }
@@ -9625,8 +9632,6 @@ static ExprResult captureInLambda(Sema &S, LambdaScopeInfo *LSI,
   //   direct-initialized in increasing subscript order.) These
   //   initializations are performed in the (unspecified) order in
   //   which the non-static data members are declared.
-  //
-  // FIXME: Introduce an initialization entity for lambda captures.
       
   // Introduce a new evaluation context for the initialization, so
   // that temporaries introduced as part of the capture are retained
@@ -9697,7 +9702,8 @@ static ExprResult captureInLambda(Sema &S, LambdaScopeInfo *LSI,
   // of array-subscript entities. 
   SmallVector<InitializedEntity, 4> Entities;
   Entities.reserve(1 + IndexVariables.size());
-  Entities.push_back(InitializedEntity::InitializeMember(Field));
+  Entities.push_back(
+    InitializedEntity::InitializeLambdaCapture(Var, Field, Loc));
   for (unsigned I = 0, N = IndexVariables.size(); I != N; ++I)
     Entities.push_back(InitializedEntity::InitializeElement(S.Context,
                                                             0,
@@ -10042,7 +10048,7 @@ static void MarkExprReferenced(Sema &SemaRef, SourceLocation Loc,
   }
 
   SemaRef.MarkAnyDeclReferenced(Loc, D);
-}
+} 
 
 /// \brief Perform reference-marking and odr-use handling for a
 /// BlockDeclRefExpr.

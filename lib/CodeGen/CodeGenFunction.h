@@ -1376,6 +1376,13 @@ public:
   void EmitDestructorBody(FunctionArgList &Args);
   void EmitFunctionBody(FunctionArgList &Args);
 
+  void EmitLambdaToBlockPointerBody(FunctionArgList &Args);
+  void EmitLambdaToFunctionPointerBody(FunctionArgList &Args);
+  llvm::Constant *EmitLambdaConvertedFnPtr(const CXXMethodDecl *MD);
+  void EmitLambdaThunkBody(llvm::Function *Fn,
+                           const CGFunctionInfo &FnInfo,
+                           const CXXRecordDecl *Lambda);
+
   /// EmitReturnBlock - Emit the unified return block, trying to avoid its
   /// emission when possible.
   void EmitReturnBlock();
@@ -2566,6 +2573,8 @@ private:
   CodeGenModule::ByrefHelpers *
   buildByrefHelpers(llvm::StructType &byrefType,
                     const AutoVarEmission &emission);
+
+  void AddObjCARCExceptionMetadata(llvm::Instruction *Inst);
 };
 
 /// Helper class with most of the code for saving a value for a
