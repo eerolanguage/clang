@@ -326,7 +326,7 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D) {
     if (Owner->isFunctionOrMethod())
       SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, Var);
   }
-  SemaRef.InstantiateAttrs(TemplateArgs, D, Var);
+  SemaRef.InstantiateAttrs(TemplateArgs, D, Var, LateAttrs, StartingScope);
 
   // Link instantiations of static data members back to the template from
   // which they were instantiated.
@@ -2629,7 +2629,8 @@ void Sema::InstantiateStaticDataMemberDefinition(
   // Enter the scope of this instantiation. We don't use
   // PushDeclContext because we don't have a scope.
   ContextRAII previousContext(*this, Var->getDeclContext());
-
+  LocalInstantiationScope Local(*this);
+  
   VarDecl *OldVar = Var;
   Var = cast_or_null<VarDecl>(SubstDecl(Def, Var->getDeclContext(),
                                         getTemplateInstantiationArgs(Var)));
@@ -2644,7 +2645,8 @@ void Sema::InstantiateStaticDataMemberDefinition(
     DeclGroupRef DG(Var);
     Consumer.HandleTopLevelDecl(DG);
   }
-
+  Local.Exit();
+  
   if (Recursive) {
     // Define any newly required vtables.
     DefineUsedVTables();
@@ -3096,7 +3098,8 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
   DeclContext *ParentDC = D->getDeclContext();
   if (isa<ParmVarDecl>(D) || isa<NonTypeTemplateParmDecl>(D) ||
       isa<TemplateTypeParmDecl>(D) || isa<TemplateTemplateParmDecl>(D) ||
-      (ParentDC->isFunctionOrMethod() && ParentDC->isDependentContext())) {
+      (ParentDC->isFunctionOrMethod() && ParentDC->isDependentContext()) ||
+      (isa<CXXRecordDecl>(D) && cast<CXXRecordDecl>(D)->isLambda())) {
     // D is a local of some kind. Look into the map of local
     // declarations to their instantiations.
     typedef LocalInstantiationScope::DeclArgumentPack DeclArgumentPack;

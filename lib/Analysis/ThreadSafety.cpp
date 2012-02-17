@@ -62,11 +62,11 @@ namespace {
 ///
 /// Clang introduces an additional wrinkle, which is that it is difficult to
 /// derive canonical expressions, or compare expressions directly for equality.
-/// Thus, we identify a mutex not by an Expr, but by the set of named
+/// Thus, we identify a mutex not by an Expr, but by the list of named
 /// declarations that are referenced by the Expr.  In other words,
 /// x->foo->bar.mu will be a four element vector with the Decls for
 /// mu, bar, and foo, and x.  The vector will uniquely identify the expression
-/// for all practical purposes.
+/// for all practical purposes.  Null is used to denote 'this'.
 ///
 /// Note we will need to perform substitution on "this" and function parameter
 /// names when constructing a lock expression.
@@ -122,8 +122,10 @@ class MutexID {
     } else if (isa<CXXThisExpr>(Exp)) {
       if (Parent)
         buildMutexID(Parent, D, 0, 0, 0);
-      else
+      else {
+        DeclSeq.push_back(0);  // Use 0 to represent 'this'.
         return;  // mutexID is still valid in this case
+      }
     } else if (UnaryOperator *UOE = dyn_cast<UnaryOperator>(Exp))
       buildMutexID(UOE->getSubExpr(), D, Parent, NumArgs, FunArgs);
     else if (CastExpr *CE = dyn_cast<CastExpr>(Exp))
@@ -233,6 +235,8 @@ public:
   /// We do not want to output the entire expression text for security reasons.
   StringRef getName() const {
     assert(isValid());
+    if (!DeclSeq.front())
+      return "this";  // Use 0 to represent 'this'.
     return DeclSeq.front()->getName();
   }
 
@@ -1428,6 +1432,14 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
     return;  // Ignore anonymous functions for now.
   if (D->getAttr<NoThreadSafetyAnalysisAttr>())
     return;
+  // FIXME: Do something a bit more intelligent inside constructor and
+  // destructor code.  Constructors and destructors must assume unique access
+  // to 'this', so checks on member variable access is disabled, but we should
+  // still enable checks on other objects.
+  if (isa<CXXConstructorDecl>(D))
+    return;  // Don't check inside constructors.
+  if (isa<CXXDestructorDecl>(D))
+    return;  // Don't check inside destructors.
 
   std::vector<CFGBlockInfo> BlockInfo(CFGraph->getNumBlockIDs(),
     CFGBlockInfo::getEmptyBlockInfo(LocksetFactory, LocalVarMap));
@@ -1445,30 +1457,40 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   findBlockLocations(CFGraph, SortedGraph, BlockInfo);
 
   // Add locks from exclusive_locks_required and shared_locks_required
-  // to initial lockset.
+  // to initial lockset. Also turn off checking for lock and unlock functions.
+  // FIXME: is there a more intelligent way to check lock/unlock functions?
   if (!SortedGraph->empty() && D->hasAttrs()) {
     const CFGBlock *FirstBlock = *SortedGraph->begin();
     Lockset &InitialLockset = BlockInfo[FirstBlock->getBlockID()].EntrySet;
     const AttrVec &ArgAttrs = D->getAttrs();
-    for(unsigned i = 0; i < ArgAttrs.size(); ++i) {
+    for (unsigned i = 0; i < ArgAttrs.size(); ++i) {
       Attr *Attr = ArgAttrs[i];
       SourceLocation AttrLoc = Attr->getLocation();
       if (SharedLocksRequiredAttr *SLRAttr
             = dyn_cast<SharedLocksRequiredAttr>(Attr)) {
         for (SharedLocksRequiredAttr::args_iterator
-            SLRIter = SLRAttr->args_begin(),
-            SLREnd = SLRAttr->args_end(); SLRIter != SLREnd; ++SLRIter)
+             SLRIter = SLRAttr->args_begin(),
+             SLREnd = SLRAttr->args_end(); SLRIter != SLREnd; ++SLRIter)
           InitialLockset = addLock(InitialLockset,
                                    *SLRIter, D, LK_Shared,
                                    AttrLoc);
       } else if (ExclusiveLocksRequiredAttr *ELRAttr
                    = dyn_cast<ExclusiveLocksRequiredAttr>(Attr)) {
         for (ExclusiveLocksRequiredAttr::args_iterator
-            ELRIter = ELRAttr->args_begin(),
-            ELREnd = ELRAttr->args_end(); ELRIter != ELREnd; ++ELRIter)
+             ELRIter = ELRAttr->args_begin(),
+             ELREnd = ELRAttr->args_end(); ELRIter != ELREnd; ++ELRIter)
           InitialLockset = addLock(InitialLockset,
                                    *ELRIter, D, LK_Exclusive,
                                    AttrLoc);
+      } else if (isa<UnlockFunctionAttr>(Attr)) {
+        // Don't try to check unlock functions for now
+        return;
+      } else if (isa<ExclusiveLockFunctionAttr>(Attr)) {
+        // Don't try to check lock functions for now
+        return;
+      } else if (isa<SharedLockFunctionAttr>(Attr)) {
+        // Don't try to check lock functions for now
+        return;
       }
     }
   }

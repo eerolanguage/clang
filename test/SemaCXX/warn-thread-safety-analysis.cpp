@@ -313,12 +313,13 @@ Mutex wmu;
 
 // Test diagnostics for other method names.
 class WeirdMethods {
+  // FIXME: can't currently check inside constructors and destructors.
   WeirdMethods() {
-    wmu.Lock(); // expected-note {{mutex acquired here}}
-  } // expected-warning {{mutex 'wmu' is still locked at the end of function}}
+    wmu.Lock(); // EXPECTED-NOTE {{mutex acquired here}}
+  } // EXPECTED-WARNING {{mutex 'wmu' is still locked at the end of function}}
   ~WeirdMethods() {
-    wmu.Lock(); // expected-note {{mutex acquired here}}
-  } // expected-warning {{mutex 'wmu' is still locked at the end of function}}
+    wmu.Lock(); // EXPECTED-NOTE {{mutex acquired here}}
+  } // EXPECTED-WARNING {{mutex 'wmu' is still locked at the end of function}}
   void operator++() {
     wmu.Lock(); // expected-note {{mutex acquired here}}
   } // expected-warning {{mutex 'wmu' is still locked at the end of function}}
@@ -1846,6 +1847,7 @@ class CellDelayed {
 public:
   // Test dependent guarded_by
   T data GUARDED_BY(mu_);
+  static T static_data GUARDED_BY(static_mu_);
 
   void fooEx(CellDelayed<T> *other) EXCLUSIVE_LOCKS_REQUIRED(mu_, other->mu_) {
     this->data = other->data;
@@ -1863,6 +1865,7 @@ public:
   }
 
   Mutex mu_;
+  static Mutex static_mu_;
 };
 
 void testDelayed() {
@@ -1936,3 +1939,164 @@ namespace GoingNative {
   }
 
 }
+
+
+
+namespace FunctionDefinitionTest {
+
+class Foo {
+public:
+  void foo1();
+  void foo2();
+  void foo3(Foo *other);
+
+  template<class T>
+  void fooT1(const T& dummy1);
+
+  template<class T>
+  void fooT2(const T& dummy2) EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  Mutex mu_;
+  int a GUARDED_BY(mu_);
+};
+
+template<class T>
+class FooT {
+public:
+  void foo();
+
+  Mutex mu_;
+  T a GUARDED_BY(mu_);
+};
+
+
+void Foo::foo1() NO_THREAD_SAFETY_ANALYSIS {
+  a = 1;
+}
+
+void Foo::foo2() EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+  a = 2;
+}
+
+void Foo::foo3(Foo *other) EXCLUSIVE_LOCKS_REQUIRED(other->mu_) {
+  other->a = 3;
+}
+
+template<class T>
+void Foo::fooT1(const T& dummy1) EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+  a = dummy1;
+}
+
+/* TODO -- uncomment with template instantiation of attributes.
+template<class T>
+void Foo::fooT2(const T& dummy2) {
+  a = dummy2;
+}
+*/
+
+void fooF1(Foo *f) EXCLUSIVE_LOCKS_REQUIRED(f->mu_) {
+  f->a = 1;
+}
+
+void fooF2(Foo *f);
+void fooF2(Foo *f) EXCLUSIVE_LOCKS_REQUIRED(f->mu_) {
+  f->a = 2;
+}
+
+void fooF3(Foo *f) EXCLUSIVE_LOCKS_REQUIRED(f->mu_);
+void fooF3(Foo *f) {
+  f->a = 3;
+}
+
+template<class T>
+void FooT<T>::foo() EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+  a = 0;
+}
+
+void test() {
+  int dummy = 0;
+  Foo myFoo;
+
+  myFoo.foo2();        // \
+    // expected-warning {{calling function 'foo2' requires exclusive lock on 'mu_'}}
+  myFoo.foo3(&myFoo);  // \
+    // expected-warning {{calling function 'foo3' requires exclusive lock on 'mu_'}}
+  myFoo.fooT1(dummy);  // \
+    // expected-warning {{calling function 'fooT1' requires exclusive lock on 'mu_'}}
+
+  // FIXME: uncomment with template instantiation of attributes patch
+  // myFoo.fooT2(dummy);  // expected warning
+
+  fooF1(&myFoo);  // \
+    // expected-warning {{calling function 'fooF1' requires exclusive lock on 'mu_'}}
+  fooF2(&myFoo);  // \
+    // expected-warning {{calling function 'fooF2' requires exclusive lock on 'mu_'}}
+  fooF3(&myFoo);  // \
+    // expected-warning {{calling function 'fooF3' requires exclusive lock on 'mu_'}}
+
+  myFoo.mu_.Lock();
+  myFoo.foo2();
+  myFoo.foo3(&myFoo);
+  myFoo.fooT1(dummy);
+
+  // FIXME: uncomment with template instantiation of attributes patch
+  // myFoo.fooT2(dummy);
+
+  fooF1(&myFoo);
+  fooF2(&myFoo);
+  fooF3(&myFoo);
+  myFoo.mu_.Unlock();
+
+  FooT<int> myFooT;
+  myFooT.foo();  // \
+    // expected-warning {{calling function 'foo' requires exclusive lock on 'mu_'}}
+}
+
+} // end namespace FunctionDefinitionTest
+
+
+namespace SelfLockingTest {
+
+class LOCKABLE MyLock {
+public:
+  int foo GUARDED_BY(this);
+
+  void lock()   EXCLUSIVE_LOCK_FUNCTION();
+  void unlock() UNLOCK_FUNCTION();
+
+  void doSomething() {
+    this->lock();  // allow 'this' as a lock expression
+    foo = 0;
+    doSomethingElse();
+    this->unlock();
+  }
+
+  void doSomethingElse() EXCLUSIVE_LOCKS_REQUIRED(this) {
+    foo = 1;
+  };
+
+  void test() {
+    foo = 2;  // \
+      // expected-warning {{writing variable 'foo' requires locking 'this' exclusively}}
+  }
+};
+
+
+class LOCKABLE MyLock2 {
+public:
+  Mutex mu_;
+  int foo GUARDED_BY(this);
+
+  // don't check inside lock and unlock functions
+  void lock()   EXCLUSIVE_LOCK_FUNCTION() { mu_.Lock();   }
+  void unlock() UNLOCK_FUNCTION()         { mu_.Unlock(); }
+
+  // don't check inside constructors and destructors
+  MyLock2()  { foo = 1; }
+  ~MyLock2() { foo = 0; }
+};
+
+
+} // end namespace SelfLockingTest
+
+

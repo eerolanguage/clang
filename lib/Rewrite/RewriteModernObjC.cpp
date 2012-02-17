@@ -5218,7 +5218,7 @@ void RewriteModernObjC::RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
 ///   struct _class_t * const superclass;
 ///   void *cache;
 ///   IMP *vtable;
-///   struct class_ro_t *ro;
+///   struct _class_ro_t *ro;
 /// }
 
 /// struct _category_t {
@@ -5301,7 +5301,7 @@ static void WriteModernMetadataDeclarations(std::string &Result) {
   Result += "\tstruct _class_t *const superclass;\n";
   Result += "\tvoid *cache;\n";
   Result += "\tvoid *vtable;\n";
-  Result += "\tstruct class_ro_t *ro;\n";
+  Result += "\tstruct _class_ro_t *ro;\n";
   Result += "};\n";
   
   Result += "\nstruct _category_t {\n";
@@ -5312,6 +5312,9 @@ static void WriteModernMetadataDeclarations(std::string &Result) {
   Result += "\tconst struct _protocol_list_t *const protocols;\n";
   Result += "\tconst struct _prop_list_t *const properties;\n";
   Result += "};\n";
+  
+  Result += "extern void *_objc_empty_cache;\n";
+  Result += "extern void *_objc_empty_vtable;\n";
   
   meta_data_declared = true;
 }
@@ -5453,6 +5456,20 @@ static void Write_prop_list_t_initializer(RewriteModernObjC &RewriteObj,
   }
 }
 
+// Metadata flags
+enum MetaDataDlags {
+  CLS = 0x0,
+  CLS_META = 0x1,
+  CLS_ROOT = 0x2,
+  OBJC2_CLS_HIDDEN = 0x10,
+  CLS_EXCEPTION = 0x20,
+  
+  /// (Obsolete) ARC-specific: this class has a .release_ivars method
+  CLS_HAS_IVAR_RELEASER = 0x40,
+  /// class was compiled with -fobjc-arr
+  CLS_COMPILED_BY_ARC = 0x80  // (1<<7)
+};
+
 static void Write__class_ro_t_initializer(ASTContext *Context, std::string &Result, 
                                           unsigned int flags, 
                                           const std::string &InstanceStart, 
@@ -5478,15 +5495,20 @@ static void Write__class_ro_t_initializer(ASTContext *Context, std::string &Resu
   // const uint8_t * const ivarLayout;
   Result += "0, \n\t";
   Result += "\""; Result += ClassName; Result += "\",\n\t";
+  bool metaclass = ((flags & CLS_META) != 0);
   if (baseMethods.size() > 0) {
     Result += "(const struct _method_list_t *)&";
-    Result += "_OBJC_$_INSTANCE_METHODS_"; Result += ClassName;
+    if (metaclass)
+      Result += "_OBJC_$_CLASS_METHODS_";
+    else
+      Result += "_OBJC_$_INSTANCE_METHODS_";
+    Result += ClassName;
     Result += ",\n\t";
   }
   else
     Result += "0, \n\t";
 
-  if (baseProtocols.size() > 0) {
+  if (!metaclass && baseProtocols.size() > 0) {
     Result += "(const struct _objc_protocol_list *)&";
     Result += "_OBJC_CLASS_PROTOCOLS_$_"; Result += ClassName;
     Result += ",\n\t";
@@ -5494,7 +5516,7 @@ static void Write__class_ro_t_initializer(ASTContext *Context, std::string &Resu
   else
     Result += "0, \n\t";
 
-  if (ivars.size() > 0) {
+  if (!metaclass && ivars.size() > 0) {
     Result += "(const struct _ivar_list_t *)&";
     Result += "_OBJC_$_INSTANCE_VARIABLES_"; Result += ClassName;
     Result += ",\n\t";
@@ -5504,15 +5526,75 @@ static void Write__class_ro_t_initializer(ASTContext *Context, std::string &Resu
 
   // weakIvarLayout
   Result += "0, \n\t";
-  if (Properties.size() > 0) {
+  if (!metaclass && Properties.size() > 0) {
     Result += "(const struct _prop_list_t *)&";
-    Result += "_OBJC_CLASS_PROPERTIES_$_"; Result += ClassName;
+    Result += "_OBJC_$_PROP_LIST_"; Result += ClassName;
     Result += ",\n";
   }
   else
     Result += "0, \n";
 
   Result += "};\n";
+}
+
+static void Write_class_t(ASTContext *Context, std::string &Result,
+                          StringRef VarName,
+                          const ObjCInterfaceDecl *CDecl, bool metadata) {
+  WriteModernMetadataDeclarations(Result);
+  
+  if (metadata && !CDecl->getSuperClass()) {
+    // Need to handle a case of use of forward declaration.
+    Result += "\nextern struct _class_t OBJC_CLASS_$_";
+    Result += CDecl->getNameAsString();
+    Result += ";\n";
+  }
+  // Also, for possibility of 'super' metadata class not having been defined yet.
+  if (CDecl->getSuperClass()) {
+    Result += "\nextern struct _class_t "; Result += VarName;
+    Result += CDecl->getSuperClass()->getNameAsString();
+    Result += ";\n";
+  }
+  
+  Result += "\nstruct _class_t "; Result += VarName; Result += CDecl->getNameAsString();
+  Result += " __attribute__ ((used, section (\"__DATA,__objc_data\"))) = {\n";
+  Result += "\t";
+  if (metadata) {
+    if (CDecl->getSuperClass()) {
+      Result += "&"; Result += VarName;
+      Result += CDecl->getSuperClass()->getNameAsString();
+      Result += ",\n\t";
+      Result += "&"; Result += VarName;
+      Result += CDecl->getSuperClass()->getNameAsString();
+      Result += ",\n\t";
+    }
+    else {
+      Result += "&"; Result += VarName; 
+      Result += CDecl->getNameAsString();
+      Result += ",\n\t";
+      Result += "&OBJC_CLASS_$_"; Result += CDecl->getNameAsString();
+      Result += ",\n\t";
+    }
+  }
+  else {
+    Result += "&OBJC_METACLASS_$_"; 
+    Result += CDecl->getNameAsString();
+    Result += ",\n\t";
+    if (CDecl->getSuperClass()) {
+      Result += "&"; Result += VarName;
+      Result += CDecl->getSuperClass()->getNameAsString();
+      Result += ",\n\t";
+    }
+    else 
+      Result += "0,\n\t";
+  }
+  Result += "(void *)&_objc_empty_cache,\n\t";
+  Result += "(void *)&_objc_empty_vtable,\n\t";
+  if (metadata)
+    Result += "&_OBJC_METACLASS_RO_$_";
+  else
+    Result += "&_OBJC_CLASS_RO_$_";
+  Result += CDecl->getNameAsString();
+  Result += ",\n};\n";
 }
 
 static void Write__extendedMethodTypes_initializer(RewriteModernObjC &RewriteObj,
@@ -5825,19 +5907,17 @@ void RewriteModernObjC::RewriteObjCProtocolListMetaData(
   Result += "\t }\n};\n";
 }
 
-// Metadata flags
-enum MetaDataDlags {
-  CLS = 0x0,
-  CLS_META = 0x1,
-  CLS_ROOT = 0x2,
-  OBJC2_CLS_HIDDEN = 0x10,
-  CLS_EXCEPTION = 0x20,
-  
-  /// (Obsolete) ARC-specific: this class has a .release_ivars method
-  CLS_HAS_IVAR_RELEASER = 0x40,
-  /// class was compiled with -fobjc-arr
-  CLS_COMPILED_BY_ARC = 0x80  // (1<<7)
-};
+/// hasObjCExceptionAttribute - Return true if this class or any super
+/// class has the __objc_exception__ attribute.
+/// FIXME. Move this to ASTContext.cpp as it is also used for IRGen.
+static bool hasObjCExceptionAttribute(ASTContext &Context,
+                                      const ObjCInterfaceDecl *OID) {
+  if (OID->hasAttr<ObjCExceptionAttr>())
+    return true;
+  if (const ObjCInterfaceDecl *Super = OID->getSuperClass())
+    return hasObjCExceptionAttribute(Context, Super);
+  return false;
+}
 
 void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
                                            std::string &Result) {
@@ -5926,20 +6006,49 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
   
   Write_prop_list_t_initializer(*this, Context, Result, ClassProperties,
                                  /* Container */0,
-                                 "_OBJC_CLASS_PROPERTIES_$_",
+                                 "_OBJC_$_PROP_LIST_",
                                  CDecl->getNameAsString());
 
   
+  // Data for initializing _class_ro_t  metaclass meta-data
+  uint32_t flags = CLS_META;
+  std::string InstanceSize;
+  std::string InstanceStart;
+  
+  
+  bool classIsHidden = CDecl->getVisibility() == HiddenVisibility;
+  if (classIsHidden)
+    flags |= OBJC2_CLS_HIDDEN;
+  
+  if (!CDecl->getSuperClass())
+    // class is root
+    flags |= CLS_ROOT;
+  InstanceSize = "sizeof(struct _class_t)";
+  InstanceStart = InstanceSize;
+  Write__class_ro_t_initializer(Context, Result, flags, 
+                                InstanceStart, InstanceSize,
+                                ClassMethods,
+                                0,
+                                0,
+                                0,
+                                "_OBJC_METACLASS_RO_$_",
+                                CDecl->getNameAsString());
+
+  
   // Data for initializing _class_ro_t meta-data
-  uint32_t flags = CLS;
-  // FIXME. condition for class visibility hidden
-  // flags |= OBJC2_CLS_HIDDEN;
+  flags = CLS;
+  if (classIsHidden)
+    flags |= OBJC2_CLS_HIDDEN;
+  
+  if (hasObjCExceptionAttribute(*Context, CDecl))
+    flags |= CLS_EXCEPTION;
+
   if (!CDecl->getSuperClass())
     // class is root
     flags |= CLS_ROOT;
   
-  std::string InstanceSize;
-  std::string InstanceStart;
+  InstanceSize.clear();
+  InstanceStart.clear();
   if (!ObjCSynthesizedStructs.count(CDecl)) {
     InstanceSize = "0";
     InstanceStart = "0";
@@ -5968,6 +6077,15 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
                                 ClassProperties,
                                 "_OBJC_CLASS_RO_$_",
                                 CDecl->getNameAsString());
+  
+  Write_class_t(Context, Result,
+                "OBJC_METACLASS_$_",
+                CDecl, /*metaclass*/true);
+  
+  Write_class_t(Context, Result,
+                "OBJC_CLASS_$_",
+                CDecl, /*metaclass*/false);
+                
 }
 
 void RewriteModernObjC::RewriteMetaDataIntoBuffer(std::string &Result) {
@@ -5982,88 +6100,18 @@ void RewriteModernObjC::RewriteMetaDataIntoBuffer(std::string &Result) {
   for (int i = 0; i < CatDefCount; i++)
     RewriteObjCCategoryImplDecl(CategoryImplementation[i], Result);
   
-  // Write objc_symtab metadata
-  /*
-   struct _objc_symtab
-   {
-   long sel_ref_cnt;
-   SEL *refs;
-   short cls_def_cnt;
-   short cat_def_cnt;
-   void *defs[cls_def_cnt + cat_def_cnt];
-   };
-   */
-  
-  Result += "\nstruct _objc_symtab {\n";
-  Result += "\tlong sel_ref_cnt;\n";
-  Result += "\tSEL *refs;\n";
-  Result += "\tshort cls_def_cnt;\n";
-  Result += "\tshort cat_def_cnt;\n";
-  Result += "\tvoid *defs[" + utostr(ClsDefCount + CatDefCount)+ "];\n";
-  Result += "};\n\n";
-  
-  Result += "static struct _objc_symtab "
-  "_OBJC_SYMBOLS __attribute__((used, section (\"__OBJC, __symbols\")))= {\n";
-  Result += "\t0, 0, " + utostr(ClsDefCount)
-  + ", " + utostr(CatDefCount) + "\n";
-  for (int i = 0; i < ClsDefCount; i++) {
-    Result += "\t,&_OBJC_CLASS_";
-    Result += ClassImplementation[i]->getNameAsString();
-    Result += "\n";
-  }
-  
-  for (int i = 0; i < CatDefCount; i++) {
-    Result += "\t,&_OBJC_CATEGORY_";
-    Result += CategoryImplementation[i]->getClassInterface()->getNameAsString();
-    Result += "_";
-    Result += CategoryImplementation[i]->getNameAsString();
-    Result += "\n";
-  }
-  
-  Result += "};\n\n";
-  
-  // Write objc_module metadata
-  
-  /*
-   struct _objc_module {
-   long version;
-   long size;
-   const char *name;
-   struct _objc_symtab *symtab;
-   }
-   */
-  
-  Result += "\nstruct _objc_module {\n";
-  Result += "\tlong version;\n";
-  Result += "\tlong size;\n";
-  Result += "\tconst char *name;\n";
-  Result += "\tstruct _objc_symtab *symtab;\n";
-  Result += "};\n\n";
-  Result += "static struct _objc_module "
-  "_OBJC_MODULES __attribute__ ((used, section (\"__OBJC, __module_info\")))= {\n";
-  Result += "\t" + utostr(OBJC_ABI_VERSION) +
-  ", sizeof(struct _objc_module), \"\", &_OBJC_SYMBOLS\n";
-  Result += "};\n\n";
-  
-  if (LangOpts.MicrosoftExt) {
-    if (ProtocolExprDecls.size()) {
-      Result += "#pragma section(\".objc_protocol$B\",long,read,write)\n";
-      Result += "#pragma data_seg(push, \".objc_protocol$B\")\n";
-      for (llvm::SmallPtrSet<ObjCProtocolDecl *,8>::iterator I = ProtocolExprDecls.begin(),
-           E = ProtocolExprDecls.end(); I != E; ++I) {
-        Result += "static struct _objc_protocol *_POINTER_OBJC_PROTOCOL_";
-        Result += (*I)->getNameAsString();
-        Result += " = &_OBJC_PROTOCOL_";
-        Result += (*I)->getNameAsString();
-        Result += ";\n";
-      }
-      Result += "#pragma data_seg(pop)\n\n";
+  if (ClsDefCount > 0) {
+    Result += "static struct _class_t *L_OBJC_LABEL_CLASS_$ [";
+    Result += llvm::utostr(ClsDefCount); Result += "]";
+    Result += 
+      " __attribute__((used, section (\"__DATA, __objc_classlist,"
+      "regular,no_dead_strip\")))= {\n";
+    for (int i = 0; i < ClsDefCount; i++) {
+      Result += "\t&OBJC_CLASS_$_";
+      Result += ClassImplementation[i]->getNameAsString();
+      Result += ",\n";
     }
-    Result += "#pragma section(\".objc_module_info$B\",long,read,write)\n";
-    Result += "#pragma data_seg(push, \".objc_module_info$B\")\n";
-    Result += "static struct _objc_module *_POINTER_OBJC_MODULES = ";
-    Result += "&_OBJC_MODULES;\n";
-    Result += "#pragma data_seg(pop)\n\n";
+    Result += "};\n";
   }
 }
 

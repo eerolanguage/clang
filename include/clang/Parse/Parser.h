@@ -1186,7 +1186,10 @@ private:
                                 ExprResult& Init);
   void ParseCXXNonStaticMemberInitializer(Decl *VarD);
   void ParseLexedAttributes(ParsingClass &Class);
-  void ParseLexedAttribute(LateParsedAttribute &LA);
+  void ParseLexedAttributeList(LateParsedAttrList &LAs, Decl *D,
+                               bool EnterScope, bool OnDefinition);
+  void ParseLexedAttribute(LateParsedAttribute &LA,
+                           bool EnterScope, bool OnDefinition);
   void ParseLexedMethodDeclarations(ParsingClass &Class);
   void ParseLexedMethodDeclaration(LateParsedMethodDeclaration &LM);
   void ParseLexedMethodDefs(ParsingClass &Class);
@@ -1225,7 +1228,8 @@ private:
                                                   AccessSpecifier AS = AS_none);
 
   Decl *ParseFunctionDefinition(ParsingDeclarator &D,
-                 const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo());
+                 const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo(),
+                 LateParsedAttrList *LateParsedAttrs = 0);
   void ParseKNRParamDeclarations(Declarator &D);
   // EndLoc, if non-NULL, is filled with the location of the last token of
   // the simple-asm.
@@ -1683,7 +1687,7 @@ private:
                                 ForRangeInit *FRI = 0);
   Decl *ParseDeclarationAfterDeclarator(Declarator &D,
                const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo());
-  bool ParseAttributesAfterDeclarator(Declarator &D);
+  bool ParseAsmAttributesAfterDeclarator(Declarator &D);
   Decl *ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
                const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo());
   Decl *ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope);

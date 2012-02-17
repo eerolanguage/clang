@@ -3128,6 +3128,7 @@ ExprResult Sema::BuildCXXDefaultArgExpr(SourceLocation CallLoc,
       //   the semantic constraints are checked, at the point where the
       //   default argument expression appears.
       ContextRAII SavedContext(*this, FD);
+      LocalInstantiationScope Local(*this);
       Result = SubstExpr(UninstExpr, ArgList);
     }
     if (Result.isInvalid())
@@ -10148,15 +10149,13 @@ namespace {
     }
     
     void VisitCXXNewExpr(CXXNewExpr *E) {
-      if (E->getConstructor())
-        S.MarkFunctionReferenced(E->getLocStart(), E->getConstructor());
       if (E->getOperatorNew())
         S.MarkFunctionReferenced(E->getLocStart(), E->getOperatorNew());
       if (E->getOperatorDelete())
         S.MarkFunctionReferenced(E->getLocStart(), E->getOperatorDelete());
       Inherited::VisitCXXNewExpr(E);
     }
-    
+
     void VisitCXXDeleteExpr(CXXDeleteExpr *E) {
       if (E->getOperatorDelete())
         S.MarkFunctionReferenced(E->getLocStart(), E->getOperatorDelete());
