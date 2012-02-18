@@ -1433,9 +1433,10 @@ InitListExpr::InitListExpr(ASTContext &C, SourceLocation lbraceloc,
   : Expr(InitListExprClass, QualType(), VK_RValue, OK_Ordinary, false, false,
          false, false),
     InitExprs(C, numInits),
-    LBraceLoc(lbraceloc), RBraceLoc(rbraceloc), SyntacticForm(0),
-    HadArrayRangeDesignator(false) 
-{      
+    LBraceLoc(lbraceloc), RBraceLoc(rbraceloc), SyntacticForm(0)
+{
+  sawArrayRangeDesignator(false);
+  setInitializesStdInitializerList(false);
   for (unsigned I = 0; I != numInits; ++I) {
     if (initExprs[I]->isTypeDependent())
       ExprBits.TypeDependent = true;
@@ -1512,9 +1513,10 @@ SourceRange InitListExpr::getSourceRange() const {
 
 /// getFunctionType - Return the underlying function type for this block.
 ///
-const FunctionType *BlockExpr::getFunctionType() const {
-  return getType()->getAs<BlockPointerType>()->
-                    getPointeeType()->getAs<FunctionType>();
+const FunctionProtoType *BlockExpr::getFunctionType() const {
+  // The block pointer is never sugared, but the function type might be.
+  return cast<BlockPointerType>(getType())
+           ->getPointeeType()->castAs<FunctionProtoType>();
 }
 
 SourceLocation BlockExpr::getCaretLocation() const {

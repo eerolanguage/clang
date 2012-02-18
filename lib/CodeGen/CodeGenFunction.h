@@ -1377,11 +1377,8 @@ public:
   void EmitFunctionBody(FunctionArgList &Args);
 
   void EmitLambdaToBlockPointerBody(FunctionArgList &Args);
-  void EmitLambdaToFunctionPointerBody(FunctionArgList &Args);
-  llvm::Constant *EmitLambdaConvertedFnPtr(const CXXMethodDecl *MD);
-  void EmitLambdaThunkBody(llvm::Function *Fn,
-                           const CGFunctionInfo &FnInfo,
-                           const CXXRecordDecl *Lambda);
+  void EmitLambdaDelegatingInvokeBody(const CXXMethodDecl *MD);
+  void EmitLambdaStaticInvokeFunction(const CXXMethodDecl *MD);
 
   /// EmitReturnBlock - Emit the unified return block, trying to avoid its
   /// emission when possible.
@@ -1813,6 +1810,9 @@ public:
 
   llvm::Value* EmitCXXTypeidExpr(const CXXTypeidExpr *E);
   llvm::Value *EmitDynamicCast(llvm::Value *V, const CXXDynamicCastExpr *DCE);
+
+  void MaybeEmitStdInitializerListCleanup(LValue lvalue, const Expr *init);
+  void EmitStdInitializerListCleanup(LValue lvalue, const InitListExpr *init);
 
   void EmitCheck(llvm::Value *, unsigned Size);
 

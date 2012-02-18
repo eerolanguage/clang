@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangSACheckers.h"
+#include "InterCheckerAPI.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
@@ -826,7 +827,8 @@ ProgramStateRef CStringChecker::InvalidateBuffer(CheckerContext &C,
 
     // Invalidate this region.
     unsigned Count = C.getCurrentBlockCount();
-    return state->invalidateRegions(R, E, Count);
+    const LocationContext *LCtx = C.getPredecessor()->getLocationContext();
+    return state->invalidateRegions(R, E, Count, LCtx);
   }
 
   // If we have a non-region value by chance, just remove the binding.
@@ -956,7 +958,7 @@ void CStringChecker::evalCopyCommon(CheckerContext &C,
         // conjure a return value for later.
         unsigned Count = C.getCurrentBlockCount();
         SVal result =
-          C.getSValBuilder().getConjuredSymbolVal(NULL, CE, Count);
+          C.getSValBuilder().getConjuredSymbolVal(NULL, CE, LCtx, Count);
         state = state->BindExpr(CE, LCtx, result);
       }
 
@@ -1076,7 +1078,7 @@ void CStringChecker::evalMemcmp(CheckerContext &C, const CallExpr *CE) const {
       if (state) {
         // The return value is the comparison result, which we don't know.
         unsigned Count = C.getCurrentBlockCount();
-        SVal CmpV = svalBuilder.getConjuredSymbolVal(NULL, CE, Count);
+        SVal CmpV = svalBuilder.getConjuredSymbolVal(NULL, CE, LCtx, Count);
         state = state->BindExpr(CE, LCtx, CmpV);
         C.addTransition(state);
       }
@@ -1183,7 +1185,7 @@ void CStringChecker::evalstrLengthCommon(CheckerContext &C, const CallExpr *CE,
       // All we know is the return value is the min of the string length
       // and the limit. This is better than nothing.
       unsigned Count = C.getCurrentBlockCount();
-      result = C.getSValBuilder().getConjuredSymbolVal(NULL, CE, Count);
+      result = C.getSValBuilder().getConjuredSymbolVal(NULL, CE, LCtx, Count);
       NonLoc *resultNL = cast<NonLoc>(&result);
 
       if (strLengthNL) {
@@ -1211,7 +1213,7 @@ void CStringChecker::evalstrLengthCommon(CheckerContext &C, const CallExpr *CE,
     // value, so it can be used in constraints, at least.
     if (result.isUnknown()) {
       unsigned Count = C.getCurrentBlockCount();
-      result = C.getSValBuilder().getConjuredSymbolVal(NULL, CE, Count);
+      result = C.getSValBuilder().getConjuredSymbolVal(NULL, CE, LCtx, Count);
     }
   }
 
@@ -1556,7 +1558,7 @@ void CStringChecker::evalStrcpyCommon(CheckerContext &C, const CallExpr *CE,
   // overflow, we still need a result. Conjure a return value.
   if (returnEnd && Result.isUnknown()) {
     unsigned Count = C.getCurrentBlockCount();
-    Result = svalBuilder.getConjuredSymbolVal(NULL, CE, Count);
+    Result = svalBuilder.getConjuredSymbolVal(NULL, CE, LCtx, Count);
   }
 
   // Set the return value.
@@ -1702,7 +1704,7 @@ void CStringChecker::evalStrcmpCommon(CheckerContext &C, const CallExpr *CE,
   if (!canComputeResult) {
     // Conjure a symbolic value. It's the best we can do.
     unsigned Count = C.getCurrentBlockCount();
-    SVal resultVal = svalBuilder.getConjuredSymbolVal(NULL, CE, Count);
+    SVal resultVal = svalBuilder.getConjuredSymbolVal(NULL, CE, LCtx, Count);
     state = state->BindExpr(CE, LCtx, resultVal);
   }
 
@@ -1715,31 +1717,47 @@ void CStringChecker::evalStrcmpCommon(CheckerContext &C, const CallExpr *CE,
 //===----------------------------------------------------------------------===//
 
 bool CStringChecker::evalCall(const CallExpr *CE, CheckerContext &C) const {
-  StringRef Name = C.getCalleeName(CE);
-  if (Name.empty())
+  const FunctionDecl *FDecl = C.getCalleeDecl(CE);
+
+  if (!FDecl)
     return false;
-  if (Name.startswith("__builtin_"))
-    Name = Name.substr(10);
 
-  FnCheck evalFunction = llvm::StringSwitch<FnCheck>(Name)
-    .Cases("memcpy", "__memcpy_chk", &CStringChecker::evalMemcpy)
-    .Cases("mempcpy", "__mempcpy_chk", &CStringChecker::evalMempcpy)
-    .Cases("memcmp", "bcmp", &CStringChecker::evalMemcmp)
-    .Cases("memmove", "__memmove_chk", &CStringChecker::evalMemmove)
-    .Cases("strcpy", "__strcpy_chk", &CStringChecker::evalStrcpy)
-    .Cases("strncpy", "__strncpy_chk", &CStringChecker::evalStrncpy)
-    .Cases("stpcpy", "__stpcpy_chk", &CStringChecker::evalStpcpy)
-    .Cases("strcat", "__strcat_chk", &CStringChecker::evalStrcat)
-    .Cases("strncat", "__strncat_chk", &CStringChecker::evalStrncat)
-    .Case("strlen", &CStringChecker::evalstrLength)
-    .Case("strnlen", &CStringChecker::evalstrnLength)
-    .Case("strcmp", &CStringChecker::evalStrcmp)
-    .Case("strncmp", &CStringChecker::evalStrncmp)
-    .Case("strcasecmp", &CStringChecker::evalStrcasecmp)
-    .Case("strncasecmp", &CStringChecker::evalStrncasecmp)
-    .Case("bcopy", &CStringChecker::evalBcopy)
-    .Default(NULL);
-
+  FnCheck evalFunction = 0;
+  if (C.isCLibraryFunction(FDecl, "memcpy"))
+    evalFunction =  &CStringChecker::evalMemcpy;
+  else if (C.isCLibraryFunction(FDecl, "mempcpy"))
+    evalFunction =  &CStringChecker::evalMempcpy;
+  else if (C.isCLibraryFunction(FDecl, "memcmp"))
+    evalFunction =  &CStringChecker::evalMemcmp;
+  else if (C.isCLibraryFunction(FDecl, "memmove"))
+    evalFunction =  &CStringChecker::evalMemmove;
+  else if (C.isCLibraryFunction(FDecl, "strcpy"))
+    evalFunction =  &CStringChecker::evalStrcpy;
+  else if (C.isCLibraryFunction(FDecl, "strncpy"))
+    evalFunction =  &CStringChecker::evalStrncpy;
+  else if (C.isCLibraryFunction(FDecl, "stpcpy"))
+    evalFunction =  &CStringChecker::evalStpcpy;
+  else if (C.isCLibraryFunction(FDecl, "strcat"))
+    evalFunction =  &CStringChecker::evalStrcat;
+  else if (C.isCLibraryFunction(FDecl, "strncat"))
+    evalFunction =  &CStringChecker::evalStrncat;
+  else if (C.isCLibraryFunction(FDecl, "strlen"))
+    evalFunction =  &CStringChecker::evalstrLength;
+  else if (C.isCLibraryFunction(FDecl, "strnlen"))
+    evalFunction =  &CStringChecker::evalstrnLength;
+  else if (C.isCLibraryFunction(FDecl, "strcmp"))
+    evalFunction =  &CStringChecker::evalStrcmp;
+  else if (C.isCLibraryFunction(FDecl, "strncmp"))
+    evalFunction =  &CStringChecker::evalStrncmp;
+  else if (C.isCLibraryFunction(FDecl, "strcasecmp"))
+    evalFunction =  &CStringChecker::evalStrcasecmp;
+  else if (C.isCLibraryFunction(FDecl, "strncasecmp"))
+    evalFunction =  &CStringChecker::evalStrncasecmp;
+  else if (C.isCLibraryFunction(FDecl, "bcopy"))
+    evalFunction =  &CStringChecker::evalBcopy;
+  else if (C.isCLibraryFunction(FDecl, "bcmp"))
+    evalFunction =  &CStringChecker::evalMemcmp;
+  
   // If the callee isn't a string function, let another checker handle it.
   if (!evalFunction)
     return false;
@@ -1908,3 +1926,7 @@ REGISTER_CHECKER(CStringNullArg)
 REGISTER_CHECKER(CStringOutOfBounds)
 REGISTER_CHECKER(CStringBufferOverlap)
 REGISTER_CHECKER(CStringNotNullTerm)
+
+void ento::registerCStringCheckerBasic(CheckerManager &Mgr) {
+  registerCStringNullArg(Mgr);
+}

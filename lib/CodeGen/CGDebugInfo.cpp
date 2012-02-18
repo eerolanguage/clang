@@ -502,8 +502,7 @@ llvm::DIType CGDebugInfo::createRecordFwdDecl(const RecordDecl *RD,
     llvm_unreachable("Unknown RecordDecl type!");
 
   // Create the type.
-  return DBuilder.createForwardDecl(Tag, RDName, DefUnit,
-				    Line);
+  return DBuilder.createForwardDecl(Tag, RDName, DefUnit, Line);
 }
 
 // Walk up the context chain and create forward decls for record decls,
@@ -554,9 +553,7 @@ llvm::DIType CGDebugInfo::CreatePointeeType(QualType PointeeTy,
     RecordDecl *RD = RTy->getDecl();
     llvm::DIDescriptor FDContext =
       getContextDescriptor(cast<Decl>(RD->getDeclContext()));
-    llvm::DIType RetTy = createRecordFwdDecl(RD, FDContext);
-    TypeCache[PointeeTy.getAsOpaquePtr()] = RetTy;
-    return RetTy;
+    return createRecordFwdDecl(RD, FDContext);
   }
   return getOrCreateType(PointeeTy, Unit);
 
@@ -1617,6 +1614,10 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
 
   // Otherwise create the type.
   llvm::DIType Res = CreateTypeNode(Ty, Unit);
+
+  llvm::DIType TC = getTypeOrNull(Ty);
+  if (TC.Verify() && TC.isForwardDecl())
+    ReplaceMap.push_back(std::make_pair(Ty.getAsOpaquePtr(), TC));
   
   // And update the type cache.
   TypeCache[Ty.getAsOpaquePtr()] = Res;
@@ -1726,6 +1727,9 @@ llvm::DIType CGDebugInfo::getOrCreateLimitedType(QualType Ty,
   // Otherwise create the type.
   llvm::DIType Res = CreateLimitedTypeNode(Ty, Unit);
 
+  if (T.Verify() && T.isForwardDecl())
+    ReplaceMap.push_back(std::make_pair(Ty.getAsOpaquePtr(), T));
+
   // And update the type cache.
   TypeCache[Ty.getAsOpaquePtr()] = Res;
   return Res;
@@ -1748,11 +1752,8 @@ llvm::DIType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
 
   // If this is just a forward declaration, construct an appropriately
   // marked node and just return it.
-  if (!RD->getDefinition()) {
-    llvm::DIType RTy = createRecordFwdDecl(RD, RDContext);
-    TypeCache[QualType(Ty, 0).getAsOpaquePtr()] = RTy;
-    return RTy;
-  }
+  if (!RD->getDefinition())
+    return createRecordFwdDecl(RD, RDContext);
 
   uint64_t Size = CGM.getContext().getTypeSize(Ty);
   uint64_t Align = CGM.getContext().getTypeAlign(Ty);
@@ -1798,7 +1799,7 @@ llvm::DIType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
     else if (CXXDecl->isDynamicClass())
       ContainingType = RealDecl;
 
-    RealDecl->replaceOperandWith(9, ContainingType);
+    RealDecl->replaceOperandWith(12, ContainingType);
   }
   return llvm::DIType(RealDecl);
 }
@@ -2563,16 +2564,24 @@ CGDebugInfo::getOrCreateNameSpace(const NamespaceDecl *NSDecl) {
   return NS;
 }
 
-/// UpdateCompletedType - Update type cache because the type is now
-/// translated.
-void CGDebugInfo::UpdateCompletedType(const TagDecl *TD) {
-  QualType Ty = CGM.getContext().getTagDeclType(TD);
-
-  // If the type exist in type cache then remove it from the cache.
-  // There is no need to prepare debug info for the completed type
-  // right now. It will be generated on demand lazily.
-  llvm::DenseMap<void *, llvm::WeakVH>::iterator it =
-    TypeCache.find(Ty.getAsOpaquePtr());
-  if (it != TypeCache.end()) 
-    TypeCache.erase(it);
+void CGDebugInfo::finalize(void) {
+  for (std::vector<std::pair<void *, llvm::WeakVH> >::const_iterator VI
+         = ReplaceMap.begin(), VE = ReplaceMap.end(); VI != VE; ++VI) {
+    llvm::DIType Ty, RepTy;
+    // Verify that the debug info still exists.
+    if (&*VI->second)
+      Ty = llvm::DIType(cast<llvm::MDNode>(VI->second));
+    
+    llvm::DenseMap<void *, llvm::WeakVH>::iterator it =
+      TypeCache.find(VI->first);
+    if (it != TypeCache.end()) {
+      // Verify that the debug info still exists.
+      if (&*it->second)
+        RepTy = llvm::DIType(cast<llvm::MDNode>(it->second));
+    }
+    
+    if (Ty.Verify() && RepTy.Verify())
+      Ty.replaceAllUsesWith(RepTy);
+  }
+  DBuilder.finalize();
 }

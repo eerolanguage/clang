@@ -101,6 +101,23 @@ static void EmitDeclDestroy(CodeGenFunction &CGF, const VarDecl &D,
   CGF.EmitCXXGlobalDtorRegistration(function, argument);
 }
 
+/// Emit code to cause the variable at the given address to be considered as
+/// constant from this point onwards.
+static void EmitDeclInvariant(CodeGenFunction &CGF, llvm::Constant *Addr) {
+  // Don't emit the intrinsic if we're not optimizing.
+  if (!CGF.CGM.getCodeGenOpts().OptimizationLevel)
+    return;
+
+  // Grab the llvm.invariant.start intrinsic.
+  llvm::Intrinsic::ID InvStartID = llvm::Intrinsic::invariant_start;
+  llvm::Constant *InvariantStart = CGF.CGM.getIntrinsic(InvStartID);
+
+  // Emit a call, with size -1 signifying the whole object.
+  llvm::Value *Args[2] = { llvm::ConstantInt::getSigned(CGF.Int64Ty, -1),
+                           llvm::ConstantExpr::getBitCast(Addr, CGF.Int8PtrTy)};
+  CGF.Builder.CreateCall(InvariantStart, Args);
+}
+
 void CodeGenFunction::EmitCXXGlobalVarDeclInit(const VarDecl &D,
                                                llvm::Constant *DeclPtr,
                                                bool PerformInit) {
@@ -111,7 +128,10 @@ void CodeGenFunction::EmitCXXGlobalVarDeclInit(const VarDecl &D,
   if (!T->isReferenceType()) {
     if (PerformInit)
       EmitDeclInit(*this, D, DeclPtr);
-    EmitDeclDestroy(*this, D, DeclPtr);
+    if (CGM.isTypeConstant(D.getType(), true))
+      EmitDeclInvariant(*this, DeclPtr);
+    else
+      EmitDeclDestroy(*this, D, DeclPtr);
     return;
   }
 
@@ -277,7 +297,7 @@ void CodeGenFunction::GenerateCXXGlobalVarDeclInitFunc(llvm::Function *Fn,
                                                  llvm::GlobalVariable *Addr,
                                                        bool PerformInit) {
   StartFunction(GlobalDecl(), getContext().VoidTy, Fn,
-                getTypes().getNullaryFunctionInfo(),
+                getTypes().arrangeNullaryFunction(),
                 FunctionArgList(), SourceLocation());
 
   // Use guarded initialization if the global variable is weak. This
@@ -297,7 +317,7 @@ void CodeGenFunction::GenerateCXXGlobalInitFunc(llvm::Function *Fn,
                                                 llvm::Constant **Decls,
                                                 unsigned NumDecls) {
   StartFunction(GlobalDecl(), getContext().VoidTy, Fn,
-                getTypes().getNullaryFunctionInfo(),
+                getTypes().arrangeNullaryFunction(),
                 FunctionArgList(), SourceLocation());
 
   RunCleanupsScope Scope(*this);
@@ -322,7 +342,7 @@ void CodeGenFunction::GenerateCXXGlobalDtorFunc(llvm::Function *Fn,
                   const std::vector<std::pair<llvm::WeakVH, llvm::Constant*> >
                                                 &DtorsAndObjects) {
   StartFunction(GlobalDecl(), getContext().VoidTy, Fn,
-                getTypes().getNullaryFunctionInfo(),
+                getTypes().arrangeNullaryFunction(),
                 FunctionArgList(), SourceLocation());
 
   // Emit the dtors, in reverse order from construction.
@@ -350,9 +370,10 @@ CodeGenFunction::generateDestroyHelper(llvm::Constant *addr,
   args.push_back(&dst);
   
   const CGFunctionInfo &FI = 
-    CGM.getTypes().getFunctionInfo(getContext().VoidTy, args, 
-                                   FunctionType::ExtInfo());
-  llvm::FunctionType *FTy = CGM.getTypes().GetFunctionType(FI, false);
+    CGM.getTypes().arrangeFunctionDeclaration(getContext().VoidTy, args,
+                                              FunctionType::ExtInfo(),
+                                              /*variadic*/ false);
+  llvm::FunctionType *FTy = CGM.getTypes().GetFunctionType(FI);
   llvm::Function *fn = 
     CreateGlobalInitOrDestructFunction(CGM, FTy, "__cxx_global_array_dtor");
 
