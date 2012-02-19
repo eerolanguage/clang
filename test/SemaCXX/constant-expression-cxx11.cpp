@@ -1055,6 +1055,28 @@ namespace ComplexConstexpr {
   constexpr _Complex int test6 = {5,6};
   typedef _Complex float fcomplex;
   constexpr fcomplex test7 = fcomplex();
+
+  constexpr const double &t2r = __real test3;
+  constexpr const double &t2i = __imag test3;
+  static_assert(&t2r + 1 == &t2i, "");
+  static_assert(t2r == 1.0, "");
+  static_assert(t2i == 2.0, "");
+  constexpr const double *t2p = &t2r;
+  static_assert(t2p[-1] == 0.0, ""); // expected-error {{constant expr}} expected-note {{cannot refer to element -1 of array of 2 elements}}
+  static_assert(t2p[0] == 1.0, "");
+  static_assert(t2p[1] == 2.0, "");
+  static_assert(t2p[2] == 0.0, ""); // expected-error {{constant expr}} expected-note {{one-past-the-end pointer}}
+  static_assert(t2p[3] == 0.0, ""); // expected-error {{constant expr}} expected-note {{cannot refer to element 3 of array of 2 elements}}
+  constexpr _Complex float *p = 0;
+  constexpr float pr = __real *p; // expected-error {{constant expr}} expected-note {{cannot access real component of null}}
+  constexpr float pi = __imag *p; // expected-error {{constant expr}} expected-note {{cannot access imaginary component of null}}
+  constexpr const _Complex double *q = &test3 + 1;
+  constexpr double qr = __real *q; // expected-error {{constant expr}} expected-note {{cannot access real component of pointer past the end}}
+  constexpr double qi = __imag *q; // expected-error {{constant expr}} expected-note {{cannot access imaginary component of pointer past the end}}
+
+  static_assert(__real test6 == 5, "");
+  static_assert(__imag test6 == 6, "");
+  static_assert(&__imag test6 == &__real test6 + 1, "");
 }
 
 namespace InstantiateCaseStmt {
@@ -1197,4 +1219,14 @@ namespace VLASizeof {
         sizeof(arr) // expected-error {{constant expression}}
         * 3;
   }
+}
+
+namespace CompoundLiteral {
+  // FIXME:
+  // We don't model the semantics of this correctly: the compound literal is
+  // represented as a prvalue in the AST, but actually behaves like an lvalue.
+  // We treat the compound literal as a temporary and refuse to produce a
+  // pointer to it. This is OK: we're not required to treat this as a constant
+  // in C++, and in C we model compound literals as lvalues.
+  constexpr int *p = (int*)(int[1]){0}; // expected-warning {{C99}} expected-error {{constant expression}} expected-note 2{{temporary}}
 }
