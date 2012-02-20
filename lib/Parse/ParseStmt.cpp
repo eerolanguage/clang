@@ -575,7 +575,7 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
       ColonLoc = ConsumeToken();
 
     } else if (getLang().Eero) { // colons are optional
-      // TODO: check for newline?
+      // do nothing
     // Treat "case blah;" as a typo for "case blah:".
     } else if (Tok.is(tok::semi)) {
       ColonLoc = ConsumeToken();
@@ -609,8 +609,15 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
       DeepestParsedCaseStmt = NextDeepest;
     }
 
+    if (getLang().Eero && !PP.isInSystemHeader()) {
+      if (Tok.is(tok::comma)) { // support comma-separated cases
+        Tok.setKind(tok::kw_case);
+      } else if (Tok.is(tok::kw_case)) {
+        break; // no fallthrough
+      }
+    }
     // Handle all case statements.
-  } while (Tok.is(tok::kw_case) || (getLang().Eero && Tok.is(tok::comma)));
+  } while (Tok.is(tok::kw_case));
 
   assert(!TopLevelCase.isInvalid() && "Should have parsed at least one case!");
 
@@ -618,7 +625,10 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
   StmtResult SubStmt;
 
   if (getLang().Eero && !PP.isInSystemHeader()) {
-    SubStmt = ParseCompoundStatement(attrs);
+    if (Tok.is(tok::kw_case) || Tok.is(tok::kw_default)) // break even on an
+      SubStmt = Actions.ActOnNullStmt(SourceLocation()); // empty statement
+    else
+      SubStmt = ParseCompoundStatement(attrs);
     if (!SubStmt.isInvalid())
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
   } else if (Tok.isNot(tok::r_brace)) {
@@ -659,7 +669,7 @@ StmtResult Parser::ParseDefaultStatement(ParsedAttributes &attrs) {
     ColonLoc = ConsumeToken();
 
   } else if (getLang().Eero) { // colons are optional
-    // TODO: check for newline?
+    // do nothing    
   // Treat "default;" as a typo for "default:".
   } else if (Tok.is(tok::semi)) {
     ColonLoc = ConsumeToken();
@@ -674,7 +684,10 @@ StmtResult Parser::ParseDefaultStatement(ParsedAttributes &attrs) {
 
   StmtResult SubStmt;
   if (getLang().Eero && !PP.isInSystemHeader()) {
-    SubStmt = ParseCompoundStatement(attrs);
+    if (Tok.is(tok::kw_case)) // break even on an empty statement
+      SubStmt = Actions.ActOnNullStmt(SourceLocation());
+    else
+      SubStmt = ParseCompoundStatement(attrs);
     if (!SubStmt.isInvalid())
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
   } else if (Tok.isNot(tok::r_brace)) {
