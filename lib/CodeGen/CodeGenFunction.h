@@ -1811,8 +1811,9 @@ public:
   llvm::Value* EmitCXXTypeidExpr(const CXXTypeidExpr *E);
   llvm::Value *EmitDynamicCast(llvm::Value *V, const CXXDynamicCastExpr *DCE);
 
-  void MaybeEmitStdInitializerListCleanup(LValue lvalue, const Expr *init);
-  void EmitStdInitializerListCleanup(LValue lvalue, const InitListExpr *init);
+  void MaybeEmitStdInitializerListCleanup(llvm::Value *loc, const Expr *init);
+  void EmitStdInitializerListCleanup(llvm::Value *loc,
+                                     const InitListExpr *init);
 
   void EmitCheck(llvm::Value *, unsigned Size);
 

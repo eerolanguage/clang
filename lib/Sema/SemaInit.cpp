@@ -3078,16 +3078,25 @@ static void TryListInitialization(Sema &S,
     TryReferenceListInitialization(S, Entity, Kind, InitList, Sequence);
     return;
   }
-  if (DestType->isRecordType() && !DestType->isAggregateType()) {
-    if (S.getLangOptions().CPlusPlus0x) {
-      Expr *Arg = InitList;
-      // A direct-initializer is not list-syntax, i.e. there's no special
-      // treatment of "A a({1, 2});".
-      TryConstructorInitialization(S, Entity, Kind, &Arg, 1, DestType,
-                    Sequence, Kind.getKind() != InitializationKind::IK_Direct);
-    } else
-      Sequence.SetFailed(InitializationSequence::FK_InitListBadDestinationType);
-    return;
+  if (DestType->isRecordType()) {
+    if (S.RequireCompleteType(InitList->getLocStart(), DestType, S.PDiag())) {
+      Sequence.SetFailed(InitializationSequence::FK_Incomplete);
+      return;
+    }
+
+    if (!DestType->isAggregateType()) {
+      if (S.getLangOptions().CPlusPlus0x) {
+        Expr *Arg = InitList;
+        // A direct-initializer is not list-syntax, i.e. there's no special
+        // treatment of "A a({1, 2});".
+        TryConstructorInitialization(S, Entity, Kind, &Arg, 1, DestType, 
+                                     Sequence,
+                               Kind.getKind() != InitializationKind::IK_Direct);
+      } else
+        Sequence.SetFailed(
+            InitializationSequence::FK_InitListBadDestinationType);
+      return;
+    }
   }
 
   InitListChecker CheckInitList(S, Entity, InitList,
@@ -5100,8 +5109,9 @@ InitializationSequence::Perform(Sema &S,
       // When an initializer list is passed for a parameter of type "reference
       // to object", we don't get an EK_Temporary entity, but instead an
       // EK_Parameter entity with reference type.
-      // FIXME: This is a hack. Why is this necessary here, but not in other
-      // places where implicit temporaries are created?
+      // FIXME: This is a hack. What we really should do is create a user
+      // conversion step for this case, but this makes it considerably more
+      // complicated. For now, this will do.
       InitializedEntity TempEntity = InitializedEntity::InitializeTemporary(
                                         Entity.getType().getNonReferenceType());
       bool UseTemporary = Entity.getType()->isReferenceType();
@@ -5130,11 +5140,22 @@ InitializationSequence::Perform(Sema &S,
       break;
     }
 
-    case SK_ConstructorInitialization:
-      CurInit = PerformConstructorInitialization(S, Entity, Kind, move(Args),
-                                                 *Step,
+    case SK_ConstructorInitialization: {
+      // When an initializer list is passed for a parameter of type "reference
+      // to object", we don't get an EK_Temporary entity, but instead an
+      // EK_Parameter entity with reference type.
+      // FIXME: This is a hack. What we really should do is create a user
+      // conversion step for this case, but this makes it considerably more
+      // complicated. For now, this will do.
+      InitializedEntity TempEntity = InitializedEntity::InitializeTemporary(
+                                        Entity.getType().getNonReferenceType());
+      bool UseTemporary = Entity.getType()->isReferenceType();
+      CurInit = PerformConstructorInitialization(S, UseTemporary ? TempEntity
+                                                                 : Entity,
+                                                 Kind, move(Args), *Step,
                                                ConstructorInitRequiresZeroInit);
       break;
+    }
 
     case SK_ZeroInitialization: {
       step_iterator NextStep = Step;

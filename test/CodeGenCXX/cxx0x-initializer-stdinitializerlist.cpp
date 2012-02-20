@@ -58,12 +58,20 @@ struct destroyme1 {
 struct destroyme2 {
   ~destroyme2();
 };
-
+struct witharg1 {
+  witharg1(const destroyme1&);
+  ~witharg1();
+};
+struct wantslist1 {
+  wantslist1(std::initializer_list<destroyme1>);
+  ~wantslist1();
+};
 
 void fn2() {
   // CHECK: define void @_Z3fn2v
   void target(std::initializer_list<destroyme1>);
   // objects should be destroyed before dm2, after call returns
+  // CHECK: call void @_Z6targetSt16initializer_listI10destroyme1E
   target({ destroyme1(), destroyme1() });
   // CHECK: call void @_ZN10destroyme1D1Ev
   destroyme2 dm2;
@@ -77,4 +85,133 @@ void fn3() {
   destroyme2 dm2;
   // CHECK: call void @_ZN10destroyme2D1Ev
   // CHECK: call void @_ZN10destroyme1D1Ev
+}
+
+void fn4() {
+  // CHECK: define void @_Z3fn4v
+  void target(std::initializer_list<witharg1>);
+  // objects should be destroyed before dm2, after call returns
+  // CHECK: call void @_ZN8witharg1C1ERK10destroyme1
+  // CHECK: call void @_Z6targetSt16initializer_listI8witharg1E
+  target({ witharg1(destroyme1()), witharg1(destroyme1()) });
+  // CHECK: call void @_ZN8witharg1D1Ev
+  // CHECK: call void @_ZN10destroyme1D1Ev
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
+}
+
+void fn5() {
+  // CHECK: define void @_Z3fn5v
+  // temps should be destroyed before dm2
+  // objects should be destroyed after dm2
+  // CHECK: call void @_ZN8witharg1C1ERK10destroyme1
+  auto list = { witharg1(destroyme1()), witharg1(destroyme1()) };
+  // CHECK: call void @_ZN10destroyme1D1Ev
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
+  // CHECK: call void @_ZN8witharg1D1Ev
+}
+
+void fn6() {
+  // CHECK: define void @_Z3fn6v
+  void target(const wantslist1&);
+  // objects should be destroyed before dm2, after call returns
+  // CHECK: call void @_ZN10wantslist1C1ESt16initializer_listI10destroyme1E
+  // CHECK: call void @_Z6targetRK10wantslist1
+  target({ destroyme1(), destroyme1() });
+  // CHECK: call void @_ZN10wantslist1D1Ev
+  // CHECK: call void @_ZN10destroyme1D1Ev
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
+}
+
+void fn7() {
+  // CHECK: define void @_Z3fn7v
+  // temps should be destroyed before dm2
+  // object should be destroyed after dm2
+  // CHECK: call void @_ZN10wantslist1C1ESt16initializer_listI10destroyme1E
+  wantslist1 wl = { destroyme1(), destroyme1() };
+  // CHECK: call void @_ZN10destroyme1D1Ev
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
+  // CHECK: call void @_ZN10wantslist1D1Ev
+}
+
+void fn8() {
+  // CHECK: define void @_Z3fn8v
+  void target(std::initializer_list<std::initializer_list<destroyme1>>);
+  // objects should be destroyed before dm2, after call returns
+  // CHECK: call void @_Z6targetSt16initializer_listIS_I10destroyme1EE
+  std::initializer_list<destroyme1> inner;
+  target({ inner, { destroyme1() } });
+  // CHECK: call void @_ZN10destroyme1D1Ev
+  // Only one destroy loop, since only one inner init list is directly inited.
+  // CHECK-NOT: call void @_ZN10destroyme1D1Ev
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
+}
+
+void fn9() {
+  // CHECK: define void @_Z3fn9v
+  // objects should be destroyed after dm2
+  std::initializer_list<destroyme1> inner;
+  std::initializer_list<std::initializer_list<destroyme1>> list =
+      { inner, { destroyme1() } };
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
+  // CHECK: call void @_ZN10destroyme1D1Ev
+  // Only one destroy loop, since only one inner init list is directly inited.
+  // CHECK-NOT: call void @_ZN10destroyme1D1Ev
+  // CHECK: ret void
+}
+
+struct haslist1 {
+  std::initializer_list<int> il;
+  haslist1();
+};
+
+// CHECK: define void @_ZN8haslist1C2Ev
+haslist1::haslist1()
+// CHECK: alloca [3 x i32]
+// CHECK: store i32 1
+// CHECK: store i32 2
+// CHECK: store i32 3
+// CHECK: store i{{32|64}} 3
+  : il{1, 2, 3}
+{
+  destroyme2 dm2;
+}
+
+struct haslist2 {
+  std::initializer_list<destroyme1> il;
+  haslist2();
+};
+
+// CHECK: define void @_ZN8haslist2C2Ev
+haslist2::haslist2()
+  : il{destroyme1(), destroyme1()}
+{
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
+  // CHECK: call void @_ZN10destroyme1D1Ev
+}
+
+void fn10() {
+  // CHECK: define void @_Z4fn10v
+  // CHECK: alloca [3 x i32]
+  // CHECK: call noalias i8* @_Znw{{[jm]}}
+  // CHECK: store i32 1
+  // CHECK: store i32 2
+  // CHECK: store i32 3
+  // CHECK: store i32*
+  // CHECK: store i{{32|64}} 3
+  (void) new std::initializer_list<int> {1, 2, 3};
+}
+
+void fn11() {
+  // CHECK: define void @_Z4fn11v
+  (void) new std::initializer_list<destroyme1> {destroyme1(), destroyme1()};
+  // CHECK: call void @_ZN10destroyme1D1Ev
+  destroyme2 dm2;
+  // CHECK: call void @_ZN10destroyme2D1Ev
 }
