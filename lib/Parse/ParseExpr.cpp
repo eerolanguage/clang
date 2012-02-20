@@ -277,6 +277,14 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     if (NextTokPrec < MinPrec)
       return move(LHS);
 
+    // Catches cases where the next line looks like the RHS of a bin op,
+    // but it really isn't, e.g. after some (non-decl) assignments.
+    if (getLang().Eero &&
+        Tok.isAtStartOfLine() && 
+        (ParenCount == 0) && (BracketCount == 0)) {
+      return move(LHS);
+    }
+
     // Consume the operator, saving the operator token for error reporting.
     Token OpToken = Tok;
     ConsumeToken();
@@ -2373,7 +2381,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
 
   ExprResult Result(true);
-  if (!Tok.is(tok::l_brace)) {
+  if (!Tok.is(tok::l_brace) && (!getLang().Eero || !Tok.isAtStartOfLine())) {
     // Saw something like: ^expr
     Diag(Tok, diag::err_expected_expression);
     Actions.ActOnBlockError(CaretLoc, getCurScope());

@@ -1360,7 +1360,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
 
     if (Tok.is(tok::semi)) {
       ConsumeToken();
-    } else {
+    } else if (!getLang().Eero && !PP.isInSystemHeader()) {
       Diag(Tok, diag::err_expected_semi_decl_list);
       // Skip to end of block or statement
       SkipUntil(tok::r_brace, true, true);

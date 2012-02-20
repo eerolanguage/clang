@@ -986,8 +986,9 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(StmtVector &Stmts,
 
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
-  if (Tok.is(tok::semi)) {
-    if (RequireSemi) ConsumeToken();
+  if (Tok.is(tok::semi) || 
+      (getLang().Eero && !PP.isInSystemHeader() && Tok.isAtStartOfLine())) {
+    if (Tok.is(tok::semi) && RequireSemi) ConsumeToken();
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS_none,
                                                        DS);
     DS.complete(TheDecl);
@@ -2885,6 +2886,9 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   StructScope.Exit();
   Actions.ActOnTagFinishDefinition(getCurScope(), TagDecl,
                                    T.getCloseLocation());
+
+  if (getLang().Eero && !PP.isInSystemHeader() && Tok.isAtStartOfLine())
+    InsertToken(tok::semi); // TODO: revisit this, should avoid inserting semi
 }
 
 /// ParseEnumSpecifier
@@ -3068,6 +3072,10 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
     TUK = Sema::TUK_Definition;
   else if (Tok.is(tok::semi))
     TUK = Sema::TUK_Declaration;
+  else if (getLang().Eero && !PP.isInSystemHeader() && Tok.isAtStartOfLine()) {
+    TUK = Sema::TUK_Declaration;
+    InsertToken(tok::semi); // TODO: is there a way to avoid inserting a semi?
+  }
   else
     TUK = Sema::TUK_Reference;
   

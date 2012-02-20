@@ -307,6 +307,8 @@ Retry:
   // If we reached this code, the statement must end in a semicolon.
   if (Tok.is(tok::semi)) {
     ConsumeToken();
+  } else if (getLang().Eero && !PP.isInSystemHeader()) {
+    // do nothing here, since semicolons are optional
   } else if (!Res.isInvalid()) {
     // If the result was valid, then we do want to diagnose this.  Use
     // ExpectAndConsume to emit the diagnostic, even though we know it won't
@@ -841,8 +843,11 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
           break;
         } else {
           Diag(Tok, diag::err_ambiguous_indentation);
-          SkipUntil(tok::eof, false, true); // subsequent scopes likely off,
-          return StmtError();               // so abandon the rest of the file
+          // subsequent scopes are likely off, so either flush everything from
+          // here to the end of an interface/impl, or to the end of the file.
+          while (Tok.isNot(tok::kw_end) && Tok.isNot(tok::eof))
+            ConsumeAnyToken();
+          return StmtError(); 
         }
       }
       if (newScope) {
@@ -956,6 +961,8 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
   // recover by skipping ahead to a semi and bailing out.  If condexp is
   // semantically invalid but we have well formed code, keep going.
   if (ExprResult.isInvalid() && !DeclResult && Tok.isNot(tok::r_paren)) {
+    if (getLang().Eero && T.isOptional())
+      return true; // just bail out right here
     SkipUntil(tok::semi);
     // Skipping may have stopped if it found the containing ')'.  If so, we can
     // continue parsing the if statement.
@@ -1735,7 +1742,7 @@ StmtResult Parser::ParseReturnStatement(ParsedAttributes &attrs) {
   SourceLocation ReturnLoc = ConsumeToken();  // eat the 'return'.
 
   ExprResult R;
-  if (Tok.isNot(tok::semi)) {
+  if (Tok.isNot(tok::semi) && !(getLang().Eero && Tok.isAtStartOfLine())) {
     if (Tok.is(tok::code_completion)) {
       Actions.CodeCompleteReturn(getCurScope());
       cutOffParsing();

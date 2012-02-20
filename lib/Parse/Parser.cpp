@@ -153,6 +153,17 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
     return false;
   }
 
+  if (getLang().Eero && (ExpectedTok == tok::semi) && !PP.isInSystemHeader()) {
+    if (Tok.isAtStartOfLine()) { // optional in Eero if line break present
+      return false;
+    } else {
+      Diag(Tok, diag::err_expected) << "newline";
+      while (!Tok.isAtStartOfLine()) // flush the rest of the
+        ConsumeAnyToken();           // line
+      return true;
+    }
+  }
+
   // Detect common single-character typos and resume.
   if (IsCommonTypo(ExpectedTok, Tok)) {
     SourceLocation Loc = Tok.getLocation();
@@ -186,6 +197,17 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
   if (Tok.is(tok::semi) || Tok.is(tok::code_completion)) {
     ConsumeAnyToken();
     return false;
+  }
+
+  if (getLang().Eero && !PP.isInSystemHeader()) {
+    if (Tok.isAtStartOfLine()) { // optional in Eero if line break present
+      return false;
+    } else {
+      Diag(Tok, diag::err_expected) << "newline";
+      while (!Tok.isAtStartOfLine()) // flush the rest of the
+        ConsumeAnyToken();           // line
+      return true;
+    }
   }
   
   if ((Tok.is(tok::r_paren) || Tok.is(tok::r_square)) && 
@@ -230,6 +252,13 @@ bool Parser::SkipUntil(const tok::TokenKind *Toks, unsigned NumToks,
         }
         return true;
       }
+      // For Eero searches on semicolon, skip to next statement in current block
+      if (getLang().Eero && !PP.isInSystemHeader() && Tok.isNot(tok::eof))
+        if ((StopAtSemi || Toks[i] == tok::semi) &&
+            Tok.isAtStartOfLine() && 
+            !indentationPositions.empty() &&
+            Column(Tok.getLocation()) <= indentationPositions.back())
+          return false;
     }
 
     switch (Tok.getKind()) {
@@ -695,6 +724,15 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
       
   default:
   dont_know:
+    if (getLang().Eero && !PP.isInSystemHeader() && 
+        CurParsedObjCImpl) { // in an objc implementation
+      Diag(Tok, diag::err_not_allowed) << "external declaration or definition";
+      // Flush everything from here to the end of the implementation, or
+      // to the end of the file (to be safe).
+      while (Tok.isNot(tok::kw_end) && Tok.isNot(tok::eof))
+        ConsumeAnyToken();
+      return DeclGroupPtrTy();
+    }
     // We can't tell whether this is a function-definition or declaration yet.
     if (DS) {
       DS->takeAttributesFrom(attrs);
@@ -751,6 +789,7 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   
   // Handle K&R C argument lists: int X(f) int f; {}
   if (!getLang().CPlusPlus &&
+      (!getLang().Eero || PP.isInSystemHeader()) &&
       Declarator.getFunctionTypeInfo().isKNRPrototype()) 
     return isDeclarationSpecifier();
 
@@ -787,8 +826,9 @@ Parser::ParseDeclarationOrFunctionDefinition(ParsingDeclSpec &DS,
 
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
-  if (Tok.is(tok::semi)) {
-    ConsumeToken();
+  if (Tok.is(tok::semi) ||
+      (getLang().Eero && !PP.isInSystemHeader() && Tok.isAtStartOfLine())) {
+    if (Tok.is(tok::semi)) ConsumeToken();
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS, DS);
     DS.complete(TheDecl);
     return Actions.ConvertDeclToDeclGroup(TheDecl);
