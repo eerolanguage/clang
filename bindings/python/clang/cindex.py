@@ -63,6 +63,7 @@ call is efficient.
 # o implement additional SourceLocation, SourceRange, and File methods.
 
 from ctypes import *
+import collections
 
 def get_cindex_library():
     # FIXME: It's probably not the case that the library is actually found in
@@ -1137,6 +1138,44 @@ class Type(Structure):
         """Return the kind of this type."""
         return TypeKind.from_id(self._kind_id)
 
+    def argument_types(self):
+        """Retrieve a container for the non-variadic arguments for this type.
+
+        The returned object is iterable and indexable. Each item in the
+        container is a Type instance.
+        """
+        class ArgumentsIterator(collections.Sequence):
+            def __init__(self, parent):
+                self.parent = parent
+                self.length = None
+
+            def __len__(self):
+                if self.length is None:
+                    self.length = Type_get_num_arg_types(self.parent)
+
+                return self.length
+
+            def __getitem__(self, key):
+                # FIXME Support slice objects.
+                if not isinstance(key, int):
+                    raise TypeError("Must supply a non-negative int.")
+
+                if key < 0:
+                    raise IndexError("Only non-negative indexes are accepted.")
+
+                if key >= len(self):
+                    raise IndexError("Index greater than container length: "
+                                     "%d > %d" % ( key, len(self) ))
+
+                result = Type_get_arg_type(self.parent, key)
+                if result.kind == TypeKind.INVALID:
+                    raise IndexError("Argument could not be retrieved.")
+
+                return result
+
+        assert self.kind == TypeKind.FUNCTIONPROTO
+        return ArgumentsIterator(self)
+
     @property
     def element_type(self):
         """Retrieve the Type of elements within this Type.
@@ -1182,26 +1221,26 @@ class Type(Structure):
         return Type_get_canonical(self)
 
     def is_const_qualified(self):
-        """
-        Determine whether a Type has the "const" qualifier set,
-        without looking through typedefs that may have added "const"
+        """Determine whether a Type has the "const" qualifier set.
+
+        This does not look through typedefs that may have added "const"
         at a different level.
         """
         return Type_is_const_qualified(self)
 
     def is_volatile_qualified(self):
-        """
-        Determine whether a Type has the "volatile" qualifier set,
-        without looking through typedefs that may have added
-        "volatile" at a different level.
+        """Determine whether a Type has the "volatile" qualifier set.
+
+        This does not look through typedefs that may have added "volatile"
+        at a different level.
         """
         return Type_is_volatile_qualified(self)
 
     def is_restrict_qualified(self):
-        """
-        Determine whether a Type has the "restrict" qualifier set,
-        without looking through typedefs that may have added
-        "restrict" at a different level.
+        """Determine whether a Type has the "restrict" qualifier set.
+
+        This does not look through typedefs that may have added "restrict" at
+        a different level.
         """
         return Type_is_restrict_qualified(self)
 
@@ -1244,6 +1283,15 @@ class Type(Structure):
         Retrieve the size of the constant array.
         """
         return Type_get_array_size(self)
+
+    def __eq__(self, other):
+        if type(other) != type(self):
+            return False
+
+        return Type_equal(self, other)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
 ## CIndex Objects ##
 
@@ -1918,7 +1966,16 @@ Type_get_result.argtypes = [Type]
 Type_get_result.restype = Type
 Type_get_result.errcheck = Type.from_result
 
+Type_get_num_arg_types = lib.clang_getNumArgTypes
+Type_get_num_arg_types.argtypes = [Type]
+Type_get_num_arg_types.restype = c_uint
+
+Type_get_arg_type = lib.clang_getArgType
+Type_get_arg_type.argtypes = [Type, c_uint]
+Type_get_arg_type.restype = Type
+Type_get_arg_type.errcheck = Type.from_result
 Type_get_element_type = lib.clang_getElementType
+
 Type_get_element_type.argtypes = [Type]
 Type_get_element_type.restype = Type
 Type_get_element_type.errcheck = Type.from_result
@@ -1935,6 +1992,10 @@ Type_get_array_element.errcheck = Type.from_result
 Type_get_array_size = lib.clang_getArraySize
 Type_get_array_size.argtype = [Type]
 Type_get_array_size.restype = c_longlong
+
+Type_equal = lib.clang_equalTypes
+Type_equal.argtypes = [Type, Type]
+Type_equal.restype = bool
 
 # Index Functions
 Index_create = lib.clang_createIndex

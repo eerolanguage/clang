@@ -561,7 +561,9 @@ class CXXRecordDecl : public RecordDecl {
     typedef LambdaExpr::Capture Capture;
     
     LambdaDefinitionData(CXXRecordDecl *D) 
-      : DefinitionData(D), NumCaptures(0), NumExplicitCaptures(0), Captures(0) { 
+      : DefinitionData(D), NumCaptures(0), NumExplicitCaptures(0), 
+        ContextDecl(0), Captures(0) 
+    {
       IsLambda = true;
     }
 
@@ -569,11 +571,20 @@ class CXXRecordDecl : public RecordDecl {
     unsigned NumCaptures : 16;
 
     /// \brief The number of explicit captures in this lambda.
-    unsigned NumExplicitCaptures : 15;
+    unsigned NumExplicitCaptures : 16;
 
-    /// \brief The "extra" data associated with the lambda, including
-    /// captures, capture initializers, the body of the lambda, and the
-    /// array-index variables for array captures.
+    /// \brief The number used to indicate this lambda expression for name 
+    /// mangling in the Itanium C++ ABI.
+    unsigned ManglingNumber;
+    
+    /// \brief The declaration that provides context for this lambda, if the
+    /// actual DeclContext does not suffice. This is used for lambdas that
+    /// occur within default arguments of function parameters within the class
+    /// or within a data member initializer.
+    Decl *ContextDecl;
+    
+    /// \brief The list of captures, both explicit and implicit, for this 
+    /// lambda.
     Capture *Captures;    
   };
 
@@ -1442,6 +1453,31 @@ public:
   /// actually abstract.
   bool mayBeAbstract() const;
 
+  /// \brief If this is the closure type of a lambda expression, retrieve the
+  /// number to be used for name mangling in the Itanium C++ ABI.
+  ///
+  /// Zero indicates that this closure type has internal linkage, so the 
+  /// mangling number does not matter, while a non-zero value indicates which
+  /// lambda expression this is in this particular context.
+  unsigned getLambdaManglingNumber() const {
+    assert(isLambda() && "Not a lambda closure type!");
+    return getLambdaData().ManglingNumber;
+  }
+  
+  /// \brief Retrieve the declaration that provides additional context for a 
+  /// lambda, when the normal declaration context is not specific enough.
+  ///
+  /// Certain contexts (default arguments of in-class function parameters and 
+  /// the initializers of data members) have separate name mangling rules for
+  /// lambdas within the Itanium C++ ABI. For these cases, this routine provides
+  /// the declaration in which the lambda occurs, e.g., the function parameter 
+  /// or the non-static data member. Otherwise, it returns NULL to imply that
+  /// the declaration context suffices.
+  Decl *getLambdaContextDecl() const {
+    assert(isLambda() && "Not a lambda closure type!");
+    return getLambdaData().ContextDecl;    
+  }
+  
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) {
     return K >= firstCXXRecord && K <= lastCXXRecord;

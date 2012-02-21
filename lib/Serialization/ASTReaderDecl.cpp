@@ -770,6 +770,8 @@ void ASTDeclReader::VisitObjCAtDefsFieldDecl(ObjCAtDefsFieldDecl *FD) {
 void ASTDeclReader::VisitObjCCategoryDecl(ObjCCategoryDecl *CD) {
   VisitObjCContainerDecl(CD);
   CD->setCategoryNameLoc(ReadSourceLocation(Record, Idx));
+  CD->setIvarLBraceLoc(ReadSourceLocation(Record, Idx));
+  CD->setIvarRBraceLoc(ReadSourceLocation(Record, Idx));
   
   // Note that this category has been deserialized. We do this before
   // deserializing the interface declaration, so that it will consider this
@@ -829,6 +831,8 @@ void ASTDeclReader::VisitObjCCategoryImplDecl(ObjCCategoryImplDecl *D) {
 void ASTDeclReader::VisitObjCImplementationDecl(ObjCImplementationDecl *D) {
   VisitObjCImplDecl(D);
   D->setSuperClass(ReadDeclAs<ObjCInterfaceDecl>(Record, Idx));
+  D->setIvarLBraceLoc(ReadSourceLocation(Record, Idx));
+  D->setIvarRBraceLoc(ReadSourceLocation(Record, Idx));
   llvm::tie(D->IvarInitializers, D->NumIvarInitializers)
       = Reader.ReadCXXCtorInitializers(F, Record, Idx);
   D->setHasSynthBitfield(Record[Idx++]);
@@ -1105,6 +1109,8 @@ void ASTDeclReader::ReadCXXDefinitionData(
       = static_cast<CXXRecordDecl::LambdaDefinitionData &>(Data);
     Lambda.NumCaptures = Record[Idx++];
     Lambda.NumExplicitCaptures = Record[Idx++];
+    Lambda.ManglingNumber = Record[Idx++];
+    Lambda.ContextDecl = ReadDecl(Record, Idx);
     Lambda.Captures 
       = (Capture*)Reader.Context.Allocate(sizeof(Capture)*Lambda.NumCaptures);
     Capture *ToCapture = Lambda.Captures;

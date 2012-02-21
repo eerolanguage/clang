@@ -336,21 +336,19 @@ llvm::DIType CGDebugInfo::CreateType(const BuiltinType *BT) {
   case BuiltinType::Void:
     return llvm::DIType();
   case BuiltinType::ObjCClass:
-    return DBuilder.createStructType(TheCU, "objc_class", 
-                                     getOrCreateMainFile(), 0, 0, 0,
-                                     llvm::DIDescriptor::FlagFwdDecl, 
-                                     llvm::DIArray());
+    return DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
+                                      "objc_class", getOrCreateMainFile(),
+                                      0);
   case BuiltinType::ObjCId: {
     // typedef struct objc_class *Class;
     // typedef struct objc_object {
     //  Class isa;
     // } *id;
 
-    llvm::DIType OCTy = 
-      DBuilder.createStructType(TheCU, "objc_class", 
-                                getOrCreateMainFile(), 0, 0, 0,
-                                llvm::DIDescriptor::FlagFwdDecl, 
-                                llvm::DIArray());
+    llvm::DIType OCTy =
+      DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
+                                 "objc_class", getOrCreateMainFile(),
+                                 0);
     unsigned Size = CGM.getContext().getTypeSize(CGM.getContext().VoidPtrTy);
     
     llvm::DIType ISATy = DBuilder.createPointerType(OCTy, Size);
@@ -368,10 +366,10 @@ llvm::DIType CGDebugInfo::CreateType(const BuiltinType *BT) {
                                      0, 0, 0, 0, Elements);
   }
   case BuiltinType::ObjCSel: {
-    return  DBuilder.createStructType(TheCU, "objc_selector", 
-                                      getOrCreateMainFile(), 0, 0, 0,
-                                      llvm::DIDescriptor::FlagFwdDecl, 
-                                      llvm::DIArray());
+    return
+      DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
+                                 "objc_selector", getOrCreateMainFile(),
+                                 0);
   }
   case BuiltinType::UChar:
   case BuiltinType::Char_U: Encoding = llvm::dwarf::DW_ATE_unsigned_char; break;
@@ -553,7 +551,9 @@ llvm::DIType CGDebugInfo::CreatePointeeType(QualType PointeeTy,
     RecordDecl *RD = RTy->getDecl();
     llvm::DIDescriptor FDContext =
       getContextDescriptor(cast<Decl>(RD->getDeclContext()));
-    return createRecordFwdDecl(RD, FDContext);
+    llvm::DIType RetTy = createRecordFwdDecl(RD, FDContext);
+    TypeCache[QualType(RTy, 0).getAsOpaquePtr()] = RetTy;
+    return RetTy;
   }
   return getOrCreateType(PointeeTy, Unit);
 
@@ -1120,7 +1120,6 @@ CollectVTableInfo(const CXXRecordDecl *RD, llvm::DIFile Unit,
 llvm::DIType CGDebugInfo::getOrCreateRecordType(QualType RTy, 
                                                 SourceLocation Loc) {
   llvm::DIType T = getOrCreateType(RTy, getOrCreateFile(Loc));
-  DBuilder.retainType(T);
   return T;
 }
 
@@ -1224,10 +1223,9 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
   ObjCInterfaceDecl *Def = ID->getDefinition();
   if (!Def) {
     llvm::DIType FwdDecl =
-      DBuilder.createStructType(Unit, ID->getName(),
-                                DefUnit, Line, 0, 0,
-                                llvm::DIDescriptor::FlagFwdDecl,
-                                llvm::DIArray(), RuntimeLang);
+      DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
+				 ID->getName(), DefUnit, Line,
+				 RuntimeLang);
     return FwdDecl;
   }
   ID = Def;
@@ -1770,7 +1768,7 @@ llvm::DIType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
     // than C++ class type, but needs llvm metadata changes first.
     RealDecl = DBuilder.createClassType(RDContext, RDName, DefUnit, Line,
 					Size, Align, 0, 0, llvm::DIType(),
-					llvm::DIArray(), NULL,
+					llvm::DIArray(), llvm::DIType(),
 					llvm::DIArray());
   } else
     RealDecl = DBuilder.createStructType(RDContext, RDName, DefUnit, Line,
@@ -2580,8 +2578,9 @@ void CGDebugInfo::finalize(void) {
         RepTy = llvm::DIType(cast<llvm::MDNode>(it->second));
     }
     
-    if (Ty.Verify() && RepTy.Verify())
+    if (Ty.Verify() && Ty.isForwardDecl() && RepTy.Verify()) {
       Ty.replaceAllUsesWith(RepTy);
+    }
   }
   DBuilder.finalize();
 }

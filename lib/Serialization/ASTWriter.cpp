@@ -4332,6 +4332,8 @@ void ASTWriter::AddCXXDefinitionData(const CXXRecordDecl *D, RecordDataImpl &Rec
     CXXRecordDecl::LambdaDefinitionData &Lambda = D->getLambdaData();
     Record.push_back(Lambda.NumCaptures);
     Record.push_back(Lambda.NumExplicitCaptures);
+    Record.push_back(Lambda.ManglingNumber);
+    AddDeclRef(Lambda.ContextDecl, Record);
     for (unsigned I = 0, N = Lambda.NumCaptures; I != N; ++I) {
       LambdaExpr::Capture &Capture = Lambda.Captures[I];
       AddSourceLocation(Capture.getLocation(), Record);

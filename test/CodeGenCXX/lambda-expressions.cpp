@@ -1,5 +1,11 @@
 // RUN: %clang_cc1 -triple x86_64-apple-darwin10.0.0 -emit-llvm -o - %s -fexceptions -std=c++11 | FileCheck %s
 
+// CHECK: @var = internal global
+auto var = [](int i) { return i+1; };
+
+// CHECK: @cvar = global
+extern "C" auto cvar = []{};
+
 int a() { return []{ return 1; }(); }
 // CHECK: define i32 @_Z1av
 // CHECK: call i32 @"_ZZ1avENK3$_0clEv"
@@ -55,7 +61,7 @@ int e(E a, E b, bool cond) { [a,b,cond](){ return (cond ? a : b).x; }(); }
 
 void f() {
   // CHECK: define void @_Z1fv()
-  // CHECK: {{call.*_5cvPFiiiEEv}}
+  // CHECK: @"_ZZ1fvENK3$_5cvPFiiiEEv"
   // CHECK-NEXT: store i32 (i32, i32)*
   // CHECK-NEXT: ret void
   int (*fp)(int, int) = [](int x, int y){ return x + y; };
