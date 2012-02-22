@@ -59,6 +59,7 @@ namespace clang {
   class BlockDecl;
   class CXXBasePath;
   class CXXBasePaths;
+  class CXXBindTemporaryExpr;
   typedef SmallVector<CXXBaseSpecifier*, 4> CXXCastPath;
   class CXXConstructorDecl;
   class CXXConversionDecl;
@@ -562,6 +563,9 @@ public:
     /// \brief Whether the enclosing context needed a cleanup.
     bool ParentNeedsCleanups;
 
+    /// \brief Whether we are in a decltype expression.
+    bool IsDecltype;
+
     /// \brief The number of active cleanup objects when we entered
     /// this expression evaluation context.
     unsigned NumCleanupObjects;
@@ -583,13 +587,22 @@ public:
     /// This mangling information is allocated lazily, since most contexts
     /// do not have lambda expressions.
     LambdaMangleContext *LambdaMangle;
+
+    /// \brief If we are processing a decltype type, a set of call expressions
+    /// for which we have deferred checking the completeness of the return type.
+    llvm::SmallVector<CallExpr*, 8> DelayedDecltypeCalls;
+
+    /// \brief If we are processing a decltype type, a set of temporary binding
+    /// expressions for which we have deferred checking the destructor.
+    llvm::SmallVector<CXXBindTemporaryExpr*, 8> DelayedDecltypeBinds;
     
     ExpressionEvaluationContextRecord(ExpressionEvaluationContext Context,
                                       unsigned NumCleanupObjects,
                                       bool ParentNeedsCleanups,
-                                      Decl *LambdaContextDecl)
+                                      Decl *LambdaContextDecl,
+                                      bool IsDecltype)
       : Context(Context), ParentNeedsCleanups(ParentNeedsCleanups),
-        NumCleanupObjects(NumCleanupObjects), 
+        IsDecltype(IsDecltype), NumCleanupObjects(NumCleanupObjects),
         LambdaContextDecl(LambdaContextDecl), LambdaMangle() { }
     
     ~ExpressionEvaluationContextRecord() {
@@ -2326,7 +2339,8 @@ public:
                              Expr **Args, unsigned NumArgs);
 
   void PushExpressionEvaluationContext(ExpressionEvaluationContext NewContext,
-                                       Decl *LambdaContextDecl = 0);
+                                       Decl *LambdaContextDecl = 0,
+                                       bool IsDecltype = false);
 
   void PopExpressionEvaluationContext();
 
@@ -2397,7 +2411,8 @@ public:
   QualType getCapturedDeclRefType(VarDecl *Var, SourceLocation Loc);
   
   void MarkDeclarationsReferencedInType(SourceLocation Loc, QualType T);
-  void MarkDeclarationsReferencedInExpr(Expr *E);
+  void MarkDeclarationsReferencedInExpr(Expr *E, 
+                                        bool SkipLocalVariables = false);
 
   /// \brief Try to recover by turning the given expression into a
   /// call.  Returns true if recovery was attempted or an error was
@@ -3456,6 +3471,8 @@ public:
                                    bool EnteringContext,
                                    CXXScopeSpec &SS);
 
+  ExprResult ActOnDecltypeExpression(Expr *E);
+
   bool ActOnCXXNestedNameSpecifierDecltype(CXXScopeSpec &SS,
                                            const DeclSpec &DS, 
                                            SourceLocation ColonColonLoc);
@@ -3554,7 +3571,8 @@ public:
   void ActOnCXXExitDeclInitializer(Scope *S, Decl *Dcl);
 
   /// \brief Create a new lambda closure type.
-  CXXRecordDecl *createLambdaClosureType(SourceRange IntroducerRange);
+  CXXRecordDecl *createLambdaClosureType(SourceRange IntroducerRange,
+                                         bool KnownDependent = false);
   
   /// \brief Start the definition of a lambda expression.
   CXXMethodDecl *startLambdaDefinition(CXXRecordDecl *Class,
@@ -6581,9 +6599,11 @@ class EnterExpressionEvaluationContext {
 public:
   EnterExpressionEvaluationContext(Sema &Actions,
                                    Sema::ExpressionEvaluationContext NewContext,
-                                   Decl *LambdaContextDecl = 0)
+                                   Decl *LambdaContextDecl = 0,
+                                   bool IsDecltype = false)
     : Actions(Actions) {
-    Actions.PushExpressionEvaluationContext(NewContext, LambdaContextDecl);
+    Actions.PushExpressionEvaluationContext(NewContext, LambdaContextDecl,
+                                            IsDecltype);
   }
 
   ~EnterExpressionEvaluationContext() {

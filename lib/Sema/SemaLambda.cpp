@@ -21,14 +21,16 @@
 using namespace clang;
 using namespace sema;
 
-CXXRecordDecl *Sema::createLambdaClosureType(SourceRange IntroducerRange) {
+CXXRecordDecl *Sema::createLambdaClosureType(SourceRange IntroducerRange,
+                                             bool KnownDependent) {
   DeclContext *DC = CurContext;
   while (!(DC->isFunctionOrMethod() || DC->isRecord() || DC->isFileContext()))
     DC = DC->getParent();
   
   // Start constructing the lambda class.
   CXXRecordDecl *Class = CXXRecordDecl::CreateLambda(Context, DC, 
-                                                     IntroducerRange.getBegin());
+                                                     IntroducerRange.getBegin(),
+                                                     KnownDependent);
   DC->addDecl(Class);
   
   return Class;
@@ -142,7 +144,14 @@ void Sema::addLambdaParameters(CXXMethodDecl *CallOperator, Scope *CurScope) {
 void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
                                         Declarator &ParamInfo,
                                         Scope *CurScope) {
-  CXXRecordDecl *Class = createLambdaClosureType(Intro.Range);
+  // Determine if we're within a context where we know that the lambda will
+  // be dependent, because there are template parameters in scope.
+  bool KnownDependent = false;
+  if (Scope *TmplScope = CurScope->getTemplateParamParent())
+    if (!TmplScope->decl_empty())
+      KnownDependent = true;
+  
+  CXXRecordDecl *Class = createLambdaClosureType(Intro.Range, KnownDependent);
   
   // Determine the signature of the call operator.
   TypeSourceInfo *MethodTyInfo;
@@ -502,10 +511,6 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
                                  llvm::Optional<unsigned> ManglingNumber,
                                  Decl *ContextDecl,
                                  bool IsInstantiation) {
-  // Leave the expression-evaluation context.
-  DiscardCleanupsInEvaluationContext();
-  PopExpressionEvaluationContext();
-
   // Collect information from the lambda scope.
   llvm::SmallVector<LambdaExpr::Capture, 4> Captures;
   llvm::SmallVector<Expr *, 4> CaptureInits;
@@ -622,6 +627,7 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
     ActOnFinishFunctionBody(CallOperator, Body, IsInstantiation);
     CallOperator->setLexicalDeclContext(Class);
     Class->addDecl(CallOperator);
+    PopExpressionEvaluationContext();
 
     // C++11 [expr.prim.lambda]p6:
     //   The closure type for a lambda-expression with no lambda-capture
@@ -645,7 +651,6 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
     ActOnFields(0, Class->getLocation(), Class, Fields, 
                 SourceLocation(), SourceLocation(), 0);
     CheckCompletedCXXClass(Class);
-
   }
 
   if (LambdaExprNeedsCleanups)

@@ -56,6 +56,16 @@
 
 @implementation INTF  
 - (SUPER *) Meth : (SUPER *)arg { 
-  return arg->p_super; 
+// NYI -  return arg->p_super; 
+  return (SUPER *)0;
 }
 @end
+
+@class FORM_CLASS;
+@interface INTF_DECL  {
+}
+@end
+
+double Meth(INTF_DECL *p, FORM_CLASS *f) {
+  return 1.34;
+}
