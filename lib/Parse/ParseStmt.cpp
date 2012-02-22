@@ -307,7 +307,7 @@ Retry:
   // If we reached this code, the statement must end in a semicolon.
   if (Tok.is(tok::semi)) {
     ConsumeToken();
-  } else if (getLang().Eero && !PP.isInSystemHeader()) {
+  } else if (getLang().OptionalSemicolons && !PP.isInSystemHeader()) {
     // do nothing here, since semicolons are optional
   } else if (!Res.isInvalid()) {
     // If the result was valid, then we do want to diagnose this.  Use
@@ -968,7 +968,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
   // recover by skipping ahead to a semi and bailing out.  If condexp is
   // semantically invalid but we have well formed code, keep going.
   if (ExprResult.isInvalid() && !DeclResult && Tok.isNot(tok::r_paren)) {
-    if (getLang().Eero && T.isOptional())
+    if (getLang().OptionalSemicolons && T.isOptional())
       return true; // just bail out right here
     SkipUntil(tok::semi);
     // Skipping may have stopped if it found the containing ')'.  If so, we can
@@ -1748,7 +1748,8 @@ StmtResult Parser::ParseReturnStatement(ParsedAttributes &attrs) {
   SourceLocation ReturnLoc = ConsumeToken();  // eat the 'return'.
 
   ExprResult R;
-  if (Tok.isNot(tok::semi) && !(getLang().Eero && Tok.isAtStartOfLine())) {
+  if (Tok.isNot(tok::semi) && 
+      !(getLang().OptionalSemicolons && Tok.isAtStartOfLine())) {
     if (Tok.is(tok::code_completion)) {
       Actions.CodeCompleteReturn(getCurScope());
       cutOffParsing();

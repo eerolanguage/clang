@@ -153,8 +153,9 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
     return false;
   }
 
-  if (getLang().Eero && (ExpectedTok == tok::semi) && !PP.isInSystemHeader()) {
-    if (Tok.isAtStartOfLine()) { // optional in Eero if line break present
+  if (getLang().OptionalSemicolons && 
+      (ExpectedTok == tok::semi) && !PP.isInSystemHeader()) {
+    if (Tok.isAtStartOfLine()) { // optional here if line break present
       return false;
     } else {
       Diag(Tok, diag::err_expected) << "newline";
@@ -199,8 +200,8 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
     return false;
   }
 
-  if (getLang().Eero && !PP.isInSystemHeader()) {
-    if (Tok.isAtStartOfLine()) { // optional in Eero if line break present
+  if (getLang().OptionalSemicolons && !PP.isInSystemHeader()) {
+    if (Tok.isAtStartOfLine()) { // optional here if line break present
       return false;
     } else {
       Diag(Tok, diag::err_expected) << "newline";
@@ -252,8 +253,9 @@ bool Parser::SkipUntil(const tok::TokenKind *Toks, unsigned NumToks,
         }
         return true;
       }
-      // For Eero searches on semicolon, skip to next statement in current block
-      if (getLang().Eero && !PP.isInSystemHeader() && Tok.isNot(tok::eof))
+      // For these searches on semicolon, skip to next statement in current block
+      if (getLang().OptionalSemicolons && !PP.isInSystemHeader() &&
+          Tok.isNot(tok::eof))
         if ((StopAtSemi || Toks[i] == tok::semi) &&
             Tok.isAtStartOfLine() && 
             !indentationPositions.empty() &&
@@ -724,7 +726,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
       
   default:
   dont_know:
-    if (getLang().Eero && !PP.isInSystemHeader() && 
+    if (getLang().OptionalSemicolons && !PP.isInSystemHeader() &&
         CurParsedObjCImpl) { // in an objc implementation
       Diag(Tok, diag::err_not_allowed) << "external declaration or definition";
       // Flush everything from here to the end of the implementation, or
@@ -827,7 +829,8 @@ Parser::ParseDeclarationOrFunctionDefinition(ParsingDeclSpec &DS,
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
   if (Tok.is(tok::semi) ||
-      (getLang().Eero && !PP.isInSystemHeader() && Tok.isAtStartOfLine())) {
+      (getLang().OptionalSemicolons && !PP.isInSystemHeader() && 
+       Tok.isAtStartOfLine())) {
     if (Tok.is(tok::semi)) ConsumeToken();
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS, DS);
     DS.complete(TheDecl);
