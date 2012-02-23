@@ -51,7 +51,6 @@ LANGOPT(CPlusPlus0x       , 1, 0, "C++0x")
 LANGOPT(ObjC1             , 1, 0, "Objective-C 1")
 LANGOPT(ObjC2             , 1, 0, "Objective-C 2")
 LANGOPT(Eero              , 1, 0, "Eero")
-LANGOPT(OptionalSemicolons, 1, 0, "Optional semicolons")
 LANGOPT(ObjCNonFragileABI , 1, 0, "Objective-C modern abi")
 LANGOPT(ObjCNonFragileABI2 , 1, 0, "Objective-C enhanced modern abi")
 BENIGN_LANGOPT(ObjCDefaultSynthProperties , 1, 0, 
@@ -85,6 +84,9 @@ LANGOPT(MSBitfields       , 1, 0, "Microsoft-compatible structure layout")
 LANGOPT(NeXTRuntime       , 1, 1, "NeXT Objective-C runtime")
 LANGOPT(Freestanding, 1, 0, "freestanding implementation")
 LANGOPT(NoBuiltin         , 1, 0, "disable builtin functions")
+
+LANGOPT(OptionalSemicolons, 1, 0, "Optional semicolons")
+LANGOPT(OffSideRule,        1, 0, "Off-side rule")
 
 BENIGN_LANGOPT(ThreadsafeStatics , 1, 1, "thread-safe static initializers")
 LANGOPT(POSIXThreads      , 1, 0, "POSIX thread support")

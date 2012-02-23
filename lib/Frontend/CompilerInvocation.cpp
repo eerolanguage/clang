@@ -1619,6 +1619,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.Eero = 1;
     Opts.CXXOperatorNames = 1;
     Opts.OptionalSemicolons = 1;
+    Opts.OffSideRule = 1;
   }
 
   if (LangStd == LangStandard::lang_unspecified) {
