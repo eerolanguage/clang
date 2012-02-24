@@ -367,6 +367,7 @@ KEYWORD(__is_union                  , KEYCXX)
 
 // Clang-only C++ Type Traits
 KEYWORD(__is_trivially_copyable     , KEYCXX)
+KEYWORD(__is_trivially_assignable   , KEYCXX)
 KEYWORD(__underlying_type           , KEYCXX)
 
 // Embarcadero Expression Traits
@@ -592,6 +593,11 @@ ANNOTATION(pragma_unused)
 // The lexer produces these so that they only take effect when the parser
 // handles them.
 ANNOTATION(pragma_vis)
+
+// Annotation for #pragma pack...
+// The lexer produces these so that they only take effect when the parser
+// handles them.
+ANNOTATION(pragma_pack)
 
 #undef ANNOTATION
 #undef TESTING_KEYWORD

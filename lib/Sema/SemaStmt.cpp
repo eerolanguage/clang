@@ -1893,7 +1893,7 @@ Sema::ActOnCapScopeReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     // Delay processing for now.  TODO: there are lots of dependent
     // types we can conclusively prove aren't void.
   } else if (FnRetType->isVoidType()) {
-    if (RetValExp &&
+    if (RetValExp && !isa<InitListExpr>(RetValExp) &&
         !(getLangOptions().CPlusPlus &&
           (RetValExp->isTypeDependent() ||
            RetValExp->getType()->isVoidType()))) {
@@ -1976,7 +1976,26 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
   ReturnStmt *Result = 0;
   if (FnRetType->isVoidType()) {
     if (RetValExp) {
-      if (!RetValExp->isTypeDependent()) {
+      if (isa<InitListExpr>(RetValExp)) {
+        // We simply never allow init lists as the return value of void
+        // functions. This is compatible because this was never allowed before,
+        // so there's no legacy code to deal with.
+        NamedDecl *CurDecl = getCurFunctionOrMethodDecl();
+        int FunctionKind = 0;
+        if (isa<ObjCMethodDecl>(CurDecl))
+          FunctionKind = 1;
+        else if (isa<CXXConstructorDecl>(CurDecl))
+          FunctionKind = 2;
+        else if (isa<CXXDestructorDecl>(CurDecl))
+          FunctionKind = 3;
+
+        Diag(ReturnLoc, diag::err_return_init_list)
+          << CurDecl->getDeclName() << FunctionKind
+          << RetValExp->getSourceRange();
+
+        // Drop the expression.
+        RetValExp = 0;
+      } else if (!RetValExp->isTypeDependent()) {
         // C99 6.8.6.4p1 (ext_ since GCC warns)
         unsigned D = diag::ext_return_has_expr;
         if (RetValExp->getType()->isVoidType())
@@ -2010,8 +2029,10 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
         }
       }
 
-      CheckImplicitConversions(RetValExp, ReturnLoc);
-      RetValExp = MaybeCreateExprWithCleanups(RetValExp);
+      if (RetValExp) {
+        CheckImplicitConversions(RetValExp, ReturnLoc);
+        RetValExp = MaybeCreateExprWithCleanups(RetValExp);
+      }
     }
 
     Result = new (Context) ReturnStmt(ReturnLoc, RetValExp, 0);

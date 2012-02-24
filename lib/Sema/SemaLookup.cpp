@@ -31,8 +31,6 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/LangOptions.h"
-#include "clang/Lex/Preprocessor.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -1294,7 +1292,7 @@ static bool LookupQualifiedNameInUsingDirectives(Sema &S, LookupResult &R,
   if (I == E) return false;
 
   // We have at least added all these contexts to the queue.
-  llvm::DenseSet<DeclContext*> Visited;
+  llvm::SmallPtrSet<DeclContext*, 8> Visited;
   Visited.insert(StartDC);
 
   // We have not yet looked into these namespaces, much less added
@@ -1305,7 +1303,7 @@ static bool LookupQualifiedNameInUsingDirectives(Sema &S, LookupResult &R,
   // with its using-children.
   for (; I != E; ++I) {
     NamespaceDecl *ND = (*I)->getNominatedNamespace()->getOriginalNamespace();
-    if (Visited.insert(ND).second)
+    if (Visited.insert(ND))
       Queue.push_back(ND);
   }
 
@@ -1354,7 +1352,7 @@ static bool LookupQualifiedNameInUsingDirectives(Sema &S, LookupResult &R,
 
     for (llvm::tie(I,E) = ND->getUsingDirectives(); I != E; ++I) {
       NamespaceDecl *Nom = (*I)->getNominatedNamespace();
-      if (Visited.insert(Nom).second)
+      if (Visited.insert(Nom))
         Queue.push_back(Nom);
     }
   }

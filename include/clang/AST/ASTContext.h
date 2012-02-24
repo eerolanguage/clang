@@ -218,6 +218,8 @@ class ASTContext : public RefCountedBase<ASTContext> {
 
   QualType ObjCConstantStringType;
   mutable RecordDecl *CFConstantStringTypeDecl;
+  
+  QualType ObjCNSStringType;
 
   /// \brief The typedef declaration for the Objective-C "instancetype" type.
   TypedefDecl *ObjCInstanceTypeDecl;
@@ -323,12 +325,6 @@ class ASTContext : public RefCountedBase<ASTContext> {
   typedef UsuallyTinyPtrVector<const CXXMethodDecl> CXXMethodVector;
   llvm::DenseMap<const CXXMethodDecl *, CXXMethodVector> OverriddenMethods;
 
-  /// \brief Mapping from lambda-to-block-pointer conversion functions to the
-  /// expression used to copy the lambda object.
-  llvm::DenseMap<const CXXConversionDecl *, Expr *> LambdaBlockPointerInits;
-  
-  friend class CXXConversionDecl;
-  
   /// \brief Mapping from each declaration context to its corresponding lambda 
   /// mangling context.
   llvm::DenseMap<const DeclContext *, LambdaMangleContext> LambdaMangleContexts;
@@ -950,6 +946,14 @@ public:
     return ObjCConstantStringType;
   }
 
+  QualType getObjCNSStringType() const {
+    return ObjCNSStringType;
+  }
+  
+  void setObjCNSStringType(QualType T) {
+    ObjCNSStringType = T;
+  }
+  
   /// \brief Retrieve the type that 'id' has been defined to, which may be
   /// different from the built-in 'id' if 'id' has been typedef'd.
   QualType getObjCIdRedefinitionType() const {

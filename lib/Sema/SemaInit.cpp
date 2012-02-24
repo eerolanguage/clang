@@ -173,7 +173,7 @@ class InitListChecker {
   bool hadError;
   bool VerifyOnly; // no diagnostics, no structure building
   bool AllowBraceElision;
-  std::map<InitListExpr *, InitListExpr *> SyntacticToSemantic;
+  llvm::DenseMap<InitListExpr *, InitListExpr *> SyntacticToSemantic;
   InitListExpr *FullyStructuredList;
 
   void CheckImplicitInitList(const InitializedEntity &Entity,
@@ -604,7 +604,9 @@ void InitListChecker::CheckExplicitInitList(const InitializedEntity &Entity,
   CheckListElementTypes(Entity, IList, T, /*SubobjectIsDesignatorContext=*/true,
                         Index, StructuredList, StructuredIndex, TopLevelObject);
   if (!VerifyOnly) {
-    QualType ExprTy = T.getNonLValueExprType(SemaRef.Context);
+    QualType ExprTy = T;
+    if (!ExprTy->isArrayType())
+      ExprTy = ExprTy.getNonLValueExprType(SemaRef.Context);
     IList->setType(ExprTy);
     StructuredList->setType(ExprTy);
   }
@@ -1630,7 +1632,7 @@ InitListChecker::CheckDesignatedInitializer(const InitializedEntity &Entity,
 
     // Determine the structural initializer list that corresponds to the
     // current subobject.
-    StructuredList = IsFirstDesignator? SyntacticToSemantic[IList]
+    StructuredList = IsFirstDesignator? SyntacticToSemantic.lookup(IList)
       : getStructuredSubobjectInit(IList, Index, CurrentObjectType,
                                    StructuredList, StructuredIndex,
                                    SourceRange(D->getStartLocation(),
@@ -2044,7 +2046,7 @@ InitListChecker::getStructuredSubobjectInit(InitListExpr *IList, unsigned Index,
     return 0; // No structured list in verification-only mode.
   Expr *ExistingInit = 0;
   if (!StructuredList)
-    ExistingInit = SyntacticToSemantic[IList];
+    ExistingInit = SyntacticToSemantic.lookup(IList);
   else if (StructuredIndex < StructuredList->getNumInits())
     ExistingInit = StructuredList->getInit(StructuredIndex);
 
@@ -2077,7 +2079,10 @@ InitListChecker::getStructuredSubobjectInit(InitListExpr *IList, unsigned Index,
                                          InitRange.getBegin(), 0, 0,
                                          InitRange.getEnd());
 
-  Result->setType(CurrentObjectType.getNonLValueExprType(SemaRef.Context));
+  QualType ResultType = CurrentObjectType;
+  if (!ResultType->isArrayType())
+    ResultType = ResultType.getNonLValueExprType(SemaRef.Context);
+  Result->setType(ResultType);
 
   // Pre-allocate storage for the structured initializer list.
   unsigned NumElements = 0;

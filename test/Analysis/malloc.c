@@ -379,7 +379,7 @@ void mallocEscapeMalloc() {
 
 void mallocMalloc() {
   int *p = malloc(12);
-  p = malloc(12); // expected-warning{{Memory is never released; potential memory leak}}
+  p = malloc(12); // expected-warning 2 {{Memory is never released; potential memory leak}}
 }
 
 void mallocFreeMalloc() {
@@ -666,9 +666,25 @@ int testStrndup(const char *s, unsigned validIndex, unsigned size) {
   char *s2 = strndup(s, size);
   s2 [validIndex + 1] = 'b';
   if (s2[validIndex] != 'a')
-    return 0;// expected-warning {{Memory is never released; potential memory leak}}
+    return 0;
   else
     return 1;// expected-warning {{Memory is never released; potential memory leak}}
+}
+
+void testStrdupContentIsDefined(const char *s, unsigned validIndex) {
+  char *s2 = strdup(s);
+  char result = s2[1];// no warning
+  free(s2);
+}
+
+// Test the system library functions to which the pointer can escape.
+
+// For now, we assume memory passed to pthread_specific escapes.
+// TODO: We could check that if a new pthread binding is set, the existing
+// binding must be freed; otherwise, a memory leak can occur.
+void testPthereadSpecificEscape(pthread_key_t key) {
+  void *buf = malloc(12);
+  pthread_setspecific(key, buf); // no warning
 }
 
 // Below are the known false positives.

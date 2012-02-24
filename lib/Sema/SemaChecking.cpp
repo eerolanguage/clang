@@ -1663,7 +1663,20 @@ public:
 
   void HandleIncompleteSpecifier(const char *startSpecifier,
                                  unsigned specifierLen);
-    
+
+  void HandleNonStandardLengthModifier(
+      const analyze_format_string::LengthModifier &LM,
+      const char *startSpecifier, unsigned specifierLen);
+
+  void HandleNonStandardConversionSpecifier(
+      const analyze_format_string::ConversionSpecifier &CS,
+      const char *startSpecifier, unsigned specifierLen);
+
+  void HandleNonStandardConversionSpecification(
+      const analyze_format_string::LengthModifier &LM,
+      const analyze_format_string::ConversionSpecifier &CS,
+      const char *startSpecifier, unsigned specifierLen);
+
   virtual void HandleInvalidPosition(const char *startSpecifier,
                                      unsigned specifierLen,
                                      analyze_format_string::PositionContext p);
@@ -1735,6 +1748,37 @@ void CheckFormatHandler::HandleIncompleteSpecifier(const char *startSpecifier,
                                                    unsigned specifierLen){
   EmitFormatDiagnostic(S.PDiag(diag::warn_printf_incomplete_specifier),
                        getLocationOfByte(startSpecifier),
+                       /*IsStringLocation*/true,
+                       getSpecifierRange(startSpecifier, specifierLen));
+}
+
+void CheckFormatHandler::HandleNonStandardLengthModifier(
+    const analyze_format_string::LengthModifier &LM,
+    const char *startSpecifier, unsigned specifierLen) {
+  EmitFormatDiagnostic(S.PDiag(diag::warn_format_non_standard) << LM.toString()
+                       << "length modifier",
+                       getLocationOfByte(LM.getStart()),
+                       /*IsStringLocation*/true,
+                       getSpecifierRange(startSpecifier, specifierLen));
+}
+
+void CheckFormatHandler::HandleNonStandardConversionSpecifier(
+    const analyze_format_string::ConversionSpecifier &CS,
+    const char *startSpecifier, unsigned specifierLen) {
+  EmitFormatDiagnostic(S.PDiag(diag::warn_format_non_standard) << CS.toString()
+                       << "conversion specifier",
+                       getLocationOfByte(CS.getStart()),
+                       /*IsStringLocation*/true,
+                       getSpecifierRange(startSpecifier, specifierLen));
+}
+
+void CheckFormatHandler::HandleNonStandardConversionSpecification(
+    const analyze_format_string::LengthModifier &LM,
+    const analyze_format_string::ConversionSpecifier &CS,
+    const char *startSpecifier, unsigned specifierLen) {
+  EmitFormatDiagnostic(S.PDiag(diag::warn_format_non_standard_conversion_spec)
+                       << LM.toString() << CS.toString(),
+                       getLocationOfByte(LM.getStart()),
                        /*IsStringLocation*/true,
                        getSpecifierRange(startSpecifier, specifierLen));
 }
@@ -2157,6 +2201,13 @@ CheckPrintfHandler::HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier
                          FixItHint::CreateRemoval(
                            getSpecifierRange(LM.getStart(),
                                              LM.getLength())));
+  if (!FS.hasStandardLengthModifier())
+    HandleNonStandardLengthModifier(LM, startSpecifier, specifierLen);
+  if (!FS.hasStandardConversionSpecifier(S.getLangOptions()))
+    HandleNonStandardConversionSpecifier(CS, startSpecifier, specifierLen);
+  if (!FS.hasStandardLengthConversionCombination())
+    HandleNonStandardConversionSpecification(LM, CS, startSpecifier,
+                                             specifierLen);
 
   // Are we using '%n'?
   if (CS.getKind() == ConversionSpecifier::nArg) {
@@ -2342,6 +2393,14 @@ bool CheckScanfHandler::HandleScanfSpecifier(
                          /*IsStringLocation*/true, R,
                          FixItHint::CreateRemoval(R));
   }
+
+  if (!FS.hasStandardLengthModifier())
+    HandleNonStandardLengthModifier(LM, startSpecifier, specifierLen);
+  if (!FS.hasStandardConversionSpecifier(S.getLangOptions()))
+    HandleNonStandardConversionSpecifier(CS, startSpecifier, specifierLen);
+  if (!FS.hasStandardLengthConversionCombination())
+    HandleNonStandardConversionSpecification(LM, CS, startSpecifier,
+                                             specifierLen);
 
   // The remaining checks depend on the data arguments.
   if (HasVAListArg)
@@ -2996,37 +3055,31 @@ static Expr *EvalAddr(Expr *E, SmallVectorImpl<DeclRefExpr *> &refVars) {
   case Stmt::ImplicitCastExprClass:
   case Stmt::CStyleCastExprClass:
   case Stmt::CXXFunctionalCastExprClass:
-  case Stmt::ObjCBridgedCastExprClass: {
-    Expr* SubExpr = cast<CastExpr>(E)->getSubExpr();
-    QualType T = SubExpr->getType();
-
-    if (SubExpr->getType()->isPointerType() ||
-        SubExpr->getType()->isBlockPointerType() ||
-        SubExpr->getType()->isObjCQualifiedIdType())
-      return EvalAddr(SubExpr, refVars);
-    else if (T->isArrayType())
-      return EvalVal(SubExpr, refVars);
-    else
-      return 0;
-  }
-
-  // C++ casts.  For dynamic casts, static casts, and const casts, we
-  // are always converting from a pointer-to-pointer, so we just blow
-  // through the cast.  In the case the dynamic cast doesn't fail (and
-  // return NULL), we take the conservative route and report cases
-  // where we return the address of a stack variable.  For Reinterpre
-  // FIXME: The comment about is wrong; we're not always converting
-  // from pointer to pointer. I'm guessing that this code should also
-  // handle references to objects.
+  case Stmt::ObjCBridgedCastExprClass:
   case Stmt::CXXStaticCastExprClass:
   case Stmt::CXXDynamicCastExprClass:
   case Stmt::CXXConstCastExprClass:
   case Stmt::CXXReinterpretCastExprClass: {
-      Expr *S = cast<CXXNamedCastExpr>(E)->getSubExpr();
-      if (S->getType()->isPointerType() || S->getType()->isBlockPointerType())
-        return EvalAddr(S, refVars);
-      else
-        return NULL;
+    Expr* SubExpr = cast<CastExpr>(E)->getSubExpr();
+    switch (cast<CastExpr>(E)->getCastKind()) {
+    case CK_BitCast:
+    case CK_LValueToRValue:
+    case CK_NoOp:
+    case CK_BaseToDerived:
+    case CK_DerivedToBase:
+    case CK_UncheckedDerivedToBase:
+    case CK_Dynamic:
+    case CK_CPointerToObjCPointerCast:
+    case CK_BlockPointerToObjCPointerCast:
+    case CK_AnyPointerToBlockPointerCast:
+      return EvalAddr(SubExpr, refVars);
+
+    case CK_ArrayToPointerDecay:
+      return EvalVal(SubExpr, refVars);
+
+    default:
+      return 0;
+    }
   }
 
   case Stmt::MaterializeTemporaryExprClass:
@@ -4969,4 +5022,3 @@ void Sema::DiagnoseEmptyLoopBody(const Stmt *S,
     Diag(NBody->getSemiLoc(), diag::note_empty_body_on_separate_line);
   }
 }
-

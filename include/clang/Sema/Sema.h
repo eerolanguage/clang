@@ -4507,7 +4507,7 @@ public:
   /// \param Unexpanded the set of unexpanded parameter packs.
   void DiagnoseUnexpandedParameterPacks(SourceLocation Loc,
                                         UnexpandedParameterPackContext UPPC,
-                    const SmallVectorImpl<UnexpandedParameterPack> &Unexpanded);
+                                  ArrayRef<UnexpandedParameterPack> Unexpanded);
 
   /// \brief If the given type contains an unexpanded parameter pack,
   /// diagnose the error.
@@ -5487,6 +5487,9 @@ public:
                                          SourceLocation ClassLoc,
                                          IdentifierInfo *CatName,
                                          SourceLocation CatLoc);
+
+  DeclGroupPtrTy ActOnFinishObjCImplementation(Decl *ObjCImpDecl,
+                                               ArrayRef<Decl *> Decls);
 
   DeclGroupPtrTy ActOnForwardClassDeclaration(SourceLocation Loc,
                                      IdentifierInfo **IdentList,

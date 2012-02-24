@@ -6254,10 +6254,8 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   // completed by the initializer. For example:
   //   int ary[] = { 1, 3, 5 };
   // "ary" transitions from an IncompleteArrayType to a ConstantArrayType.
-  if (!VDecl->isInvalidDecl() && (DclT != SavT)) {
+  if (!VDecl->isInvalidDecl() && (DclT != SavT))
     VDecl->setType(DclT);
-    Init->setType(DclT.getNonReferenceType());
-  }
 
   // Check any implicit conversions within the expression.
   CheckImplicitConversions(Init, VDecl->getLocation());

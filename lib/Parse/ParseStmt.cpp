@@ -302,6 +302,14 @@ Retry:
 
   case tok::kw___try:
     return ParseSEHTryBlock(attrs);
+
+  case tok::annot_pragma_vis:
+    HandlePragmaVisibility();
+    return StmtEmpty();
+
+  case tok::annot_pragma_pack:
+    HandlePragmaPack();
+    return StmtEmpty();
   }
 
   // If we reached this code, the statement must end in a semicolon.
@@ -1753,9 +1761,6 @@ StmtResult Parser::ParseReturnStatement(ParsedAttributes &attrs) {
       return StmtError();
     }
 
-    // FIXME: This is a hack to allow something like C++0x's generalized
-    // initializer lists, but only enough of this feature to allow Clang to
-    // parse libstdc++ 4.5's headers.
     if (Tok.is(tok::l_brace) && getLang().CPlusPlus) {
       R = ParseInitializer();
       if (R.isUsable())

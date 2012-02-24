@@ -4847,6 +4847,11 @@ def warn_printf_nonsensical_flag: Warning<
 def warn_format_nonsensical_length: Warning<
   "length modifier '%0' results in undefined behavior or no effect with '%1' conversion specifier">,
   InGroup<Format>;
+def warn_format_non_standard: ExtWarn<
+  "'%0' is a non-standard %1">, InGroup<FormatNonStandard>, DefaultIgnore;
+def warn_format_non_standard_conversion_spec: ExtWarn<
+  "using the length modifier '%0' with the conversion specifier '%1' is non-standard">,
+  InGroup<FormatNonStandard>, DefaultIgnore;
 def warn_printf_ignored_flag: Warning<
   "flag '%0' is ignored when flag '%1' is present">,
   InGroup<Format>;
@@ -5052,6 +5057,9 @@ def ext_return_has_expr : ExtWarn<
   DefaultError, InGroup<ReturnType>;
 def ext_return_has_void_expr : Extension<
   "void %select{function|method}1 %0 should not return void expression">;
+def err_return_init_list : Error<
+  "%select{void function|void method|constructor|destructor}1 %0 "
+  "must not return a value">;
 def warn_noreturn_function_has_return_expr : Warning<
   "function %0 declared 'noreturn' should not return">,
   InGroup<DiagGroup<"invalid-noreturn">>;

@@ -223,10 +223,8 @@ def ext_inline_namespace : ExtWarn<
 def warn_cxx98_compat_inline_namespace : Warning<
   "inline namespaces are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
-def err_generalized_initializer_lists : Error<
-  "generalized initializer lists are a C++11 extension unsupported in Clang">;
 def ext_generalized_initializer_lists : ExtWarn<
-  "generalized initializer lists are a C++11 extension unsupported in Clang">,
+  "generalized initializer lists are a C++11 extension">,
   InGroup<CXX11>;
 def warn_cxx98_compat_generalized_initializer_lists : Warning<
   "generalized initializer lists are incompatible with C++98">,
@@ -386,8 +384,10 @@ def err_func_def_no_params : Error<
   "function definition does not declare parameters">;
 def err_expected_lparen_after_type : Error<
   "expected '(' for function-style cast or type construction">;
-def err_expected_equal_after_declarator : Error<
-  "expected '=' after declarator">;
+def err_expected_init_in_condition : Error<
+  "variable declaration in condition must have an initializer">;
+def err_expected_init_in_condition_lparen : Error<
+  "variable declaration in condition cannot have a parenthesized initializer">;
 def warn_parens_disambiguated_as_function_decl : Warning<
   "parentheses were disambiguated as a function declarator">,
   InGroup<VexingParse>;
