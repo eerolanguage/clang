@@ -398,8 +398,8 @@ NumericLiteralParser(const char *begin, const char *end,
     radix = 10;
     s = SkipDigits(s);
     const LangOptions& Features = PP.getLangOptions();
-    if (Features.Eero) {                      // Eero accepts and ignores
-      while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+    if (Features.UnderscoresInNumerals) {     // Accept and ignore
+      while (s < ThisTokEnd-1 && *s == '_') { // underscores in the middle
         s = SkipDigits(++s);
       }
     }
@@ -414,8 +414,8 @@ NumericLiteralParser(const char *begin, const char *end,
       s++;
       saw_period = true;
       s = SkipDigits(s);
-      if (Features.Eero) {                      // Eero accepts and ignores
-        while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+      if (Features.UnderscoresInNumerals) {
+        while (s < ThisTokEnd-1 && *s == '_') {
           s = SkipDigits(++s);
         }
       }
@@ -557,12 +557,13 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
 
   // Handle a hex number like 0x1234.
   if ((*s == 'x' || *s == 'X') && (isxdigit(s[1]) || s[1] == '.' ||
-                                   (Features.Eero && s[1] == '_'))) {
+                                   (Features.UnderscoresInNumerals && 
+                                    s[1] == '_'))) {
     s++;
     radix = 16;
     DigitsBegin = s;
-    if (Features.Eero) {                      // Eero accepts and ignores
-      while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+    if (Features.UnderscoresInNumerals) {
+      while (s < ThisTokEnd-1 && *s == '_') {
         s = SkipHexDigits(++s);
       }
     }
@@ -575,8 +576,8 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
       saw_period = true;
       const char *floatDigitsBegin = s;
       s = SkipHexDigits(s);
-      if (Features.Eero) {                      // Eero accepts and ignores
-        while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+      if (Features.UnderscoresInNumerals) {
+        while (s < ThisTokEnd-1 && *s == '_') {
           s = SkipHexDigits(++s);
         }
       }
@@ -624,8 +625,8 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
     radix = 2;
     DigitsBegin = s;
     s = SkipBinaryDigits(s);
-    if (Features.Eero) {                      // Eero accepts and ignores
-      while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+    if (Features.UnderscoresInNumerals) {
+      while (s < ThisTokEnd-1 && *s == '_') {
         s = SkipBinaryDigits(++s);
       }
     }
@@ -646,8 +647,8 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   radix = 8;
   DigitsBegin = s;
   s = SkipOctalDigits(s);
-  if (Features.Eero) {                      // Eero accepts and ignores
-    while (s < ThisTokEnd-1 && *s == '_') { // uderscores in the middle
+  if (Features.UnderscoresInNumerals) {
+    while (s < ThisTokEnd-1 && *s == '_') {
       s = SkipOctalDigits(++s);
     }
   }
@@ -715,7 +716,7 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
   if ((SuffixBegin - DigitsBegin) * MaxBitsPerDigit <= 64) {
     uint64_t N = 0;
     for (s = DigitsBegin; s != SuffixBegin; ++s)
-      if (!Features.Eero || *s != '_') // Eero accepts and skips '_'
+      if (!Features.UnderscoresInNumerals || *s != '_')
         N = N*radix + HexDigitValue(*s);
 
     // This will truncate the value to Val's input width. Simply check
@@ -733,7 +734,7 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
 
   bool OverflowOccurred = false;
   while (s < SuffixBegin) {
-    if (Features.Eero && *s == '_') { // Eero accepts and skips '_'
+    if (Features.UnderscoresInNumerals && *s == '_') {
       s++;
       continue;
     }
@@ -766,7 +767,7 @@ NumericLiteralParser::GetFloatValue(llvm::APFloat &Result) {
 
   unsigned n = std::min(SuffixBegin - ThisTokBegin, ThisTokEnd - ThisTokBegin);
   std::string floatString(ThisTokBegin, n);
-  if (PP.getLangOptions().Eero) { // Eero accepts underscores, strip them out
+  if (PP.getLangOptions().UnderscoresInNumerals) { // strip out underscores
     floatString.erase(std::remove(floatString.begin(), floatString.end(), '_'),
                       floatString.end());
   }
