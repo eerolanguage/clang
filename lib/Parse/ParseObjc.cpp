@@ -1574,15 +1574,12 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
     }
   }
 
-  return Actions.ActOnFinishObjCImplementation(ObjCImpDecl, DeclsInGroup);
   if (getLang().OffSideRule) { // their parsing was not deferred
     for (size_t i = 0; i < ParsedObjCMethods.size(); ++i)
       DeclsInGroup.push_back(ParsedObjCMethods[i]);
     ParsedObjCMethods.clear();
   }
-  DeclsInGroup.push_back(ObjCImpDecl);
-  return Actions.BuildDeclaratorGroup(
-           DeclsInGroup.data(), DeclsInGroup.size(), false);
+  return Actions.ActOnFinishObjCImplementation(ObjCImpDecl, DeclsInGroup);
 }
 
 Parser::DeclGroupPtrTy
