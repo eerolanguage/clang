@@ -195,11 +195,9 @@ bool CodeGenTypes::isFuncTypeArgumentConvertible(QualType Ty) {
   // If this isn't a tagged type, we can convert it!
   const TagType *TT = Ty->getAs<TagType>();
   if (TT == 0) return true;
-  
-  
-  // If it's a tagged type used by-value, but is just a forward decl, we can't
-  // convert it.  Note that getDefinition()==0 is not the same as !isDefinition.
-  if (TT->getDecl()->getDefinition() == 0)
+    
+  // Incomplete types cannot be converted.
+  if (TT->isIncompleteType())
     return false;
   
   // If this is an enum, then it is always safe to convert.

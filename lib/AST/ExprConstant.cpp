@@ -2225,8 +2225,8 @@ static bool HandleConstructorCall(SourceLocation CallLoc, const LValue &This,
   // essential for unions, where the operations performed by the constructor
   // cannot be represented by ctor-initializers.
   if (Definition->isDefaulted() &&
-      ((Definition->isCopyConstructor() && RD->hasTrivialCopyConstructor()) ||
-       (Definition->isMoveConstructor() && RD->hasTrivialMoveConstructor()))) {
+      ((Definition->isCopyConstructor() && Definition->isTrivial()) ||
+       (Definition->isMoveConstructor() && Definition->isTrivial()))) {
     LValue RHS;
     RHS.setFrom(ArgValues[0]);
     CCValue Value;
@@ -4116,6 +4116,10 @@ public:
   }
 
   bool VisitBinaryTypeTraitExpr(const BinaryTypeTraitExpr *E) {
+    return Success(E->getValue(), E);
+  }
+
+  bool VisitTypeTraitExpr(const TypeTraitExpr *E) {
     return Success(E->getValue(), E);
   }
 
@@ -6360,6 +6364,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
   case Expr::CXXScalarValueInitExprClass:
   case Expr::UnaryTypeTraitExprClass:
   case Expr::BinaryTypeTraitExprClass:
+  case Expr::TypeTraitExprClass:
   case Expr::ArrayTypeTraitExprClass:
   case Expr::ExpressionTraitExprClass:
   case Expr::CXXNoexceptExprClass:
@@ -6374,12 +6379,12 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
       return CheckEvalInICE(E, Ctx);
     return ICEDiag(2, E->getLocStart());
   }
-  case Expr::DeclRefExprClass:
+  case Expr::DeclRefExprClass: {
     if (isa<EnumConstantDecl>(cast<DeclRefExpr>(E)->getDecl()))
       return NoDiag();
-    if (Ctx.getLangOptions().CPlusPlus && IsConstNonVolatile(E->getType())) {
-      const NamedDecl *D = cast<DeclRefExpr>(E)->getDecl();
-
+    const ValueDecl *D = dyn_cast<ValueDecl>(cast<DeclRefExpr>(E)->getDecl());
+    if (Ctx.getLangOptions().CPlusPlus &&
+        D && IsConstNonVolatile(D->getType())) {
       // Parameter variables are never constants.  Without this check,
       // getAnyInitializer() can find a default argument, which leads
       // to chaos.
@@ -6403,6 +6408,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
       }
     }
     return ICEDiag(2, E->getLocStart());
+  }
   case Expr::UnaryOperatorClass: {
     const UnaryOperator *Exp = cast<UnaryOperator>(E);
     switch (Exp->getOpcode()) {
