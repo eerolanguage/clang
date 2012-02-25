@@ -436,7 +436,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
                                        isTypeCast);
   if (NotCastExpr) {
     Diag(Tok, diag::err_expected_expression);
-    if (getLang().Eero && !PP.isInSystemHeader()) // very ugly without semis
+    if (getLang().OptionalSemicolons && !PP.isInSystemHeader())
       Tok.setKind(tok::eof); // TODO: do something less harsh?
   }
   return move(Res);
@@ -983,7 +983,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw___vector: {
     if (!getLang().CPlusPlus) {
       Diag(Tok, diag::err_expected_expression);
-      if (getLang().Eero && !PP.isInSystemHeader()) // very ugly without semis
+      if (getLang().OptionalSemicolons && !PP.isInSystemHeader())
         Tok.setKind(tok::eof); // TODO: do something less harsh?
       return ExprError();
     }
