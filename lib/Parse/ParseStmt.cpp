@@ -242,7 +242,7 @@ Retry:
   case tok::l_brace:                // C99 6.8.2: compound-statement
     if (getLang().OffSideRule && 
         Tok.getLength() != 0 && // if not an inserted left brace
-        !InSystemHeader(Tok.getLocation())) {
+        !PP.isInSystemHeader()) {
       Diag(Tok, diag::err_not_allowed) << "'{'";
       ConsumeAnyToken(); // eat it and move on
       return StmtError();
@@ -957,7 +957,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
                                        SourceLocation Loc,
                                        bool ConvertToBoolean) {
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (getLang().Eero && !InSystemHeader(Loc)) 
+  if (getLang().Eero && !PP.isInSystemHeader()) 
     T.setOptional();
   T.consumeOpen();
 
@@ -1390,7 +1390,7 @@ StmtResult Parser::ParseDoStatement(ParsedAttributes &attrs) {
 
   // Parse the parenthesized condition.
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (getLang().Eero && !InSystemHeader(WhileLoc)) 
+  if (getLang().Eero && !PP.isInSystemHeader()) 
     T.setOptional();
   T.consumeOpen();
   ExprResult Cond = ParseExpression();

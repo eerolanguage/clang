@@ -722,15 +722,6 @@ private:
   //===--------------------------------------------------------------------===//
   // Eero convenience methods
 
-  // TODO: remove this function after more testing is done
-  inline bool InSystemHeader(const SourceLocation&) {
-    return PP.isInSystemHeader();
-//  if (PP.isInPrimaryFile())
-//    return false;
-//  else 
-//    return PP.getSourceManager().isInSystemHeader(Loc);
-  }
-
   void InsertToken(const tok::TokenKind tokenKind) {
     PP.EnterToken(Tok);
     Tok.setKind(tokenKind);

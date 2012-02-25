@@ -633,7 +633,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
   NotCastExpr = false;
-  const bool Eero = getLang().Eero && !InSystemHeader(Tok.getLocation());
+  const bool Eero = getLang().Eero && !PP.isInSystemHeader();
 
   // This handles all of cast-expression, unary-expression, postfix-expression,
   // and primary-expression.  We handle them together like this for efficiency
