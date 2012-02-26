@@ -2356,7 +2356,6 @@ recurse:
   case Expr::CXXThisExprClass:
   case Expr::DesignatedInitExprClass:
   case Expr::ImplicitValueInitExprClass:
-  case Expr::InitListExprClass:
   case Expr::ParenListExprClass:
   case Expr::LambdaExprClass:
     llvm_unreachable("unexpected statement kind");
@@ -2418,6 +2417,16 @@ recurse:
   case Expr::OpaqueValueExprClass:
     llvm_unreachable("cannot mangle opaque value; mangling wrong thing?");
 
+  case Expr::InitListExprClass: {
+    // Proposal by Jason Merrill, 2012-01-03
+    Out << "il";
+    const InitListExpr *InitList = cast<InitListExpr>(E);
+    for (unsigned i = 0, e = InitList->getNumInits(); i != e; ++i)
+      mangleExpression(InitList->getInit(i));
+    Out << "E";
+    break;
+  }
+
   case Expr::CXXDefaultArgExprClass:
     mangleExpression(cast<CXXDefaultArgExpr>(E)->getExpr(), Arity);
     break;
@@ -2454,7 +2463,6 @@ recurse:
   }
 
   case Expr::CXXNewExprClass: {
-    // Proposal from David Vandervoorde, 2010.06.30
     const CXXNewExpr *New = cast<CXXNewExpr>(E);
     if (New->isGlobalNew()) Out << "gs";
     Out << (New->isArray() ? "na" : "nw");
@@ -2464,8 +2472,11 @@ recurse:
     Out << '_';
     mangleType(New->getAllocatedType());
     if (New->hasInitializer()) {
-      // FIXME: Does this mean "parenthesized initializer"?
-      Out << "pi";
+      // Proposal by Jason Merrill, 2012-01-03
+      if (New->getInitializationStyle() == CXXNewExpr::ListInit)
+        Out << "il";
+      else
+        Out << "pi";
       const Expr *Init = New->getInitializer();
       if (const CXXConstructExpr *CCE = dyn_cast<CXXConstructExpr>(Init)) {
         // Directly inline the initializers.
@@ -2476,6 +2487,12 @@ recurse:
       } else if (const ParenListExpr *PLE = dyn_cast<ParenListExpr>(Init)) {
         for (unsigned i = 0, e = PLE->getNumExprs(); i != e; ++i)
           mangleExpression(PLE->getExpr(i));
+      } else if (New->getInitializationStyle() == CXXNewExpr::ListInit &&
+                 isa<InitListExpr>(Init)) {
+        // Only take InitListExprs apart for list-initialization.
+        const InitListExpr *InitList = cast<InitListExpr>(Init);
+        for (unsigned i = 0, e = InitList->getNumInits(); i != e; ++i)
+          mangleExpression(InitList->getInit(i));
       } else
         mangleExpression(Init);
     }
@@ -2541,7 +2558,11 @@ recurse:
     const CXXConstructExpr *CE = cast<CXXConstructExpr>(E);
     unsigned N = CE->getNumArgs();
 
-    Out << "cv";
+    // Proposal by Jason Merrill, 2012-01-03
+    if (CE->isListInitialization())
+      Out << "tl";
+    else
+      Out << "cv";
     mangleType(CE->getType());
     if (N != 1) Out << '_';
     for (unsigned I = 0; I != N; ++I) mangleExpression(CE->getArg(I));

@@ -1507,13 +1507,13 @@ public:
 
   void AddOverloadCandidate(FunctionDecl *Function,
                             DeclAccessPair FoundDecl,
-                            Expr **Args, unsigned NumArgs,
+                            llvm::ArrayRef<Expr *> Args,
                             OverloadCandidateSet& CandidateSet,
                             bool SuppressUserConversions = false,
                             bool PartialOverloading = false,
                             bool AllowExplicit = false);
   void AddFunctionCandidates(const UnresolvedSetImpl &Functions,
-                             Expr **Args, unsigned NumArgs,
+                             llvm::ArrayRef<Expr *> Args,
                              OverloadCandidateSet& CandidateSet,
                              bool SuppressUserConversions = false);
   void AddMethodCandidate(DeclAccessPair FoundDecl,
@@ -1526,7 +1526,7 @@ public:
                           DeclAccessPair FoundDecl,
                           CXXRecordDecl *ActingContext, QualType ObjectType,
                           Expr::Classification ObjectClassification,
-                          Expr **Args, unsigned NumArgs,
+                          llvm::ArrayRef<Expr *> Args,
                           OverloadCandidateSet& CandidateSet,
                           bool SuppressUserConversions = false);
   void AddMethodTemplateCandidate(FunctionTemplateDecl *MethodTmpl,
@@ -1535,13 +1535,13 @@ public:
                                  TemplateArgumentListInfo *ExplicitTemplateArgs,
                                   QualType ObjectType,
                                   Expr::Classification ObjectClassification,
-                                  Expr **Args, unsigned NumArgs,
+                                  llvm::ArrayRef<Expr *> Args,
                                   OverloadCandidateSet& CandidateSet,
                                   bool SuppressUserConversions = false);
   void AddTemplateOverloadCandidate(FunctionTemplateDecl *FunctionTemplate,
                                     DeclAccessPair FoundDecl,
                                  TemplateArgumentListInfo *ExplicitTemplateArgs,
-                                    Expr **Args, unsigned NumArgs,
+                                    llvm::ArrayRef<Expr *> Args,
                                     OverloadCandidateSet& CandidateSet,
                                     bool SuppressUserConversions = false);
   void AddConversionCandidate(CXXConversionDecl *Conversion,
@@ -1558,7 +1558,7 @@ public:
                              DeclAccessPair FoundDecl,
                              CXXRecordDecl *ActingContext,
                              const FunctionProtoType *Proto,
-                             Expr *Object, Expr **Args, unsigned NumArgs,
+                             Expr *Object, llvm::ArrayRef<Expr*> Args,
                              OverloadCandidateSet& CandidateSet);
   void AddMemberOperatorCandidates(OverloadedOperatorKind Op,
                                    SourceLocation OpLoc,
@@ -1575,8 +1575,8 @@ public:
                                     Expr **Args, unsigned NumArgs,
                                     OverloadCandidateSet& CandidateSet);
   void AddArgumentDependentLookupCandidates(DeclarationName Name,
-                                            bool Operator,
-                                            Expr **Args, unsigned NumArgs,
+                                            bool Operator, SourceLocation Loc,
+                                            llvm::ArrayRef<Expr *> Args,
                                 TemplateArgumentListInfo *ExplicitTemplateArgs,
                                             OverloadCandidateSet& CandidateSet,
                                             bool PartialOverloading = false,
@@ -1625,7 +1625,7 @@ public:
                                             FunctionDecl *Fn);
 
   void AddOverloadedCallCandidates(UnresolvedLookupExpr *ULE,
-                                   Expr **Args, unsigned NumArgs,
+                                   llvm::ArrayRef<Expr *> Args,
                                    OverloadCandidateSet &CandidateSet,
                                    bool PartialOverloading = false);
 
@@ -1822,7 +1822,8 @@ public:
   CXXDestructorDecl *LookupDestructor(CXXRecordDecl *Class);
 
   void ArgumentDependentLookup(DeclarationName Name, bool Operator,
-                               Expr **Args, unsigned NumArgs,
+                               SourceLocation Loc,
+                               llvm::ArrayRef<Expr *> Args,
                                ADLResult &Functions,
                                bool StdNamespaceIsAssociated = false);
 
@@ -1841,7 +1842,7 @@ public:
                              bool EnteringContext = false,
                              const ObjCObjectPointerType *OPT = 0);
 
-  void FindAssociatedClassesAndNamespaces(Expr **Args, unsigned NumArgs,
+  void FindAssociatedClassesAndNamespaces(llvm::ArrayRef<Expr *> Args,
                                    AssociatedNamespaceSet &AssociatedNamespaces,
                                    AssociatedClassSet &AssociatedClasses);
 
@@ -2454,7 +2455,7 @@ public:
   bool DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
                            CorrectionCandidateCallback &CCC,
                            TemplateArgumentListInfo *ExplicitTemplateArgs = 0,
-                           Expr **Args = 0, unsigned NumArgs = 0);
+                       llvm::ArrayRef<Expr *> Args = llvm::ArrayRef<Expr *>());
 
   ExprResult LookupInObjCMethod(LookupResult &LookUp, Scope *S,
                                 IdentifierInfo *II,
@@ -4845,7 +4846,7 @@ public:
   TemplateDeductionResult
   DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
                           TemplateArgumentListInfo *ExplicitTemplateArgs,
-                          Expr **Args, unsigned NumArgs,
+                          llvm::ArrayRef<Expr *> Args,
                           FunctionDecl *&Specialization,
                           sema::TemplateDeductionInfo &Info);
 
@@ -6398,7 +6399,7 @@ public:
   void CodeCompleteTag(Scope *S, unsigned TagSpec);
   void CodeCompleteTypeQualifiers(DeclSpec &DS);
   void CodeCompleteCase(Scope *S);
-  void CodeCompleteCall(Scope *S, Expr *Fn, Expr **Args, unsigned NumArgs);
+  void CodeCompleteCall(Scope *S, Expr *Fn, llvm::ArrayRef<Expr *> Args);
   void CodeCompleteInitializer(Scope *S, Decl *D);
   void CodeCompleteReturn(Scope *S);
   void CodeCompleteAfterIf(Scope *S);
