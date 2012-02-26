@@ -159,8 +159,7 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
       return false;
     } else {
       Diag(Tok, diag::err_expected) << "newline";
-      while (!Tok.isAtStartOfLine()) // flush the rest of the
-        ConsumeAnyToken();           // line
+      Tok.setKind(tok::eof); // drastic, but in bad state otherwise
       return true;
     }
   }
@@ -253,14 +252,21 @@ bool Parser::SkipUntil(const tok::TokenKind *Toks, unsigned NumToks,
         }
         return true;
       }
-      // For these searches on semicolon, skip to next statement in current block
+      // For searches on semicolon, 
       if (getLang().OptionalSemicolons && !PP.isInSystemHeader() &&
-          Tok.isNot(tok::eof))
-        if ((StopAtSemi || Toks[i] == tok::semi) &&
-            Tok.isAtStartOfLine() && 
-            !indentationPositions.empty() &&
-            Column(Tok.getLocation()) <= indentationPositions.back())
-          return false;
+          Tok.isNot(tok::eof) &&
+          (StopAtSemi || Toks[i] == tok::semi)) {
+        if (getLang().OffSideRule) { // skip to next statement in current block
+          if (Tok.isAtStartOfLine() && 
+              (indentationPositions.empty() ||
+               Column(Tok.getLocation()) <= indentationPositions.back())) {
+            return false;
+          }
+        } else { // not offside rule
+          if (Tok.isAtStartOfLine())
+            return false;
+        }
+      }
     }
 
     switch (Tok.getKind()) {
