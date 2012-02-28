@@ -3293,6 +3293,9 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
       continue;
     if (FieldClassDecl->hasIrrelevantDestructor())
       continue;
+    // The destructor for an implicit anonymous union member is never invoked.
+    if (FieldClassDecl->isUnion() && FieldClassDecl->isAnonymousStructOrUnion())
+      continue;
 
     CXXDestructorDecl *Dtor = LookupDestructor(FieldClassDecl);
     assert(Dtor && "No dtor found for FieldClassDecl!");
@@ -4372,31 +4375,33 @@ struct SpecialMemberDeletionInfo {
                                  TQ & Qualifiers::Volatile);
   }
 
+  bool shouldDeleteForClassSubobject(CXXRecordDecl *Class, FieldDecl *Field);
+
   bool shouldDeleteForBase(CXXRecordDecl *BaseDecl, bool IsVirtualBase);
   bool shouldDeleteForField(FieldDecl *FD);
   bool shouldDeleteForAllConstMembers();
 };
 }
 
-/// Check whether we should delete a special member function due to the class
-/// having a particular direct or virtual base class.
-bool SpecialMemberDeletionInfo::shouldDeleteForBase(CXXRecordDecl *BaseDecl,
-                                                    bool IsVirtualBase) {
-  // C++11 [class.copy]p23:
-  // -- for the move assignment operator, any direct or indirect virtual
-  //    base class.
-  if (CSM == Sema::CXXMoveAssignment && IsVirtualBase)
-    return true;
-
+/// Check whether we should delete a special member function due to having a
+/// direct or virtual base class or static data member of class type M.
+bool SpecialMemberDeletionInfo::shouldDeleteForClassSubobject(
+    CXXRecordDecl *Class, FieldDecl *Field) {
   // C++11 [class.ctor]p5, C++11 [class.copy]p11, C++11 [class.dtor]p5:
   // -- any direct or virtual base class [...] has a type with a destructor
   //    that is deleted or inaccessible
   if (!IsAssignment) {
-    CXXDestructorDecl *BaseDtor = S.LookupDestructor(BaseDecl);
-    if (BaseDtor->isDeleted())
+    CXXDestructorDecl *Dtor = S.LookupDestructor(Class);
+    if (Dtor->isDeleted())
       return true;
-    if (S.CheckDestructorAccess(Loc, BaseDtor, S.PDiag())
-          != Sema::AR_accessible)
+    if (S.CheckDestructorAccess(Loc, Dtor, S.PDiag()) != Sema::AR_accessible)
+      return true;
+
+    // C++11 [class.dtor]p5:
+    // -- X is a union-like class that has a variant member with a non-trivial
+    //    destructor
+    if (CSM == Sema::CXXDestructor && Field && Field->getParent()->isUnion() &&
+        !Dtor->isTrivial())
       return true;
   }
 
@@ -4410,50 +4415,58 @@ bool SpecialMemberDeletionInfo::shouldDeleteForBase(CXXRecordDecl *BaseDecl,
   //    overload resolution, as applied to B's corresponding special member,
   //    results in an ambiguity or a function that is deleted or inaccessible
   //    from the defaulted special member
+  // FIXME: in-class initializers should be handled here
   if (CSM != Sema::CXXDestructor) {
-    Sema::SpecialMemberOverloadResult *SMOR = lookupIn(BaseDecl);
+    Sema::SpecialMemberOverloadResult *SMOR = lookupIn(Class);
     if (!SMOR->hasSuccess())
       return true;
 
-    CXXMethodDecl *BaseMember = SMOR->getMethod();
+    CXXMethodDecl *Member = SMOR->getMethod();
+    // A member of a union must have a trivial corresponding special member.
+    if (Field && Field->getParent()->isUnion() && !Member->isTrivial())
+      return true;
+
     if (IsConstructor) {
-      CXXConstructorDecl *BaseCtor = cast<CXXConstructorDecl>(BaseMember);
-      if (S.CheckConstructorAccess(Loc, BaseCtor, BaseCtor->getAccess(),
-                                   S.PDiag()) != Sema::AR_accessible)
+      CXXConstructorDecl *Ctor = cast<CXXConstructorDecl>(Member);
+      if (S.CheckConstructorAccess(Loc, Ctor, Ctor->getAccess(), S.PDiag())
+            != Sema::AR_accessible)
         return true;
 
       // -- for the move constructor, a [...] direct or virtual base class with
       //    a type that does not have a move constructor and is not trivially
       //    copyable.
-      if (IsMove && !BaseCtor->isMoveConstructor() &&
-          !BaseDecl->isTriviallyCopyable())
+      if (IsMove && !Ctor->isMoveConstructor() && !Class->isTriviallyCopyable())
         return true;
     } else {
       assert(IsAssignment && "unexpected kind of special member");
-      if (S.CheckDirectMemberAccess(Loc, BaseMember, S.PDiag())
+      if (S.CheckDirectMemberAccess(Loc, Member, S.PDiag())
             != Sema::AR_accessible)
         return true;
 
       // -- for the move assignment operator, a direct base class with a type
       //    that does not have a move assignment operator and is not trivially
       //    copyable.
-      if (IsMove && !BaseMember->isMoveAssignmentOperator() &&
-          !BaseDecl->isTriviallyCopyable())
+      if (IsMove && !Member->isMoveAssignmentOperator() &&
+          !Class->isTriviallyCopyable())
         return true;
     }
   }
 
-  // C++11 [class.dtor]p5:
-  // -- for a virtual destructor, lookup of the non-array deallocation function
-  //    results in an ambiguity or in a function that is deleted or inaccessible
-  if (CSM == Sema::CXXDestructor && MD->isVirtual()) {
-    FunctionDecl *OperatorDelete = 0;
-    DeclarationName Name =
-      S.Context.DeclarationNames.getCXXOperatorName(OO_Delete);
-    if (S.FindDeallocationFunction(Loc, MD->getParent(), Name,
-                                   OperatorDelete, false))
-      return true;
-  }
+  return false;
+}
+
+/// Check whether we should delete a special member function due to the class
+/// having a particular direct or virtual base class.
+bool SpecialMemberDeletionInfo::shouldDeleteForBase(CXXRecordDecl *BaseDecl,
+                                                    bool IsVirtualBase) {
+  // C++11 [class.copy]p23:
+  // -- for the move assignment operator, any direct or indirect virtual
+  //    base class.
+  if (CSM == Sema::CXXMoveAssignment && IsVirtualBase)
+    return true;
+
+  if (shouldDeleteForClassSubobject(BaseDecl, 0))
+    return true;
 
   return false;
 }
@@ -4472,6 +4485,15 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
 
     if (inUnion() && !FieldType.isConstQualified())
       AllFieldsAreConst = false;
+
+    // C++11 [class.ctor]p5: any non-variant non-static data member of
+    // const-qualified type (or array thereof) with no
+    // brace-or-equal-initializer does not have a user-provided default
+    // constructor.
+    if (!inUnion() && FieldType.isConstQualified() &&
+        !FD->hasInClassInitializer() &&
+        (!FieldRecord || !FieldRecord->hasUserProvidedDefaultConstructor()))
+      return true;
   } else if (CSM == Sema::CXXCopyConstructor) {
     // For a copy constructor, data members must not be of rvalue reference
     // type.
@@ -4484,13 +4506,6 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
   }
 
   if (FieldRecord) {
-    // For a default constructor, a const member must have a user-provided
-    // default constructor or else be explicitly initialized.
-    if (CSM == Sema::CXXDefaultConstructor && FieldType.isConstQualified() &&
-        !FD->hasInClassInitializer() &&
-        !FieldRecord->hasUserProvidedDefaultConstructor())
-      return true;
-
     // Some additional restrictions exist on the variant members.
     if (!inUnion() && FieldRecord->isUnion() &&
         FieldRecord->isAnonymousStructOrUnion()) {
@@ -4500,58 +4515,14 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
                                          UE = FieldRecord->field_end();
            UI != UE; ++UI) {
         QualType UnionFieldType = S.Context.getBaseElementType(UI->getType());
-        CXXRecordDecl *UnionFieldRecord =
-          UnionFieldType->getAsCXXRecordDecl();
 
         if (!UnionFieldType.isConstQualified())
           AllVariantFieldsAreConst = false;
 
-        if (UnionFieldRecord) {
-          // FIXME: Checking for accessibility and validity of this
-          //        destructor is technically going beyond the
-          //        standard, but this is believed to be a defect.
-          if (!IsAssignment) {
-            CXXDestructorDecl *FieldDtor = S.LookupDestructor(UnionFieldRecord);
-            if (FieldDtor->isDeleted())
-              return true;
-            if (S.CheckDestructorAccess(Loc, FieldDtor, S.PDiag()) !=
-                Sema::AR_accessible)
-              return true;
-            if (!FieldDtor->isTrivial())
-              return true;
-          }
-
-          // FIXME: in-class initializers should be handled here
-          if (CSM != Sema::CXXDestructor) {
-            Sema::SpecialMemberOverloadResult *SMOR =
-                lookupIn(UnionFieldRecord);
-            // FIXME: Checking for accessibility and validity of this
-            //        corresponding member is technically going beyond the
-            //        standard, but this is believed to be a defect.
-            if (!SMOR->hasSuccess())
-              return true;
-
-            CXXMethodDecl *FieldMember = SMOR->getMethod();
-            // A member of a union must have a trivial corresponding
-            // special member.
-            if (!FieldMember->isTrivial())
-              return true;
-
-            if (IsConstructor) {
-              CXXConstructorDecl *FieldCtor =
-                  cast<CXXConstructorDecl>(FieldMember);
-              if (S.CheckConstructorAccess(Loc, FieldCtor,
-                                           FieldCtor->getAccess(),
-                                           S.PDiag()) != Sema::AR_accessible)
-              return true;
-            } else {
-              assert(IsAssignment && "unexpected kind of special member");
-              if (S.CheckDirectMemberAccess(Loc, FieldMember, S.PDiag())
-                  != Sema::AR_accessible)
-                return true;
-            }
-          }
-        }
+        CXXRecordDecl *UnionFieldRecord = UnionFieldType->getAsCXXRecordDecl();
+        if (UnionFieldRecord &&
+            shouldDeleteForClassSubobject(UnionFieldRecord, *UI))
+          return true;
       }
 
       // At least one member in each anonymous union must be non-const
@@ -4564,9 +4535,9 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
       return false;
     }
 
-    // Unless we're doing assignment, the field's destructor must be
-    // accessible and not deleted.
-    if (!IsAssignment) {
+    // When checking a constructor, the field's destructor must be accessible
+    // and not deleted.
+    if (IsConstructor) {
       CXXDestructorDecl *FieldDtor = S.LookupDestructor(FieldRecord);
       if (FieldDtor->isDeleted())
         return true;
@@ -4578,13 +4549,18 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
     // Check that the corresponding member of the field is accessible,
     // unique, and non-deleted. We don't do this if it has an explicit
     // initialization when default-constructing.
-    if (CSM != Sema::CXXDestructor &&
-        !(CSM == Sema::CXXDefaultConstructor && FD->hasInClassInitializer())) {
+    if (!(CSM == Sema::CXXDefaultConstructor && FD->hasInClassInitializer())) {
       Sema::SpecialMemberOverloadResult *SMOR = lookupIn(FieldRecord);
       if (!SMOR->hasSuccess())
         return true;
 
       CXXMethodDecl *FieldMember = SMOR->getMethod();
+
+      // We need the corresponding member of a union to be trivial so that
+      // we can safely process all members simultaneously.
+      if (inUnion() && !FieldMember->isTrivial())
+        return true;
+
       if (IsConstructor) {
         CXXConstructorDecl *FieldCtor = cast<CXXConstructorDecl>(FieldMember);
         if (S.CheckConstructorAccess(Loc, FieldCtor, FieldCtor->getAccess(),
@@ -4596,6 +4572,13 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
         // resolution) unless we are working on a trivially copyable class.
         if (IsMove && !FieldCtor->isMoveConstructor() &&
             !FieldRecord->isTriviallyCopyable())
+          return true;
+      } else if (CSM == Sema::CXXDestructor) {
+        CXXDestructorDecl *FieldDtor = S.LookupDestructor(FieldRecord);
+        if (FieldDtor->isDeleted())
+          return true;
+        if (S.CheckDestructorAccess(Loc, FieldDtor, S.PDiag()) !=
+            Sema::AR_accessible)
           return true;
       } else {
         assert(IsAssignment && "unexpected kind of special member");
@@ -4610,19 +4593,7 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
             !FieldRecord->isTriviallyCopyable())
           return true;
       }
-
-      // We need the corresponding member of a union to be trivial so that
-      // we can safely copy them all simultaneously.
-      // FIXME: Note that performing the check here (where we rely on the lack
-      // of an in-class initializer) is technically ill-formed. However, this
-      // seems most obviously to be a bug in the standard.
-      if (inUnion() && !FieldMember->isTrivial())
-        return true;
     }
-  } else if (CSM == Sema::CXXDefaultConstructor && !inUnion() &&
-             FieldType.isConstQualified() && !FD->hasInClassInitializer()) {
-    // We can't initialize a const member of non-class type to any value.
-    return true;
   } else if (IsAssignment && FieldType.isConstQualified()) {
     // C++11 [class.copy]p23:
     // -- a non-static data member of const non-class type (or array thereof)
@@ -4652,6 +4623,8 @@ bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM) {
   if (!LangOpts.CPlusPlus0x || RD->isInvalidDecl())
     return false;
 
+  // FIXME: Provide the ability to diagnose why a special member was deleted.
+
   // C++11 [expr.lambda.prim]p19:
   //   The closure type associated with a lambda-expression has a
   //   deleted (8.4.3) default constructor and a deleted copy
@@ -4659,6 +4632,18 @@ bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM) {
   if (RD->isLambda() &&
       (CSM == CXXDefaultConstructor || CSM == CXXCopyAssignment))
     return true;
+
+  // C++11 [class.dtor]p5:
+  // -- for a virtual destructor, lookup of the non-array deallocation function
+  //    results in an ambiguity or in a function that is deleted or inaccessible
+  if (CSM == Sema::CXXDestructor && MD->isVirtual()) {
+    FunctionDecl *OperatorDelete = 0;
+    DeclarationName Name =
+      Context.DeclarationNames.getCXXOperatorName(OO_Delete);
+    if (FindDeallocationFunction(MD->getLocation(), MD->getParent(), Name,
+                                 OperatorDelete, false))
+      return true;
+  }
 
   // For an anonymous struct or union, the copy and assignment special members
   // will never be used, so skip the check. For an anonymous union declared at
@@ -4671,8 +4656,6 @@ bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM) {
   ContextRAII MethodContext(*this, MD);
 
   SpecialMemberDeletionInfo SMI(*this, MD, CSM);
-
-  // FIXME: We should put some diagnostic logic right into this function.
 
   for (CXXRecordDecl::base_class_iterator BI = RD->bases_begin(),
                                           BE = RD->bases_end(); BI != BE; ++BI)
@@ -7216,18 +7199,19 @@ CXXDestructorDecl *Sema::DeclareImplicitDestructor(CXXRecordDecl *ClassDecl) {
   // This could be uniqued if it ever proves significant.
   Destructor->setTypeSourceInfo(Context.getTrivialTypeSourceInfo(Ty));
 
+  AddOverriddenMethods(ClassDecl, Destructor);
+
   if (ShouldDeleteSpecialMember(Destructor, CXXDestructor))
     Destructor->setDeletedAsWritten();
-  
-  AddOverriddenMethods(ClassDecl, Destructor);
-  
+
   return Destructor;
 }
 
 void Sema::DefineImplicitDestructor(SourceLocation CurrentLocation,
                                     CXXDestructorDecl *Destructor) {
   assert((Destructor->isDefaulted() &&
-          !Destructor->doesThisDeclarationHaveABody()) &&
+          !Destructor->doesThisDeclarationHaveABody() &&
+          !Destructor->isDeleted()) &&
          "DefineImplicitDestructor - call it for implicit default dtor");
   CXXRecordDecl *ClassDecl = Destructor->getParent();
   assert(ClassDecl && "DefineImplicitDestructor - invalid destructor");
@@ -7677,7 +7661,8 @@ void Sema::DefineImplicitCopyAssignment(SourceLocation CurrentLocation,
   assert((CopyAssignOperator->isDefaulted() && 
           CopyAssignOperator->isOverloadedOperator() &&
           CopyAssignOperator->getOverloadedOperator() == OO_Equal &&
-          !CopyAssignOperator->doesThisDeclarationHaveABody()) &&
+          !CopyAssignOperator->doesThisDeclarationHaveABody() &&
+          !CopyAssignOperator->isDeleted()) &&
          "DefineImplicitCopyAssignment called for wrong function");
 
   CXXRecordDecl *ClassDecl = CopyAssignOperator->getParent();
@@ -8105,7 +8090,8 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
   assert((MoveAssignOperator->isDefaulted() && 
           MoveAssignOperator->isOverloadedOperator() &&
           MoveAssignOperator->getOverloadedOperator() == OO_Equal &&
-          !MoveAssignOperator->doesThisDeclarationHaveABody()) &&
+          !MoveAssignOperator->doesThisDeclarationHaveABody() &&
+          !MoveAssignOperator->isDeleted()) &&
          "DefineImplicitMoveAssignment called for wrong function");
 
   CXXRecordDecl *ClassDecl = MoveAssignOperator->getParent();
@@ -8592,7 +8578,8 @@ void Sema::DefineImplicitCopyConstructor(SourceLocation CurrentLocation,
                                    CXXConstructorDecl *CopyConstructor) {
   assert((CopyConstructor->isDefaulted() &&
           CopyConstructor->isCopyConstructor() &&
-          !CopyConstructor->doesThisDeclarationHaveABody()) &&
+          !CopyConstructor->doesThisDeclarationHaveABody() &&
+          !CopyConstructor->isDeleted()) &&
          "DefineImplicitCopyConstructor - call it for implicit copy ctor");
 
   CXXRecordDecl *ClassDecl = CopyConstructor->getParent();
@@ -8747,7 +8734,8 @@ void Sema::DefineImplicitMoveConstructor(SourceLocation CurrentLocation,
                                    CXXConstructorDecl *MoveConstructor) {
   assert((MoveConstructor->isDefaulted() &&
           MoveConstructor->isMoveConstructor() &&
-          !MoveConstructor->doesThisDeclarationHaveABody()) &&
+          !MoveConstructor->doesThisDeclarationHaveABody() &&
+          !MoveConstructor->isDeleted()) &&
          "DefineImplicitMoveConstructor - call it for implicit move ctor");
 
   CXXRecordDecl *ClassDecl = MoveConstructor->getParent();

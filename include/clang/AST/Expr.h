@@ -1085,11 +1085,11 @@ public:
 /// the APFloat/APInt values will never get freed. APNumericStorage uses
 /// ASTContext's allocator for memory allocation.
 class APNumericStorage {
-  unsigned BitWidth;
   union {
     uint64_t VAL;    ///< Used to store the <= 64 bits integer value.
     uint64_t *pVal;  ///< Used to store the >64 bits integer value.
   };
+  unsigned BitWidth;
 
   bool hasAllocation() const { return llvm::APInt::getNumWords(BitWidth) > 1; }
 
@@ -1097,7 +1097,7 @@ class APNumericStorage {
   APNumericStorage& operator=(const APNumericStorage&); // do not implement
 
 protected:
-  APNumericStorage() : BitWidth(0), VAL(0) { }
+  APNumericStorage() : VAL(0), BitWidth(0) { }
 
   llvm::APInt getIntValue() const {
     unsigned NumWords = llvm::APInt::getNumWords(BitWidth);
@@ -1109,13 +1109,13 @@ protected:
   void setIntValue(ASTContext &C, const llvm::APInt &Val);
 };
 
-class APIntStorage : public APNumericStorage {
+class APIntStorage : private APNumericStorage {
 public:
   llvm::APInt getValue() const { return getIntValue(); }
   void setValue(ASTContext &C, const llvm::APInt &Val) { setIntValue(C, Val); }
 };
 
-class APFloatStorage : public APNumericStorage {
+class APFloatStorage : private APNumericStorage {
 public:
   llvm::APFloat getValue(bool IsIEEE) const {
     return llvm::APFloat(getIntValue(), IsIEEE);
@@ -1125,8 +1125,7 @@ public:
   }
 };
 
-class IntegerLiteral : public Expr {
-  APIntStorage Num;
+class IntegerLiteral : public Expr, public APIntStorage {
   SourceLocation Loc;
 
   /// \brief Construct an empty integer literal.
@@ -1156,13 +1155,11 @@ public:
   /// \brief Returns a new empty integer literal.
   static IntegerLiteral *Create(ASTContext &C, EmptyShell Empty);
 
-  llvm::APInt getValue() const { return Num.getValue(); }
   SourceRange getSourceRange() const { return SourceRange(Loc); }
 
   /// \brief Retrieve the location of the literal.
   SourceLocation getLocation() const { return Loc; }
 
-  void setValue(ASTContext &C, const llvm::APInt &Val) { Num.setValue(C, Val); }
   void setLocation(SourceLocation Location) { Loc = Location; }
 
   static bool classof(const Stmt *T) {
@@ -1186,28 +1183,30 @@ public:
 private:
   unsigned Value;
   SourceLocation Loc;
-  unsigned Kind : 2;
 public:
   // type should be IntTy
   CharacterLiteral(unsigned value, CharacterKind kind, QualType type,
                    SourceLocation l)
     : Expr(CharacterLiteralClass, type, VK_RValue, OK_Ordinary, false, false,
            false, false),
-      Value(value), Loc(l), Kind(kind) {
+      Value(value), Loc(l) {
+    CharacterLiteralBits.Kind = kind;
   }
 
   /// \brief Construct an empty character literal.
   CharacterLiteral(EmptyShell Empty) : Expr(CharacterLiteralClass, Empty) { }
 
   SourceLocation getLocation() const { return Loc; }
-  CharacterKind getKind() const { return static_cast<CharacterKind>(Kind); }
+  CharacterKind getKind() const {
+    return static_cast<CharacterKind>(CharacterLiteralBits.Kind);
+  }
 
   SourceRange getSourceRange() const { return SourceRange(Loc); }
 
   unsigned getValue() const { return Value; }
 
   void setLocation(SourceLocation Location) { Loc = Location; }
-  void setKind(CharacterKind kind) { Kind = kind; }
+  void setKind(CharacterKind kind) { CharacterLiteralBits.Kind = kind; }
   void setValue(unsigned Val) { Value = Val; }
 
   static bool classof(const Stmt *T) {
@@ -1219,41 +1218,41 @@ public:
   child_range children() { return child_range(); }
 };
 
-class FloatingLiteral : public Expr {
-  APFloatStorage Num;
-  bool IsIEEE : 1; // Distinguishes between PPC128 and IEEE128.
-  bool IsExact : 1;
+class FloatingLiteral : public Expr, private APFloatStorage {
   SourceLocation Loc;
 
   FloatingLiteral(ASTContext &C, const llvm::APFloat &V, bool isexact,
                   QualType Type, SourceLocation L)
     : Expr(FloatingLiteralClass, Type, VK_RValue, OK_Ordinary, false, false,
-           false, false),
-      IsIEEE(&C.getTargetInfo().getLongDoubleFormat() ==
-             &llvm::APFloat::IEEEquad),
-      IsExact(isexact), Loc(L) {
+           false, false), Loc(L) {
+    FloatingLiteralBits.IsIEEE =
+      &C.getTargetInfo().getLongDoubleFormat() == &llvm::APFloat::IEEEquad;
+    FloatingLiteralBits.IsExact = isexact;
     setValue(C, V);
   }
 
   /// \brief Construct an empty floating-point literal.
   explicit FloatingLiteral(ASTContext &C, EmptyShell Empty)
-    : Expr(FloatingLiteralClass, Empty),
-      IsIEEE(&C.getTargetInfo().getLongDoubleFormat() ==
-             &llvm::APFloat::IEEEquad),
-      IsExact(false) { }
+    : Expr(FloatingLiteralClass, Empty) {
+    FloatingLiteralBits.IsIEEE =
+      &C.getTargetInfo().getLongDoubleFormat() == &llvm::APFloat::IEEEquad;
+    FloatingLiteralBits.IsExact = false;
+  }
 
 public:
   static FloatingLiteral *Create(ASTContext &C, const llvm::APFloat &V,
                                  bool isexact, QualType Type, SourceLocation L);
   static FloatingLiteral *Create(ASTContext &C, EmptyShell Empty);
 
-  llvm::APFloat getValue() const { return Num.getValue(IsIEEE); }
+  llvm::APFloat getValue() const {
+    return APFloatStorage::getValue(FloatingLiteralBits.IsIEEE);
+  }
   void setValue(ASTContext &C, const llvm::APFloat &Val) {
-    Num.setValue(C, Val);
+    APFloatStorage::setValue(C, Val);
   }
 
-  bool isExact() const { return IsExact; }
-  void setExact(bool E) { IsExact = E; }
+  bool isExact() const { return FloatingLiteralBits.IsExact; }
+  void setExact(bool E) { FloatingLiteralBits.IsExact = E; }
 
   /// getValueAsApproximateDouble - This returns the value as an inaccurate
   /// double.  Note that this may cause loss of precision, but is useful for
@@ -1340,10 +1339,10 @@ private:
     const uint32_t *asUInt32;
   } StrData;
   unsigned Length;
-  unsigned CharByteWidth;
-  unsigned NumConcatenated;
+  unsigned CharByteWidth : 4;
   unsigned Kind : 3;
-  bool IsPascal : 1;
+  unsigned IsPascal : 1;
+  unsigned NumConcatenated;
   SourceLocation TokLocs[1];
 
   StringLiteral(QualType Ty) :
@@ -1827,8 +1826,6 @@ public:
 /// expression operand.  Used for sizeof/alignof (C99 6.5.3.4) and
 /// vec_step (OpenCL 1.1 6.11.12).
 class UnaryExprOrTypeTraitExpr : public Expr {
-  unsigned Kind : 2;
-  bool isType : 1;    // true if operand is a type, false if an expression
   union {
     TypeSourceInfo *Ty;
     Stmt *Ex;
@@ -1845,7 +1842,9 @@ public:
            TInfo->getType()->isDependentType(),
            TInfo->getType()->isInstantiationDependentType(),
            TInfo->getType()->containsUnexpandedParameterPack()),
-      Kind(ExprKind), isType(true), OpLoc(op), RParenLoc(rp) {
+      OpLoc(op), RParenLoc(rp) {
+    UnaryExprOrTypeTraitExprBits.Kind = ExprKind;
+    UnaryExprOrTypeTraitExprBits.IsType = true;
     Argument.Ty = TInfo;
   }
 
@@ -1858,7 +1857,9 @@ public:
            E->isTypeDependent(),
            E->isInstantiationDependent(),
            E->containsUnexpandedParameterPack()),
-      Kind(ExprKind), isType(false), OpLoc(op), RParenLoc(rp) {
+      OpLoc(op), RParenLoc(rp) {
+    UnaryExprOrTypeTraitExprBits.Kind = ExprKind;
+    UnaryExprOrTypeTraitExprBits.IsType = false;
     Argument.Ex = E;
   }
 
@@ -1867,11 +1868,11 @@ public:
     : Expr(UnaryExprOrTypeTraitExprClass, Empty) { }
 
   UnaryExprOrTypeTrait getKind() const {
-    return static_cast<UnaryExprOrTypeTrait>(Kind);
+    return static_cast<UnaryExprOrTypeTrait>(UnaryExprOrTypeTraitExprBits.Kind);
   }
-  void setKind(UnaryExprOrTypeTrait K) { Kind = K; }
+  void setKind(UnaryExprOrTypeTrait K) { UnaryExprOrTypeTraitExprBits.Kind = K;}
 
-  bool isArgumentType() const { return isType; }
+  bool isArgumentType() const { return UnaryExprOrTypeTraitExprBits.IsType; }
   QualType getArgumentType() const {
     return getArgumentTypeInfo()->getType();
   }
@@ -1887,10 +1888,13 @@ public:
     return const_cast<UnaryExprOrTypeTraitExpr*>(this)->getArgumentExpr();
   }
 
-  void setArgument(Expr *E) { Argument.Ex = E; isType = false; }
+  void setArgument(Expr *E) {
+    Argument.Ex = E;
+    UnaryExprOrTypeTraitExprBits.IsType = false;
+  }
   void setArgument(TypeSourceInfo *TInfo) {
     Argument.Ty = TInfo;
-    isType = true;
+    UnaryExprOrTypeTraitExprBits.IsType = true;
   }
 
   /// Gets the argument type, or the type of the argument expression, whichever
@@ -2157,12 +2161,12 @@ class MemberExpr : public Expr {
   /// In X.F, this is the decl referenced by F.
   ValueDecl *MemberDecl;
 
-  /// MemberLoc - This is the location of the member name.
-  SourceLocation MemberLoc;
-
   /// MemberDNLoc - Provides source/type location info for the
   /// declaration name embedded in MemberDecl.
   DeclarationNameLoc MemberDNLoc;
+
+  /// MemberLoc - This is the location of the member name.
+  SourceLocation MemberLoc;
 
   /// IsArrow - True if this is "X->F", false if this is "X.F".
   bool IsArrow : 1;
@@ -2206,8 +2210,8 @@ public:
            base->isValueDependent(),
            base->isInstantiationDependent(),
            base->containsUnexpandedParameterPack()),
-      Base(base), MemberDecl(memberdecl), MemberLoc(NameInfo.getLoc()),
-      MemberDNLoc(NameInfo.getInfo()), IsArrow(isarrow),
+      Base(base), MemberDecl(memberdecl), MemberDNLoc(NameInfo.getInfo()),
+      MemberLoc(NameInfo.getLoc()), IsArrow(isarrow),
       HasQualifierOrFoundDecl(false), HasTemplateKWAndArgsInfo(false),
       HadMultipleCandidates(false) {
     assert(memberdecl->getDeclName() == NameInfo.getName());
@@ -2224,7 +2228,7 @@ public:
            base->isTypeDependent(), base->isValueDependent(),
            base->isInstantiationDependent(),
            base->containsUnexpandedParameterPack()),
-      Base(base), MemberDecl(memberdecl), MemberLoc(l), MemberDNLoc(),
+      Base(base), MemberDecl(memberdecl), MemberDNLoc(), MemberLoc(l),
       IsArrow(isarrow),
       HasQualifierOrFoundDecl(false), HasTemplateKWAndArgsInfo(false),
       HadMultipleCandidates(false) {}
@@ -2430,9 +2434,9 @@ class CompoundLiteralExpr : public Expr {
 
   /// The type as written.  This can be an incomplete array type, in
   /// which case the actual expression type will be different.
-  TypeSourceInfo *TInfo;
+  /// The int part of the pair stores whether this expr is file scope.
+  llvm::PointerIntPair<TypeSourceInfo *, 1, bool> TInfoAndScope;
   Stmt *Init;
-  bool FileScope;
 public:
   CompoundLiteralExpr(SourceLocation lparenloc, TypeSourceInfo *tinfo,
                       QualType T, ExprValueKind VK, Expr *init, bool fileScope)
@@ -2442,7 +2446,7 @@ public:
            (init->isInstantiationDependent() ||
             tinfo->getType()->isInstantiationDependentType()),
            init->containsUnexpandedParameterPack()),
-      LParenLoc(lparenloc), TInfo(tinfo), Init(init), FileScope(fileScope) {}
+      LParenLoc(lparenloc), TInfoAndScope(tinfo, fileScope), Init(init) {}
 
   /// \brief Construct an empty compound literal.
   explicit CompoundLiteralExpr(EmptyShell Empty)
@@ -2452,14 +2456,18 @@ public:
   Expr *getInitializer() { return cast<Expr>(Init); }
   void setInitializer(Expr *E) { Init = E; }
 
-  bool isFileScope() const { return FileScope; }
-  void setFileScope(bool FS) { FileScope = FS; }
+  bool isFileScope() const { return TInfoAndScope.getInt(); }
+  void setFileScope(bool FS) { TInfoAndScope.setInt(FS); }
 
   SourceLocation getLParenLoc() const { return LParenLoc; }
   void setLParenLoc(SourceLocation L) { LParenLoc = L; }
 
-  TypeSourceInfo *getTypeSourceInfo() const { return TInfo; }
-  void setTypeSourceInfo(TypeSourceInfo* tinfo) { TInfo = tinfo; }
+  TypeSourceInfo *getTypeSourceInfo() const {
+    return TInfoAndScope.getPointer();
+  }
+  void setTypeSourceInfo(TypeSourceInfo *tinfo) {
+    TInfoAndScope.setPointer(tinfo);
+  }
 
   SourceRange getSourceRange() const {
     // FIXME: Init should never be null.
@@ -3667,14 +3675,14 @@ private:
   /// The number of designators in this initializer expression.
   unsigned NumDesignators : 15;
 
-  /// \brief The designators in this designated initialization
-  /// expression.
-  Designator *Designators;
-
   /// The number of subexpressions of this initializer expression,
   /// which contains both the initializer and any additional
   /// expressions used by array and array-range designators.
   unsigned NumSubExprs : 16;
+
+  /// \brief The designators in this designated initialization
+  /// expression.
+  Designator *Designators;
 
 
   DesignatedInitExpr(ASTContext &C, QualType Ty, unsigned NumDesignators,
@@ -3685,7 +3693,7 @@ private:
 
   explicit DesignatedInitExpr(unsigned NumSubExprs)
     : Expr(DesignatedInitExprClass, EmptyShell()),
-      NumDesignators(0), Designators(0), NumSubExprs(NumSubExprs) { }
+      NumDesignators(0), NumSubExprs(NumSubExprs), Designators(0) { }
 
 public:
   /// A field designator, e.g., ".x".

@@ -1307,7 +1307,8 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
           if (Method) {
             Diag(Loc, diag::warn_instance_method_on_class_found)
               << Method->getSelector() << Sel;
-            Diag(Method->getLocation(), diag::note_method_declared_at);
+            Diag(Method->getLocation(), diag::note_method_declared_at)
+              << Method->getDeclName();
           }
         }
       } else {
@@ -1529,7 +1530,8 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
                   // selector names a +1 method 
                   Diag(SelLoc, 
                        diag::err_arc_perform_selector_retains);
-                  Diag(SelMethod->getLocation(), diag::note_method_declared_at);
+                  Diag(SelMethod->getLocation(), diag::note_method_declared_at)
+                    << SelMethod->getDeclName();
                 }
                 break;
               default:
@@ -1538,7 +1540,8 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
                   // selector names a +1 method
                   Diag(SelLoc, 
                        diag::err_arc_perform_selector_retains);
-                  Diag(SelMethod->getLocation(), diag::note_method_declared_at);
+                  Diag(SelMethod->getLocation(), diag::note_method_declared_at)
+                    << SelMethod->getDeclName();
                 }
                 break;
             }
