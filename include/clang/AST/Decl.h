@@ -1431,6 +1431,11 @@ private:
   /// no formals.
   ParmVarDecl **ParamInfo;
 
+  /// DeclsInPrototypeScope - Array of pointers to NamedDecls for
+  /// decls defined in the function prototype that are not parameters. E.g.
+  /// 'enum Y' in 'void f(enum Y {AA} x) {}'.
+  llvm::ArrayRef<NamedDecl*> DeclsInPrototypeScope;
+
   LazyDeclStmtPtr Body;
 
   // FIXME: This can be packed into the bitfields in Decl.
@@ -1795,6 +1800,11 @@ public:
   void setParams(llvm::ArrayRef<ParmVarDecl *> NewParamInfo) {
     setParams(getASTContext(), NewParamInfo);
   }
+
+  const llvm::ArrayRef<NamedDecl*> &getDeclsInPrototypeScope() const {
+    return DeclsInPrototypeScope;
+  }
+  void setDeclsInPrototypeScope(llvm::ArrayRef<NamedDecl *> NewDecls);
 
   /// getMinRequiredArguments - Returns the minimum number of arguments
   /// needed to call this function. This may be fewer than the number of
@@ -3050,6 +3060,7 @@ private:
   bool IsVariadic : 1;
   bool CapturesCXXThis : 1;
   bool BlockMissingReturnType : 1;
+  bool IsConversionFromLambda : 1;
   /// ParamInfo - new[]'d array of pointers to ParmVarDecls for the formal
   /// parameters of this function.  This is null if a prototype or if there are
   /// no formals.
@@ -3066,7 +3077,7 @@ protected:
   BlockDecl(DeclContext *DC, SourceLocation CaretLoc)
     : Decl(Block, DC, CaretLoc), DeclContext(Block),
       IsVariadic(false), CapturesCXXThis(false),
-      BlockMissingReturnType(true),
+      BlockMissingReturnType(true), IsConversionFromLambda(false),
       ParamInfo(0), NumParams(0), Body(0),
       SignatureAsWritten(0), Captures(0), NumCaptures(0) {}
 
@@ -3128,6 +3139,9 @@ public:
   bool blockMissingReturnType() const { return BlockMissingReturnType; }
   void setBlockMissingReturnType(bool val) { BlockMissingReturnType = val; }
 
+  bool isConversionFromLambda() const { return IsConversionFromLambda; }
+  void setIsConversionFromLambda(bool val) { IsConversionFromLambda = val; }
+
   bool capturesVariable(const VarDecl *var) const;
 
   void setCaptures(ASTContext &Context,
@@ -3154,7 +3168,7 @@ public:
 ///
 /// An import declaration imports the named module (or submodule). For example:
 /// \code
-///   @import std.vector;
+///   @__experimental_modules_import std.vector;
 /// \endcode
 ///
 /// Import declarations can also be implicitly generated from #include/#import 

@@ -417,13 +417,6 @@ AddDefaultCPlusPlusIncludePaths(const llvm::Triple &triple, const HeaderSearchOp
   case llvm::Triple::Solaris:
     AddGnuCPlusPlusIncludePaths("/usr/gcc/4.5/include/c++/4.5.2/",
                                 "i386-pc-solaris2.11", "", "", triple);
-    AddGnuCPlusPlusIncludePaths(
-        "/usr/gcc/4.5/lib/gcc/i386-pc-solaris2.11/4.5.2/include",
-        "", "", "", triple);
-    AddGnuCPlusPlusIncludePaths(
-        "/usr/gcc/4.5/lib/gcc/i386-pc-solaris2.11/4.5.2/include-fixed",
-        "", "", "", triple);
-
     // Solaris - Fall though..
   case llvm::Triple::AuroraUX:
     // AuroraUX
@@ -468,6 +461,11 @@ void InitHeaderSearch::AddDefaultIncludePaths(const LangOptions &Lang,
           AddPath(P.str(), CXXSystem, true, false, false, true);
         }
       }
+      // On Solaris, include the support directory for things like xlocale and
+      // fudged system headers.
+      if (triple.getOS() == llvm::Triple::Solaris) 
+        AddPath("/usr/include/c++/v1/support/solaris", CXXSystem, true, false,
+            false);
       
       AddPath("/usr/include/c++/v1", CXXSystem, true, false, false);
     } else {

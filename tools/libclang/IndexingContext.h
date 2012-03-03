@@ -53,6 +53,8 @@ struct DeclInfo : public CXIdxDeclInfo {
       Info_ObjCProtocol,
       Info_ObjCCategory,
 
+    Info_ObjCProperty,
+
     Info_CXXClass
   };
   
@@ -166,6 +168,20 @@ struct ObjCCategoryDeclInfo : public ObjCContainerDeclInfo {
     return D->Kind == Info_ObjCCategory;
   }
   static bool classof(const ObjCCategoryDeclInfo *D) { return true; }
+};
+
+struct ObjCPropertyDeclInfo : public DeclInfo {
+  CXIdxObjCPropertyDeclInfo ObjCPropDeclInfo;
+
+  ObjCPropertyDeclInfo()
+    : DeclInfo(Info_ObjCProperty,
+               /*isRedeclaration=*/false, /*isDefinition=*/false,
+               /*isContainer=*/false) { }
+
+  static bool classof(const DeclInfo *D) {
+    return D->Kind == Info_ObjCProperty;
+  }
+  static bool classof(const ObjCPropertyDeclInfo *D) { return true; }
 };
 
 struct CXXClassDeclInfo : public DeclInfo {
@@ -390,7 +406,8 @@ public:
   bool handleObjCMethod(const ObjCMethodDecl *D);
 
   bool handleSynthesizedObjCProperty(const ObjCPropertyImplDecl *D);
-  bool handleSynthesizedObjCMethod(const ObjCMethodDecl *D, SourceLocation Loc);
+  bool handleSynthesizedObjCMethod(const ObjCMethodDecl *D, SourceLocation Loc,
+                                   const DeclContext *LexicalDC);
 
   bool handleObjCProperty(const ObjCPropertyDecl *D);
 
@@ -436,7 +453,8 @@ public:
 private:
   bool handleDecl(const NamedDecl *D,
                   SourceLocation Loc, CXCursor Cursor,
-                  DeclInfo &DInfo);
+                  DeclInfo &DInfo,
+                  const DeclContext *LexicalDC = 0);
 
   bool handleObjCContainer(const ObjCContainerDecl *D,
                            SourceLocation Loc, CXCursor Cursor,

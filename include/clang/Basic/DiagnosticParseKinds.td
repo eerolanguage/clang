@@ -154,6 +154,9 @@ def err_expected_fn_body : Error<
 def warn_attribute_on_function_definition : Warning<
   "GCC does not allow %0 attribute in this position on a function definition">, 
   InGroup<GccCompat>;
+def warn_attribute_no_decl : Warning<
+  "attribute %0 ignored, because it is not attached to a declaration">, 
+  InGroup<IgnoredAttributes>;
 def err_expected_method_body : Error<"expected method body">;
 def err_invalid_token_after_toplevel_declarator : Error<
   "expected ';' after top level declarator">;
@@ -229,6 +232,8 @@ def ext_generalized_initializer_lists : ExtWarn<
 def warn_cxx98_compat_generalized_initializer_lists : Warning<
   "generalized initializer lists are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
+def err_init_list_bin_op : Error<"initializer list cannot be used on the "
+  "%select{left|right}0 hand side of operator '%1'">;
 def warn_cxx98_compat_trailing_return_type : Warning<
   "trailing return types are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;

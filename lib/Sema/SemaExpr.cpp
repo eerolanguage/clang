@@ -587,6 +587,11 @@ ExprResult Sema::DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
       E = Comma.get();
     }
   }
+  // c++ rules are enforced elsewhere.
+  if (!getLangOptions().CPlusPlus &&
+      RequireCompleteType(E->getExprLoc(), E->getType(),
+                          diag::err_call_incomplete_argument))
+    return ExprError();
   
   return Owned(E);
 }
@@ -5943,6 +5948,46 @@ static bool checkArithmethicPointerOnNonFragileABI(Sema &S,
   return false;
 }
 
+/// diagnoseStringPlusInt - Emit a warning when adding an integer to a string
+/// literal.
+static void diagnoseStringPlusInt(Sema &Self, SourceLocation OpLoc,
+                                  Expr *LHSExpr, Expr *RHSExpr) {
+  StringLiteral* StrExpr = dyn_cast<StringLiteral>(LHSExpr->IgnoreImpCasts());
+  Expr* IndexExpr = RHSExpr;
+  if (!StrExpr) {
+    StrExpr = dyn_cast<StringLiteral>(RHSExpr->IgnoreImpCasts());
+    IndexExpr = LHSExpr;
+  }
+
+  bool IsStringPlusInt = StrExpr &&
+      IndexExpr->getType()->isIntegralOrUnscopedEnumerationType();
+  if (!IsStringPlusInt)
+    return;
+
+  llvm::APSInt index;
+  if (IndexExpr->EvaluateAsInt(index, Self.getASTContext())) {
+    unsigned StrLenWithNull = StrExpr->getLength() + 1;
+    if (index.isNonNegative() &&
+        index <= llvm::APSInt(llvm::APInt(index.getBitWidth(), StrLenWithNull),
+                              index.isUnsigned()))
+      return;
+  }
+
+  SourceRange DiagRange(LHSExpr->getLocStart(), RHSExpr->getLocEnd());
+  Self.Diag(OpLoc, diag::warn_string_plus_int)
+      << DiagRange << IndexExpr->IgnoreImpCasts()->getType();
+
+  // Only print a fixit for "str" + int, not for int + "str".
+  if (IndexExpr == RHSExpr) {
+    SourceLocation EndLoc = Self.PP.getLocForEndOfToken(RHSExpr->getLocEnd());
+    Self.Diag(OpLoc, diag::note_string_plus_int_silence)
+        << FixItHint::CreateInsertion(LHSExpr->getLocStart(), "&")
+        << FixItHint::CreateReplacement(SourceRange(OpLoc), "[")
+        << FixItHint::CreateInsertion(EndLoc, "]");
+  } else
+    Self.Diag(OpLoc, diag::note_string_plus_int_silence);
+}
+
 /// \brief Emit error when two pointers are incompatible.
 static void diagnosePointerIncompatibility(Sema &S, SourceLocation Loc,
                                            Expr *LHSExpr, Expr *RHSExpr) {
@@ -5954,7 +5999,8 @@ static void diagnosePointerIncompatibility(Sema &S, SourceLocation Loc,
 }
 
 QualType Sema::CheckAdditionOperands( // C99 6.5.6
-  ExprResult &LHS, ExprResult &RHS, SourceLocation Loc, QualType* CompLHSTy) {
+    ExprResult &LHS, ExprResult &RHS, SourceLocation Loc, unsigned Opc,
+    QualType* CompLHSTy) {
   checkArithmeticNull(*this, LHS, RHS, Loc, /*isCompare=*/false);
 
   if (LHS.get()->getType()->isVectorType() ||
@@ -5967,6 +6013,10 @@ QualType Sema::CheckAdditionOperands( // C99 6.5.6
   QualType compType = UsualArithmeticConversions(LHS, RHS, CompLHSTy);
   if (LHS.isInvalid() || RHS.isInvalid())
     return QualType();
+
+  // Diagnose "string literal" '+' int.
+  if (Opc == BO_Add)
+    diagnoseStringPlusInt(*this, Loc, LHS.get(), RHS.get());
 
   // handle the common case first (both operands are arithmetic).
   if (LHS.get()->getType()->isArithmeticType() &&
@@ -7664,7 +7714,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
     ResultTy = CheckRemainderOperands(LHS, RHS, OpLoc);
     break;
   case BO_Add:
-    ResultTy = CheckAdditionOperands(LHS, RHS, OpLoc);
+    ResultTy = CheckAdditionOperands(LHS, RHS, OpLoc, Opc);
     break;
   case BO_Sub:
     ResultTy = CheckSubtractionOperands(LHS, RHS, OpLoc);
@@ -7707,7 +7757,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
       ResultTy = CheckAssignmentOperands(LHS.get(), RHS, OpLoc, CompResultTy);
     break;
   case BO_AddAssign:
-    CompResultTy = CheckAdditionOperands(LHS, RHS, OpLoc, &CompLHSTy);
+    CompResultTy = CheckAdditionOperands(LHS, RHS, OpLoc, Opc, &CompLHSTy);
     if (!CompResultTy.isNull() && !LHS.isInvalid() && !RHS.isInvalid())
       ResultTy = CheckAssignmentOperands(LHS.get(), RHS, OpLoc, CompResultTy);
     break;
@@ -9000,7 +9050,7 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
   // Decode the result (notice that AST's are still created for extensions).
   bool CheckInferredResultType = false;
   bool isInvalid = false;
-  unsigned DiagKind;
+  unsigned DiagKind = 0;
   FixItHint Hint;
   ConversionFixItGenerator ConvHints;
   bool MayHaveConvFixit = false;
@@ -9308,6 +9358,8 @@ namespace {
 }
 
 ExprResult Sema::TranformToPotentiallyEvaluated(Expr *E) {
+  assert(ExprEvalContexts.back().Context == Unevaluated &&
+         "Should only transform unevaluated expressions");
   ExprEvalContexts.back().Context =
       ExprEvalContexts[ExprEvalContexts.size()-2].Context;
   if (ExprEvalContexts.back().Context == Unevaluated)
@@ -9628,6 +9680,7 @@ static ExprResult captureInLambda(Sema &S, LambdaScopeInfo *LSI,
   //   An entity captured by a lambda-expression is odr-used (3.2) in
   //   the scope containing the lambda-expression.
   Expr *Ref = new (S.Context) DeclRefExpr(Var, DeclRefType, VK_LValue, Loc);
+  Var->setReferenced(true);
   Var->setUsed(true);
 
   // When the field has array type, create index variables for each
@@ -10023,6 +10076,18 @@ void Sema::UpdateMarkingForLValueToRValue(Expr *E) {
   MaybeODRUseExprs.erase(E->IgnoreParens());
 }
 
+ExprResult Sema::ActOnConstantExpression(ExprResult Res) {
+  if (!Res.isUsable())
+    return Res;
+
+  // If a constant-expression is a reference to a variable where we delay
+  // deciding whether it is an odr-use, just assume we will apply the
+  // lvalue-to-rvalue conversion.  In the one case where this doesn't happen
+  // (a non-type template argument), we have special handling anyway.
+  UpdateMarkingForLValueToRValue(Res.get());
+  return Res;
+}
+
 void Sema::CleanupVarDeclMarking() {
   for (llvm::SmallPtrSetIterator<Expr*> i = MaybeODRUseExprs.begin(),
                                         e = MaybeODRUseExprs.end();
@@ -10087,9 +10152,10 @@ static void DoMarkVarDeclReferenced(Sema &SemaRef, SourceLocation Loc,
   // is immediately applied."  We check the first part here, and
   // Sema::UpdateMarkingForLValueToRValue deals with the second part.
   // Note that we use the C++11 definition everywhere because nothing in
-  // C++03 depends on whether we get the C++03 version correct.
+  // C++03 depends on whether we get the C++03 version correct. This does not
+  // apply to references, since they are not objects.
   const VarDecl *DefVD;
-  if (E && !isa<ParmVarDecl>(Var) &&
+  if (E && !isa<ParmVarDecl>(Var) && !Var->getType()->isReferenceType() &&
       Var->isUsableInConstantExpressions() &&
       Var->getAnyInitializer(DefVD) && DefVD->checkInitIsICE())
     SemaRef.MaybeODRUseExprs.insert(E);

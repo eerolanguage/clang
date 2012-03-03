@@ -120,8 +120,15 @@ void Preprocessor::ReadMacroName(Token &MacroNameTok, char isDefineUndef) {
     std::string Spelling = getSpelling(MacroNameTok, &Invalid);
     if (Invalid)
       return;
-    
+
     const IdentifierInfo &Info = Identifiers.get(Spelling);
+
+    // Allow #defining |and| and friends in microsoft mode.
+    if (Info.isCPlusPlusOperatorKeyword() && getLangOptions().MicrosoftMode) {
+      MacroNameTok.setIdentifierInfo(getIdentifierInfo(Spelling));
+      return;
+    }
+
     if (Info.isCPlusPlusOperatorKeyword())
       // C++ 2.5p2: Alternative tokens behave the same as its primary token
       // except for their spellings.
@@ -1267,6 +1274,7 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
     return;
   }
 
+  StringRef OriginalFilename = Filename;
   bool isAngled =
     GetIncludeFilenameSpelling(FilenameTok.getLocation(), Filename);
   // If GetIncludeFilenameSpelling set the start ptr to null, there was an
@@ -1295,6 +1303,15 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
 
     // Immediately leave the pragma.
     PragmaARCCFCodeAuditedLoc = SourceLocation();
+  }
+
+  if (HeaderInfo.HasIncludeAliasMap()) {
+    // Map the filename with the brackets still attached.  If the name doesn't 
+    // map to anything, fall back on the filename we've already gotten the 
+    // spelling for.
+    StringRef NewName = HeaderInfo.MapHeaderToIncludeAlias(OriginalFilename);
+    if (!NewName.empty())
+      Filename = NewName;
   }
 
   // Search include directories.
@@ -1394,7 +1411,7 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
       Diag(HashLoc, diag::warn_auto_module_import)
         << IncludeKind << PathString 
         << FixItHint::CreateReplacement(ReplaceRange,
-             "@import " + PathString.str().str() + ";");
+             "@__experimental_modules_import " + PathString.str().str() + ";");
     }
     
     // Load the module.

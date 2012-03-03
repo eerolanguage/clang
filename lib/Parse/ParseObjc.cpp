@@ -65,7 +65,7 @@ Parser::DeclGroupPtrTy Parser::ParseObjCAtDirectives() {
   case tok::objc_dynamic:
     SingleDecl = ParseObjCPropertyDynamic(AtLoc);
     break;
-  case tok::objc_import:
+  case tok::objc___experimental_modules_import:
     if (getLang().Modules)
       return ParseModuleImport(AtLoc);
       
@@ -296,13 +296,15 @@ public:
   SmallVectorImpl<Decl *> &Props;
   ObjCDeclSpec &OCDS;
   SourceLocation AtLoc;
+  SourceLocation LParenLoc;
   tok::ObjCKeywordKind MethodImplKind;
         
   ObjCPropertyCallback(Parser &P, 
                        SmallVectorImpl<Decl *> &Props,
                        ObjCDeclSpec &OCDS, SourceLocation AtLoc,
+                       SourceLocation LParenLoc,
                        tok::ObjCKeywordKind MethodImplKind) :
-    P(P), Props(Props), OCDS(OCDS), AtLoc(AtLoc),
+    P(P), Props(Props), OCDS(OCDS), AtLoc(AtLoc), LParenLoc(LParenLoc),
     MethodImplKind(MethodImplKind) {
   }
 
@@ -334,7 +336,8 @@ public:
                                                      FD.D.getIdentifier());
     bool isOverridingProperty = false;
     Decl *Property =
-      P.Actions.ActOnProperty(P.getCurScope(), AtLoc, FD, OCDS,
+      P.Actions.ActOnProperty(P.getCurScope(), AtLoc, LParenLoc,
+                              FD, OCDS,
                               GetterSel, SetterSel, 
                               &isOverridingProperty,
                               MethodImplKind);
@@ -494,12 +497,15 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
         Diag(AtLoc, diag::err_objc_properties_require_objc2);
 
       ObjCDeclSpec OCDS;
+      SourceLocation LParenLoc;
       // Parse property attribute list, if any.
-      if (Tok.is(tok::l_paren))
+      if (Tok.is(tok::l_paren)) {
+        LParenLoc = Tok.getLocation();
         ParseObjCPropertyAttribute(OCDS);
+      }
 
       ObjCPropertyCallback Callback(*this, allProperties,
-                                    OCDS, AtLoc, MethodImplKind);
+                                    OCDS, AtLoc, LParenLoc, MethodImplKind);
 
       // Parse all the comma separated declarators.
       DeclSpec DS(AttrFactory);

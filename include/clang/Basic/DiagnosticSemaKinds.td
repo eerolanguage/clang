@@ -132,7 +132,11 @@ def warn_unused_variable : Warning<"unused variable %0">,
 def warn_unused_exception_param : Warning<"unused exception parameter %0">,
   InGroup<UnusedExceptionParameter>, DefaultIgnore;
 def warn_decl_in_param_list : Warning<
-  "declaration of %0 will not be visible outside of this function">;
+  "declaration of %0 will not be visible outside of this function">,
+  InGroup<Visibility>;
+def warn_redefinition_in_param_list : Warning<
+  "redefinition of %0 will not be visible outside of this function">,
+  InGroup<Visibility>;
 def warn_empty_parens_are_function_decl : Warning<
   "empty parentheses interpreted as a function declaration">,
   InGroup<VexingParse>;
@@ -3426,6 +3430,12 @@ def warn_self_assignment : Warning<
   "explicitly assigning a variable of type %0 to itself">,
   InGroup<SelfAssignment>, DefaultIgnore;
 
+def warn_string_plus_int : Warning<
+  "adding %0 to a string does not append to the string">,
+  InGroup<StringPlusInt>;
+def note_string_plus_int_silence : Note<
+  "use array indexing to silence this warning">;
+
 def warn_sizeof_array_param : Warning<
   "sizeof on array function parameter will return size of %0 instead of %1">,
   InGroup<SizeofArrayArgument>;
@@ -4197,7 +4207,8 @@ def ext_typecheck_convert_pointer_int : ExtWarn<
   "%select{|dereference with *|"
   "take the address with &|"
   "remove *|"
-  "remove &}3">;
+  "remove &}3">,
+  InGroup<IntConversions>;
 def ext_typecheck_convert_int_pointer : ExtWarn<
   "incompatible integer to pointer conversion "
   "%select{assigning to|passing|returning|converting|initializing|sending|casting}2"
@@ -4207,7 +4218,8 @@ def ext_typecheck_convert_int_pointer : ExtWarn<
   "%select{|dereference with *|"
   "take the address with &|"
   "remove *|"
-  "remove &}3">;
+  "remove &}3">,
+  InGroup<IntConversions>;
 def ext_typecheck_convert_pointer_void_func : Extension<
   "%select{assigning to|passing|returning|converting|initializing|sending|casting}2"
   " %0 "

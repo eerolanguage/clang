@@ -85,6 +85,8 @@ public:
   unsigned CFGAddInitializers : 1;
   unsigned EagerlyTrimEGraph : 1;
   unsigned PrintStats : 1;
+  unsigned InlineMaxStackDepth;
+  unsigned InlineMaxFunctionSize;
 
 public:
   AnalyzerOptions() {
@@ -100,12 +102,15 @@ public:
     TrimGraph = 0;
     VisualizeEGDot = 0;
     VisualizeEGUbi = 0;
-    InlineCall = 0;
+    InlineCall = 1;
     UnoptimizedCFG = 0;
     CFGAddImplicitDtors = 0;
     CFGAddInitializers = 0;
     EagerlyTrimEGraph = 0;
     PrintStats = 0;
+    // Cap the stack depth at 4 calls (5 stack frames, base + 4 calls).
+    InlineMaxStackDepth = 5;
+    InlineMaxFunctionSize = 10;
   }
 };
 

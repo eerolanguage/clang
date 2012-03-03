@@ -41,7 +41,7 @@ IdentifierInfo::IdentifierInfo() {
   ChangedAfterLoad = false;
   RevertedTokenID = false;
   OutOfDate = false;
-  IsImport = false;
+  IsModulesImport = false;
   FETokenInfo = 0;
   Entry = 0;
 }
@@ -78,6 +78,10 @@ IdentifierTable::IdentifierTable(const LangOptions &LangOpts,
   // Populate the identifier table with info about keywords for the current
   // language.
   AddKeywords(LangOpts);
+      
+
+  // Add the '_experimental_modules_import' contextual keyword.
+  get("__experimental_modules_import").setModulesImport(true);
 }
 
 //===----------------------------------------------------------------------===//

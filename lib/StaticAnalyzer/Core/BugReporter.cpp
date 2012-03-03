@@ -111,6 +111,58 @@ GetCurrentOrNextStmt(const ExplodedNode *N) {
 }
 
 //===----------------------------------------------------------------------===//
+// Diagnostic cleanup.
+//===----------------------------------------------------------------------===//
+
+/// Recursively scan through a path and prune out calls and macros pieces
+/// that aren't needed.  Return true if afterwards the path contains
+/// "interesting stuff" which means it should be pruned from the parent path.
+static bool RemoveUneededCalls(PathPieces &pieces) {
+  bool containsSomethingInteresting = false;
+  const unsigned N = pieces.size();
+  
+  for (unsigned i = 0 ; i < N ; ++i) {
+    // Remove the front piece from the path.  If it is still something we
+    // want to keep once we are done, we will push it back on the end.
+    IntrusiveRefCntPtr<PathDiagnosticPiece> piece(pieces.front());
+    pieces.pop_front();
+    
+    switch (piece->getKind()) {
+      case PathDiagnosticPiece::Call: {
+        PathDiagnosticCallPiece *call = cast<PathDiagnosticCallPiece>(piece);
+        // Recursively clean out the subclass.  Keep this call around if
+        // it contains any informative diagnostics.
+        if (!RemoveUneededCalls(call->path))
+          continue;
+        containsSomethingInteresting = true;
+        break;
+      }
+      case PathDiagnosticPiece::Macro: {
+        PathDiagnosticMacroPiece *macro = cast<PathDiagnosticMacroPiece>(piece);
+        if (!RemoveUneededCalls(macro->subPieces))
+          continue;
+        containsSomethingInteresting = true;
+        break;
+      }
+      case PathDiagnosticPiece::Event: {
+        PathDiagnosticEventPiece *event = cast<PathDiagnosticEventPiece>(piece);
+        // We never throw away an event, but we do throw it away wholesale
+        // as part of a path if we throw the entire path away.
+        if (!event->isPrunable())
+          containsSomethingInteresting = true;
+        break;
+      }
+      case PathDiagnosticPiece::ControlFlow:
+        break;
+    }
+    
+    pieces.push_back(piece);
+  }
+  
+  return containsSomethingInteresting;
+}
+
+//===----------------------------------------------------------------------===//
 // PathDiagnosticBuilder and its associated routines and helper objects.
 //===----------------------------------------------------------------------===//
 
@@ -512,7 +564,7 @@ public:
 // "Minimal" path diagnostic generation algorithm.
 //===----------------------------------------------------------------------===//
 
-static void CompactPathDiagnostic(PathDiagnostic &PD, const SourceManager& SM);
+static void CompactPathDiagnostic(PathPieces &path, const SourceManager& SM);
 
 static void GenerateMinimalPathDiagnostic(PathDiagnostic& PD,
                                           PathDiagnosticBuilder &PDB,
@@ -825,7 +877,7 @@ static void GenerateMinimalPathDiagnostic(PathDiagnostic& PD,
 
   // After constructing the full PathDiagnostic, do a pass over it to compact
   // PathDiagnosticPieces that occur within a macro.
-  CompactPathDiagnostic(PD, PDB.getSourceManager());
+  CompactPathDiagnostic(PD.getMutablePieces(), PDB.getSourceManager());
 }
 
 //===----------------------------------------------------------------------===//
@@ -1177,17 +1229,14 @@ static void GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
         PD.pushActivePath(&C->path);
         break;
       }
-
-      // Note that is important that we update the LocationContext
-      // after looking at CallExits.  CallExit basically adds an
-      // edge in the *caller*, so we don't want to update the LocationContext
-      // too soon.
-      PDB.LC = N->getLocationContext();
-
+      
       // Pop the call hierarchy if we are done walking the contents
       // of a function call.
       if (const CallEnter *CE = dyn_cast<CallEnter>(&P)) {
+        EB.flushLocations();
         PD.popActivePath();
+        assert(!PD.getActivePath().empty());
+        PDB.LC = N->getLocationContext();
         // The current active path should never be empty.  Either we
         // just added a bunch of stuff to the top-level path, or
         // we have a previous CallExit.  If the front of the active
@@ -1195,16 +1244,20 @@ static void GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
         // path terminated within a function call.  We must then take the
         // current contents of the active path and place it within
         // a new PathDiagnosticCallPiece.
-        assert(!PD.getActivePath().empty());
-        PathDiagnosticCallPiece *C = 
+        PathDiagnosticCallPiece *C =
           dyn_cast<PathDiagnosticCallPiece>(PD.getActivePath().front());
         if (!C)
           C = PathDiagnosticCallPiece::construct(PD.getActivePath());
         C->setCallee(*CE, SM);
-        EB.flushLocations();
         EB.addContext(CE->getCallExpr());
         break;
       }
+      
+      // Note that is important that we update the LocationContext
+      // after looking at CallExits.  CallExit basically adds an
+      // edge in the *caller*, so we don't want to update the LocationContext
+      // too soon.
+      PDB.LC = N->getLocationContext();
 
       // Block edges.
       if (const BlockEdge *BE = dyn_cast<BlockEdge>(&P)) {        
@@ -1600,7 +1653,7 @@ MakeReportGraph(const ExplodedGraph* G,
 
 /// CompactPathDiagnostic - This function postprocesses a PathDiagnostic object
 ///  and collapses PathDiagosticPieces that are expanded by macros.
-static void CompactPathDiagnostic(PathDiagnostic &PD, const SourceManager& SM) {
+static void CompactPathDiagnostic(PathPieces &path, const SourceManager& SM) {
   typedef std::vector<std::pair<IntrusiveRefCntPtr<PathDiagnosticMacroPiece>,
                                 SourceLocation> > MacroStackTy;
 
@@ -1610,10 +1663,18 @@ static void CompactPathDiagnostic(PathDiagnostic &PD, const SourceManager& SM) {
   MacroStackTy MacroStack;
   PiecesTy Pieces;
 
-  for (PathPieces::const_iterator I = PD.path.begin(), E = PD.path.end();
+  for (PathPieces::const_iterator I = path.begin(), E = path.end();
        I!=E; ++I) {
+    
+    PathDiagnosticPiece *piece = I->getPtr();
+
+    // Recursively compact calls.
+    if (PathDiagnosticCallPiece *call=dyn_cast<PathDiagnosticCallPiece>(piece)){
+      CompactPathDiagnostic(call->path, SM);
+    }
+    
     // Get the location of the PathDiagnosticPiece.
-    const FullSourceLoc Loc = (*I)->getLocation().asLocation();
+    const FullSourceLoc Loc = piece->getLocation().asLocation();
 
     // Determine the instantiation location, which is the location we group
     // related PathDiagnosticPieces.
@@ -1623,7 +1684,7 @@ static void CompactPathDiagnostic(PathDiagnostic &PD, const SourceManager& SM) {
 
     if (Loc.isFileID()) {
       MacroStack.clear();
-      Pieces.push_back(*I);
+      Pieces.push_back(piece);
       continue;
     }
 
@@ -1631,7 +1692,7 @@ static void CompactPathDiagnostic(PathDiagnostic &PD, const SourceManager& SM) {
 
     // Is the PathDiagnosticPiece within the same macro group?
     if (!MacroStack.empty() && InstantiationLoc == MacroStack.back().second) {
-      MacroStack.back().first->subPieces.push_back(*I);
+      MacroStack.back().first->subPieces.push_back(piece);
       continue;
     }
 
@@ -1662,7 +1723,7 @@ static void CompactPathDiagnostic(PathDiagnostic &PD, const SourceManager& SM) {
       // Create a new macro group and add it to the stack.
       PathDiagnosticMacroPiece *NewGroup =
         new PathDiagnosticMacroPiece(
-          PathDiagnosticLocation::createSingleLocation((*I)->getLocation()));
+          PathDiagnosticLocation::createSingleLocation(piece->getLocation()));
 
       if (MacroGroup)
         MacroGroup->subPieces.push_back(NewGroup);
@@ -1676,18 +1737,14 @@ static void CompactPathDiagnostic(PathDiagnostic &PD, const SourceManager& SM) {
     }
 
     // Finally, add the PathDiagnosticPiece to the group.
-    MacroGroup->subPieces.push_back(*I);
+    MacroGroup->subPieces.push_back(piece);
   }
 
   // Now take the pieces and construct a new PathDiagnostic.
-  PD.getMutablePieces().clear();
+  path.clear();
 
-  for (PiecesTy::iterator I=Pieces.begin(), E=Pieces.end(); I!=E; ++I) {
-    if (PathDiagnosticMacroPiece *MP = dyn_cast<PathDiagnosticMacroPiece>(*I))
-      if (!MP->containsEvent())
-        continue;
-    PD.getMutablePieces().push_back(*I);
-  }
+  for (PiecesTy::iterator I=Pieces.begin(), E=Pieces.end(); I!=E; ++I)
+    path.push_back(*I);
 }
 
 void GRBugReporter::GeneratePathDiagnostic(PathDiagnostic& PD,
@@ -1749,6 +1806,11 @@ void GRBugReporter::GeneratePathDiagnostic(PathDiagnostic& PD,
       GenerateMinimalPathDiagnostic(PD, PDB, N);
       break;
   }
+  
+  // Finally, prune the diagnostic path of uninteresting stuff.
+  bool hasSomethingInteresting = RemoveUneededCalls(PD.getMutablePieces());
+  assert(hasSomethingInteresting);
+  (void) hasSomethingInteresting;
 }
 
 void BugReporter::Register(BugType *BT) {

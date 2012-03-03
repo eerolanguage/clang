@@ -257,7 +257,8 @@ void IndexingContext::handleDiagnosticSet(CXDiagnostic CXDiagSet) {
 
 bool IndexingContext::handleDecl(const NamedDecl *D,
                                  SourceLocation Loc, CXCursor Cursor,
-                                 DeclInfo &DInfo) {
+                                 DeclInfo &DInfo,
+                                 const DeclContext *LexicalDC) {
   if (!CB.indexDeclaration || !D)
     return false;
   if (D->isImplicit() && shouldIgnoreIfImplicit(D))
@@ -268,6 +269,9 @@ bool IndexingContext::handleDecl(const NamedDecl *D,
   if ((!shouldIndexFunctionLocalSymbols() && !DInfo.EntInfo.USR)
       || Loc.isInvalid())
     return false;
+
+  if (!LexicalDC)
+    LexicalDC = D->getLexicalDeclContext();
 
   if (shouldSuppressRefs())
     markEntityOccurrenceInFile(D, Loc);
@@ -284,7 +288,7 @@ bool IndexingContext::handleDecl(const NamedDecl *D,
   getContainerInfo(D->getDeclContext(), DInfo.SemanticContainer);
   DInfo.semanticContainer = &DInfo.SemanticContainer;
 
-  if (D->getLexicalDeclContext() == D->getDeclContext()) {
+  if (LexicalDC == D->getDeclContext()) {
     DInfo.lexicalContainer = &DInfo.SemanticContainer;
   } else if (isTemplateImplicitInstantiation(D)) {
     // Implicit instantiations have the lexical context of where they were
@@ -295,7 +299,7 @@ bool IndexingContext::handleDecl(const NamedDecl *D,
     //   information anyway.
     DInfo.lexicalContainer = &DInfo.SemanticContainer;
   } else {
-    getContainerInfo(D->getLexicalDeclContext(), DInfo.LexicalContainer);
+    getContainerInfo(LexicalDC, DInfo.LexicalContainer);
     DInfo.lexicalContainer = &DInfo.LexicalContainer;
   }
 
@@ -510,15 +514,34 @@ bool IndexingContext::handleSynthesizedObjCProperty(
 }
 
 bool IndexingContext::handleSynthesizedObjCMethod(const ObjCMethodDecl *D,
-                                                  SourceLocation Loc) {
+                                                  SourceLocation Loc,
+                                                 const DeclContext *LexicalDC) {
   DeclInfo DInfo(/*isRedeclaration=*/true, /*isDefinition=*/true,
                  /*isContainer=*/false);
-  return handleDecl(D, Loc, getCursor(D), DInfo);
+  return handleDecl(D, Loc, getCursor(D), DInfo, LexicalDC);
 }
 
 bool IndexingContext::handleObjCProperty(const ObjCPropertyDecl *D) {
-  DeclInfo DInfo(/*isRedeclaration=*/false, /*isDefinition=*/false,
-                 /*isContainer=*/false);
+  ObjCPropertyDeclInfo DInfo;
+  EntityInfo GetterEntity;
+  EntityInfo SetterEntity;
+  ScratchAlloc SA(*this);
+
+  DInfo.ObjCPropDeclInfo.declInfo = &DInfo;
+
+  if (ObjCMethodDecl *Getter = D->getGetterMethodDecl()) {
+    getEntityInfo(Getter, GetterEntity, SA);
+    DInfo.ObjCPropDeclInfo.getter = &GetterEntity;
+  } else {
+    DInfo.ObjCPropDeclInfo.getter = 0;
+  }
+  if (ObjCMethodDecl *Setter = D->getSetterMethodDecl()) {
+    getEntityInfo(Setter, SetterEntity, SA);
+    DInfo.ObjCPropDeclInfo.setter = &SetterEntity;
+  } else {
+    DInfo.ObjCPropDeclInfo.setter = 0;
+  }
+
   return handleDecl(D, D->getLocation(), getCursor(D), DInfo);
 }
 

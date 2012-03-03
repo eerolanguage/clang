@@ -1794,8 +1794,15 @@ static void handleObjCNSObject(Sema &S, Decl *D, const AttributeList &Attr) {
       return;
     }
   }
-  else 
+  else if (!isa<ObjCPropertyDecl>(D)) {
+    // It is okay to include this attribute on properties, e.g.:
+    //
+    //  @property (retain, nonatomic) struct Bork *Q __attribute__((NSObject));
+    //
+    // In this case it follows tradition and suppresses an error in the above
+    // case.    
     S.Diag(D->getLocation(), diag::warn_nsobject_attribute);
+  }
   D->addAttr(::new (S.Context) ObjCNSObjectAttr(Attr.getRange(), S.Context));
 }
 
@@ -4114,6 +4121,11 @@ void Sema::HandleDelayedDeprecationCheck(DelayedDiagnostic &DD,
     Diag(DD.Loc, diag::warn_deprecated_message)
       << DD.getDeprecationDecl()->getDeclName()
       << DD.getDeprecationMessage();
+  else if (DD.getUnknownObjCClass()) {
+    Diag(DD.Loc, diag::warn_deprecated_fwdclass_message) 
+      << DD.getDeprecationDecl()->getDeclName();
+    Diag(DD.getUnknownObjCClass()->getLocation(), diag::note_forward_class);
+  }
   else
     Diag(DD.Loc, diag::warn_deprecated)
       << DD.getDeprecationDecl()->getDeclName();
@@ -4124,7 +4136,9 @@ void Sema::EmitDeprecationWarning(NamedDecl *D, StringRef Message,
                                   const ObjCInterfaceDecl *UnknownObjCClass) {
   // Delay if we're currently parsing a declaration.
   if (DelayedDiagnostics.shouldDelayDiagnostics()) {
-    DelayedDiagnostics.add(DelayedDiagnostic::makeDeprecation(Loc, D, Message));
+    DelayedDiagnostics.add(DelayedDiagnostic::makeDeprecation(Loc, D, 
+                                                              UnknownObjCClass,
+                                                              Message));
     return;
   }
 

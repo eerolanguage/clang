@@ -806,6 +806,10 @@ ObjCIvarDecl *ObjCInterfaceDecl::all_declared_ivar_begin() {
 ///
 ObjCCategoryDecl *
 ObjCInterfaceDecl::FindCategoryDeclaration(IdentifierInfo *CategoryId) const {
+  // FIXME: Should make sure no callers ever do this.
+  if (!hasDefinition())
+    return 0;
+
   if (data().ExternallyCompleted)
     LoadExternalDefinition();
 
@@ -1278,15 +1282,17 @@ ObjCPropertyDecl *ObjCPropertyDecl::Create(ASTContext &C, DeclContext *DC,
                                            SourceLocation L,
                                            IdentifierInfo *Id,
                                            SourceLocation AtLoc,
+                                           SourceLocation LParenLoc,
                                            TypeSourceInfo *T,
                                            PropertyControl propControl) {
-  return new (C) ObjCPropertyDecl(DC, L, Id, AtLoc, T);
+  return new (C) ObjCPropertyDecl(DC, L, Id, AtLoc, LParenLoc, T);
 }
 
 ObjCPropertyDecl *ObjCPropertyDecl::CreateDeserialized(ASTContext &C, 
                                                        unsigned ID) {
   void * Mem = AllocateDeserializedDecl(C, ID, sizeof(ObjCPropertyDecl));
   return new (Mem) ObjCPropertyDecl(0, SourceLocation(), 0, SourceLocation(),
+                                    SourceLocation(),
                                     0);
 }
 

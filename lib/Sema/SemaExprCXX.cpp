@@ -787,20 +787,6 @@ Sema::BuildCXXTypeConstructExpr(TypeSourceInfo *TInfo,
   SourceRange FullRange = SourceRange(TyBeginLoc,
       ListInitialization ? Exprs[0]->getSourceRange().getEnd() : RParenLoc);
 
-  if (Ty->isArrayType())
-    return ExprError(Diag(TyBeginLoc,
-                          diag::err_value_init_for_array_type) << FullRange);
-  if (!Ty->isVoidType() &&
-      RequireCompleteType(TyBeginLoc, Ty,
-                          PDiag(diag::err_invalid_incomplete_type_use)
-                            << FullRange))
-    return ExprError();
-
-  if (RequireNonAbstractType(TyBeginLoc, Ty,
-                             diag::err_allocation_of_abstract_type))
-    return ExprError();
-
-
   // C++ [expr.type.conv]p1:
   // If the expression list is a single expression, the type conversion
   // expression is equivalent (in definedness, and if defined in meaning) to the
@@ -810,6 +796,24 @@ Sema::BuildCXXTypeConstructExpr(TypeSourceInfo *TInfo,
     exprs.release();
     return BuildCXXFunctionalCastExpr(TInfo, LParenLoc, Arg, RParenLoc);
   }
+
+  QualType ElemTy = Ty;
+  if (Ty->isArrayType()) {
+    if (!ListInitialization)
+      return ExprError(Diag(TyBeginLoc,
+                            diag::err_value_init_for_array_type) << FullRange);
+    ElemTy = Context.getBaseElementType(Ty);
+  }
+
+  if (!Ty->isVoidType() &&
+      RequireCompleteType(TyBeginLoc, ElemTy,
+                          PDiag(diag::err_invalid_incomplete_type_use)
+                            << FullRange))
+    return ExprError();
+
+  if (RequireNonAbstractType(TyBeginLoc, Ty,
+                             diag::err_allocation_of_abstract_type))
+    return ExprError();
 
   InitializedEntity Entity = InitializedEntity::InitializeTemporary(TInfo);
   InitializationKind Kind
@@ -2288,7 +2292,8 @@ static ExprResult BuildCXXCastArgument(Sema &S,
     assert(!From->getType()->isPointerType() && "Arg can't have pointer type!");
 
     // Create an implicit call expr that calls it.
-    ExprResult Result = S.BuildCXXMemberCallExpr(From, FoundDecl, Method,
+    CXXConversionDecl *Conv = cast<CXXConversionDecl>(Method);
+    ExprResult Result = S.BuildCXXMemberCallExpr(From, FoundDecl, Conv,
                                                  HadMultipleCandidates);
     if (Result.isInvalid())
       return ExprError();
@@ -4455,11 +4460,8 @@ ExprResult Sema::MaybeBindToTemporary(Expr *E) {
     // For message sends and property references, we try to find an
     // actual method.  FIXME: we should infer retention by selector in
     // cases where we don't have an actual method.
-    } else {
-      ObjCMethodDecl *D = 0;
-      if (ObjCMessageExpr *Send = dyn_cast<ObjCMessageExpr>(E)) {
-        D = Send->getMethodDecl();
-      }
+    } else if (ObjCMessageExpr *Send = dyn_cast<ObjCMessageExpr>(E)) {
+      ObjCMethodDecl *D = Send->getMethodDecl();
 
       ReturnsRetained = (D && D->hasAttr<NSReturnsRetainedAttr>());
 
@@ -4469,6 +4471,13 @@ ExprResult Sema::MaybeBindToTemporary(Expr *E) {
       if (!ReturnsRetained &&
           D && D->getMethodFamily() == OMF_performSelector)
         return Owned(E);
+    } else if (isa<CastExpr>(E) &&
+               isa<BlockExpr>(cast<CastExpr>(E)->getSubExpr())) {
+      // We hit this case with the lambda conversion-to-block optimization;
+      // we don't want any extra casts here.
+      return Owned(E);
+    } else {
+      ReturnsRetained = false;
     }
 
     // Don't reclaim an object of Class type.
@@ -5082,8 +5091,36 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
 }
 
 ExprResult Sema::BuildCXXMemberCallExpr(Expr *E, NamedDecl *FoundDecl,
-                                        CXXMethodDecl *Method,
+                                        CXXConversionDecl *Method,
                                         bool HadMultipleCandidates) {
+  if (Method->getParent()->isLambda() &&
+      Method->getConversionType()->isBlockPointerType()) {
+    // This is a lambda coversion to block pointer; check if the argument
+    // is a LambdaExpr.
+    Expr *SubE = E;
+    CastExpr *CE = dyn_cast<CastExpr>(SubE);
+    if (CE && CE->getCastKind() == CK_NoOp)
+      SubE = CE->getSubExpr();
+    SubE = SubE->IgnoreParens();
+    if (CXXBindTemporaryExpr *BE = dyn_cast<CXXBindTemporaryExpr>(SubE))
+      SubE = BE->getSubExpr();
+    if (isa<LambdaExpr>(SubE)) {
+      // For the conversion to block pointer on a lambda expression, we
+      // construct a special BlockLiteral instead; this doesn't really make
+      // a difference in ARC, but outside of ARC the resulting block literal
+      // follows the normal lifetime rules for block literals instead of being
+      // autoreleased.
+      DiagnosticErrorTrap Trap(Diags);
+      ExprResult Exp = BuildBlockForLambdaConversion(E->getExprLoc(),
+                                                     E->getExprLoc(),
+                                                     Method, E);
+      if (Exp.isInvalid())
+        Diag(E->getExprLoc(), diag::note_lambda_to_block_conv);
+      return Exp;
+    }
+  }
+      
+
   ExprResult Exp = PerformObjectArgumentInitialization(E, /*Qualifier=*/0,
                                           FoundDecl, Method);
   if (Exp.isInvalid())

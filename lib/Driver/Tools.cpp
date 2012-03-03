@@ -1339,6 +1339,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
     CmdArgs.push_back("-analyzer-eagerly-assume");
 
+    CmdArgs.push_back("-analyzer-inline-call");
+
     // Add default argument set.
     if (!Args.hasArg(options::OPT__analyzer_no_default_checks)) {
       CmdArgs.push_back("-analyzer-checker=core");
@@ -1928,6 +1930,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    options::OPT_fno_address_sanitizer, false))
     CmdArgs.push_back("-faddress-sanitizer");
 
+  if (Args.hasFlag(options::OPT_fthread_sanitizer,
+                   options::OPT_fno_thread_sanitizer, false))
+    CmdArgs.push_back("-fthread-sanitizer");
+
   // -flax-vector-conversions is default.
   if (!Args.hasFlag(options::OPT_flax_vector_conversions,
                     options::OPT_fno_lax_vector_conversions))
@@ -2079,7 +2085,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     !Args.hasFlag(options::OPT_fuse_cxa_atexit, options::OPT_fno_use_cxa_atexit,
                   getToolChain().getTriple().getOS() != llvm::Triple::Cygwin &&
                   getToolChain().getTriple().getOS() != llvm::Triple::MinGW32 &&
-                  getToolChain().getTriple().getOS() != llvm::Triple::Solaris &&
                   getToolChain().getTriple().getArch() !=
                   llvm::Triple::hexagon))
     CmdArgs.push_back("-fno-use-cxa-atexit");
@@ -2226,6 +2231,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // NOTE: This logic is duplicated in ToolChains.cpp.
   bool ARC = isObjCAutoRefCount(Args);
   if (ARC) {
+    if (!getToolChain().SupportsObjCARC())
+      D.Diag(diag::err_arc_unsupported);
+
     CmdArgs.push_back("-fobjc-arc");
 
     // FIXME: It seems like this entire block, and several around it should be
@@ -4219,6 +4227,9 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   ArgStringList CmdArgs;
 
+  // Demangle C++ names in errors
+  CmdArgs.push_back("-C");
+
   if ((!Args.hasArg(options::OPT_nostdlib)) &&
       (!Args.hasArg(options::OPT_shared))) {
     CmdArgs.push_back("-e");
@@ -4250,9 +4261,13 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
     if (!Args.hasArg(options::OPT_shared)) {
       CmdArgs.push_back(Args.MakeArgString(LibPath + "crt1.o"));
       CmdArgs.push_back(Args.MakeArgString(LibPath + "crti.o"));
+      CmdArgs.push_back(Args.MakeArgString(LibPath + "values-Xa.o"));
       CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtbegin.o"));
     } else {
+      CmdArgs.push_back(Args.MakeArgString(LibPath + "cxa_finalize.o"));
       CmdArgs.push_back(Args.MakeArgString(LibPath + "crti.o"));
+      CmdArgs.push_back(Args.MakeArgString(LibPath + "values-Xa.o"));
+      CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtbegin.o"));
     }
   }
 
@@ -4261,22 +4276,25 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
   Args.AddAllArgs(CmdArgs, options::OPT_e);
+  Args.AddAllArgs(CmdArgs, options::OPT_r);
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  if (getToolChain().getDriver().CCCIsCXX)
+    getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    CmdArgs.push_back("-lgcc");
     CmdArgs.push_back("-lgcc_s");
-    if (!Args.hasArg(options::OPT_shared))
+    if (!Args.hasArg(options::OPT_shared)) {
+      CmdArgs.push_back("-lgcc");
       CmdArgs.push_back("-lc");
-
+      CmdArgs.push_back("-lm");
+    }
   }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nostartfiles)) {
-    if (!Args.hasArg(options::OPT_shared))
-      CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtend.o"));
+    CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtend.o"));
   }
   CmdArgs.push_back(Args.MakeArgString(LibPath + "crtn.o"));
 

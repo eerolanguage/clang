@@ -820,7 +820,7 @@ Decl *Sema::ActOnStartCategoryImplementation(
                       IdentifierInfo *CatName, SourceLocation CatLoc) {
   ObjCInterfaceDecl *IDecl = getObjCInterfaceDecl(ClassName, ClassLoc, true);
   ObjCCategoryDecl *CatIDecl = 0;
-  if (IDecl) {
+  if (IDecl && IDecl->hasDefinition()) {
     CatIDecl = IDecl->FindCategoryDeclaration(CatName);
     if (!CatIDecl) {
       // Category @implementation with no corresponding @interface.
@@ -2504,10 +2504,11 @@ namespace {
 /// A helper class for searching for methods which a particular method
 /// overrides.
 class OverrideSearch {
+public:
   Sema &S;
   ObjCMethodDecl *Method;
-  llvm::SmallPtrSet<ObjCContainerDecl*, 8> Searched;
-  llvm::SmallPtrSet<ObjCMethodDecl*, 8> Overridden;
+  llvm::SmallPtrSet<ObjCContainerDecl*, 128> Searched;
+  llvm::SmallPtrSet<ObjCMethodDecl*, 4> Overridden;
   bool Recursive;
 
 public:
@@ -2539,7 +2540,7 @@ public:
     searchFromContainer(container);
   }
 
-  typedef llvm::SmallPtrSet<ObjCMethodDecl*,8>::iterator iterator;
+  typedef llvm::SmallPtrSet<ObjCMethodDecl*, 128>::iterator iterator;
   iterator begin() const { return Overridden.begin(); }
   iterator end() const { return Overridden.end(); }
 
