@@ -1148,7 +1148,7 @@ void StringLiteralParser::init(const Token *StringToks, unsigned NumStringToks){
     const char *ThisTokEnd = ThisTokBuf+ThisTokLen;
 
     // Remove an optional ud-suffix.
-    if (ThisTokEnd[-1] != '"') {
+    if (ThisTokEnd[-1] != '"' && (!Features.Eero || ThisTokEnd[-1] != '\'')) {
       const char *UDSuffixEnd = ThisTokEnd;
       do {
         --ThisTokEnd;
