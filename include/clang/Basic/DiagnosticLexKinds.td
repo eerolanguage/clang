@@ -133,6 +133,12 @@ def warn_cxx98_compat_unicode_literal : Warning<
   InGroup<CXX98Compat>, DefaultIgnore;
 def err_unsupported_string_concat : Error<
   "unsupported non-standard concatenation of string literals">;
+def err_string_concat_mixed_suffix : Error<
+  "differing user-defined suffixes ('%0' and '%1') in string literal "
+  "concatenation">;
+def err_pp_invalid_char_udl : Error<
+  "character literal with user-defined suffix cannot be used in preprocessor "
+  "constant expression">;
 def err_bad_string_encoding : Error<
   "illegal character encoding in string literal">;
 def warn_bad_string_encoding : ExtWarn<

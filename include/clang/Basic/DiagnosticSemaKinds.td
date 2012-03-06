@@ -688,7 +688,7 @@ def warn_unimplemented_protocol_method : Warning<
 // C++ declarations
 def err_static_assert_expression_is_not_constant : Error<
   "static_assert expression is not an integral constant expression">;
-def err_static_assert_failed : Error<"static_assert failed \"%0\"">;
+def err_static_assert_failed : Error<"static_assert failed %0">;
 
 def warn_inline_namespace_reopened_noninline : Warning<
   "inline namespace cannot be re-opened as a non-inline namespace">;
@@ -4684,6 +4684,8 @@ def err_literal_operator_outside_namespace : Error<
 // FIXME: This diagnostic sucks
 def err_literal_operator_params : Error<
   "parameter declaration for literal operator %0 is not valid">;
+def err_literal_operator_extern_c : Error<
+  "literal operator must have C++ linkage">;
 def warn_user_literal_hexfloat : Warning<
   "user-defined literal with suffix '%0' is preempted by C99 hexfloat "
   "extension">, InGroup<UserDefinedLiterals>;
@@ -4951,6 +4953,9 @@ def err_blocks_disable : Error<"blocks support disabled - compile with -fblocks"
   " or pick a deployment target that supports them">;
 def err_block_returning_array_function : Error<
   "block cannot return %select{array|function}0 type %1">;
+def warn_block_missing_return_type : Warning<
+  "block literal is missing explicit return type and "
+  "returns non-void values">, InGroup<BlockMissingReturnType>, DefaultIgnore;
 
 // Builtin annotation string.
 def err_builtin_annotation_not_string_constant : Error<

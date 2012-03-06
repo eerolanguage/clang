@@ -27,12 +27,12 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/CanonicalType.h"
-#include "clang/AST/UsuallyTinyPtrVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/Support/Allocator.h"
 #include <vector>
 
@@ -322,7 +322,7 @@ class ASTContext : public RefCountedBase<ASTContext> {
   /// Since most C++ member functions aren't virtual and therefore
   /// don't override anything, we store the overridden functions in
   /// this map on the side rather than within the CXXMethodDecl structure.
-  typedef UsuallyTinyPtrVector<const CXXMethodDecl> CXXMethodVector;
+  typedef llvm::TinyPtrVector<const CXXMethodDecl*> CXXMethodVector;
   llvm::DenseMap<const CXXMethodDecl *, CXXMethodVector> OverriddenMethods;
 
   /// \brief Mapping from each declaration context to its corresponding lambda 
@@ -1907,13 +1907,16 @@ static inline Selector GetUnarySelector(StringRef name, ASTContext& Ctx) {
 }  // end namespace clang
 
 // operator new and delete aren't allowed inside namespaces.
-// The throw specifications are mandated by the standard.
+
 /// @brief Placement new for using the ASTContext's allocator.
 ///
 /// This placement form of operator new uses the ASTContext's allocator for
-/// obtaining memory. It is a non-throwing new, which means that it returns
-/// null on error. (If that is what the allocator does. The current does, so if
-/// this ever changes, this operator will have to be changed, too.)
+/// obtaining memory.
+///
+/// We intentionally avoid using a nothrow specification here so that the calls
+/// to this operator will not perform a null check on the result -- the
+/// underlying allocator never returns null pointers.
+///
 /// Usage looks like this (assuming there's an ASTContext 'Context' in scope):
 /// @code
 /// // Default alignment (8)
@@ -1931,7 +1934,7 @@ static inline Selector GetUnarySelector(StringRef name, ASTContext& Ctx) {
 ///                  allocator supports it).
 /// @return The allocated memory. Could be NULL.
 inline void *operator new(size_t Bytes, const clang::ASTContext &C,
-                          size_t Alignment) throw () {
+                          size_t Alignment) {
   return C.Allocate(Bytes, Alignment);
 }
 /// @brief Placement delete companion to the new above.
@@ -1940,14 +1943,17 @@ inline void *operator new(size_t Bytes, const clang::ASTContext &C,
 /// invoking it directly; see the new operator for more details. This operator
 /// is called implicitly by the compiler if a placement new expression using
 /// the ASTContext throws in the object constructor.
-inline void operator delete(void *Ptr, const clang::ASTContext &C, size_t)
-              throw () {
+inline void operator delete(void *Ptr, const clang::ASTContext &C, size_t) {
   C.Deallocate(Ptr);
 }
 
 /// This placement form of operator new[] uses the ASTContext's allocator for
-/// obtaining memory. It is a non-throwing new[], which means that it returns
-/// null on error.
+/// obtaining memory.
+///
+/// We intentionally avoid using a nothrow specification here so that the calls
+/// to this operator will not perform a null check on the result -- the
+/// underlying allocator never returns null pointers.
+///
 /// Usage looks like this (assuming there's an ASTContext 'Context' in scope):
 /// @code
 /// // Default alignment (8)
@@ -1965,7 +1971,7 @@ inline void operator delete(void *Ptr, const clang::ASTContext &C, size_t)
 ///                  allocator supports it).
 /// @return The allocated memory. Could be NULL.
 inline void *operator new[](size_t Bytes, const clang::ASTContext& C,
-                            size_t Alignment = 8) throw () {
+                            size_t Alignment = 8) {
   return C.Allocate(Bytes, Alignment);
 }
 
@@ -1975,8 +1981,7 @@ inline void *operator new[](size_t Bytes, const clang::ASTContext& C,
 /// invoking it directly; see the new[] operator for more details. This operator
 /// is called implicitly by the compiler if a placement new[] expression using
 /// the ASTContext throws in the object constructor.
-inline void operator delete[](void *Ptr, const clang::ASTContext &C, size_t)
-              throw () {
+inline void operator delete[](void *Ptr, const clang::ASTContext &C, size_t) {
   C.Deallocate(Ptr);
 }
 
