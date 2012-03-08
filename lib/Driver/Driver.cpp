@@ -141,8 +141,9 @@ const {
     // -{fsyntax-only,-analyze,emit-ast,S} only run up to the compiler.
   } else if ((PhaseArg = DAL.getLastArg(options::OPT_fsyntax_only)) ||
              (PhaseArg = DAL.getLastArg(options::OPT_rewrite_objc)) ||
+             (PhaseArg = DAL.getLastArg(options::OPT__migrate)) ||
              (PhaseArg = DAL.getLastArg(options::OPT__analyze,
-                                              options::OPT__analyze_auto)) ||
+                                        options::OPT__analyze_auto)) ||
              (PhaseArg = DAL.getLastArg(options::OPT_emit_ast)) ||
              (PhaseArg = DAL.getLastArg(options::OPT_S))) {
     FinalPhase = phases::Compile;
@@ -374,6 +375,10 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
 void Driver::generateCompilationDiagnostics(Compilation &C,
                                             const Command *FailingCommand) {
   if (C.getArgs().hasArg(options::OPT_fno_crash_diagnostics))
+    return;  
+
+  // Don't try to generate diagnostics for link jobs.
+  if (FailingCommand->getCreator().isLinkJob())
     return;
 
   Diag(clang::diag::note_drv_command_failed_diag_msg)
@@ -1140,6 +1145,8 @@ Action *Driver::ConstructPhaseAction(const ArgList &Args, phases::ID Phase,
       return new CompileJobAction(Input, types::TY_RewrittenObjC);
     } else if (Args.hasArg(options::OPT__analyze, options::OPT__analyze_auto)) {
       return new AnalyzeJobAction(Input, types::TY_Plist);
+    } else if (Args.hasArg(options::OPT__migrate)) {
+      return new MigrateJobAction(Input, types::TY_Remap);
     } else if (Args.hasArg(options::OPT_emit_ast)) {
       return new CompileJobAction(Input, types::TY_AST);
     } else if (IsUsingLTO(Args)) {

@@ -433,20 +433,27 @@ def rewrite_objc : Flag<"-rewrite-objc">,
   HelpText<"Rewrite ObjC into C (code rewriter example)">;
 def rewrite_macros : Flag<"-rewrite-macros">,
   HelpText<"Expand macros without full preprocessing">;
+def migrate : Flag<"-migrate">,
+  HelpText<"Migrate source code">;
 }
 
+def mt_migrate_directory : Separate<"-mt-migrate-directory">,
+  HelpText<"Directory for temporary files produced during ARC or ObjC migration">;
 def arcmt_check : Flag<"-arcmt-check">,
   HelpText<"Check for ARC migration issues that need manual handling">;
 def arcmt_modify : Flag<"-arcmt-modify">,
   HelpText<"Apply modifications to files to conform to ARC">;
 def arcmt_migrate : Flag<"-arcmt-migrate">,
   HelpText<"Apply modifications and produces temporary files that conform to ARC">;
-def arcmt_migrate_directory : Separate<"-arcmt-migrate-directory">,
-  HelpText<"Directory for temporary files produced during ARC migration">;
 def arcmt_migrate_report_output : Separate<"-arcmt-migrate-report-output">,
   HelpText<"Output path for the plist report">;
 def arcmt_migrate_emit_arc_errors : Flag<"-arcmt-migrate-emit-errors">,
   HelpText<"Emit ARC errors even if the migrator can fix them">;
+
+def objcmt_migrate_literals : Flag<"-objcmt-migrate-literals">,
+  HelpText<"Enable migration to modern ObjC literals">;
+def objcmt_migrate_subscripting : Flag<"-objcmt-migrate-subscripting">,
+  HelpText<"Enable migration to modern ObjC subscripting">;
 
 def working_directory : JoinedOrSeparate<"-working-directory">,
   HelpText<"Resolve file paths relative to the specified directory">;
@@ -496,6 +503,8 @@ def fgnu_keywords : Flag<"-fgnu-keywords">,
   HelpText<"Allow GNU-extension keywords regardless of language standard">;
 def fgnu89_inline : Flag<"-fgnu89-inline">,
   HelpText<"Use the gnu89 inline semantics">;
+def fno_inline_functions : Flag<"-fno-inline-functions">,
+  HelpText<"Disable automatic function inlining">;
 def fno_gnu_keywords : Flag<"-fno-gnu-keywords">,
   HelpText<"Disallow GNU-extension keywords regardless of language standard">;
 def fdollars_in_identifiers : Flag<"-fdollars-in-identifiers">,
@@ -659,6 +668,8 @@ def fdebugger_support : Flag<"-fdebugger-support">,
   HelpText<"Enable special debugger support behavior">;
 def fdebugger_cast_result_to_id : Flag<"-fdebugger-cast-result-to-id">,
   HelpText<"Enable casting unknown expression results to id">;
+def fdebugger_objc_literal : Flag<"-fdebugger-objc-literal">,
+  HelpText<"Enable special debugger support for objective-C subscripting and literals">;
 def fdeprecated_macro : Flag<"-fdeprecated-macro">,
   HelpText<"Defines the __DEPRECATED macro">;
 def fno_deprecated_macro : Flag<"-fno-deprecated-macro">,

@@ -738,6 +738,10 @@ void StmtProfiler::VisitCXXConstCastExpr(const CXXConstCastExpr *S) {
   VisitCXXNamedCastExpr(S);
 }
 
+void StmtProfiler::VisitUserDefinedLiteral(const UserDefinedLiteral *S) {
+  VisitCallExpr(S);
+}
+
 void StmtProfiler::VisitCXXBoolLiteralExpr(const CXXBoolLiteralExpr *S) {
   VisitExpr(S);
   ID.AddBoolean(S->getValue());
@@ -978,6 +982,18 @@ void StmtProfiler::VisitObjCStringLiteral(const ObjCStringLiteral *S) {
   VisitExpr(S);
 }
 
+void StmtProfiler::VisitObjCNumericLiteral(const ObjCNumericLiteral *E) {
+  VisitExpr(E);
+}
+
+void StmtProfiler::VisitObjCArrayLiteral(const ObjCArrayLiteral *E) {
+  VisitExpr(E);
+}
+
+void StmtProfiler::VisitObjCDictionaryLiteral(const ObjCDictionaryLiteral *E) {
+  VisitExpr(E);
+}
+
 void StmtProfiler::VisitObjCEncodeExpr(const ObjCEncodeExpr *S) {
   VisitExpr(S);
   VisitType(S->getEncodedType());
@@ -1014,6 +1030,12 @@ void StmtProfiler::VisitObjCPropertyRefExpr(const ObjCPropertyRefExpr *S) {
   }
 }
 
+void StmtProfiler::VisitObjCSubscriptRefExpr(const ObjCSubscriptRefExpr *S) {
+  VisitExpr(S);
+  VisitDecl(S->getAtIndexMethodDecl());
+  VisitDecl(S->setAtIndexMethodDecl());
+}
+
 void StmtProfiler::VisitObjCMessageExpr(const ObjCMessageExpr *S) {
   VisitExpr(S);
   VisitName(S->getSelector());
@@ -1023,6 +1045,11 @@ void StmtProfiler::VisitObjCMessageExpr(const ObjCMessageExpr *S) {
 void StmtProfiler::VisitObjCIsaExpr(const ObjCIsaExpr *S) {
   VisitExpr(S);
   ID.AddBoolean(S->isArrow());
+}
+
+void StmtProfiler::VisitObjCBoolLiteralExpr(const ObjCBoolLiteralExpr *S) {
+  VisitExpr(S);
+  ID.AddBoolean(S->getValue());
 }
 
 void StmtProfiler::VisitObjCIndirectCopyRestoreExpr(

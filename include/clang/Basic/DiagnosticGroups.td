@@ -79,7 +79,15 @@ def : DiagGroup<"c++0x-narrowing", [CXX11Narrowing]>;
 // Name of this warning in GCC
 def : DiagGroup<"narrowing", [CXX11Narrowing]>;
 
-def CXX11Compat : DiagGroup<"c++11-compat", [CXX11Narrowing]>;
+def CXX11CompatReservedUserDefinedLiteral :
+  DiagGroup<"c++11-compat-reserved-user-defined-literal">;
+def ReservedUserDefinedLiteral :
+  DiagGroup<"reserved-user-defined-literal",
+            [CXX11CompatReservedUserDefinedLiteral]>;
+
+def CXX11Compat : DiagGroup<"c++11-compat",
+                            [CXX11Narrowing,
+                             CXX11CompatReservedUserDefinedLiteral]>;
 def : DiagGroup<"c++0x-compat", [CXX11Compat]>;
 
 def : DiagGroup<"effc++">;
@@ -134,7 +142,6 @@ def OverloadedVirtual : DiagGroup<"overloaded-virtual">;
 def ObjCPropertyImpl : DiagGroup<"objc-property-implementation">;
 def ObjCMissingSuperCalls : DiagGroup<"objc-missing-super-calls">;
 def ObjCRetainBlockProperty : DiagGroup<"objc-noncopy-retain-block-property">;
-def BlockMissingReturnType : DiagGroup<"block-missing-explicit-return-type">;
 def ObjCReadonlyPropertyHasSetter : DiagGroup<"objc-readonly-with-setter-property">;
 def Packed : DiagGroup<"packed">;
 def Padded : DiagGroup<"padded">;
@@ -380,3 +387,13 @@ def Microsoft : DiagGroup<"microsoft">;
 def ObjCNonUnifiedException : DiagGroup<"objc-nonunified-exceptions">;
 
 def ObjCProtocolMethodImpl : DiagGroup<"objc-protocol-method-implementation">;
+
+// ObjC API warning groups.
+def ObjCRedundantLiteralUse : DiagGroup<"objc-redundant-literal-use">;
+def ObjCRedundantAPIUse : DiagGroup<"objc-redundant-api-use", [
+    ObjCRedundantLiteralUse
+  ]>;
+
+def ObjCCocoaAPI : DiagGroup<"objc-cocoa-api", [
+    ObjCRedundantAPIUse
+  ]>;

@@ -205,8 +205,8 @@ public:
     return DC->isRecord();
   }
 
-  /// \brief Given that this declaration is a C++ class member,
-  /// determine whether it's an instance member of its class.
+  /// \brief Determine whether the given declaration is an instance member of
+  /// a C++ class.
   bool isCXXInstanceMember() const;
 
   class LinkageInfo {
@@ -451,12 +451,18 @@ public:
 
   /// \brief Get the original (first) namespace declaration.
   NamespaceDecl *getOriginalNamespace() {
-    return getCanonicalDecl();
+    if (isFirstDeclaration())
+      return this;
+
+    return AnonOrFirstNamespaceAndInline.getPointer();
   }
 
   /// \brief Get the original (first) namespace declaration.
   const NamespaceDecl *getOriginalNamespace() const {
-    return getCanonicalDecl();
+    if (isFirstDeclaration())
+      return this;
+
+    return AnonOrFirstNamespaceAndInline.getPointer();
   }
 
   /// \brief Return true if this declaration is an original (first) declaration
@@ -478,16 +484,10 @@ public:
 
   /// Retrieves the canonical declaration of this namespace.
   NamespaceDecl *getCanonicalDecl() {
-    if (isFirstDeclaration())
-      return this;
-    
-    return AnonOrFirstNamespaceAndInline.getPointer();
+    return getOriginalNamespace();
   }
   const NamespaceDecl *getCanonicalDecl() const {
-    if (isFirstDeclaration())
-      return this;
-    
-    return AnonOrFirstNamespaceAndInline.getPointer();
+    return getOriginalNamespace();
   }
   
   virtual SourceRange getSourceRange() const {
@@ -3271,6 +3271,24 @@ void Redeclarable<decl_type>::setPreviousDeclaration(decl_type *PrevDecl) {
   First->RedeclLink = LatestDeclLink(static_cast<decl_type*>(this));
   if (NamedDecl *ND = dyn_cast<NamedDecl>(static_cast<decl_type*>(this)))
     ND->ClearLinkageCache();
+}
+
+// Inline function definitions.
+
+/// \brief Check if the given decl is complete.
+///
+/// We use this function to break a cycle between the inline definitions in
+/// Type.h and Decl.h.
+inline bool IsEnumDeclComplete(EnumDecl *ED) {
+  return ED->isComplete();
+}
+
+/// \brief Check if the given decl is scoped.
+///
+/// We use this function to break a cycle between the inline definitions in
+/// Type.h and Decl.h.
+inline bool IsEnumDeclScoped(EnumDecl *ED) {
+  return ED->isScoped();
 }
 
 }  // end namespace clang

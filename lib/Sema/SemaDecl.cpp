@@ -6021,7 +6021,8 @@ namespace {
 
     void VisitMemberExpr(MemberExpr *E) {
       if (E->getType()->canDecayToPointerType()) return;
-      if (isa<FieldDecl>(E->getMemberDecl()))
+      ValueDecl *VD = E->getMemberDecl();
+      if (isa<FieldDecl>(VD) || isa<CXXMethodDecl>(VD))
         if (DeclRefExpr *DRE
               = dyn_cast<DeclRefExpr>(E->getBase()->IgnoreParenImpCasts())) {
           HandleDeclRefExpr(DRE);

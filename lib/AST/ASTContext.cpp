@@ -74,12 +74,14 @@ ASTContext::CanonicalTemplateTemplateParm::Profile(llvm::FoldingSetNodeID &ID,
     if (NonTypeTemplateParmDecl *NTTP = dyn_cast<NonTypeTemplateParmDecl>(*P)) {
       ID.AddInteger(1);
       ID.AddBoolean(NTTP->isParameterPack());
-      ID.AddPointer(NTTP->getType().getAsOpaquePtr());
+      ID.AddPointer(NTTP->getType().getCanonicalType().getAsOpaquePtr());
       if (NTTP->isExpandedParameterPack()) {
         ID.AddBoolean(true);
         ID.AddInteger(NTTP->getNumExpansionTypes());
-        for (unsigned I = 0, N = NTTP->getNumExpansionTypes(); I != N; ++I)
-          ID.AddPointer(NTTP->getExpansionType(I).getAsOpaquePtr());
+        for (unsigned I = 0, N = NTTP->getNumExpansionTypes(); I != N; ++I) {
+          QualType T = NTTP->getExpansionType(I);
+          ID.AddPointer(T.getCanonicalType().getAsOpaquePtr());
+        }
       } else 
         ID.AddBoolean(false);
       continue;
@@ -477,7 +479,10 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target) {
   InitBuiltinType(ObjCBuiltinIdTy, BuiltinType::ObjCId);
   InitBuiltinType(ObjCBuiltinClassTy, BuiltinType::ObjCClass);
   InitBuiltinType(ObjCBuiltinSelTy, BuiltinType::ObjCSel);
-
+  
+  // Builtin type for __objc_yes and __objc_no
+  ObjCBuiltinBoolTy = SignedCharTy;
+  
   ObjCConstantStringType = QualType();
 
   // void * type

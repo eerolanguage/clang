@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_FRONTEND_PREPROCESSOROPTIONS_H_
 #define LLVM_CLANG_FRONTEND_PREPROCESSOROPTIONS_H_
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include <cassert>
 #include <string>
@@ -67,6 +68,9 @@ public:
   /// \brief When true, disables the use of the stat cache within a
   /// precompiled header or AST file.
   bool DisableStatCache;
+
+  /// \brief When true, a PCH with compiler errors will not be rejected.
+  bool AllowPCHWithCompilerErrors;
 
   /// \brief Dump declarations that are deserialized from PCH, for testing.
   bool DumpDeserializedPCHDecls;
@@ -164,6 +168,7 @@ public:
   PreprocessorOptions() : UsePredefines(true), DetailedRecord(false),
                           DetailedRecordConditionalDirectives(false),
                           DisablePCHValidation(false), DisableStatCache(false),
+                          AllowPCHWithCompilerErrors(false),
                           DumpDeserializedPCHDecls(false),
                           PrecompiledPreambleBytes(0, true),
                           RemappedFilesKeepOriginalName(true),

@@ -480,7 +480,7 @@ public:
                                   const FieldDecl *LastFD) const;
 
   // Access to the set of methods overridden by the given C++ method.
-  typedef CXXMethodVector::iterator overridden_cxx_method_iterator;
+  typedef CXXMethodVector::const_iterator overridden_cxx_method_iterator;
   overridden_cxx_method_iterator
   overridden_methods_begin(const CXXMethodDecl *Method) const;
 
@@ -564,6 +564,7 @@ public:
   CanQualType DependentTy, OverloadTy, BoundMemberTy, UnknownAnyTy;
   CanQualType PseudoObjectTy, ARCUnbridgedCastTy;
   CanQualType ObjCBuiltinIdTy, ObjCBuiltinClassTy, ObjCBuiltinSelTy;
+  CanQualType ObjCBuiltinBoolTy;
 
   // Types for deductions in C++0x [stmt.ranged]'s desugaring. Built on demand.
   mutable QualType AutoDeductTy;     // Deduction against 'auto'.
@@ -1912,6 +1913,9 @@ static inline Selector GetUnarySelector(StringRef name, ASTContext& Ctx) {
 ///
 /// This placement form of operator new uses the ASTContext's allocator for
 /// obtaining memory.
+///
+/// IMPORTANT: These are also declared in clang/AST/Attr.h! Any changes here
+/// need to also be made there.
 ///
 /// We intentionally avoid using a nothrow specification here so that the calls
 /// to this operator will not perform a null check on the result -- the

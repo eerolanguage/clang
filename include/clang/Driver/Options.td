@@ -118,12 +118,20 @@ def ccc_arrmt_check : Flag<"-ccc-arrmt-check">, Alias<ccc_arcmt_check>;
 def ccc_arrmt_modify : Flag<"-ccc-arrmt-modify">, Alias<ccc_arcmt_modify>;
 def ccc_arcmt_migrate : Separate<"-ccc-arcmt-migrate">, CCCDriverOpt,
   HelpText<"Apply modifications and produces temporary files that conform to ARC">;
-def ccc_arcmt_migrate_EQ : Joined<"-ccc-arcmt-migrate=">, CCCDriverOpt,
-  Alias<ccc_arcmt_migrate>;
 def arcmt_migrate_report_output : Separate<"-arcmt-migrate-report-output">,
   HelpText<"Output path for the plist report">;
 def arcmt_migrate_emit_arc_errors : Flag<"-arcmt-migrate-emit-errors">,
   HelpText<"Emit ARC errors even if the migrator can fix them">;
+
+def _migrate : Flag<"--migrate">, Flags<[DriverOption]>,
+  HelpText<"Run the migrator">;
+def ccc_objcmt_migrate : Separate<"-ccc-objcmt-migrate">, CCCDriverOpt,
+  HelpText<"Apply modifications and produces temporary files to migrate to "
+   "modern ObjC syntax">;
+def objcmt_migrate_literals : Flag<"-objcmt-migrate-literals">,
+  HelpText<"Enable migration to modern ObjC literals">;
+def objcmt_migrate_subscripting : Flag<"-objcmt-migrate-subscripting">,
+  HelpText<"Enable migration to modern ObjC subscripting">;
 
 // Make sure all other -ccc- options are rejected.
 def ccc_ : Joined<"-ccc-">, Group<ccc_Group>, Flags<[Unsupported]>;
@@ -411,7 +419,7 @@ def fno_elide_constructors : Flag<"-fno-elide-constructors">, Group<f_Group>;
 def fno_eliminate_unused_debug_symbols : Flag<"-fno-eliminate-unused-debug-symbols">, Group<f_Group>;
 def fno_exceptions : Flag<"-fno-exceptions">, Group<f_Group>;
 def fno_gnu_keywords : Flag<"-fno-gnu-keywords">, Group<f_Group>;
-def fno_inline_functions : Flag<"-fno-inline-functions">, Group<clang_ignored_f_Group>;
+def fno_inline_functions : Flag<"-fno-inline-functions">, Group<f_Group>;
 def fno_inline : Flag<"-fno-inline">, Group<clang_ignored_f_Group>;
 def fno_keep_inline_functions : Flag<"-fno-keep-inline-functions">, Group<clang_ignored_f_Group>;
 def fno_lax_vector_conversions : Flag<"-fno-lax-vector-conversions">, Group<f_Group>;
@@ -463,6 +471,7 @@ def fobjc_infer_related_result_type : Flag<"-fobjc-infer-related-result-type">,
                                       Group<f_Group>;
 def fno_objc_infer_related_result_type : Flag<
   "-fno-objc-infer-related-result-type">, Group<f_Group>;
+def fobjc_link_runtime: Flag<"-fobjc-link-runtime">, Group<f_Group>;
 
 // Objective-C ABI options.
 def fobjc_abi_version_EQ : Joined<"-fobjc-abi-version=">, Group<f_Group>;

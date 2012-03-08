@@ -227,6 +227,10 @@ CXCursor cxcursor::MakeCXCursor(Stmt *S, Decl *Parent, CXTranslationUnit TU,
   case Stmt::UnaryExprOrTypeTraitExprClass:
   case Stmt::UnaryTypeTraitExprClass:
   case Stmt::VAArgExprClass:
+  case Stmt::ObjCArrayLiteralClass:
+  case Stmt::ObjCDictionaryLiteralClass:
+  case Stmt::ObjCNumericLiteralClass:
+  case Stmt::ObjCSubscriptRefExprClass:
     K = CXCursor_UnexposedExpr;
     break;
 
@@ -395,7 +399,11 @@ CXCursor cxcursor::MakeCXCursor(Stmt *S, Decl *Parent, CXTranslationUnit TU,
   case Stmt::ObjCProtocolExprClass:
     K = CXCursor_ObjCProtocolExpr;
     break;
-
+      
+  case Stmt::ObjCBoolLiteralExprClass:
+    K = CXCursor_ObjCBoolLiteralExpr;
+    break;
+      
   case Stmt::ObjCBridgedCastExprClass:
     K = CXCursor_ObjCBridgedCastExpr;
     break;
@@ -438,6 +446,7 @@ CXCursor cxcursor::MakeCXCursor(Stmt *S, Decl *Parent, CXTranslationUnit TU,
   case Stmt::CXXConstructExprClass:  
   case Stmt::CXXTemporaryObjectExprClass:
   case Stmt::CXXUnresolvedConstructExprClass:
+  case Stmt::UserDefinedLiteralClass:
     K = CXCursor_CallExpr;
     break;
       
@@ -785,15 +794,20 @@ static void CollectOverriddenMethods(CXTranslationUnit TU,
   if (!Ctx)
     return;
 
-  // If we have a class or category implementation, jump straight to the 
-  // interface.
-  if (ObjCImplDecl *Impl = dyn_cast<ObjCImplDecl>(Ctx))
-    return CollectOverriddenMethods(TU, Impl->getClassInterface(),
-                                    Method, Methods);
-  
   ObjCContainerDecl *Container = dyn_cast<ObjCContainerDecl>(Ctx);
   if (!Container)
     return;
+
+  // In categories look for overriden methods from protocols. A method from
+  // category is not "overriden" since it is considered as the "same" method
+  // (same USR) as the one from the interface.
+  if (ObjCCategoryDecl *Category = dyn_cast<ObjCCategoryDecl>(Container)) {
+    for (ObjCCategoryDecl::protocol_iterator P = Category->protocol_begin(),
+                                          PEnd = Category->protocol_end();
+         P != PEnd; ++P)
+      CollectOverriddenMethods(TU, *P, Method, Methods);
+    return;
+  }
 
   // Check whether we have a matching method at this level.
   if (ObjCMethodDecl *Overridden = Container->getMethod(Method->getSelector(),
@@ -812,13 +826,6 @@ static void CollectOverriddenMethods(CXTranslationUnit TU,
       CollectOverriddenMethods(TU, *P, Method, Methods);
   }
 
-  if (ObjCCategoryDecl *Category = dyn_cast<ObjCCategoryDecl>(Container)) {
-    for (ObjCCategoryDecl::protocol_iterator P = Category->protocol_begin(),
-                                          PEnd = Category->protocol_end();
-         P != PEnd; ++P)
-      CollectOverriddenMethods(TU, *P, Method, Methods);
-  }
-
   if (ObjCInterfaceDecl *Interface = dyn_cast<ObjCInterfaceDecl>(Container)) {
     for (ObjCInterfaceDecl::protocol_iterator P = Interface->protocol_begin(),
                                            PEnd = Interface->protocol_end();
@@ -829,10 +836,8 @@ static void CollectOverriddenMethods(CXTranslationUnit TU,
          Category; Category = Category->getNextClassCategory())
       CollectOverriddenMethods(TU, Category, Method, Methods);
 
-    // We only look into the superclass if we haven't found anything yet.
-    if (Methods.empty())
-      if (ObjCInterfaceDecl *Super = Interface->getSuperClass())
-        return CollectOverriddenMethods(TU, Super, Method, Methods);
+    if (ObjCInterfaceDecl *Super = Interface->getSuperClass())
+      return CollectOverriddenMethods(TU, Super, Method, Methods);
   }
 }
 
@@ -860,8 +865,37 @@ void cxcursor::getOverriddenCursors(CXCursor cursor,
   if (!Method)
     return;
 
-  // Handle Objective-C methods.
-  CollectOverriddenMethods(TU, Method->getDeclContext(), Method, overridden);
+  if (ObjCProtocolDecl *
+        ProtD = dyn_cast<ObjCProtocolDecl>(Method->getDeclContext())) {
+    CollectOverriddenMethods(TU, ProtD, Method, overridden);
+
+  } else if (ObjCImplDecl *
+               IMD = dyn_cast<ObjCImplDecl>(Method->getDeclContext())) {
+    ObjCInterfaceDecl *ID = IMD->getClassInterface();
+    if (!ID)
+      return;
+    // Start searching for overridden methods using the method from the
+    // interface as starting point.
+    if (ObjCMethodDecl *IFaceMeth = ID->getMethod(Method->getSelector(),
+                                                  Method->isInstanceMethod()))
+      Method = IFaceMeth;
+    CollectOverriddenMethods(TU, ID, Method, overridden);
+
+  } else if (ObjCCategoryDecl *
+               CatD = dyn_cast<ObjCCategoryDecl>(Method->getDeclContext())) {
+    ObjCInterfaceDecl *ID = CatD->getClassInterface();
+    if (!ID)
+      return;
+    // Start searching for overridden methods using the method from the
+    // interface as starting point.
+    if (ObjCMethodDecl *IFaceMeth = ID->getMethod(Method->getSelector(),
+                                                  Method->isInstanceMethod()))
+      Method = IFaceMeth;
+    CollectOverriddenMethods(TU, ID, Method, overridden);
+
+  } else {
+    CollectOverriddenMethods(TU, Method->getDeclContext(), Method, overridden);
+  }
 }
 
 std::pair<int, SourceLocation>

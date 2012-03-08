@@ -997,9 +997,9 @@ NamedDecl *NamedDecl::getUnderlyingDecl() {
 }
 
 bool NamedDecl::isCXXInstanceMember() const {
-  assert(isCXXClassMember() &&
-         "checking whether non-member is instance member");
-
+  if (!isCXXClassMember())
+    return false;
+  
   const NamedDecl *D = this;
   if (isa<UsingShadowDecl>(D))
     D = cast<UsingShadowDecl>(D)->getTargetDecl();
@@ -1313,8 +1313,11 @@ VarDecl::DefinitionKind VarDecl::hasDefinition() const {
   
   const VarDecl *First = getFirstDeclaration();
   for (redecl_iterator I = First->redecls_begin(), E = First->redecls_end();
-       I != E; ++I)
+       I != E; ++I) {
     Kind = std::max(Kind, (*I)->isThisDeclarationADefinition());
+    if (Kind == Definition)
+      break;
+  }
 
   return Kind;
 }
@@ -1796,11 +1799,14 @@ void FunctionDecl::setStorageClass(StorageClass SC) {
 /// value of type \c Builtin::ID if in the target-independent range
 /// \c [1,Builtin::First), or a target-specific builtin value.
 unsigned FunctionDecl::getBuiltinID() const {
-  ASTContext &Context = getASTContext();
-  if (!getIdentifier() || !getIdentifier()->getBuiltinID())
+  if (!getIdentifier())
     return 0;
 
   unsigned BuiltinID = getIdentifier()->getBuiltinID();
+  if (!BuiltinID)
+    return 0;
+
+  ASTContext &Context = getASTContext();
   if (!Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID))
     return BuiltinID;
 

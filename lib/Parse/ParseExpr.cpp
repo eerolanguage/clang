@@ -719,6 +719,10 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_true:
   case tok::kw_false:
     return ParseCXXBoolLiteral();
+  
+  case tok::kw___objc_yes:
+  case tok::kw___objc_no:
+      return ParseObjCBoolLiteral();
 
   case tok::kw_nullptr:
     Diag(Tok, diag::warn_cxx98_compat_nullptr);
@@ -1349,22 +1353,27 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       
       Expr *ExecConfig = 0;
 
-      BalancedDelimiterTracker LLLT(*this, tok::lesslessless);
       BalancedDelimiterTracker PT(*this, tok::l_paren);
 
       if (OpKind == tok::lesslessless) {
         ExprVector ExecConfigExprs(Actions);
         CommaLocsTy ExecConfigCommaLocs;
-        LLLT.consumeOpen();
+        SourceLocation OpenLoc = ConsumeToken();
 
         if (ParseExpressionList(ExecConfigExprs, ExecConfigCommaLocs)) {
           LHS = ExprError();
         }
 
-        if (LHS.isInvalid()) {
+        SourceLocation CloseLoc = Tok.getLocation();
+        if (Tok.is(tok::greatergreatergreater)) {
+          ConsumeToken();
+        } else if (LHS.isInvalid()) {
           SkipUntil(tok::greatergreatergreater);
-        } else if (LLLT.consumeClose()) {
+        } else {
           // There was an error closing the brackets
+          Diag(Tok, diag::err_expected_ggg);
+          Diag(OpenLoc, diag::note_matching) << "<<<";
+          SkipUntil(tok::greatergreatergreater);
           LHS = ExprError();
         }
 
@@ -1377,9 +1386,9 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
         if (!LHS.isInvalid()) {
           ExprResult ECResult = Actions.ActOnCUDAExecConfigExpr(getCurScope(),
-                                    LLLT.getOpenLocation(), 
+                                    OpenLoc, 
                                     move_arg(ExecConfigExprs), 
-                                    LLLT.getCloseLocation());
+                                    CloseLoc);
           if (ECResult.isInvalid())
             LHS = ExprError();
           else
@@ -2438,6 +2447,15 @@ ExprResult Parser::ParseBlockLiteralExpression() {
   else
     Actions.ActOnBlockError(CaretLoc, getCurScope());
   return move(Result);
+}
+
+/// ParseObjCBoolLiteral - This handles the objective-c Boolean literals.
+///
+///         '__objc_yes'
+///         '__objc_no'
+ExprResult Parser::ParseObjCBoolLiteral() {
+  tok::TokenKind Kind = Tok.getKind();
+  return Actions.ActOnObjCBoolLiteral(ConsumeToken(), Kind);
 }
 
 /// Eero method to parse and treat a nested function as a block.

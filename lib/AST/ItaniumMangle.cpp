@@ -2374,6 +2374,10 @@ recurse:
   case Expr::ObjCProtocolExprClass:
   case Expr::ObjCSelectorExprClass:
   case Expr::ObjCStringLiteralClass:
+  case Expr::ObjCNumericLiteralClass:
+  case Expr::ObjCArrayLiteralClass:
+  case Expr::ObjCDictionaryLiteralClass:
+  case Expr::ObjCSubscriptRefExprClass:
   case Expr::ObjCIndirectCopyRestoreExprClass:
   case Expr::OffsetOfExprClass:
   case Expr::PredefinedExprClass:
@@ -2435,6 +2439,9 @@ recurse:
                      Arity);
     break;
 
+  case Expr::UserDefinedLiteralClass:
+    // We follow g++'s approach of mangling a UDL as a call to the literal
+    // operator.
   case Expr::CXXMemberCallExprClass: // fallthrough
   case Expr::CallExprClass: {
     const CallExpr *CE = cast<CallExpr>(E);
@@ -2814,6 +2821,13 @@ recurse:
     Out << 'E';
     break;
 
+  // FIXME. __objc_yes/__objc_no are mangled same as true/false
+  case Expr::ObjCBoolLiteralExprClass:
+    Out << "Lb";
+    Out << (cast<ObjCBoolLiteralExpr>(E)->getValue() ? '1' : '0');
+    Out << 'E';
+    break;
+  
   case Expr::CXXBoolLiteralExprClass:
     Out << "Lb";
     Out << (cast<CXXBoolLiteralExpr>(E)->getValue() ? '1' : '0');
