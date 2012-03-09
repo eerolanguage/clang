@@ -279,7 +279,7 @@ class CodeGenModule : public CodeGenTypeCache {
 
   llvm::StringMap<llvm::Constant*> CFConstantStringMap;
   llvm::StringMap<llvm::GlobalVariable*> ConstantStringMap;
-  llvm::DenseMap<const Decl*, llvm::Value*> StaticLocalDeclMap;
+  llvm::DenseMap<const Decl*, llvm::Constant *> StaticLocalDeclMap;
   
   llvm::DenseMap<QualType, llvm::Constant *> AtomicSetterHelperFnMap;
   llvm::DenseMap<QualType, llvm::Constant *> AtomicGetterHelperFnMap;
@@ -397,12 +397,12 @@ public:
     return *RRData;
   }
 
-  llvm::Value *getStaticLocalDeclAddress(const VarDecl *VD) {
-    return StaticLocalDeclMap[VD];
+  llvm::Constant *getStaticLocalDeclAddress(const VarDecl *D) {
+    return StaticLocalDeclMap[D];
   }
   void setStaticLocalDeclAddress(const VarDecl *D, 
-                             llvm::GlobalVariable *GV) {
-    StaticLocalDeclMap[D] = GV;
+                                 llvm::Constant *C) {
+    StaticLocalDeclMap[D] = C;
   }
 
   llvm::Constant *getAtomicSetterHelperFnMap(QualType Ty) {
@@ -658,10 +658,9 @@ public:
   /// EmitTopLevelDecl - Emit code for a single top level declaration.
   void EmitTopLevelDecl(Decl *D);
 
-  /// MarkVarRequired - Tell the consumer that this variable must be output.
-  /// This is needed when the definition is initially one that can be deferred,
-  /// but we then see an explicit template instantiation definition.
-  void MarkVarRequired(VarDecl *VD);
+  /// HandleCXXStaticMemberVarInstantiation - Tell the consumer that this
+  // variable has been instantiated.
+  void HandleCXXStaticMemberVarInstantiation(VarDecl *VD);
 
   /// AddUsedGlobal - Add a global which should be forced to be
   /// present in the object file; these are emitted to the llvm.used

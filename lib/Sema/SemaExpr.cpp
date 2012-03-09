@@ -2437,6 +2437,38 @@ ExprResult Sema::ActOnIntegerConstant(SourceLocation Loc, uint64_t Val) {
                                       Context.IntTy, Loc));
 }
 
+static Expr *BuildFloatingLiteral(Sema &S, NumericLiteralParser &Literal,
+                                  QualType Ty, SourceLocation Loc) {
+  const llvm::fltSemantics &Format = S.Context.getFloatTypeSemantics(Ty);
+
+  using llvm::APFloat;
+  APFloat Val(Format);
+
+  APFloat::opStatus result = Literal.GetFloatValue(Val);
+
+  // Overflow is always an error, but underflow is only an error if
+  // we underflowed to zero (APFloat reports denormals as underflow).
+  if ((result & APFloat::opOverflow) ||
+      ((result & APFloat::opUnderflow) && Val.isZero())) {
+    unsigned diagnostic;
+    SmallString<20> buffer;
+    if (result & APFloat::opOverflow) {
+      diagnostic = diag::warn_float_overflow;
+      APFloat::getLargest(Format).toString(buffer);
+    } else {
+      diagnostic = diag::warn_float_underflow;
+      APFloat::getSmallest(Format).toString(buffer);
+    }
+
+    S.Diag(Loc, diagnostic)
+      << Ty
+      << StringRef(buffer.data(), buffer.size());
+  }
+
+  bool isExact = (result == APFloat::opOK);
+  return FloatingLiteral::Create(S.Context, Val, isExact, Ty, Loc);
+}
+
 ExprResult Sema::ActOnNumericConstant(const Token &Tok) {
   // Fast path for a single digit (which is quite common).  A single digit
   // cannot have a trigraph, escaped newline, radix prefix, or type suffix.
@@ -2461,6 +2493,40 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok) {
   if (Literal.hadError)
     return ExprError();
 
+  if (Literal.hasUDSuffix()) {
+    // We're building a user-defined literal.
+    IdentifierInfo *UDSuffix = &Context.Idents.get(Literal.getUDSuffix());
+    SourceLocation UDSuffixLoc =
+      getUDSuffixLoc(*this, Tok.getLocation(), Literal.getUDSuffixOffset());
+
+    // FIXME: Perform literal operator lookup now, and build a raw literal if
+    // there is no usable operator.
+
+    QualType Ty;
+    Expr *Lit;
+    if (Literal.isFloatingLiteral()) {
+      // C++11 [lex.ext]p4: If S contains a literal operator with parameter type
+      // long double, the literal is treated as a call of the form
+      //   operator "" X (f L)
+      Lit = BuildFloatingLiteral(*this, Literal, Context.LongDoubleTy,
+                                 Tok.getLocation());
+    } else {
+      // C++11 [lex.ext]p3: If S contains a literal operator with parameter type
+      // unsigned long long, the literal is treated as a call of the form
+      //   operator "" X (n ULL)
+      llvm::APInt ResultVal(Context.getTargetInfo().getLongLongWidth(), 0);
+      if (Literal.GetIntegerValue(ResultVal))
+        Diag(Tok.getLocation(), diag::warn_integer_too_large);
+
+      QualType Ty = Context.UnsignedLongLongTy;
+      Lit = IntegerLiteral::Create(Context, ResultVal, Ty, Tok.getLocation());
+    }
+
+    return BuildLiteralOperatorCall(UDSuffix, UDSuffixLoc,
+                                    llvm::makeArrayRef(&Lit, 1),
+                                    Tok.getLocation());
+  }
+
   Expr *Res;
 
   if (Literal.isFloatingLiteral()) {
@@ -2472,34 +2538,7 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok) {
     else
       Ty = Context.LongDoubleTy;
 
-    const llvm::fltSemantics &Format = Context.getFloatTypeSemantics(Ty);
-
-    using llvm::APFloat;
-    APFloat Val(Format);
-
-    APFloat::opStatus result = Literal.GetFloatValue(Val);
-
-    // Overflow is always an error, but underflow is only an error if
-    // we underflowed to zero (APFloat reports denormals as underflow).
-    if ((result & APFloat::opOverflow) ||
-        ((result & APFloat::opUnderflow) && Val.isZero())) {
-      unsigned diagnostic;
-      SmallString<20> buffer;
-      if (result & APFloat::opOverflow) {
-        diagnostic = diag::warn_float_overflow;
-        APFloat::getLargest(Format).toString(buffer);
-      } else {
-        diagnostic = diag::warn_float_underflow;
-        APFloat::getSmallest(Format).toString(buffer);
-      }
-
-      Diag(Tok.getLocation(), diagnostic)
-        << Ty
-        << StringRef(buffer.data(), buffer.size());
-    }
-
-    bool isExact = (result == APFloat::opOK);
-    Res = FloatingLiteral::Create(Context, Val, isExact, Ty, Tok.getLocation());
+    Res = BuildFloatingLiteral(*this, Literal, Ty, Tok.getLocation());
 
     if (Ty == Context.DoubleTy) {
       if (getLangOptions().SinglePrecisionConstants) {
@@ -8853,6 +8892,8 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
     Diag(CaretLoc, diag::err_blocks_disable);
 
   // Leave the expression-evaluation context.
+  if (hasAnyUnrecoverableErrorsInThisFunction())
+    DiscardCleanupsInEvaluationContext();
   assert(!ExprNeedsCleanups && "cleanups within block not correctly bound!");
   PopExpressionEvaluationContext();
 
@@ -10104,7 +10145,7 @@ static void MarkVarDeclODRUsed(Sema &SemaRef, VarDecl *Var,
                                SourceLocation Loc) {
   // Keep track of used but undefined variables.
   // FIXME: We shouldn't suppress this warning for static data members.
-  if (Var->hasDefinition() == VarDecl::DeclarationOnly &&
+  if (Var->hasDefinition(SemaRef.Context) == VarDecl::DeclarationOnly &&
       Var->getLinkage() != ExternalLinkage &&
       !(Var->isStaticDataMember() && Var->hasInit())) {
     SourceLocation &old = SemaRef.UndefinedInternals[Var->getCanonicalDecl()];
@@ -10177,7 +10218,8 @@ static void DoMarkVarDeclReferenced(Sema &SemaRef, SourceLocation Loc,
     assert(MSInfo && "Missing member specialization information?");
     bool AlreadyInstantiated = !MSInfo->getPointOfInstantiation().isInvalid();
     if (MSInfo->getTemplateSpecializationKind() == TSK_ImplicitInstantiation &&
-        (!AlreadyInstantiated || Var->isUsableInConstantExpressions())) {
+        (!AlreadyInstantiated ||
+         Var->isUsableInConstantExpressions(SemaRef.Context))) {
       if (!AlreadyInstantiated) {
         // This is a modification of an existing AST node. Notify listeners.
         if (ASTMutationListener *L = SemaRef.getASTMutationListener())
@@ -10185,7 +10227,7 @@ static void DoMarkVarDeclReferenced(Sema &SemaRef, SourceLocation Loc,
         MSInfo->setPointOfInstantiation(Loc);
       }
       SourceLocation PointOfInstantiation = MSInfo->getPointOfInstantiation();
-      if (Var->isUsableInConstantExpressions())
+      if (Var->isUsableInConstantExpressions(SemaRef.Context))
         // Do not defer instantiations of variables which could be used in a
         // constant expression.
         SemaRef.InstantiateStaticDataMemberDefinition(PointOfInstantiation,Var);
@@ -10205,7 +10247,7 @@ static void DoMarkVarDeclReferenced(Sema &SemaRef, SourceLocation Loc,
   // apply to references, since they are not objects.
   const VarDecl *DefVD;
   if (E && !isa<ParmVarDecl>(Var) && !Var->getType()->isReferenceType() &&
-      Var->isUsableInConstantExpressions() &&
+      Var->isUsableInConstantExpressions(SemaRef.Context) &&
       Var->getAnyInitializer(DefVD) && DefVD->checkInitIsICE())
     SemaRef.MaybeODRUseExprs.insert(E);
   else

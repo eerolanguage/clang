@@ -1117,20 +1117,17 @@ static void addExceptionArgs(const ArgList &Args, types::ID InputType,
 
 static bool ShouldDisableCFI(const ArgList &Args,
                              const ToolChain &TC) {
+  bool Default = true;
   if (TC.getTriple().isOSDarwin()) {
     // The native darwin assembler doesn't support cfi directives, so
     // we disable them if we think the .s file will be passed to it.
-    bool UseIntegratedAs = Args.hasFlag(options::OPT_integrated_as,
-                                        options::OPT_no_integrated_as,
-                                        TC.IsIntegratedAssemblerDefault());
-    bool UseCFI = Args.hasFlag(options::OPT_fdwarf2_cfi_asm,
-                               options::OPT_fno_dwarf2_cfi_asm,
-                               UseIntegratedAs);
-    return !UseCFI;
+    Default = Args.hasFlag(options::OPT_integrated_as,
+			   options::OPT_no_integrated_as,
+			   TC.IsIntegratedAssemblerDefault());
   }
-
-  // For now we assume that every other assembler support CFI.
-  return false;
+  return !Args.hasFlag(options::OPT_fdwarf2_cfi_asm,
+		       options::OPT_fno_dwarf2_cfi_asm,
+		       Default);
 }
 
 static bool ShouldDisableDwarfDirectory(const ArgList &Args,
@@ -1348,7 +1345,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
     CmdArgs.push_back("-analyzer-eagerly-assume");
 
-    CmdArgs.push_back("-analyzer-inline-call");
+    CmdArgs.push_back("-analyzer-ipa=inlining");
 
     // Add default argument set.
     if (!Args.hasArg(options::OPT__analyzer_no_default_checks)) {

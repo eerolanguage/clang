@@ -333,6 +333,10 @@ static void EncodeUCNEscape(const char *&ThisTokBuf, const char *ThisTokEnd,
 ///         decimal-constant integer-suffix
 ///         octal-constant integer-suffix
 ///         hexadecimal-constant integer-suffix
+///       user-defined-integer-literal: [C++11 lex.ext]
+///         decimal-literal ud-suffix
+///         octal-literal ud-suffix
+///         hexadecimal-literal ud-suffix
 ///       decimal-constant:
 ///         nonzero-digit
 ///         decimal-constant digit
@@ -382,6 +386,7 @@ NumericLiteralParser(const char *begin, const char *end,
   s = DigitsBegin = begin;
   saw_exponent = false;
   saw_period = false;
+  saw_ud_suffix = false;
   isLong = false;
   isUnsigned = false;
   isLongLong = false;
@@ -530,13 +535,20 @@ NumericLiteralParser(const char *begin, const char *end,
       isImaginary = true;
       continue;  // Success.
     }
-    // If we reached here, there was an error.
+    // If we reached here, there was an error or a ud-suffix.
     break;
   }
 
-  // Report an error if there are any.
   if (s != ThisTokEnd) {
-    PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, s-begin),
+    if (PP.getLangOptions().CPlusPlus0x && s == SuffixBegin && *s == '_') {
+      // We have a ud-suffix! By C++11 [lex.ext]p10, ud-suffixes not starting
+      // with an '_' are ill-formed.
+      saw_ud_suffix = true;
+      return;
+    }
+
+    // Report an error if there are any.
+    PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, SuffixBegin-begin),
             isFPConstant ? diag::err_invalid_suffix_float_constant :
                            diag::err_invalid_suffix_integer_constant)
       << StringRef(SuffixBegin, ThisTokEnd-SuffixBegin);
@@ -1200,17 +1212,14 @@ void StringLiteralParser::init(const Token *StringToks, unsigned NumStringToks){
         ++ThisTokBuf;
       ++ThisTokBuf; // skip '('
 
-      // remove same number of characters from the end
-      if (ThisTokEnd >= ThisTokBuf + (ThisTokBuf - Prefix))
-        ThisTokEnd -= (ThisTokBuf - Prefix);
+      // Remove same number of characters from the end
+      ThisTokEnd -= ThisTokBuf - Prefix;
+      assert(ThisTokEnd >= ThisTokBuf && "malformed raw string literal");
 
       // Copy the string over
-      if (CopyStringFragment(StringRef(ThisTokBuf,ThisTokEnd-ThisTokBuf)))
-      {
+      if (CopyStringFragment(StringRef(ThisTokBuf, ThisTokEnd - ThisTokBuf)))
         if (DiagnoseBadString(StringToks[i]))
           hadError = true;
-      }
-
     } else {
       if (!Features.Eero) // eero converts 'xxx' strings to objc strings
         assert(ThisTokBuf[0] == '"' && "Expected quote, lexer broken?");
@@ -1238,11 +1247,9 @@ void StringLiteralParser::init(const Token *StringToks, unsigned NumStringToks){
           } while (ThisTokBuf != ThisTokEnd && ThisTokBuf[0] != '\\');
 
           // Copy the character span over.
-          if (CopyStringFragment(StringRef(InStart,ThisTokBuf-InStart)))
-          {
+          if (CopyStringFragment(StringRef(InStart, ThisTokBuf - InStart)))
             if (DiagnoseBadString(StringToks[i]))
               hadError = true;
-          }
           continue;
         }
         // Is this a Universal Character Name escape?
@@ -1326,8 +1333,8 @@ bool StringLiteralParser::CopyStringFragment(StringRef Fragment) {
   ConversionResult result = conversionOK;
   // Copy the character span over.
   if (CharByteWidth == 1) {
-    if (!isLegalUTF8Sequence(reinterpret_cast<const UTF8*>(Fragment.begin()),
-                             reinterpret_cast<const UTF8*>(Fragment.end())))
+    if (!isLegalUTF8String(reinterpret_cast<const UTF8*>(Fragment.begin()),
+                           reinterpret_cast<const UTF8*>(Fragment.end())))
       result = sourceIllegal;
     memcpy(ResultPtr, Fragment.data(), Fragment.size());
     ResultPtr += Fragment.size();

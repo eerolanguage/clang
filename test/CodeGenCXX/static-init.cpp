@@ -1,6 +1,7 @@
 // RUN: %clang_cc1 %s -triple=x86_64-apple-darwin10 -emit-llvm -o - | FileCheck %s
 
 // CHECK: @_ZZ1hvE1i = internal global i32 0, align 4
+// CHECK: @base_req = global [4 x i8] c"foo\00", align 1
 
 // CHECK: @_ZZN5test1L6getvarEiE3var = internal constant [4 x i32] [i32 1, i32 0, i32 2, i32 4], align 16
 // CHECK: @_ZZ2h2vE1i = linkonce_odr global i32 0
@@ -58,4 +59,23 @@ namespace test1 {
   }
 
   void test() { (void) getvar(2); }
+}
+
+// Make sure we emit the initializer correctly for the following:
+char base_req[] = { "foo" };
+
+namespace union_static_local {
+  // CHECK: define internal void @_ZZN18union_static_local4testEvEN1c4mainEv
+  // CHECK: call void @_ZN18union_static_local1fEPNS_1xE(%"union.union_static_local::x"* bitcast ({ [2 x i8*] }* @_ZZN18union_static_local4testEvE3foo to %"union.union_static_local::x"*))
+  union x { long double y; const char *x[2]; };
+  void f(union x*);
+  void test() {
+    static union x foo = { .x = { "a", "b" } };
+    struct c {
+      static void main() {
+        f(&foo);
+      }
+    };
+    c::main();
+  }
 }
