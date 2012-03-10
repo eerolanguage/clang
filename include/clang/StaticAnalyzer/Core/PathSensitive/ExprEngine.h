@@ -27,6 +27,7 @@
 namespace clang {
 
 class AnalysisDeclContextManager;
+class CXXCatchStmt;
 class CXXConstructExpr;
 class CXXDeleteExpr;
 class CXXNewExpr;
@@ -89,7 +90,7 @@ class ExprEngine : public SubEngine {
   GRBugReporter BR;
 
 public:
-  ExprEngine(AnalysisManager &mgr, bool gcEnabled);
+  ExprEngine(AnalysisManager &mgr, bool gcEnabled, SetOfDecls *VisitedCallees);
 
   ~ExprEngine();
 
@@ -339,6 +340,9 @@ public:
   void VisitIncrementDecrementOperator(const UnaryOperator* U,
                                        ExplodedNode *Pred,
                                        ExplodedNodeSet &Dst);
+  
+  void VisitCXXCatchStmt(const CXXCatchStmt *CS, ExplodedNode *Pred,
+                         ExplodedNodeSet &Dst);
 
   void VisitCXXThisExpr(const CXXThisExpr *TE, ExplodedNode *Pred, 
                         ExplodedNodeSet & Dst);

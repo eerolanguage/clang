@@ -27,6 +27,7 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Compiler.h"
 #include <cctype>
 
 namespace clang {
@@ -175,7 +176,7 @@ public:
 
   /// getExprLoc - Return the preferred location for the arrow when diagnosing
   /// a problem with a generic expression.
-  SourceLocation getExprLoc() const;
+  SourceLocation getExprLoc() const LLVM_READONLY;
 
   /// isUnusedResultAWarning - Return true if this immediate expression should
   /// be warned about if the result is unused.  If so, fill in Loc and Ranges
@@ -594,50 +595,52 @@ public:
 
   /// IgnoreImpCasts - Skip past any implicit casts which might
   /// surround this expression.  Only skips ImplicitCastExprs.
-  Expr *IgnoreImpCasts();
+  Expr *IgnoreImpCasts() LLVM_READONLY;
 
   /// IgnoreImplicit - Skip past any implicit AST nodes which might
   /// surround this expression.
-  Expr *IgnoreImplicit() { return cast<Expr>(Stmt::IgnoreImplicit()); }
+  Expr *IgnoreImplicit() LLVM_READONLY {
+    return cast<Expr>(Stmt::IgnoreImplicit());
+  }
 
   /// IgnoreParens - Ignore parentheses.  If this Expr is a ParenExpr, return
   ///  its subexpression.  If that subexpression is also a ParenExpr,
   ///  then this method recursively returns its subexpression, and so forth.
   ///  Otherwise, the method returns the current Expr.
-  Expr *IgnoreParens();
+  Expr *IgnoreParens() LLVM_READONLY;
 
   /// IgnoreParenCasts - Ignore parentheses and casts.  Strip off any ParenExpr
   /// or CastExprs, returning their operand.
-  Expr *IgnoreParenCasts();
+  Expr *IgnoreParenCasts() LLVM_READONLY;
 
   /// IgnoreParenImpCasts - Ignore parentheses and implicit casts.  Strip off
   /// any ParenExpr or ImplicitCastExprs, returning their operand.
-  Expr *IgnoreParenImpCasts();
+  Expr *IgnoreParenImpCasts() LLVM_READONLY;
 
   /// IgnoreConversionOperator - Ignore conversion operator. If this Expr is a
   /// call to a conversion operator, return the argument.
-  Expr *IgnoreConversionOperator();
+  Expr *IgnoreConversionOperator() LLVM_READONLY;
 
-  const Expr *IgnoreConversionOperator() const {
+  const Expr *IgnoreConversionOperator() const LLVM_READONLY {
     return const_cast<Expr*>(this)->IgnoreConversionOperator();
   }
 
-  const Expr *IgnoreParenImpCasts() const {
+  const Expr *IgnoreParenImpCasts() const LLVM_READONLY {
     return const_cast<Expr*>(this)->IgnoreParenImpCasts();
   }
 
   /// Ignore parentheses and lvalue casts.  Strip off any ParenExpr and
   /// CastExprs that represent lvalue casts, returning their operand.
-  Expr *IgnoreParenLValueCasts();
+  Expr *IgnoreParenLValueCasts() LLVM_READONLY;
 
-  const Expr *IgnoreParenLValueCasts() const {
+  const Expr *IgnoreParenLValueCasts() const LLVM_READONLY {
     return const_cast<Expr*>(this)->IgnoreParenLValueCasts();
   }
 
   /// IgnoreParenNoopCasts - Ignore parentheses and casts that do not change the
   /// value (including ptr->int casts of the same size).  Strip off any
   /// ParenExpr or CastExprs, returning their operand.
-  Expr *IgnoreParenNoopCasts(ASTContext &Ctx);
+  Expr *IgnoreParenNoopCasts(ASTContext &Ctx) LLVM_READONLY;
 
   /// \brief Determine whether this expression is a default function argument.
   ///
@@ -655,16 +658,16 @@ public:
   /// \brief Whether this expression is an implicit reference to 'this' in C++.
   bool isImplicitCXXThis() const;
 
-  const Expr *IgnoreImpCasts() const {
+  const Expr *IgnoreImpCasts() const LLVM_READONLY {
     return const_cast<Expr*>(this)->IgnoreImpCasts();
   }
-  const Expr *IgnoreParens() const {
+  const Expr *IgnoreParens() const LLVM_READONLY {
     return const_cast<Expr*>(this)->IgnoreParens();
   }
-  const Expr *IgnoreParenCasts() const {
+  const Expr *IgnoreParenCasts() const LLVM_READONLY {
     return const_cast<Expr*>(this)->IgnoreParenCasts();
   }
-  const Expr *IgnoreParenNoopCasts(ASTContext &Ctx) const {
+  const Expr *IgnoreParenNoopCasts(ASTContext &Ctx) const LLVM_READONLY {
     return const_cast<Expr*>(this)->IgnoreParenNoopCasts(Ctx);
   }
 
@@ -716,11 +719,11 @@ public:
   /// \brief Retrieve the location of this expression.
   SourceLocation getLocation() const { return Loc; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     if (SourceExpr) return SourceExpr->getSourceRange();
     return Loc;
   }
-  SourceLocation getExprLoc() const {
+  SourceLocation getExprLoc() const LLVM_READONLY {
     if (SourceExpr) return SourceExpr->getExprLoc();
     return Loc;
   }
@@ -867,7 +870,9 @@ public:
 
   SourceLocation getLocation() const { return Loc; }
   void setLocation(SourceLocation L) { Loc = L; }
-  SourceRange getSourceRange() const;
+  SourceRange getSourceRange() const LLVM_READONLY;
+  SourceLocation getLocStart() const LLVM_READONLY;
+  SourceLocation getLocEnd() const LLVM_READONLY;
 
   /// \brief Determine whether this declaration reference was preceded by a
   /// C++ nested-name-specifier, e.g., \c N::foo.
@@ -1065,7 +1070,7 @@ public:
 
   static std::string ComputeName(IdentType IT, const Decl *CurrentDecl);
 
-  SourceRange getSourceRange() const { return SourceRange(Loc); }
+  SourceRange getSourceRange() const LLVM_READONLY { return SourceRange(Loc); }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == PredefinedExprClass;
@@ -1155,7 +1160,7 @@ public:
   /// \brief Returns a new empty integer literal.
   static IntegerLiteral *Create(ASTContext &C, EmptyShell Empty);
 
-  SourceRange getSourceRange() const { return SourceRange(Loc); }
+  SourceRange getSourceRange() const LLVM_READONLY { return SourceRange(Loc); }
 
   /// \brief Retrieve the location of the literal.
   SourceLocation getLocation() const { return Loc; }
@@ -1201,7 +1206,7 @@ public:
     return static_cast<CharacterKind>(CharacterLiteralBits.Kind);
   }
 
-  SourceRange getSourceRange() const { return SourceRange(Loc); }
+  SourceRange getSourceRange() const LLVM_READONLY { return SourceRange(Loc); }
 
   unsigned getValue() const { return Value; }
 
@@ -1262,7 +1267,7 @@ public:
   SourceLocation getLocation() const { return Loc; }
   void setLocation(SourceLocation L) { Loc = L; }
 
-  SourceRange getSourceRange() const { return SourceRange(Loc); }
+  SourceRange getSourceRange() const LLVM_READONLY { return SourceRange(Loc); }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == FloatingLiteralClass;
@@ -1294,7 +1299,7 @@ public:
   Expr *getSubExpr() { return cast<Expr>(Val); }
   void setSubExpr(Expr *E) { Val = E; }
 
-  SourceRange getSourceRange() const { return Val->getSourceRange(); }
+  SourceRange getSourceRange() const LLVM_READONLY { return Val->getSourceRange(); }
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == ImaginaryLiteralClass;
   }
@@ -1452,7 +1457,7 @@ public:
   tokloc_iterator tokloc_begin() const { return TokLocs; }
   tokloc_iterator tokloc_end() const { return TokLocs+NumConcatenated; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(TokLocs[0], TokLocs[NumConcatenated-1]);
   }
   static bool classof(const Stmt *T) {
@@ -1486,7 +1491,7 @@ public:
   Expr *getSubExpr() { return cast<Expr>(Val); }
   void setSubExpr(Expr *E) { Val = E; }
 
-  SourceRange getSourceRange() const { return SourceRange(L, R); }
+  SourceRange getSourceRange() const LLVM_READONLY { return SourceRange(L, R); }
 
   /// \brief Get the location of the left parentheses '('.
   SourceLocation getLParen() const { return L; }
@@ -1599,13 +1604,13 @@ public:
   /// the given unary opcode.
   static OverloadedOperatorKind getOverloadedOperator(Opcode Opc);
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     if (isPostfix())
       return SourceRange(Val->getLocStart(), Loc);
     else
       return SourceRange(Loc, Val->getLocEnd());
   }
-  SourceLocation getExprLoc() const { return Loc; }
+  SourceLocation getExprLoc() const LLVM_READONLY { return Loc; }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == UnaryOperatorClass;
@@ -1721,7 +1726,7 @@ public:
     /// the square brackets. For a field or identifier node, the source range
     /// contains the location of the period (if there is one) and the
     /// identifier.
-    SourceRange getSourceRange() const { return Range; }
+    SourceRange getSourceRange() const LLVM_READONLY { return Range; }
   };
 
 private:
@@ -1803,7 +1808,7 @@ public:
     return NumExprs;
   }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(OperatorLoc, RParenLoc);
   }
 
@@ -1909,7 +1914,7 @@ public:
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(OpLoc, RParenLoc);
   }
 
@@ -1984,14 +1989,14 @@ public:
     return cast<Expr>(getRHS()->getType()->isIntegerType() ? getRHS():getLHS());
   }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(getLHS()->getLocStart(), RBracketLoc);
   }
 
   SourceLocation getRBracketLoc() const { return RBracketLoc; }
   void setRBracketLoc(SourceLocation L) { RBracketLoc = L; }
 
-  SourceLocation getExprLoc() const { return getBase()->getExprLoc(); }
+  SourceLocation getExprLoc() const LLVM_READONLY { return getBase()->getExprLoc(); }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == ArraySubscriptExprClass;
@@ -2124,7 +2129,9 @@ public:
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
 
-  SourceRange getSourceRange() const;
+  SourceRange getSourceRange() const LLVM_READONLY;
+  SourceLocation getLocStart() const LLVM_READONLY;
+  SourceLocation getLocEnd() const LLVM_READONLY;
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() >= firstCallExprConstant &&
@@ -2391,9 +2398,11 @@ public:
   SourceLocation getMemberLoc() const { return MemberLoc; }
   void setMemberLoc(SourceLocation L) { MemberLoc = L; }
 
-  SourceRange getSourceRange() const;
+  SourceRange getSourceRange() const LLVM_READONLY;
+  SourceLocation getLocStart() const LLVM_READONLY;
+  SourceLocation getLocEnd() const LLVM_READONLY;
 
-  SourceLocation getExprLoc() const { return MemberLoc; }
+  SourceLocation getExprLoc() const LLVM_READONLY { return MemberLoc; }
 
   /// \brief Determine whether the base of this explicit is implicit.
   bool isImplicitAccess() const {
@@ -2469,7 +2478,7 @@ public:
     TInfoAndScope.setPointer(tinfo);
   }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     // FIXME: Init should never be null.
     if (!Init)
       return SourceRange();
@@ -2623,8 +2632,14 @@ public:
 
   static ImplicitCastExpr *CreateEmpty(ASTContext &Context, unsigned PathSize);
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return getSubExpr()->getSourceRange();
+  }
+  SourceLocation getLocStart() const LLVM_READONLY {
+    return getSubExpr()->getLocStart();
+  }
+  SourceLocation getLocEnd() const LLVM_READONLY {
+    return getSubExpr()->getLocEnd();
   }
 
   static bool classof(const Stmt *T) {
@@ -2720,7 +2735,7 @@ public:
   SourceLocation getRParenLoc() const { return RPLoc; }
   void setRParenLoc(SourceLocation L) { RPLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(LPLoc, getSubExpr()->getSourceRange().getEnd());
   }
   static bool classof(const Stmt *T) {
@@ -2780,7 +2795,7 @@ public:
   explicit BinaryOperator(EmptyShell Empty)
     : Expr(BinaryOperatorClass, Empty), Opc(BO_Comma) { }
 
-  SourceLocation getExprLoc() const { return OpLoc; }
+  SourceLocation getExprLoc() const LLVM_READONLY { return OpLoc; }
   SourceLocation getOperatorLoc() const { return OpLoc; }
   void setOperatorLoc(SourceLocation L) { OpLoc = L; }
 
@@ -2792,7 +2807,7 @@ public:
   Expr *getRHS() const { return cast<Expr>(SubExprs[RHS]); }
   void setRHS(Expr *E) { SubExprs[RHS] = E; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(getLHS()->getLocStart(), getRHS()->getLocEnd());
   }
 
@@ -3023,7 +3038,7 @@ public:
   Expr *getLHS() const { return cast<Expr>(SubExprs[LHS]); }
   Expr *getRHS() const { return cast<Expr>(SubExprs[RHS]); }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(getCond()->getLocStart(), getRHS()->getLocEnd());
   }
   static bool classof(const Stmt *T) {
@@ -3105,7 +3120,7 @@ public:
     return cast<Expr>(SubExprs[RHS]);
   }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(getCommon()->getLocStart(), getFalseExpr()->getLocEnd());
   }
   static bool classof(const Stmt *T) {
@@ -3157,7 +3172,7 @@ public:
   SourceLocation getLabelLoc() const { return LabelLoc; }
   void setLabelLoc(SourceLocation L) { LabelLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(AmpAmpLoc, LabelLoc);
   }
 
@@ -3199,7 +3214,7 @@ public:
   const CompoundStmt *getSubStmt() const { return cast<CompoundStmt>(SubStmt); }
   void setSubStmt(CompoundStmt *S) { SubStmt = S; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(LParenLoc, RParenLoc);
   }
 
@@ -3249,7 +3264,7 @@ public:
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(BuiltinLoc, RParenLoc);
   }
   static bool classof(const Stmt *T) {
@@ -3344,7 +3359,7 @@ public:
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(BuiltinLoc, RParenLoc);
   }
   static bool classof(const Stmt *T) {
@@ -3381,7 +3396,7 @@ public:
   SourceLocation getTokenLocation() const { return TokenLoc; }
   void setTokenLocation(SourceLocation L) { TokenLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(TokenLoc);
   }
   static bool classof(const Stmt *T) {
@@ -3427,7 +3442,7 @@ public:
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(BuiltinLoc, RParenLoc);
   }
   static bool classof(const Stmt *T) {
@@ -3607,7 +3622,7 @@ public:
     InitListExprBits.InitializesStdInitializerList = ISIL;
   }
 
-  SourceRange getSourceRange() const;
+  SourceRange getSourceRange() const LLVM_READONLY;
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == InitListExprClass;
@@ -3843,7 +3858,7 @@ public:
     SourceLocation getEndLocation() const {
       return Kind == FieldDesignator ? getFieldLoc() : getRBracketLoc();
     }
-    SourceRange getSourceRange() const {
+    SourceRange getSourceRange() const LLVM_READONLY {
       return SourceRange(getStartLocation(), getEndLocation());
     }
   };
@@ -3945,7 +3960,7 @@ public:
 
   SourceRange getDesignatorsSourceRange() const;
 
-  SourceRange getSourceRange() const;
+  SourceRange getSourceRange() const LLVM_READONLY;
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == DesignatedInitExprClass;
@@ -3982,7 +3997,7 @@ public:
   }
   static bool classof(const ImplicitValueInitExpr *) { return true; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange();
   }
 
@@ -4020,7 +4035,7 @@ public:
   SourceLocation getLParenLoc() const { return LParenLoc; }
   SourceLocation getRParenLoc() const { return RParenLoc; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(LParenLoc, RParenLoc);
   }
   static bool classof(const Stmt *T) {
@@ -4135,7 +4150,7 @@ public:
   const Expr *getResultExpr() const { return getAssocExpr(getResultIndex()); }
   Expr *getResultExpr() { return getAssocExpr(getResultIndex()); }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(GenericLoc, RParenLoc);
   }
   static bool classof(const Stmt *T) {
@@ -4201,7 +4216,7 @@ public:
   /// aggregate Constant of ConstantInt(s).
   void getEncodedElementAccess(SmallVectorImpl<unsigned> &Elts) const;
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(getBase()->getLocStart(), AccessorLoc);
   }
 
@@ -4244,7 +4259,7 @@ public:
   const Stmt *getBody() const;
   Stmt *getBody();
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(getCaretLocation(), getBody()->getLocEnd());
   }
 
@@ -4283,7 +4298,7 @@ public:
   SourceLocation getLocation() const { return Loc; }
   void setLocation(SourceLocation L) { Loc = L; }
 
-  SourceRange getSourceRange() const { return SourceRange(Loc); }
+  SourceRange getSourceRange() const LLVM_READONLY { return SourceRange(Loc); }
 
   bool isByRef() const { return IsByRef; }
   void setByRef(bool BR) { IsByRef = BR; }
@@ -4334,7 +4349,7 @@ public:
   /// getRParenLoc - Return the location of final right parenthesis.
   SourceLocation getRParenLoc() const { return RParenLoc; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(BuiltinLoc, RParenLoc);
   }
 
@@ -4463,10 +4478,10 @@ public:
     return const_cast<PseudoObjectExpr*>(this)->getSemanticExpr(index);
   }
 
-  SourceLocation getExprLoc() const {
+  SourceLocation getExprLoc() const LLVM_READONLY {
     return getSyntacticForm()->getExprLoc();
   }
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return getSyntacticForm()->getSourceRange();
   }
 
@@ -4568,7 +4583,7 @@ public:
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
 
-  SourceRange getSourceRange() const {
+  SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(BuiltinLoc, RParenLoc);
   }
   static bool classof(const Stmt *T) {

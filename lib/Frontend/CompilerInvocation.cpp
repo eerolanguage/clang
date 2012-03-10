@@ -138,7 +138,7 @@ static void AnalyzerOptsToArgs(const AnalyzerOptions &Opts,
     Res.push_back("-analyzer-ipa");
     Res.push_back(getAnalysisIPAModeName(Opts.IPAMode));
   }
-  if (Opts.InliningMode != All) {
+  if (Opts.InliningMode != NoRedundancy) {
     Res.push_back("-analyzer-inlining-mode");
     Res.push_back(getAnalysisInliningModeName(Opts.InliningMode));
   }
@@ -2014,7 +2014,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   // inlining enabled.
   //
   // FIXME: This is affected by other options (-fno-inline).
-  Opts.NoInline = !Opt;
+  Opts.NoInlineDefine = !Opt;
 
   Opts.FastMath = Args.hasArg(OPT_ffast_math);
 

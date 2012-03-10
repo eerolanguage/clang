@@ -2195,7 +2195,13 @@ def err_addr_ovl_not_func_ptrref : Error<
   "address of overloaded function %0 cannot be converted to type %1">;
 def err_addr_ovl_no_qualifier : Error<
   "can't form member pointer of type %0 without '&' and class name">;
-  
+
+// C++11 Literal Operators
+def err_ovl_no_viable_literal_operator : Error<
+  "no matching literal operator for call to %0"
+  "%select{| with argument of type %2| with arguments of types %2 and %3}1"
+  "%select{| or 'const char *', and no matching literal operator template}4">;
+
 // C++ Template Declarations
 def err_template_param_shadow : Error<
   "declaration of %0 shadows template parameter">;
@@ -4752,6 +4758,8 @@ def err_operator_delete_param_type : Error<
 // C++ literal operators
 def err_literal_operator_outside_namespace : Error<
   "literal operator %0 must be in a namespace or global scope">;
+def err_literal_operator_default_argument : Error<
+  "literal operator cannot have a default argument">;
 // FIXME: This diagnostic sucks
 def err_literal_operator_params : Error<
   "parameter declaration for literal operator %0 is not valid">;
@@ -4936,10 +4944,13 @@ def warn_printf_nonsensical_flag: Warning<
 def warn_format_nonsensical_length: Warning<
   "length modifier '%0' results in undefined behavior or no effect with '%1' conversion specifier">,
   InGroup<Format>;
+def warn_format_non_standard_positional_arg: ExtWarn<
+  "positional arguments are not supported by ISO C">, InGroup<FormatNonStandard>, DefaultIgnore;
 def warn_format_non_standard: ExtWarn<
-  "'%0' is a non-standard %1">, InGroup<FormatNonStandard>, DefaultIgnore;
+  "'%0' %select{length modifier|conversion specifier}1 is not supported by ISO C">,
+  InGroup<FormatNonStandard>, DefaultIgnore;
 def warn_format_non_standard_conversion_spec: ExtWarn<
-  "using the length modifier '%0' with the conversion specifier '%1' is non-standard">,
+  "using length modifier '%0' with conversion specifier '%1' is not supported by ISO C">,
   InGroup<FormatNonStandard>, DefaultIgnore;
 def warn_printf_ignored_flag: Warning<
   "flag '%0' is ignored when flag '%1' is present">,

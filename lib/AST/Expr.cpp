@@ -94,6 +94,8 @@ bool Expr::isKnownToHaveBooleanValue() const {
 
 // Amusing macro metaprogramming hack: check whether a class provides
 // a more specific implementation of getExprLoc().
+//
+// See also Stmt.cpp:{getLocStart(),getLocEnd()}.
 namespace {
   /// This implementation is used when a class provides a custom
   /// implementation of getExprLoc.
@@ -110,7 +112,7 @@ namespace {
   template <class E>
   SourceLocation getExprLocImpl(const Expr *expr,
                                 SourceLocation (Expr::*v)() const) {
-    return static_cast<const E*>(expr)->getSourceRange().getBegin();
+    return static_cast<const E*>(expr)->getLocStart();
   }
 }
 
@@ -359,6 +361,16 @@ SourceRange DeclRefExpr::getSourceRange() const {
   if (hasExplicitTemplateArgs())
     R.setEnd(getRAngleLoc());
   return R;
+}
+SourceLocation DeclRefExpr::getLocStart() const {
+  if (hasQualifier())
+    return getQualifierLoc().getBeginLoc();
+  return getNameInfo().getLocStart();
+}
+SourceLocation DeclRefExpr::getLocEnd() const {
+  if (hasExplicitTemplateArgs())
+    return getRAngleLoc();
+  return getNameInfo().getLocEnd();
 }
 
 // FIXME: Maybe this should use DeclPrinter with a special "print predefined
@@ -893,6 +905,24 @@ SourceRange CallExpr::getSourceRange() const {
     end = getArg(getNumArgs() - 1)->getLocEnd();
   return SourceRange(begin, end);
 }
+SourceLocation CallExpr::getLocStart() const {
+  if (isa<CXXOperatorCallExpr>(this))
+    return cast<CXXOperatorCallExpr>(this)->getSourceRange().getBegin();
+
+  SourceLocation begin = getCallee()->getLocStart();
+  if (begin.isInvalid() && getNumArgs() > 0)
+    begin = getArg(0)->getLocStart();
+  return begin;
+}
+SourceLocation CallExpr::getLocEnd() const {
+  if (isa<CXXOperatorCallExpr>(this))
+    return cast<CXXOperatorCallExpr>(this)->getSourceRange().getEnd();
+
+  SourceLocation end = getRParenLoc();
+  if (end.isInvalid() && getNumArgs() > 0)
+    end = getArg(getNumArgs() - 1)->getLocEnd();
+  return end;
+}
 
 OffsetOfExpr *OffsetOfExpr::Create(ASTContext &C, QualType type, 
                                    SourceLocation OperatorLoc,
@@ -1016,24 +1046,26 @@ MemberExpr *MemberExpr::Create(ASTContext &C, Expr *base, bool isarrow,
 }
 
 SourceRange MemberExpr::getSourceRange() const {
-  SourceLocation StartLoc;
+  return SourceRange(getLocStart(), getLocEnd());
+}
+SourceLocation MemberExpr::getLocStart() const {
   if (isImplicitAccess()) {
     if (hasQualifier())
-      StartLoc = getQualifierLoc().getBeginLoc();
-    else
-      StartLoc = MemberLoc;
-  } else {
-    // FIXME: We don't want this to happen. Rather, we should be able to
-    // detect all kinds of implicit accesses more cleanly.
-    StartLoc = getBase()->getLocStart();
-    if (StartLoc.isInvalid())
-      StartLoc = MemberLoc;
+      return getQualifierLoc().getBeginLoc();
+    return MemberLoc;
   }
 
-  SourceLocation EndLoc = hasExplicitTemplateArgs()
-    ? getRAngleLoc() : getMemberNameInfo().getEndLoc();
-
-  return SourceRange(StartLoc, EndLoc);
+  // FIXME: We don't want this to happen. Rather, we should be able to
+  // detect all kinds of implicit accesses more cleanly.
+  SourceLocation BaseStartLoc = getBase()->getLocStart();
+  if (BaseStartLoc.isValid())
+    return BaseStartLoc;
+  return MemberLoc;
+}
+SourceLocation MemberExpr::getLocEnd() const {
+  if (hasExplicitTemplateArgs())
+    return getRAngleLoc();
+  return getMemberNameInfo().getEndLoc();
 }
 
 void CastExpr::CheckCastConsistency() const {

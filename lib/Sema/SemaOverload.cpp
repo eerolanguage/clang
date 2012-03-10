@@ -3052,11 +3052,11 @@ Sema::DiagnoseMultipleUserDefinedConversion(Expr *From, QualType ToType) {
     IsUserDefinedConversion(*this, From, ToType, ICS.UserDefined,
                             CandidateSet, false);
   if (OvResult == OR_Ambiguous)
-    Diag(From->getSourceRange().getBegin(),
+    Diag(From->getLocStart(),
          diag::err_typecheck_ambiguous_condition)
           << From->getType() << ToType << From->getSourceRange();
   else if (OvResult == OR_No_Viable_Function && !CandidateSet.empty())
-    Diag(From->getSourceRange().getBegin(),
+    Diag(From->getLocStart(),
          diag::err_typecheck_nonviable_condition)
     << From->getType() << ToType << From->getSourceRange();
   else
@@ -4603,7 +4603,7 @@ Sema::PerformObjectArgumentInitialization(Expr *From,
       Qualifiers ToQs = DestType.getQualifiers();
       unsigned CVR = FromQs.getCVRQualifiers() & ~ToQs.getCVRQualifiers();
       if (CVR) {
-        Diag(From->getSourceRange().getBegin(),
+        Diag(From->getLocStart(),
              diag::err_member_function_call_bad_cvr)
           << Method->getDeclName() << FromRecordType << (CVR - 1)
           << From->getSourceRange();
@@ -4613,7 +4613,7 @@ Sema::PerformObjectArgumentInitialization(Expr *From,
       }
     }
 
-    return Diag(From->getSourceRange().getBegin(),
+    return Diag(From->getLocStart(),
                 diag::err_implicit_object_parameter_init)
        << ImplicitParamRecordType << FromRecordType << From->getSourceRange();
   }
@@ -4657,7 +4657,7 @@ ExprResult Sema::PerformContextuallyConvertToBool(Expr *From) {
     return PerformImplicitConversion(From, Context.BoolTy, ICS, AA_Converting);
 
   if (!DiagnoseMultipleUserDefinedConversion(From, Context.BoolTy))
-    return Diag(From->getSourceRange().getBegin(),
+    return Diag(From->getLocStart(),
                 diag::err_typecheck_bool_condition)
                   << From->getType() << From->getSourceRange();
   return ExprError();
@@ -4745,7 +4745,7 @@ ExprResult Sema::CheckConvertedConstantExpression(Expr *From, QualType T,
   switch (ICS.getKind()) {
   case ImplicitConversionSequence::StandardConversion:
     if (!CheckConvertedConstantConversions(*this, ICS.Standard))
-      return Diag(From->getSourceRange().getBegin(),
+      return Diag(From->getLocStart(),
                   diag::err_typecheck_converted_constant_expression_disallowed)
                << From->getType() << From->getSourceRange() << T;
     SCS = &ICS.Standard;
@@ -4754,7 +4754,7 @@ ExprResult Sema::CheckConvertedConstantExpression(Expr *From, QualType T,
     // We are converting from class type to an integral or enumeration type, so
     // the Before sequence must be trivial.
     if (!CheckConvertedConstantConversions(*this, ICS.UserDefined.After))
-      return Diag(From->getSourceRange().getBegin(),
+      return Diag(From->getLocStart(),
                   diag::err_typecheck_converted_constant_expression_disallowed)
                << From->getType() << From->getSourceRange() << T;
     SCS = &ICS.UserDefined.After;
@@ -4762,7 +4762,7 @@ ExprResult Sema::CheckConvertedConstantExpression(Expr *From, QualType T,
   case ImplicitConversionSequence::AmbiguousConversion:
   case ImplicitConversionSequence::BadConversion:
     if (!DiagnoseMultipleUserDefinedConversion(From, T))
-      return Diag(From->getSourceRange().getBegin(),
+      return Diag(From->getLocStart(),
                   diag::err_typecheck_converted_constant_expression)
                     << From->getType() << From->getSourceRange() << T;
     return ExprError();
@@ -4786,14 +4786,14 @@ ExprResult Sema::CheckConvertedConstantExpression(Expr *From, QualType T,
     break;
 
   case NK_Constant_Narrowing:
-    Diag(From->getSourceRange().getBegin(), diag::err_cce_narrowing)
+    Diag(From->getLocStart(), diag::err_cce_narrowing)
       << CCE << /*Constant*/1
       << PreNarrowingValue.getAsString(Context, QualType()) << T;
     Diagnosed = true;
     break;
 
   case NK_Type_Narrowing:
-    Diag(From->getSourceRange().getBegin(), diag::err_cce_narrowing)
+    Diag(From->getLocStart(), diag::err_cce_narrowing)
       << CCE << /*Constant*/0 << From->getType() << T;
     Diagnosed = true;
     break;
@@ -4826,7 +4826,7 @@ ExprResult Sema::CheckConvertedConstantExpression(Expr *From, QualType T,
       Notes[0].second.getDiagID() == diag::note_invalid_subexpr_in_const_expr)
     Diag(Notes[0].first, diag::err_expr_not_cce) << CCE;
   else {
-    Diag(From->getSourceRange().getBegin(), diag::err_expr_not_cce)
+    Diag(From->getLocStart(), diag::err_expr_not_cce)
       << CCE << From->getSourceRange();
     for (unsigned I = 0; I < Notes.size(); ++I)
       Diag(Notes[I].first, Notes[I].second);
@@ -5236,7 +5236,8 @@ Sema::AddOverloadCandidate(FunctionDecl *Function,
 void Sema::AddFunctionCandidates(const UnresolvedSetImpl &Fns,
                                  llvm::ArrayRef<Expr *> Args,
                                  OverloadCandidateSet& CandidateSet,
-                                 bool SuppressUserConversions) {
+                                 bool SuppressUserConversions,
+                               TemplateArgumentListInfo *ExplicitTemplateArgs) {
   for (UnresolvedSetIterator F = Fns.begin(), E = Fns.end(); F != E; ++F) {
     NamedDecl *D = F.getDecl()->getUnderlyingDecl();
     if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
@@ -5255,13 +5256,13 @@ void Sema::AddFunctionCandidates(const UnresolvedSetImpl &Fns,
           !cast<CXXMethodDecl>(FunTmpl->getTemplatedDecl())->isStatic())
         AddMethodTemplateCandidate(FunTmpl, F.getPair(),
                               cast<CXXRecordDecl>(FunTmpl->getDeclContext()),
-                                   /*FIXME: explicit args */ 0,
+                                   ExplicitTemplateArgs,
                                    Args[0]->getType(),
                                    Args[0]->Classify(Context), Args.slice(1),
                                    CandidateSet, SuppressUserConversions);
       else
         AddTemplateOverloadCandidate(FunTmpl, F.getPair(),
-                                     /*FIXME: explicit args */ 0, Args,
+                                     ExplicitTemplateArgs, Args,
                                      CandidateSet, SuppressUserConversions);
     }
   }
@@ -7846,12 +7847,6 @@ void DiagnoseBadConversion(Sema &S, OverloadCandidate *Cand, unsigned I) {
 
   if (CToTy.getUnqualifiedType() == CFromTy.getUnqualifiedType() &&
       !CToTy.isAtLeastAsQualifiedAs(CFromTy)) {
-    // It is dumb that we have to do this here.
-    while (isa<ArrayType>(CFromTy))
-      CFromTy = CFromTy->getAs<ArrayType>()->getElementType();
-    while (isa<ArrayType>(CToTy))
-      CToTy = CFromTy->getAs<ArrayType>()->getElementType();
-
     Qualifiers FromQs = CFromTy.getQualifiers();
     Qualifiers ToQs = CToTy.getQualifiers();
 
@@ -9082,7 +9077,7 @@ bool Sema::ResolveAndFixSingleFunctionTemplateSpecialization(
   ExprResult SingleFunctionExpression;
   if (FunctionDecl *fn = ResolveSingleFunctionTemplateSpecialization(
                            ovl.Expression, /*complain*/ false, &found)) {
-    if (DiagnoseUseOfDecl(fn, SrcExpr.get()->getSourceRange().getBegin())) {
+    if (DiagnoseUseOfDecl(fn, SrcExpr.get()->getLocStart())) {
       SrcExpr = ExprError();
       return true;
     }
@@ -9557,7 +9552,7 @@ Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn, UnresolvedLookupExpr *ULE,
     if (!Recovery.isInvalid())
       return Recovery;
 
-    Diag(Fn->getSourceRange().getBegin(),
+    Diag(Fn->getLocStart(),
          diag::err_ovl_no_viable_function_in_call)
       << ULE->getName() << Fn->getSourceRange();
     CandidateSet.NoteCandidates(*this, OCD_AllCandidates,
@@ -9566,7 +9561,7 @@ Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn, UnresolvedLookupExpr *ULE,
   }
 
   case OR_Ambiguous:
-    Diag(Fn->getSourceRange().getBegin(), diag::err_ovl_ambiguous_call)
+    Diag(Fn->getLocStart(), diag::err_ovl_ambiguous_call)
       << ULE->getName() << Fn->getSourceRange();
     CandidateSet.NoteCandidates(*this, OCD_ViableCandidates,
                                 llvm::makeArrayRef(Args, NumArgs));
@@ -9574,7 +9569,7 @@ Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn, UnresolvedLookupExpr *ULE,
 
   case OR_Deleted:
     {
-      Diag(Fn->getSourceRange().getBegin(), diag::err_ovl_deleted_call)
+      Diag(Fn->getLocStart(), diag::err_ovl_deleted_call)
         << Best->Function->isDeleted()
         << ULE->getName()
         << getDeletedOrUnavailableSuffix(Best->Function)
@@ -10306,7 +10301,7 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
                                         resultType, valueKind, RParenLoc);
 
     if (CheckCallReturnType(proto->getResultType(),
-                            op->getRHS()->getSourceRange().getBegin(),
+                            op->getRHS()->getLocStart(),
                             call, 0))
       return ExprError();
 
@@ -10600,11 +10595,11 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
 
   case OR_No_Viable_Function:
     if (CandidateSet.empty())
-      Diag(Object.get()->getSourceRange().getBegin(), diag::err_ovl_no_oper)
+      Diag(Object.get()->getLocStart(), diag::err_ovl_no_oper)
         << Object.get()->getType() << /*call*/ 1
         << Object.get()->getSourceRange();
     else
-      Diag(Object.get()->getSourceRange().getBegin(),
+      Diag(Object.get()->getLocStart(),
            diag::err_ovl_no_viable_object_call)
         << Object.get()->getType() << Object.get()->getSourceRange();
     CandidateSet.NoteCandidates(*this, OCD_AllCandidates,
@@ -10612,7 +10607,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
     break;
 
   case OR_Ambiguous:
-    Diag(Object.get()->getSourceRange().getBegin(),
+    Diag(Object.get()->getLocStart(),
          diag::err_ovl_ambiguous_object_call)
       << Object.get()->getType() << Object.get()->getSourceRange();
     CandidateSet.NoteCandidates(*this, OCD_ViableCandidates,
@@ -10620,7 +10615,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
     break;
 
   case OR_Deleted:
-    Diag(Object.get()->getSourceRange().getBegin(),
+    Diag(Object.get()->getLocStart(),
          diag::err_ovl_deleted_object_call)
       << Best->Function->isDeleted()
       << Object.get()->getType() 
@@ -10895,66 +10890,53 @@ Sema::BuildOverloadedArrowExpr(Scope *S, Expr *Base, SourceLocation OpLoc) {
   return MaybeBindToTemporary(TheCall);
 }
 
-static void FilterLookupForLiteralOperator(Sema &S, LookupResult &R,
-                                           ArrayRef<Expr*> Args) {
-  LookupResult::Filter F = R.makeFilter();
+/// BuildLiteralOperatorCall - Build a UserDefinedLiteral by creating a call to
+/// a literal operator described by the provided lookup results.
+ExprResult Sema::BuildLiteralOperatorCall(LookupResult &R,
+                                          DeclarationNameInfo &SuffixInfo,
+                                          ArrayRef<Expr*> Args,
+                                          SourceLocation LitEndLoc,
+                                       TemplateArgumentListInfo *TemplateArgs) {
+  SourceLocation UDSuffixLoc = SuffixInfo.getCXXLiteralOperatorNameLoc();
 
-  while (F.hasNext()) {
-    FunctionDecl *D = dyn_cast<FunctionDecl>(F.next());
-    // FIXME: using-decls?
+  OverloadCandidateSet CandidateSet(UDSuffixLoc);
+  AddFunctionCandidates(R.asUnresolvedSet(), Args, CandidateSet, true,
+                        TemplateArgs);
 
-    if (!D || D->getNumParams() != Args.size()) {
-      F.erase();
-    } else {
-      // The literal operator's parameter types must exactly match the decayed
-      // argument types.
-      for (unsigned ArgIdx = 0; ArgIdx != Args.size(); ++ArgIdx) {
-        QualType ArgTy = Args[ArgIdx]->getType();
-        QualType ParamTy = D->getParamDecl(ArgIdx)->getType();
-        if (ArgTy->isArrayType())
-          ArgTy = S.Context.getArrayDecayedType(ArgTy);
-        if (!S.Context.hasSameUnqualifiedType(ArgTy, ParamTy)) {
-          F.erase();
-          break;
-        }
-      }
-    }
+  bool HadMultipleCandidates = (CandidateSet.size() > 1);
+
+  // Perform overload resolution. This will usually be trivial, but might need
+  // to perform substitutions for a literal operator template.
+  OverloadCandidateSet::iterator Best;
+  switch (CandidateSet.BestViableFunction(*this, UDSuffixLoc, Best)) {
+  case OR_Success:
+  case OR_Deleted:
+    break;
+
+  case OR_No_Viable_Function:
+    Diag(UDSuffixLoc, diag::err_ovl_no_viable_function_in_call)
+      << R.getLookupName();
+    CandidateSet.NoteCandidates(*this, OCD_AllCandidates, Args);
+    return ExprError();
+
+  case OR_Ambiguous:
+    Diag(R.getNameLoc(), diag::err_ovl_ambiguous_call) << R.getLookupName();
+    CandidateSet.NoteCandidates(*this, OCD_ViableCandidates, Args);
+    return ExprError();
   }
 
-  F.done();
-}
+  FunctionDecl *FD = Best->Function;
+  MarkFunctionReferenced(UDSuffixLoc, FD);
+  DiagnoseUseOfDecl(Best->FoundDecl, UDSuffixLoc);
 
-/// BuildLiteralOperatorCall - A user-defined literal was found. Look up the
-/// corresponding literal operator, and build a call to it.
-/// FIXME: Support for raw literal operators and literal operator templates.
-ExprResult
-Sema::BuildLiteralOperatorCall(IdentifierInfo *UDSuffix,
-                               SourceLocation UDSuffixLoc,
-                               ArrayRef<Expr*> Args, SourceLocation LitEndLoc) {
-  DeclarationName OpName =
-    Context.DeclarationNames.getCXXLiteralOperatorName(UDSuffix);
-  DeclarationNameInfo OpNameInfo(OpName, UDSuffixLoc);
-  OpNameInfo.setCXXLiteralOperatorNameLoc(UDSuffixLoc);
-
-  LookupResult R(*this, OpName, UDSuffixLoc, LookupOrdinaryName);
-  LookupName(R, /*FIXME*/CurScope);
-  assert(R.getResultKind() != LookupResult::Ambiguous &&
-         "literal operator lookup can't be ambiguous");
-
-  // Filter the lookup results appropriately.
-  FilterLookupForLiteralOperator(*this, R, Args);
-
-  // FIXME: For literal operator templates, we need to perform overload
-  // resolution to deal with SFINAE.
-  FunctionDecl *FD = R.getAsSingle<FunctionDecl>();
-  if (!FD || FD->getNumParams() != Args.size())
-    return ExprError(
-        Diag(UDSuffixLoc, diag::err_ovl_no_viable_oper) << UDSuffix->getName());
-  bool HadMultipleCandidates = false;
+  ExprResult Fn = CreateFunctionRefExpr(*this, FD, HadMultipleCandidates,
+                                        SuffixInfo.getLoc(),
+                                        SuffixInfo.getInfo());
+  if (Fn.isInvalid())
+    return true;
 
   // Check the argument types. This should almost always be a no-op, except
   // that array-to-pointer decay is applied to string literals.
-  assert(Args.size() <= 2 && "too many arguments for literal operator");
   Expr *ConvArgs[2];
   for (unsigned ArgIdx = 0; ArgIdx != Args.size(); ++ArgIdx) {
     ExprResult InputInit = PerformCopyInitialization(
@@ -10965,25 +10947,9 @@ Sema::BuildLiteralOperatorCall(IdentifierInfo *UDSuffix,
     ConvArgs[ArgIdx] = InputInit.take();
   }
 
-  MarkFunctionReferenced(UDSuffixLoc, FD);
-  DiagnoseUseOfDecl(FD, UDSuffixLoc);
-
-  ExprResult Fn = CreateFunctionRefExpr(*this, FD, HadMultipleCandidates,
-                                        OpNameInfo.getLoc(),
-                                        OpNameInfo.getInfo());
-  if (Fn.isInvalid())
-    return true;
-
   QualType ResultTy = FD->getResultType();
   ExprValueKind VK = Expr::getValueKindForType(ResultTy);
   ResultTy = ResultTy.getNonLValueExprType(Context);
-
-  // FIXME: A literal operator call never uses default arguments.
-  // But is this ambiguous?
-  //   void operator"" _x(const char *p);
-  //   void operator"" _x(const char *p, size_t n = 0);
-  //   123_x
-  // g++ says no, but bizarrely rejects it if the default argument is omitted.
 
   UserDefinedLiteral *UDL =
     new (Context) UserDefinedLiteral(Context, Fn.take(), ConvArgs, Args.size(),

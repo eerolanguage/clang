@@ -712,7 +712,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     // constant: integer-constant
     // constant: floating-constant
 
-    Res = Actions.ActOnNumericConstant(Tok);
+    Res = Actions.ActOnNumericConstant(Tok, /*UDLScope*/getCurScope());
     ConsumeToken();
     break;
 
@@ -857,7 +857,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::wide_char_constant:
   case tok::utf16_char_constant:
   case tok::utf32_char_constant:
-    Res = Actions.ActOnCharacterConstant(Tok);
+    Res = Actions.ActOnCharacterConstant(Tok, /*UDLScope*/getCurScope());
     ConsumeToken();
     break;
   case tok::kw___func__:       // primary-expression: __func__ [C99 6.4.2.2]
@@ -2155,18 +2155,13 @@ ExprResult Parser::ParseStringLiteralExpression(bool AllowUserDefinedLiteral) {
   SmallVector<Token, 4> StringToks;
 
   do {
-    if (!AllowUserDefinedLiteral && Tok.hasUDSuffix()) {
-      Diag(Tok, diag::err_invalid_string_udl);
-      do ConsumeStringToken(); while (isTokenStringLiteral());
-      return ExprError();
-    }
-
     StringToks.push_back(Tok);
     ConsumeStringToken();
   } while (isTokenStringLiteral());
 
   // Pass the set of string tokens, ready for concatenation, to the actions.
-  return Actions.ActOnStringLiteral(&StringToks[0], StringToks.size());
+  return Actions.ActOnStringLiteral(&StringToks[0], StringToks.size(),
+                                   AllowUserDefinedLiteral ? getCurScope() : 0);
 }
 
 /// ParseGenericSelectionExpression - Parse a C11 generic-selection

@@ -214,9 +214,16 @@ bool CoreEngine::ExecuteWorkList(const LocationContext *L, unsigned Steps,
         assert (false && "BlockExit location never occur in forward analysis.");
         break;
 
-      case ProgramPoint::CallEnterKind:
-        SubEng.processCallEnter(cast<CallEnter>(Node->getLocation()), Node);
+      case ProgramPoint::CallEnterKind: {
+        CallEnter CEnter = cast<CallEnter>(Node->getLocation());
+        if (AnalyzedCallees)
+          if (const CallExpr* CE =
+              dyn_cast_or_null<CallExpr>(CEnter.getCallExpr()))
+            if (const Decl *CD = CE->getCalleeDecl())
+              AnalyzedCallees->insert(CD);
+        SubEng.processCallEnter(CEnter, Node);
         break;
+      }
 
       case ProgramPoint::CallExitKind:
         SubEng.processCallExit(Node);
@@ -328,6 +335,19 @@ void CoreEngine::HandleBlockExit(const CFGBlock * B, ExplodedNode *Pred) {
         HandleBranch(cast<ChooseExpr>(Term)->getCond(), Term, B, Pred);
         return;
 
+      case Stmt::CXXTryStmtClass: {
+        // Generate a node for each of the successors.
+        // Our logic for EH analysis can certainly be improved.
+        for (CFGBlock::const_succ_iterator it = B->succ_begin(),
+             et = B->succ_end(); it != et; ++it) {
+          if (const CFGBlock *succ = *it) {
+            generateNode(BlockEdge(B, succ, Pred->getLocationContext()),
+                         Pred->State, Pred);
+          }
+        }
+        return;
+      }
+        
       case Stmt::DoStmtClass:
         HandleBranch(cast<DoStmt>(Term)->getCond(), Term, B, Pred);
         return;

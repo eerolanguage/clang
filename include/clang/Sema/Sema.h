@@ -1559,7 +1559,8 @@ public:
   void AddFunctionCandidates(const UnresolvedSetImpl &Functions,
                              llvm::ArrayRef<Expr *> Args,
                              OverloadCandidateSet& CandidateSet,
-                             bool SuppressUserConversions = false);
+                             bool SuppressUserConversions = false,
+                            TemplateArgumentListInfo *ExplicitTemplateArgs = 0);
   void AddMethodCandidate(DeclAccessPair FoundDecl,
                           QualType ObjectType,
                           Expr::Classification ObjectClassification,
@@ -1801,6 +1802,22 @@ public:
     ForRedeclaration
   };
 
+  /// \brief The possible outcomes of name lookup for a literal operator.
+  enum LiteralOperatorLookupResult {
+    /// \brief The lookup resulted in an error.
+    LOLR_Error,
+    /// \brief The lookup found a single 'cooked' literal operator, which
+    /// expects a normal literal to be built and passed to it.
+    LOLR_Cooked,
+    /// \brief The lookup found a single 'raw' literal operator, which expects
+    /// a string literal containing the spelling of the literal token.
+    LOLR_Raw,
+    /// \brief The lookup found an overload set of literal operator templates,
+    /// which expect the characters of the spelling of the literal token to be
+    /// passed as a non-type template argument pack.
+    LOLR_Template
+  };
+
   SpecialMemberOverloadResult *LookupSpecialMember(CXXRecordDecl *D,
                                                    CXXSpecialMember SM,
                                                    bool ConstArg,
@@ -1864,6 +1881,10 @@ public:
   CXXMethodDecl *LookupMovingAssignment(CXXRecordDecl *Class, bool RValueThis,
                                         unsigned ThisQuals);
   CXXDestructorDecl *LookupDestructor(CXXRecordDecl *Class);
+
+  LiteralOperatorLookupResult LookupLiteralOperator(Scope *S, LookupResult &R,
+                                                    ArrayRef<QualType> ArgTys,
+                                                    bool AllowRawAndTemplate);
 
   void ArgumentDependentLookup(DeclarationName Name, bool Operator,
                                SourceLocation Loc,
@@ -2556,15 +2577,16 @@ public:
                                       const DeclarationNameInfo &NameInfo,
                                       NamedDecl *D);
 
-  ExprResult BuildLiteralOperatorCall(IdentifierInfo *UDSuffix,
-                                      SourceLocation UDSuffixLoc,
+  ExprResult BuildLiteralOperatorCall(LookupResult &R,
+                                      DeclarationNameInfo &SuffixInfo,
                                       ArrayRef<Expr*> Args,
-                                      SourceLocation LitEndLoc);
+                                      SourceLocation LitEndLoc,
+                            TemplateArgumentListInfo *ExplicitTemplateArgs = 0);
 
   ExprResult ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind);
   ExprResult ActOnIntegerConstant(SourceLocation Loc, uint64_t Val);
-  ExprResult ActOnNumericConstant(const Token &Tok);
-  ExprResult ActOnCharacterConstant(const Token &Tok);
+  ExprResult ActOnNumericConstant(const Token &Tok, Scope *UDLScope = 0);
+  ExprResult ActOnCharacterConstant(const Token &Tok, Scope *UDLScope = 0);
   ExprResult ActOnParenExpr(SourceLocation L, SourceLocation R, Expr *E);
   ExprResult ActOnParenListExpr(SourceLocation L,
                                 SourceLocation R,
@@ -2572,8 +2594,8 @@ public:
 
   /// ActOnStringLiteral - The specified tokens were lexed as pasted string
   /// fragments (e.g. "foo" "bar" L"baz").
-  ExprResult ActOnStringLiteral(const Token *StringToks,
-                                unsigned NumStringToks);
+  ExprResult ActOnStringLiteral(const Token *StringToks, unsigned NumStringToks,
+                                Scope *UDLScope = 0);
 
   ExprResult ActOnGenericSelectionExpr(SourceLocation KeyLoc,
                                        SourceLocation DefaultLoc,
