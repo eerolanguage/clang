@@ -3167,6 +3167,9 @@ LexNextToken:
       
       Kind = tok::equalequal;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+    } else if (Features.CompactBlocks && Char == '>') { // '=>' used for these
+      Kind = tok::equalgreater;
+      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
     } else {
       Kind = tok::equal;
     }

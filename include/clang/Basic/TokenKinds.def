@@ -194,6 +194,9 @@ PUNCTUATOR(coloncolon,          "::")
 // Objective C support.
 PUNCTUATOR(at,                  "@")
 
+// Eero support
+PUNCTUATOR(equalgreater,        "=>")
+
 // CUDA support.
 PUNCTUATOR(lesslessless,          "<<<")
 PUNCTUATOR(greatergreatergreater, ">>>")

@@ -2425,17 +2425,53 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     Actions.ActOnBlockArguments(ParamInfo, getCurScope());
   }
 
+  StmtResult Stmt(StmtError());
 
+  // Support blocks with an inline single expression or a
+  // single return statement. e.g. "^(int x => return x)" or
+  // "(int x) => return x"
+  if (getLang().CompactBlocks && Tok.is(tok::equalgreater)) {
+    bool expectClosingParen(Tok.getLength() == 0); // if '=>' was inserted
+    ConsumeToken(); // eat the "=>"
+    if (getLang().OffSideRule && // if offside rule in effect, disallow newline 
+        Tok.isAtStartOfLine() && // after '=>'; could be ambiguous otherwise.
+        !expectClosingParen) {   // don't care if within parens.
+      Diag(Tok, diag::err_not_allowed) << "newline";
+    }
+    if (Tok.is(tok::kw_return)) {
+      Stmt = Actions.ActOnReturnStmt(ConsumeToken(), // the "return"
+                                     ParseAssignmentExpression().take());
+    } else {      
+      ExprResult Res(ParseAssignmentExpression()); // no comma operators?
+      if (!Res.isInvalid())
+        Stmt = StmtResult(Res.take()).take();
+    }
+    if (expectClosingParen) // handle ^(int x => return x) closing paren
+      ExpectAndConsume(tok::r_paren, diag::err_expected_rparen, "");
+
+    if (!Stmt.isInvalid()) {     // make into a compound statement needed
+      StmtVector Stmts(Actions); // by ActOnBlockStmtExpr)
+      Stmts.push_back(Stmt.release());
+      Stmt = Actions.ActOnCompoundStmt(Stmt.get()->getLocStart(),
+                                       Stmt.get()->getLocEnd(),
+                                       move_arg(Stmts), false);
+    }
+  } else if (!getLang().OffSideRule || Tok.isAtStartOfLine()) {
+    Stmt = ParseCompoundStatementBody();
+  } else {
+    Diag(Tok, diag::err_expected) << "newline";
+    Actions.ActOnBlockError(CaretLoc, getCurScope());
+    return ExprError();
+  }
+  
   ExprResult Result(true);
-  if (!Tok.is(tok::l_brace) && 
-      (!getLang().OptionalSemicolons || !Tok.isAtStartOfLine())) {
+  if (!Tok.is(tok::l_brace) && !getLang().OffSideRule) {
     // Saw something like: ^expr
     Diag(Tok, diag::err_expected_expression);
     Actions.ActOnBlockError(CaretLoc, getCurScope());
     return ExprError();
   }
 
-  StmtResult Stmt(ParseCompoundStatementBody());
   BlockScope.Exit();
   if (!Stmt.isInvalid())
     Result = Actions.ActOnBlockStmtExpr(CaretLoc, Stmt.take(), getCurScope());

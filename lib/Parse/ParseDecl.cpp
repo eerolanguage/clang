@@ -4156,6 +4156,17 @@ void Parser::ParseParenDeclarator(Declarator &D) {
 
   assert(!D.isPastIdentifier() && "Should be called before passing identifier");
 
+  // Support compact blocks, in this case handling
+  //     "^(=> <expr_or_return_stmt>)"
+  if (getLang().CompactBlocks && Tok.is(tok::equalgreater) && 
+      (D.getContext() == Declarator::BlockLiteralContext)) {
+    unsigned SavedTokLen = Tok.getLength();
+    Tok.setLength(0);            // mark the '=>' token as "inserted"
+    PP.EnterToken(Tok);          // push the '=>' forward
+    Tok.setKind(tok::r_paren);   // make the original '=>' a r_paren
+    Tok.setLength(SavedTokLen);  // restore original length (used by Decl)
+  }
+
   // Eat any attributes before we look at whether this is a grouping or function
   // declarator paren.  If this is a grouping paren, the attribute applies to
   // the type being built up, for example:
@@ -4621,6 +4632,15 @@ void Parser::ParseParameterDeclarationClause(
           Diag(EllipsisLoc, diag::err_missing_comma_before_ellipsis)
             << FixItHint::CreateInsertion(EllipsisLoc, ", ");
         }
+      }
+      // Support compact blocks: "^(int x => <expr_or_return_stmt>)"
+      if (getLang().CompactBlocks && Tok.is(tok::equalgreater) && 
+          (D.getContext() == Declarator::BlockLiteralContext)) {
+        unsigned SavedTokLen = Tok.getLength();
+        Tok.setLength(0);            // mark the '=>' token as "inserted"
+        PP.EnterToken(Tok);          // push the '=>' forward
+        Tok.setKind(tok::r_paren);   // make the original '=>' a r_paren
+        Tok.setLength(SavedTokLen);  // restore original length (used by Decl)
       }
       
       break;
