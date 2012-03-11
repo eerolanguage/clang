@@ -1,4 +1,7 @@
-from clang.cindex import Index, CursorKind, TypeKind
+from clang.cindex import CursorKind
+from clang.cindex import TypeKind
+from .util import get_cursor
+from .util import get_tu
 
 kInput = """\
 // FIXME: Find nicer way to drop builtins and other cruft.
@@ -24,9 +27,8 @@ void f0(int a0, int a1) {
 """
 
 def test_get_children():
-    index = Index.create()
-    tu = index.parse('t.c', unsaved_files = [('t.c',kInput)])
-    
+    tu = get_tu(kInput)
+
     # Skip until past start_decl.
     it = tu.cursor.get_children()
     while it.next().spelling != 'start_decl':
@@ -65,31 +67,26 @@ def test_get_children():
     assert tu_nodes[2].is_definition() == True
 
 def test_underlying_type():
-    source = 'typedef int foo;'
-    index = Index.create()
-    tu = index.parse('test.c', unsaved_files=[('test.c', source)])
-    assert tu is not None
-
-    for cursor in tu.cursor.get_children():
-        if cursor.spelling == 'foo':
-            typedef = cursor
-            break
+    tu = get_tu('typedef int foo;')
+    typedef = get_cursor(tu, 'foo')
+    assert typedef is not None
 
     assert typedef.kind.is_declaration()
     underlying = typedef.underlying_typedef_type
     assert underlying.kind == TypeKind.INT
 
 def test_enum_type():
-    source = 'enum TEST { FOO=1, BAR=2 };'
-    index = Index.create()
-    tu = index.parse('test.c', unsaved_files=[('test.c', source)])
-    assert tu is not None
-
-    for cursor in tu.cursor.get_children():
-        if cursor.spelling == 'TEST':
-            enum = cursor
-            break
+    tu = get_tu('enum TEST { FOO=1, BAR=2 };')
+    enum = get_cursor(tu, 'TEST')
+    assert enum is not None
 
     assert enum.kind == CursorKind.ENUM_DECL
     enum_type = enum.enum_type
     assert enum_type.kind == TypeKind.UINT
+
+def test_objc_type_encoding():
+    tu = get_tu('int i;', lang='objc')
+    i = get_cursor(tu, 'i')
+
+    assert i is not None
+    assert i.objc_type_encoding == 'i'

@@ -211,48 +211,17 @@ public:
     // Otherwise, assume the mapping is the scalar directly.
     return CGF.getOpaqueRValueMapping(E).getScalarVal();
   }
-    
+
   // l-values.
   Value *VisitDeclRefExpr(DeclRefExpr *E) {
-    VarDecl *VD = dyn_cast<VarDecl>(E->getDecl());
-    if (!VD && !isa<EnumConstantDecl>(E->getDecl()))
-      return EmitLoadOfLValue(E);
-    if (VD && !VD->isUsableInConstantExpressions(CGF.getContext()))
-      return EmitLoadOfLValue(E);
-
-    // This is an enumerator or a variable which is usable in constant
-    // expressions. Try to emit its value instead.
-    Expr::EvalResult Result;
-    bool IsReferenceConstant = false;
-    QualType EvalTy = E->getType();
-    if (!E->EvaluateAsRValue(Result, CGF.getContext())) {
-      // If this is a reference, try to determine what it is bound to.
-      if (!E->getDecl()->getType()->isReferenceType() ||
-          !E->EvaluateAsLValue(Result, CGF.getContext()))
-        return EmitLoadOfLValue(E);
-
-      IsReferenceConstant = true;
-      EvalTy = E->getDecl()->getType();
+    if (CodeGenFunction::ConstantEmission result = CGF.tryEmitAsConstant(E)) {
+      if (result.isReference())
+        return EmitLoadOfLValue(result.getReferenceLValue(CGF, E));
+      return result.getValue();
     }
-
-    assert(!Result.HasSideEffects && "Constant declref with side-effect?!");
-
-    llvm::Constant *C = CGF.CGM.EmitConstantValue(Result.Val, EvalTy, &CGF);
-
-    // Make sure we emit a debug reference to the global variable.
-    if (VD) {
-      if (!CGF.getContext().DeclMustBeEmitted(VD))
-        CGF.EmitDeclRefExprDbgValue(E, C);
-    } else {
-      assert(isa<EnumConstantDecl>(E->getDecl()));
-      CGF.EmitDeclRefExprDbgValue(E, C);
-    }
-
-    if (IsReferenceConstant)
-      return EmitLoadOfLValue(CGF.MakeNaturalAlignAddrLValue(C, E->getType()));
-
-    return C;
+    return EmitLoadOfLValue(E);
   }
+
   Value *VisitObjCSelectorExpr(ObjCSelectorExpr *E) {
     return CGF.EmitObjCSelectorExpr(E);
   }
@@ -303,8 +272,6 @@ public:
   }
 
   Value *VisitStmtExpr(const StmtExpr *E);
-
-  Value *VisitBlockDeclRefExpr(const BlockDeclRefExpr *E);
 
   // Unary Operators.
   Value *VisitUnaryPostDec(const UnaryOperator *E) {
@@ -1270,11 +1237,6 @@ Value *ScalarExprEmitter::VisitStmtExpr(const StmtExpr *E) {
   CodeGenFunction::StmtExprEvaluation eval(CGF);
   return CGF.EmitCompoundStmt(*E->getSubStmt(), !E->getType()->isVoidType())
     .getScalarVal();
-}
-
-Value *ScalarExprEmitter::VisitBlockDeclRefExpr(const BlockDeclRefExpr *E) {
-  LValue LV = CGF.EmitBlockDeclRefLValue(E);
-  return CGF.EmitLoadOfLValue(LV).getScalarVal();
 }
 
 //===----------------------------------------------------------------------===//

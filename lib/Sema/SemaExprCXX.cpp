@@ -1330,14 +1330,17 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
   // C++0x [expr.new]p17:
   //   If the new expression creates an array of objects of class type,
   //   access and ambiguity control are done for the destructor.
-  if (ArraySize && AllocType->isRecordType() && !AllocType->isDependentType()) {
-    if (CXXDestructorDecl *dtor = LookupDestructor(
-            cast<CXXRecordDecl>(AllocType->getAs<RecordType>()->getDecl()))) {
-      MarkFunctionReferenced(StartLoc, dtor);
-      CheckDestructorAccess(StartLoc, dtor, 
-                            PDiag(diag::err_access_dtor)
-                              << Context.getBaseElementType(AllocType));
-      DiagnoseUseOfDecl(dtor, StartLoc);
+  QualType BaseAllocType = Context.getBaseElementType(AllocType);
+  if (ArraySize && !BaseAllocType->isDependentType()) {
+    if (const RecordType *BaseRecordType = BaseAllocType->getAs<RecordType>()) {
+      if (CXXDestructorDecl *dtor = LookupDestructor(
+              cast<CXXRecordDecl>(BaseRecordType->getDecl()))) {
+        MarkFunctionReferenced(StartLoc, dtor);
+        CheckDestructorAccess(StartLoc, dtor, 
+                              PDiag(diag::err_access_dtor)
+                                << BaseAllocType);
+        DiagnoseUseOfDecl(dtor, StartLoc);
+      }
     }
   }
 
@@ -2187,6 +2190,7 @@ ExprResult Sema::CheckConditionVariable(VarDecl *ConditionVar,
     Owned(DeclRefExpr::Create(Context, NestedNameSpecifierLoc(),
                               SourceLocation(),
                               ConditionVar,
+                              /*enclosing*/ false,
                               ConditionVar->getLocation(),
                               ConditionVar->getType().getNonReferenceType(),
                               VK_LValue));
