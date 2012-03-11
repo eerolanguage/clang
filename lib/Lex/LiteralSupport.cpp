@@ -415,7 +415,7 @@ NumericLiteralParser(const char *begin, const char *end,
   } else { // the first digit is non-zero
     radix = 10;
     s = SkipDigits(s);
-    const LangOptions& Features = PP.getLangOptions();
+    const LangOptions& Features = PP.getLangOpts();
     if (Features.UnderscoresInNumerals) {     // Accept and ignore
       while (s < ThisTokEnd-1 && *s == '_') { // underscores in the middle
         s = SkipDigits(++s);
@@ -493,7 +493,7 @@ NumericLiteralParser(const char *begin, const char *end,
       continue;  // Success.
     case 'i':
     case 'I':
-      if (PP.getLangOptions().MicrosoftExt) {
+      if (PP.getLangOpts().MicrosoftExt) {
         if (isFPConstant || isLong || isLongLong) break;
 
         // Allow i8, i16, i32, i64, and i128.
@@ -553,7 +553,7 @@ NumericLiteralParser(const char *begin, const char *end,
   }
 
   if (s != ThisTokEnd) {
-    if (PP.getLangOptions().CPlusPlus0x && s == SuffixBegin && *s == '_') {
+    if (PP.getLangOpts().CPlusPlus0x && s == SuffixBegin && *s == '_') {
       // We have a ud-suffix! By C++11 [lex.ext]p10, ud-suffixes not starting
       // with an '_' are ill-formed.
       saw_ud_suffix = true;
@@ -578,7 +578,7 @@ NumericLiteralParser(const char *begin, const char *end,
 void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   assert(s[0] == '0' && "Invalid method call");
   s++;
-  const LangOptions& Features = PP.getLangOptions();
+  const LangOptions& Features = PP.getLangOpts();
 
   // Handle a hex number like 0x1234.
   if ((*s == 'x' || *s == 'X') && (isxdigit(s[1]) || s[1] == '.' ||
@@ -632,7 +632,7 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
       }
       s = first_non_digit;
 
-      if (!PP.getLangOptions().HexFloats)
+      if (!PP.getLangOpts().HexFloats)
         PP.Diag(TokLoc, diag::ext_hexconstant_invalid);
     } else if (saw_period) {
       PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, s-ThisTokBegin),
@@ -737,7 +737,7 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
   unsigned MaxBitsPerDigit = 1;
   while ((1U << MaxBitsPerDigit) < radix)
     MaxBitsPerDigit += 1;
-  const LangOptions& Features(PP.getLangOptions());
+  const LangOptions& Features(PP.getLangOpts());
   if ((SuffixBegin - DigitsBegin) * MaxBitsPerDigit <= 64) {
     uint64_t N = 0;
     for (s = DigitsBegin; s != SuffixBegin; ++s)
@@ -792,7 +792,7 @@ NumericLiteralParser::GetFloatValue(llvm::APFloat &Result) {
 
   unsigned n = std::min(SuffixBegin - ThisTokBegin, ThisTokEnd - ThisTokBegin);
   std::string floatString(ThisTokBegin, n);
-  if (PP.getLangOptions().UnderscoresInNumerals) { // strip out underscores
+  if (PP.getLangOpts().UnderscoresInNumerals) { // strip out underscores
     floatString.erase(std::remove(floatString.begin(), floatString.end(), '_'),
                       floatString.end());
   }
@@ -947,7 +947,7 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
       unsigned short UcnLen = 0;
       if (!ProcessUCNEscape(TokBegin, begin, end, *buffer_begin, UcnLen,
                             FullSourceLoc(Loc, PP.getSourceManager()),
-                            &PP.getDiagnostics(), PP.getLangOptions(),
+                            &PP.getDiagnostics(), PP.getLangOpts(),
                             true))
       {
         HadError = true;
@@ -1012,7 +1012,7 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
   // character constants are not sign extended in the this implementation:
   // '\xFF\xFF' = 65536 and '\x0\xFF' = 255, which matches GCC.
   if (isAscii() && NumCharsSoFar == 1 && (Value & 128) &&
-      PP.getLangOptions().CharIsSigned)
+      PP.getLangOpts().CharIsSigned)
     Value = (signed char)Value;
 }
 
@@ -1072,7 +1072,7 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
 StringLiteralParser::
 StringLiteralParser(const Token *StringToks, unsigned NumStringToks,
                     Preprocessor &PP, bool Complain)
-  : SM(PP.getSourceManager()), Features(PP.getLangOptions()),
+  : SM(PP.getSourceManager()), Features(PP.getLangOpts()),
     Target(PP.getTargetInfo()), Diags(Complain ? &PP.getDiagnostics() : 0),
     MaxTokenLength(0), SizeBound(0), CharByteWidth(0), Kind(tok::unknown),
     ResultPtr(ResultBuf.data()), hadError(false), Pascal(false) {

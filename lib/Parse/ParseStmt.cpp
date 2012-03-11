@@ -122,7 +122,7 @@ Retry:
       IdentifierInfo *Name = Tok.getIdentifierInfo();
       SourceLocation NameLoc = Tok.getLocation();
 
-      if (getLang().CPlusPlus)
+      if (getLangOpts().CPlusPlus)
         CheckForTemplateAndDigraph(Next, ParsedType(),
                                    /*EnteringContext=*/false, *Name, SS);
 
@@ -213,7 +213,7 @@ Retry:
   }
 
   default: {
-    if ((getLang().CPlusPlus || !OnlyStatement) && isDeclarationStatement()) {
+    if ((getLangOpts().CPlusPlus || !OnlyStatement) && isDeclarationStatement()) {
       SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
       DeclGroupPtrTy Decl = ParseDeclaration(Stmts, Declarator::BlockContext,
                                              DeclEnd, attrs);
@@ -229,7 +229,7 @@ Retry:
   }
 
   case tok::kw_throw:
-    if (getLang().Eero)
+    if (getLangOpts().Eero)
       return ParseObjCThrowStmt(Tok.getLocation());
     else
       ParseExprStatement(attrs);
@@ -240,7 +240,7 @@ Retry:
     return ParseDefaultStatement(attrs);
 
   case tok::l_brace:                // C99 6.8.2: compound-statement
-    if (getLang().OffSideRule && 
+    if (getLangOpts().OffSideRule && 
         Tok.getLength() != 0 && // if not an inserted left brace
         !PP.isInSystemHeader()) {
       Diag(Tok, diag::err_not_allowed) << "'{'";
@@ -295,7 +295,7 @@ Retry:
   }
 
   case tok::kw_try:                 // C++ 15: try-block
-   if (!getLang().Eero)
+   if (!getLangOpts().Eero)
     return ParseCXXTryBlock(attrs);
    else
     return ParseObjCTryStmt(Tok.getLocation());
@@ -315,7 +315,7 @@ Retry:
   // If we reached this code, the statement must end in a semicolon.
   if (Tok.is(tok::semi)) {
     ConsumeToken();
-  } else if (getLang().OptionalSemicolons && !PP.isInSystemHeader()) {
+  } else if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader()) {
     // do nothing here, since semicolons are optional
   } else if (!Res.isInvalid()) {
     // If the result was valid, then we do want to diagnose this.  Use
@@ -423,14 +423,14 @@ StmtResult Parser::ParseSEHExceptBlock(SourceLocation ExceptLoc) {
 
   ParseScope ExpectScope(this, Scope::DeclScope | Scope::ControlScope);
 
-  if (getLang().Borland) {
+  if (getLangOpts().Borland) {
     Ident__exception_info->setIsPoisoned(false);
     Ident___exception_info->setIsPoisoned(false);
     Ident_GetExceptionInfo->setIsPoisoned(false);
   }
   ExprResult FilterExpr(ParseExpression());
 
-  if (getLang().Borland) {
+  if (getLangOpts().Borland) {
     Ident__exception_info->setIsPoisoned(true);
     Ident___exception_info->setIsPoisoned(true);
     Ident_GetExceptionInfo->setIsPoisoned(true);
@@ -582,7 +582,7 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
     if (Tok.is(tok::colon)) {
       ColonLoc = ConsumeToken();
 
-    } else if (getLang().Eero) { // colons are optional
+    } else if (getLangOpts().Eero) { // colons are optional
       // do nothing
     // Treat "case blah;" as a typo for "case blah:".
     } else if (Tok.is(tok::semi)) {
@@ -617,7 +617,7 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
       DeepestParsedCaseStmt = NextDeepest;
     }
 
-    if (getLang().Eero && !PP.isInSystemHeader()) {
+    if (getLangOpts().Eero && !PP.isInSystemHeader()) {
       if (Tok.is(tok::comma)) { // support comma-separated cases
         Tok.setKind(tok::kw_case);
       } else if (Tok.is(tok::kw_case)) {
@@ -632,9 +632,9 @@ StmtResult Parser::ParseCaseStatement(ParsedAttributes &attrs, bool MissingCase,
   // If we found a non-case statement, start by parsing it.
   StmtResult SubStmt;
 
-  if (getLang().OffSideRule && !PP.isInSystemHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
     SubStmt = ParseCompoundStatement(attrs);
-    if (!SubStmt.isInvalid() && getLang().Eero)
+    if (!SubStmt.isInvalid() && getLangOpts().Eero)
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
   } else if (Tok.isNot(tok::r_brace)) {
     SubStmt = ParseStatement();
@@ -673,7 +673,7 @@ StmtResult Parser::ParseDefaultStatement(ParsedAttributes &attrs) {
   if (Tok.is(tok::colon)) {
     ColonLoc = ConsumeToken();
 
-  } else if (getLang().Eero) { // colons are optional
+  } else if (getLangOpts().Eero) { // colons are optional
     // do nothing    
   // Treat "default;" as a typo for "default:".
   } else if (Tok.is(tok::semi)) {
@@ -688,9 +688,9 @@ StmtResult Parser::ParseDefaultStatement(ParsedAttributes &attrs) {
   }
 
   StmtResult SubStmt;
-  if (getLang().OffSideRule && !PP.isInSystemHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
     SubStmt = ParseCompoundStatement(attrs);
-    if (!SubStmt.isInvalid() && getLang().Eero)
+    if (!SubStmt.isInvalid() && getLangOpts().Eero)
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
   } else if (Tok.isNot(tok::r_brace)) {
     SubStmt = ParseStatement();
@@ -748,7 +748,7 @@ StmtResult Parser::ParseCompoundStatement(ParsedAttributes &attrs,
                                           unsigned ScopeFlags) {
   //FIXME: Use attributes?
 
-  assert((Tok.is(tok::l_brace) || getLang().OffSideRule) && 
+  assert((Tok.is(tok::l_brace) || getLangOpts().OffSideRule) && 
          "Not a compount stmt!");
 
   // Enter a scope to hold everything within the compound stmt.  Compound
@@ -778,7 +778,7 @@ bool Parser::IsValidIndentation(unsigned short column) {
 /// consume the '}' at the end of the block.  It does not manipulate the scope
 /// stack.
 StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
-  if (getLang().OffSideRule && !PP.isInSystemHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
     if (Tok.isAtStartOfLine()) {
       InsertToken(tok::l_brace);
     } else {
@@ -838,13 +838,13 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       continue;
     }
 
-    if (getLang().MicrosoftExt && (Tok.is(tok::kw___if_exists) ||
+    if (getLangOpts().MicrosoftExt && (Tok.is(tok::kw___if_exists) ||
         Tok.is(tok::kw___if_not_exists))) {
       ParseMicrosoftIfExistsStatement(Stmts);
       continue;
     }
 
-    if (getLang().OffSideRule && !PP.isInSystemHeader() && 
+    if (getLangOpts().OffSideRule && !PP.isInSystemHeader() && 
         Tok.isAtStartOfLine()) { // main off-side rule logic
       unsigned column = Column(Tok.getLocation());      
       if (!indentationPositions.empty()) {
@@ -920,7 +920,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   }
 
   // We broke out of the while loop because we found a '}' or EOF.
-  if (getLang().OffSideRule && !indentationPositions.empty()) {
+  if (getLangOpts().OffSideRule && !indentationPositions.empty()) {
     indentationPositions.pop_back();
     if (Tok.is(tok::eof)) { // exit compound body 
       InsertToken(tok::r_brace);
@@ -957,11 +957,11 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
                                        SourceLocation Loc,
                                        bool ConvertToBoolean) {
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (getLang().Eero && !PP.isInSystemHeader()) 
+  if (getLangOpts().Eero && !PP.isInSystemHeader()) 
     T.setOptional();
   T.consumeOpen();
 
-  if (getLang().CPlusPlus)
+  if (getLangOpts().CPlusPlus)
     ParseCXXCondition(ExprResult, DeclResult, Loc, ConvertToBoolean);
   else {
     ExprResult = ParseExpression();
@@ -977,7 +977,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
   // recover by skipping ahead to a semi and bailing out.  If condexp is
   // semantically invalid but we have well formed code, keep going.
   if (ExprResult.isInvalid() && !DeclResult && Tok.isNot(tok::r_paren)) {
-    if (getLang().OptionalSemicolons && T.isOptional())
+    if (getLangOpts().OptionalSemicolons && T.isOptional())
       return true; // just bail out right here
     SkipUntil(tok::semi);
     // Skipping may have stopped if it found the containing ')'.  If so, we can
@@ -1006,13 +1006,13 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
   assert(Tok.is(tok::kw_if) && "Not an if stmt!");
   SourceLocation IfLoc = ConsumeToken();  // eat the 'if'.
 
-  if (Tok.isNot(tok::l_paren) && !getLang().Eero) {
+  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
     Diag(Tok, diag::err_expected_lparen_after) << "if";
     SkipUntil(tok::semi);
     return StmtError();
   }
 
-  bool C99orCXX = getLang().C99 || getLang().CPlusPlus;
+  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
 
   // C99 6.8.4p3 - In C99, the if statement is a block.  This is not
   // the case for C90.
@@ -1062,7 +1062,7 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
 
   SourceLocation InnerStatementTrailingElseLoc;
   StmtResult ThenStmt;
-  if (!getLang().OffSideRule || PP.isInSystemHeader())
+  if (!getLangOpts().OffSideRule || PP.isInSystemHeader())
     ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc);
   else
     ThenStmt = ParseCompoundStatement(attrs);
@@ -1079,7 +1079,7 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
   // Otherwise, process all of them.
   bool ProcessElseStatement;
   if (Tok.is(tok::kw_else) &&
-      ((!getLang().OffSideRule || PP.isInSystemHeader()) || 
+      ((!getLangOpts().OffSideRule || PP.isInSystemHeader()) || 
        Column(Tok.getLocation()) == indentationPositions.back())) {
     ProcessElseStatement = true;
   } else {
@@ -1105,7 +1105,7 @@ StmtResult Parser::ParseIfStatement(ParsedAttributes &attrs,
     ParseScope InnerScope(this, Scope::DeclScope,
                           C99orCXX && Tok.isNot(tok::l_brace));
 
-    if (getLang().OffSideRule && !PP.isInSystemHeader()) {
+    if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
       if (Tok.isAtStartOfLine()) { // line break after "else"
         ElseStmt = ParseCompoundStatement(attrs);
         ProcessElseStatement = false;
@@ -1166,13 +1166,13 @@ StmtResult Parser::ParseSwitchStatement(ParsedAttributes &attrs,
   assert(Tok.is(tok::kw_switch) && "Not a switch stmt!");
   SourceLocation SwitchLoc = ConsumeToken();  // eat the 'switch'.
 
-  if (Tok.isNot(tok::l_paren) && (!getLang().Eero || PP.isInSystemHeader())) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInSystemHeader())) {
     Diag(Tok, diag::err_expected_lparen_after) << "switch";
     SkipUntil(tok::semi);
     return StmtError();
   }
 
-  bool C99orCXX = getLang().C99 || getLang().CPlusPlus;
+  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
 
   // C99 6.8.4p3 - In C99, the switch statement is a block.  This is
   // not the case for C90.  Start the switch scope.
@@ -1229,7 +1229,7 @@ StmtResult Parser::ParseSwitchStatement(ParsedAttributes &attrs,
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLang().OffSideRule || PP.isInSystemHeader()) {
+  if (!getLangOpts().OffSideRule || PP.isInSystemHeader()) {
     Body = ParseStatement(TrailingElseLoc);
   } else {
     Body = ParseCompoundStatement(attrs);
@@ -1263,13 +1263,13 @@ StmtResult Parser::ParseWhileStatement(ParsedAttributes &attrs,
   SourceLocation WhileLoc = Tok.getLocation();
   ConsumeToken();  // eat the 'while'.
 
-  if (Tok.isNot(tok::l_paren) && !getLang().Eero) {
+  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
     Diag(Tok, diag::err_expected_lparen_after) << "while";
     SkipUntil(tok::semi);
     return StmtError();
   }
 
-  bool C99orCXX = getLang().C99 || getLang().CPlusPlus;
+  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
 
   // C99 6.8.5p5 - In C99, the while statement is a block.  This is not
   // the case for C90.  Start the loop scope.
@@ -1315,7 +1315,7 @@ StmtResult Parser::ParseWhileStatement(ParsedAttributes &attrs,
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLang().OffSideRule || PP.isInSystemHeader())
+  if (!getLangOpts().OffSideRule || PP.isInSystemHeader())
     Body = ParseStatement(TrailingElseLoc);
   else
     Body = ParseCompoundStatement(attrs);
@@ -1343,7 +1343,7 @@ StmtResult Parser::ParseDoStatement(ParsedAttributes &attrs) {
   // C99 6.8.5p5 - In C99, the do statement is a block.  This is not
   // the case for C90.  Start the loop scope.
   unsigned ScopeFlags;
-  if (getLang().C99)
+  if (getLangOpts().C99)
     ScopeFlags = Scope::BreakScope | Scope::ContinueScope | Scope::DeclScope;
   else
     ScopeFlags = Scope::BreakScope | Scope::ContinueScope;
@@ -1359,12 +1359,12 @@ StmtResult Parser::ParseDoStatement(ParsedAttributes &attrs) {
   // which is entered and exited each time through the loop.
   //
   ParseScope InnerScope(this, Scope::DeclScope,
-                        (getLang().C99 || getLang().CPlusPlus) &&
+                        (getLangOpts().C99 || getLangOpts().CPlusPlus) &&
                         Tok.isNot(tok::l_brace));
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLang().OffSideRule || PP.isInSystemHeader())
+  if (!getLangOpts().OffSideRule || PP.isInSystemHeader())
     Body = ParseStatement();
   else
     Body = ParseCompoundStatement(attrs);
@@ -1382,7 +1382,7 @@ StmtResult Parser::ParseDoStatement(ParsedAttributes &attrs) {
   }
   SourceLocation WhileLoc = ConsumeToken();
 
-  if (Tok.isNot(tok::l_paren) && !getLang().Eero) {
+  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
     Diag(Tok, diag::err_expected_lparen_after) << "do/while";
     SkipUntil(tok::semi, false, true);
     return StmtError();
@@ -1390,7 +1390,7 @@ StmtResult Parser::ParseDoStatement(ParsedAttributes &attrs) {
 
   // Parse the parenthesized condition.
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (getLang().Eero && !PP.isInSystemHeader()) 
+  if (getLangOpts().Eero && !PP.isInSystemHeader()) 
     T.setOptional();
   T.consumeOpen();
   ExprResult Cond = ParseExpression();
@@ -1430,13 +1430,13 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
   assert(Tok.is(tok::kw_for) && "Not a for stmt!");
   SourceLocation ForLoc = ConsumeToken();  // eat the 'for'.
 
-  if (Tok.isNot(tok::l_paren) && (!getLang().Eero || PP.isInSystemHeader())) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInSystemHeader())) {
     Diag(Tok, diag::err_expected_lparen_after) << "for";
     SkipUntil(tok::semi);
     return StmtError();
   }
 
-  bool C99orCXXorObjC = getLang().C99 || getLang().CPlusPlus || getLang().ObjC1;
+  bool C99orCXXorObjC = getLangOpts().C99 || getLangOpts().CPlusPlus || getLangOpts().ObjC1;
 
   // C99 6.8.5p5 - In C99, the for statement is a block.  This is not
   // the case for C90.  Start the loop scope.
@@ -1463,7 +1463,7 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
   ParseScope ForScope(this, ScopeFlags);
 
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (getLang().Eero && !PP.isInSystemHeader())
+  if (getLangOpts().Eero && !PP.isInSystemHeader())
     T.setOptional();
   T.consumeOpen();
 
@@ -1499,7 +1499,7 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
     MaybeParseCXX0XAttributes(attrs);
 
     // In C++0x, "for (T NS:a" might not be a typo for ::
-    bool MightBeForRangeStmt = getLang().CPlusPlus;
+    bool MightBeForRangeStmt = getLangOpts().CPlusPlus;
     ColonProtectionRAIIObject ColonProtection(*this, MightBeForRangeStmt);
 
     SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
@@ -1511,7 +1511,7 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
     FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, Tok.getLocation());
 
     if (ForRangeInit.ParsedForRangeDecl()) {
-      Diag(ForRangeInit.ColonLoc, getLang().CPlusPlus0x ?
+      Diag(ForRangeInit.ColonLoc, getLangOpts().CPlusPlus0x ?
            diag::warn_cxx98_compat_for_range : diag::ext_for_range);
 
       ForRange = true;
@@ -1555,7 +1555,7 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
         return StmtError();
       }
       Collection = ParseExpression();
-    } else if (getLang().CPlusPlus0x && Tok.is(tok::colon) && FirstPart.get()) {
+    } else if (getLangOpts().CPlusPlus0x && Tok.is(tok::colon) && FirstPart.get()) {
       // User tried to write the reasonable, but ill-formed, for-range-statement
       //   for (expr : expr) { ... }
       Diag(Tok, diag::err_for_range_expected_decl)
@@ -1582,7 +1582,7 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
       // missing both semicolons.
     } else {
       ExprResult Second;
-      if (getLang().CPlusPlus)
+      if (getLangOpts().CPlusPlus)
         ParseCXXCondition(Second, SecondVar, ForLoc, true);
       else {
         Second = ParseExpression();
@@ -1651,7 +1651,7 @@ StmtResult Parser::ParseForStatement(ParsedAttributes &attrs,
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLang().OffSideRule || PP.isInSystemHeader())
+  if (!getLangOpts().OffSideRule || PP.isInSystemHeader())
     Body = ParseStatement(TrailingElseLoc);
   else
     Body = ParseCompoundStatement(attrs);
@@ -1754,17 +1754,17 @@ StmtResult Parser::ParseReturnStatement(ParsedAttributes &attrs) {
 
   ExprResult R;
   if (Tok.isNot(tok::semi) && 
-      !(getLang().OptionalSemicolons && Tok.isAtStartOfLine())) {
+      !(getLangOpts().OptionalSemicolons && Tok.isAtStartOfLine())) {
     if (Tok.is(tok::code_completion)) {
       Actions.CodeCompleteReturn(getCurScope());
       cutOffParsing();
       return StmtError();
     }
 
-    if (Tok.is(tok::l_brace) && getLang().CPlusPlus) {
+    if (Tok.is(tok::l_brace) && getLangOpts().CPlusPlus) {
       R = ParseInitializer();
       if (R.isUsable())
-        Diag(R.get()->getLocStart(), getLang().CPlusPlus0x ?
+        Diag(R.get()->getLocStart(), getLangOpts().CPlusPlus0x ?
              diag::warn_cxx98_compat_generalized_initializer_lists :
              diag::ext_generalized_initializer_lists)
           << R.get()->getSourceRange();
@@ -1927,7 +1927,7 @@ StmtResult Parser::ParseAsmStatement(bool &msAsm) {
   assert(Tok.is(tok::kw_asm) && "Not an asm stmt");
   SourceLocation AsmLoc = ConsumeToken();
 
-  if (getLang().MicrosoftExt && Tok.isNot(tok::l_paren) && !isTypeQualifier()) {
+  if (getLangOpts().MicrosoftExt && Tok.isNot(tok::l_paren) && !isTypeQualifier()) {
     msAsm = true;
     return ParseMicrosoftAsmStatement(AsmLoc);
   }
@@ -2108,7 +2108,7 @@ bool Parser::ParseAsmOperandsOpt(SmallVectorImpl<IdentifierInfo *> &Names,
 }
 
 Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
-  assert(Tok.is(tok::l_brace) || getLang().OffSideRule);
+  assert(Tok.is(tok::l_brace) || getLangOpts().OffSideRule);
   SourceLocation LBraceLoc = Tok.getLocation();
 
   if (PP.isCodeCompletionEnabled()) {

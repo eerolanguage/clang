@@ -66,7 +66,7 @@ Parser::DeclGroupPtrTy Parser::ParseObjCAtDirectives() {
     SingleDecl = ParseObjCPropertyDynamic(AtLoc);
     break;
   case tok::objc___experimental_modules_import:
-    if (getLang().Modules)
+    if (getLangOpts().Modules)
       return ParseModuleImport(AtLoc);
       
     // Fall through
@@ -204,7 +204,7 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
       categoryId = Tok.getIdentifierInfo();
       categoryLoc = ConsumeToken();
     }
-    else if (!getLang().ObjC2) {
+    else if (!getLangOpts().ObjC2) {
       Diag(Tok, diag::err_expected_ident); // missing category name.
       return 0;
     }
@@ -413,7 +413,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       return cutOffParsing();
     }
     
-    if (getLang().Eero) { // objc keywords without "@"s
+    if (getLangOpts().Eero) { // objc keywords without "@"s
       switch (Tok.getKind()) {
         case tok::kw_optional:
         case tok::kw_required:
@@ -493,7 +493,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       break;
 
     case tok::objc_property:
-      if (!getLang().ObjC2)
+      if (!getLangOpts().ObjC2)
         Diag(AtLoc, diag::err_objc_properties_require_objc2);
 
       ObjCDeclSpec OCDS;
@@ -797,7 +797,7 @@ bool Parser::isTokIdentifier_in() const {
   // FIXME: May have to do additional look-ahead to only allow for
   // valid tokens following an 'in'; such as an identifier, unary operators,
   // '[' etc.
-  return (getLang().ObjC2 && Tok.is(tok::identifier) &&
+  return (getLangOpts().ObjC2 && Tok.is(tok::identifier) &&
           Tok.getIdentifierInfo() == ObjCTypeQuals[objc_in]);
 }
 
@@ -1000,7 +1000,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
 
   // If attributes exist before the method, parse them.
   ParsedAttributes methodAttrs(AttrFactory);
-  if (getLang().ObjC2)
+  if (getLangOpts().ObjC2)
     MaybeParseGNUAttributes(methodAttrs);
 
   if (Tok.is(tok::code_completion)) {
@@ -1026,7 +1026,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   SmallVector<DeclaratorChunk::ParamInfo, 8> CParamInfo;
   if (Tok.isNot(tok::colon)) {
     // If attributes exist after the method, parse them.
-    if (getLang().ObjC2)
+    if (getLangOpts().ObjC2)
       MaybeParseGNUAttributes(methodAttrs);
 
     Selector Sel = PP.getSelectorTable().getNullarySelector(SelIdent);
@@ -1069,7 +1069,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     // If attributes exist before the argument name, parse them.
     // Regardless, collect all the attributes we've parsed so far.
     ArgInfo.ArgAttrs = 0;
-    if (getLang().ObjC2) {
+    if (getLangOpts().ObjC2) {
       MaybeParseGNUAttributes(paramAttrs);
       ArgInfo.ArgAttrs = paramAttrs.getList();
     }
@@ -1088,7 +1088,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     }
     
     if (Tok.isNot(tok::identifier) && 
-        (!getLang().Eero || // Some headers use these as arg var names
+        (!getLangOpts().Eero || // Some headers use these as arg var names
          !(Tok.is(tok::kw_interface) ||
            Tok.is(tok::kw_protocol) ||
            Tok.is(tok::kw_selector) ||
@@ -1120,7 +1120,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       return 0;
     }
     
-    if (getLang().Eero && !PP.isInSystemHeader() &&
+    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
         Tok.isAtStartOfLine()) { // TODO: this will change
       break;
     }
@@ -1158,7 +1158,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
 
   // FIXME: Add support for optional parameter list...
   // If attributes exist after the method, parse them.
-  if (getLang().ObjC2)
+  if (getLangOpts().ObjC2)
     MaybeParseGNUAttributes(methodAttrs);
   
   if (KeyIdents.size() == 0)
@@ -1234,7 +1234,7 @@ ParseObjCProtocolReferences(SmallVectorImpl<Decl *> &Protocols,
 /// in a decl-specifier-seq, starting at the '<'.
 bool Parser::ParseObjCProtocolQualifiers(DeclSpec &DS) {
   assert(Tok.is(tok::less) && "Protocol qualifiers start with '<'");
-  assert(getLang().ObjC1 && "Protocol qualifiers only exist in Objective-C");
+  assert(getLangOpts().ObjC1 && "Protocol qualifiers only exist in Objective-C");
   SourceLocation LAngleLoc, EndProtoLoc;
   SmallVector<Decl *, 8> ProtocolDecl;
   SmallVector<SourceLocation, 8> ProtocolLocs;
@@ -1292,7 +1292,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
       continue;
     }
 
-    if (getLang().Eero) { // objc keywords without "@"s
+    if (getLangOpts().Eero) { // objc keywords without "@"s
       switch (Tok.getKind()) {
         case tok::kw_private:
         case tok::kw_public:
@@ -1365,7 +1365,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
 
     if (Tok.is(tok::semi)) {
       ConsumeToken();
-    } else if (!getLang().OptionalSemicolons && !PP.isInSystemHeader()) {
+    } else if (!getLangOpts().OptionalSemicolons && !PP.isInSystemHeader()) {
       Diag(Tok, diag::err_expected_semi_decl_list);
       // Skip to end of block or statement
       SkipUntil(tok::r_brace, true, true);
@@ -1580,7 +1580,7 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
     }
   }
 
-  if (getLang().OffSideRule) { // their parsing was not deferred
+  if (getLangOpts().OffSideRule) { // their parsing was not deferred
     for (size_t i = 0; i < ParsedObjCMethods.size(); ++i)
       DeclsInGroup.push_back(ParsedObjCMethods[i]);
     ParsedObjCMethods.clear();
@@ -1780,19 +1780,19 @@ StmtResult Parser::ParseObjCThrowStmt(SourceLocation atLoc) {
 StmtResult
 Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
   ConsumeToken(); // consume synchronized
-  if (Tok.isNot(tok::l_paren) && !getLang().Eero) {
+  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
     Diag(Tok, diag::err_expected_lparen_after) << "@synchronized";
     return StmtError();
   }
 
   // The operand is surrounded with parentheses.
-  if (!getLang().Eero)
+  if (!getLangOpts().Eero)
     ConsumeParen();  // '('
   ExprResult operand(ParseExpression());
 
   if (Tok.is(tok::r_paren)) {
     ConsumeParen();  // ')'
-  } else if (!getLang().Eero) {
+  } else if (!getLangOpts().Eero) {
     if (!operand.isInvalid())
       Diag(Tok, diag::err_expected_rparen);
 
@@ -1801,7 +1801,7 @@ Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
   }
 
   // Require a compound statement.
-  if (Tok.isNot(tok::l_brace) && !getLang().OffSideRule) {
+  if (Tok.isNot(tok::l_brace) && !getLangOpts().OffSideRule) {
     if (!operand.isInvalid())
       Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
@@ -1842,7 +1842,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
   bool catch_or_finally_seen = false;
 
   ConsumeToken(); // consume try
-  if (Tok.isNot(tok::l_brace) && !getLang().OffSideRule) {
+  if (Tok.isNot(tok::l_brace) && !getLangOpts().OffSideRule) {
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
   }
@@ -1869,7 +1869,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
       ConsumeToken(); // consume catch
       // Just inject an optional paren, since it would be very messy otherwise
       bool l_paren_inserted = false;
-      if (getLang().Eero && Tok.isNot(tok::l_paren)) {
+      if (getLangOpts().Eero && Tok.isNot(tok::l_paren)) {
         InsertToken(tok::l_paren); 
         l_paren_inserted = true;
       }
@@ -1890,7 +1890,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
 
         SourceLocation RParenLoc;
         // Inject a right paren if the left was
-        if (getLang().Eero && l_paren_inserted)
+        if (getLangOpts().Eero && l_paren_inserted)
           InsertToken(tok::r_paren); 
 
         if (Tok.is(tok::r_paren))
@@ -1899,7 +1899,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
           SkipUntil(tok::r_paren, true, false);
 
         StmtResult CatchBody(true);
-        if (Tok.is(tok::l_brace) || getLang().OffSideRule)
+        if (Tok.is(tok::l_brace) || getLangOpts().OffSideRule)
           CatchBody = ParseCompoundStatementBody();
         else
           Diag(Tok, diag::err_expected_lbrace);
@@ -1925,7 +1925,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
       ParseScope FinallyScope(this, Scope::DeclScope);
 
       StmtResult FinallyBody(true);
-      if (Tok.is(tok::l_brace) || getLang().OffSideRule)
+      if (Tok.is(tok::l_brace) || getLangOpts().OffSideRule)
         FinallyBody = ParseCompoundStatementBody();
       else
         Diag(Tok, diag::err_expected_lbrace);
@@ -1953,7 +1953,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
 StmtResult
 Parser::ParseObjCAutoreleasePoolStmt(SourceLocation atLoc) {
   ConsumeToken(); // consume autoreleasepool
-  if (Tok.isNot(tok::l_brace) && !getLang().OffSideRule) {
+  if (Tok.isNot(tok::l_brace) && !getLangOpts().OffSideRule) {
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
   }
@@ -1973,7 +1973,7 @@ Parser::ParseObjCAutoreleasePoolStmt(SourceLocation atLoc) {
 ///   objc-method-def: objc-method-proto ';'[opt] '{' body '}'
 ///
 Decl *Parser::ParseObjCMethodDefinition() {
-  if (getLang().OffSideRule) {
+  if (getLangOpts().OffSideRule) {
     indentationPositions.push_back(Column(Tok.getLocation()));
   }
   Decl *MDecl = ParseObjCMethodPrototype();
@@ -1981,7 +1981,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
   PrettyDeclStackTraceEntry CrashInfo(Actions, MDecl, Tok.getLocation(),
                                       "parsing Objective-C method");
 
-  if (getLang().OffSideRule) { // do this the pre-3.0 way, since we can't defer
+  if (getLangOpts().OffSideRule) { // do this the old way, since we can't defer
     SourceLocation BodyStartLoc = Tok.getLocation();
 
     // Allow the rest of sema to find private method decl implementations.
@@ -2274,14 +2274,14 @@ bool Parser::ParseObjCXXMessageReceiver(bool &IsExpr, void *&TypeOrExpr) {
 /// This routine will only return true for a subset of valid message-send
 /// expressions.
 bool Parser::isSimpleObjCMessageExpression() {
-  assert(Tok.is(tok::l_square) && getLang().ObjC1 &&
+  assert(Tok.is(tok::l_square) && getLangOpts().ObjC1 &&
          "Incorrect start for isSimpleObjCMessageExpression");
   return GetLookAheadToken(1).is(tok::identifier) &&
          GetLookAheadToken(2).is(tok::identifier);
 }
 
 bool Parser::isStartOfObjCClassMessageMissingOpenBracket() {
-  if (!getLang().ObjC1 || !NextToken().is(tok::identifier) || 
+  if (!getLangOpts().ObjC1 || !NextToken().is(tok::identifier) || 
       InMessageExpression)
     return false;
   
@@ -2330,7 +2330,7 @@ ExprResult Parser::ParseObjCMessageExpression() {
   
   InMessageExpressionRAIIObject InMessage(*this, true);
   
-  if (getLang().CPlusPlus) {
+  if (getLangOpts().CPlusPlus) {
     // We completely separate the C and C++ cases because C++ requires
     // more complicated (read: slower) parsing. 
     
@@ -2746,7 +2746,7 @@ ExprResult Parser::ParseObjCDictionaryLiteral(SourceLocation AtLoc) {
     
     // Parse the ellipsis that designates this as a pack expansion.
     SourceLocation EllipsisLoc;
-    if (Tok.is(tok::ellipsis) && getLang().CPlusPlus)
+    if (Tok.is(tok::ellipsis) && getLangOpts().CPlusPlus)
       EllipsisLoc = ConsumeToken();
     
     // We have a valid expression. Collect it in a vector so we can

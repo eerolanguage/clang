@@ -25,7 +25,7 @@ using namespace clang;
 
 IdentifierInfo *Parser::getSEHExceptKeyword() {
   // __except is accepted as a (contextual) keyword 
-  if (!Ident__except && (getLang().MicrosoftExt || getLang().Borland))
+  if (!Ident__except && (getLangOpts().MicrosoftExt || getLangOpts().Borland))
     Ident__except = PP.getIdentifierInfo("__except");
 
   return Ident__except;
@@ -70,7 +70,7 @@ Parser::Parser(Preprocessor &pp, Sema &actions)
   FPContractHandler.reset(new PragmaFPContractHandler(actions, *this));
   PP.AddPragmaHandler("STDC", FPContractHandler.get());
 
-  if (getLang().OpenCL) {
+  if (getLangOpts().OpenCL) {
     OpenCLExtensionHandler.reset(
                   new PragmaOpenCLExtensionHandler(actions, *this));
     PP.AddPragmaHandler("OPENCL", OpenCLExtensionHandler.get());
@@ -153,7 +153,7 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
     return false;
   }
 
-  if (getLang().OptionalSemicolons && 
+  if (getLangOpts().OptionalSemicolons && 
       (ExpectedTok == tok::semi) && !PP.isInSystemHeader()) {
     if (Tok.isAtStartOfLine()) { // optional here if line break present
       return false;
@@ -199,7 +199,7 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
     return false;
   }
 
-  if (getLang().OptionalSemicolons && !PP.isInSystemHeader()) {
+  if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader()) {
     if (Tok.isAtStartOfLine()) { // optional here if line break present
       return false;
     } else {
@@ -253,10 +253,10 @@ bool Parser::SkipUntil(const tok::TokenKind *Toks, unsigned NumToks,
         return true;
       }
       // For searches on semicolon, 
-      if (getLang().OptionalSemicolons && !PP.isInSystemHeader() &&
+      if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() &&
           Tok.isNot(tok::eof) &&
           (StopAtSemi || Toks[i] == tok::semi)) {
-        if (getLang().OffSideRule) { // skip to next statement in current block
+        if (getLangOpts().OffSideRule) { // skip to next statement in cur block
           if (Tok.isAtStartOfLine() && 
               (indentationPositions.empty() ||
                Column(Tok.getLocation()) <= indentationPositions.back())) {
@@ -425,7 +425,7 @@ Parser::~Parser() {
   PP.RemovePragmaHandler(RedefineExtnameHandler.get());
   RedefineExtnameHandler.reset();
 
-  if (getLang().OpenCL) {
+  if (getLangOpts().OpenCL) {
     PP.RemovePragmaHandler("OPENCL", OpenCLExtensionHandler.get());
     OpenCLExtensionHandler.reset();
     PP.RemovePragmaHandler("OPENCL", FPContractHandler.get());
@@ -448,12 +448,12 @@ void Parser::Initialize() {
   ConsumeToken();
 
   if (Tok.is(tok::eof) &&
-      !getLang().CPlusPlus)  // Empty source file is an extension in C
+      !getLangOpts().CPlusPlus)  // Empty source file is an extension in C
     Diag(Tok, diag::ext_empty_source_file);
 
   // Initialization for Objective-C context sensitive keywords recognition.
   // Referenced in Parser::ParseObjCTypeQualifierList.
-  if (getLang().ObjC1) {
+  if (getLangOpts().ObjC1) {
     ObjCTypeQuals[objc_in] = &PP.getIdentifierTable().get("in");
     ObjCTypeQuals[objc_out] = &PP.getIdentifierTable().get("out");
     ObjCTypeQuals[objc_inout] = &PP.getIdentifierTable().get("inout");
@@ -468,7 +468,7 @@ void Parser::Initialize() {
 
   Ident_super = &PP.getIdentifierTable().get("super");
 
-  if (getLang().AltiVec) {
+  if (getLangOpts().AltiVec) {
     Ident_vector = &PP.getIdentifierTable().get("vector");
     Ident_pixel = &PP.getIdentifierTable().get("pixel");
   }
@@ -484,7 +484,7 @@ void Parser::Initialize() {
   Ident___exception_code = Ident___exception_info = Ident___abnormal_termination = 0;
   Ident_GetExceptionCode = Ident_GetExceptionInfo = Ident_AbnormalTermination = 0;
 
-  if(getLang().Borland) {
+  if(getLangOpts().Borland) {
     Ident__exception_info        = PP.getIdentifierInfo("_exception_info");
     Ident___exception_info       = PP.getIdentifierInfo("__exception_info");
     Ident_GetExceptionInfo       = PP.getIdentifierInfo("GetExceptionInformation");
@@ -518,7 +518,7 @@ bool Parser::ParseTopLevelDecl(DeclGroupPtrTy &Result) {
   Result = DeclGroupPtrTy();
   if (Tok.is(tok::eof)) {
     // Late template parsing can begin.
-    if (getLang().DelayedTemplateParsing)
+    if (getLangOpts().DelayedTemplateParsing)
       Actions.SetLateTemplateParser(LateTemplateParserCallback, this);
 
     Actions.ActOnEndOfTranslationUnit();
@@ -590,7 +590,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     HandlePragmaPack();
     return DeclGroupPtrTy();
   case tok::semi:
-    Diag(Tok, getLang().CPlusPlus0x ?
+    Diag(Tok, getLangOpts().CPlusPlus0x ?
          diag::warn_cxx98_compat_top_level_semi : diag::ext_top_level_semi)
       << FixItHint::CreateRemoval(Tok.getLocation());
 
@@ -637,7 +637,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     return ParseObjCAtDirectives();
   case tok::minus:
   case tok::plus:
-    if (!getLang().ObjC1) {
+    if (!getLangOpts().ObjC1) {
       Diag(Tok, diag::err_expected_external_declaration);
       ConsumeToken();
       return DeclGroupPtrTy();
@@ -653,7 +653,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
   case tok::kw_using:
   case tok::kw_namespace:
   case tok::kw_typedef:
-    if (getLang().Eero && !PP.isInSystemHeader() &&
+    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
         GetLookAheadToken(1).is(tok::identifier) && 
         GetLookAheadToken(2).is(tok::ellipsis) && 
         GetLookAheadToken(3).is(tok::ellipsis)) {
@@ -680,7 +680,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
   case tok::kw_static:
     // Parse (then ignore) 'static' prior to a template instantiation. This is
     // a GCC extension that we intentionally do not support.
-    if (getLang().CPlusPlus && NextToken().is(tok::kw_template)) {
+    if (getLangOpts().CPlusPlus && NextToken().is(tok::kw_template)) {
       Diag(ConsumeToken(), diag::warn_static_inline_explicit_inst_ignored)
         << 0;
       SourceLocation DeclEnd;
@@ -690,7 +690,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     goto dont_know;
       
   case tok::kw_inline:
-    if (getLang().CPlusPlus) {
+    if (getLangOpts().CPlusPlus) {
       tok::TokenKind NextKind = NextToken().getKind();
       
       // Inline namespaces. Allowed as an extension even in C++03.
@@ -713,11 +713,11 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     goto dont_know;
 
   case tok::kw_extern:
-    if (getLang().CPlusPlus && NextToken().is(tok::kw_template)) {
+    if (getLangOpts().CPlusPlus && NextToken().is(tok::kw_template)) {
       // Extern templates
       SourceLocation ExternLoc = ConsumeToken();
       SourceLocation TemplateLoc = ConsumeToken();
-      Diag(ExternLoc, getLang().CPlusPlus0x ?
+      Diag(ExternLoc, getLangOpts().CPlusPlus0x ?
              diag::warn_cxx98_compat_extern_template :
              diag::ext_extern_template) << SourceRange(ExternLoc, TemplateLoc);
       SourceLocation DeclEnd;
@@ -735,7 +735,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
       
   default:
   dont_know:
-    if (getLang().OptionalSemicolons && !PP.isInSystemHeader() &&
+    if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() &&
         CurParsedObjCImpl) { // in an objc implementation
       Diag(Tok, diag::err_not_allowed) << "external declaration or definition";
       // Flush everything from here to the end of the implementation, or
@@ -762,7 +762,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
 /// declarator, continues a declaration or declaration list.
 bool Parser::isDeclarationAfterDeclarator() {
   // Check for '= delete' or '= default'
-  if (getLang().CPlusPlus && Tok.is(tok::equal)) {
+  if (getLangOpts().CPlusPlus && Tok.is(tok::equal)) {
     const Token &KW = NextToken();
     if (KW.is(tok::kw_default) || KW.is(tok::kw_delete))
       return false;
@@ -773,7 +773,7 @@ bool Parser::isDeclarationAfterDeclarator() {
     Tok.is(tok::semi)  ||           // int X();  -> not a function def
     Tok.is(tok::kw_asm) ||          // int X() __asm__ -> not a function def
     Tok.is(tok::kw___attribute) ||  // int X() __attr__ -> not a function def
-    (getLang().CPlusPlus &&
+    (getLangOpts().CPlusPlus &&
      Tok.is(tok::l_paren));         // int X(0) -> not a function def [C++]
 }
 
@@ -782,7 +782,7 @@ bool Parser::isDeclarationAfterDeclarator() {
 bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   assert(Declarator.isFunctionDeclarator() && "Isn't a function declarator");
   // Check for function definition or declaration when using off-side rule
-  if (getLang().OffSideRule && !PP.isInSystemHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
     if (!Tok.isAtStartOfLine()) {
       Diag(Tok, diag::err_expected) << "newline";
       while (!Tok.isAtStartOfLine()) // flush the rest of the
@@ -799,12 +799,12 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
     return true;
   
   // Handle K&R C argument lists: int X(f) int f; {}
-  if (!getLang().CPlusPlus &&
-      (!getLang().Eero || PP.isInSystemHeader()) &&
+  if (!getLangOpts().CPlusPlus &&
+      (!getLangOpts().Eero || PP.isInSystemHeader()) &&
       Declarator.getFunctionTypeInfo().isKNRPrototype()) 
     return isDeclarationSpecifier();
 
-  if (getLang().CPlusPlus && Tok.is(tok::equal)) {
+  if (getLangOpts().CPlusPlus && Tok.is(tok::equal)) {
     const Token &KW = NextToken();
     return KW.is(tok::kw_default) || KW.is(tok::kw_delete);
   }
@@ -838,7 +838,7 @@ Parser::ParseDeclarationOrFunctionDefinition(ParsingDeclSpec &DS,
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
   if (Tok.is(tok::semi) ||
-      (getLang().OptionalSemicolons && !PP.isInSystemHeader() && 
+      (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() && 
        Tok.isAtStartOfLine())) {
     if (Tok.is(tok::semi)) ConsumeToken();
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS, DS);
@@ -849,7 +849,7 @@ Parser::ParseDeclarationOrFunctionDefinition(ParsingDeclSpec &DS,
   // ObjC2 allows prefix attributes on class interfaces and protocols.
   // FIXME: This still needs better diagnostics. We should only accept
   // attributes here, no types, etc.
-  if (getLang().ObjC2 && Tok.is(tok::at)) {
+  if (getLangOpts().ObjC2 && Tok.is(tok::at)) {
     SourceLocation AtLoc = ConsumeToken(); // the "@"
     if (!Tok.isObjCAtKeyword(tok::objc_interface) &&
         !Tok.isObjCAtKeyword(tok::objc_protocol)) {
@@ -875,7 +875,7 @@ Parser::ParseDeclarationOrFunctionDefinition(ParsingDeclSpec &DS,
   // If the declspec consisted only of 'extern' and we have a string
   // literal following it, this must be a C++ linkage specifier like
   // 'extern "C"'.
-  if (Tok.is(tok::string_literal) && getLang().CPlusPlus &&
+  if (Tok.is(tok::string_literal) && getLangOpts().CPlusPlus &&
       DS.getStorageClassSpec() == DeclSpec::SCS_extern &&
       DS.getParsedSpecifiers() == DeclSpec::PQ_StorageClassSpecifier) {
     Decl *TheDecl = ParseLinkage(DS, Declarator::FileContext);
@@ -922,7 +922,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   // If this is C90 and the declspecs were completely missing, fudge in an
   // implicit int.  We do this here because this is the only place where
   // declaration-specifiers are completely optional in the grammar.
-  if (getLang().ImplicitInt && D.getDeclSpec().isEmpty()) {
+  if (getLangOpts().ImplicitInt && D.getDeclSpec().isEmpty()) {
     const char *PrevSpec;
     unsigned DiagID;
     D.getMutableDeclSpec().SetTypeSpecType(DeclSpec::TST_int,
@@ -937,7 +937,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   if (FTI.isKNRPrototype())
     ParseKNRParamDeclarations(D);
 
-  if (getLang().OffSideRule && !PP.isInSystemHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
     if (Tok.isAtStartOfLine()) {
       SourceLocation FuncStartLoc = D.getDeclSpec().getSourceRange().getBegin();
       indentationPositions.push_back(Column(FuncStartLoc));
@@ -948,7 +948,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   // We should have either an opening brace or, in a C++ constructor,
   // we may have a colon.
   if (Tok.isNot(tok::l_brace) && 
-      (!getLang().CPlusPlus ||
+      (!getLangOpts().CPlusPlus ||
        (Tok.isNot(tok::colon) && Tok.isNot(tok::kw_try) &&
         Tok.isNot(tok::equal)))) {
     Diag(Tok, diag::err_expected_fn_body);
@@ -976,7 +976,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
 
   // In delayed template parsing mode, for function template we consume the
   // tokens and store them for late parsing at the end of the translation unit.
-  if (getLang().DelayedTemplateParsing &&
+  if (getLangOpts().DelayedTemplateParsing &&
       TemplateInfo.Kind == ParsedTemplateInfo::Template) {
     MultiTemplateParamsArg TemplateParameterLists(Actions,
                                          TemplateInfo.TemplateParams->data(),
@@ -1032,7 +1032,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   D.getMutableDeclSpec().abort();
 
   if (Tok.is(tok::equal)) {
-    assert(getLang().CPlusPlus && "Only C++ function definitions have '='");
+    assert(getLangOpts().CPlusPlus && "Only C++ function definitions have '='");
     ConsumeToken();
 
     Actions.ActOnFinishFunctionBody(Res, 0, false);
@@ -1040,7 +1040,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
     bool Delete = false;
     SourceLocation KWLoc;
     if (Tok.is(tok::kw_delete)) {
-      Diag(Tok, getLang().CPlusPlus0x ?
+      Diag(Tok, getLangOpts().CPlusPlus0x ?
            diag::warn_cxx98_compat_deleted_function :
            diag::ext_deleted_function);
 
@@ -1048,7 +1048,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
       Actions.SetDeclDeleted(Res, KWLoc);
       Delete = true;
     } else if (Tok.is(tok::kw_default)) {
-      Diag(Tok, getLang().CPlusPlus0x ?
+      Diag(Tok, getLangOpts().CPlusPlus0x ?
            diag::warn_cxx98_compat_defaulted_function :
            diag::ext_defaulted_function);
 
@@ -1332,7 +1332,7 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
                                        0, /*IsTypename*/true))
       return true;
     if (!SS.isSet()) {
-      if (getLang().MicrosoftExt)
+      if (getLangOpts().MicrosoftExt)
         Diag(Tok.getLocation(), diag::warn_expected_qualified_after_typename);
       else
         Diag(Tok.getLocation(), diag::err_expected_qualified_after_typename);
@@ -1383,7 +1383,7 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
   bool wasScopeAnnotation = Tok.is(tok::annot_cxxscope);
 
   CXXScopeSpec SS;
-  if (getLang().CPlusPlus)
+  if (getLangOpts().CPlusPlus)
     if (ParseOptionalCXXScopeSpecifier(SS, ParsedType(), EnteringContext))
       return true;
 
@@ -1415,7 +1415,7 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
       return false;
     }
 
-    if (!getLang().CPlusPlus) {
+    if (!getLangOpts().CPlusPlus) {
       // If we're in C, we can't have :: tokens at all (the lexer won't return
       // them).  If the identifier is not a type, then it can't be scope either,
       // just early exit.
@@ -1494,7 +1494,7 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
 /// Note that this routine emits an error if you call it with ::new or ::delete
 /// as the current tokens, so only call it in contexts where these are invalid.
 bool Parser::TryAnnotateCXXScopeToken(bool EnteringContext) {
-  assert(getLang().CPlusPlus &&
+  assert(getLangOpts().CPlusPlus &&
          "Call sites of this function should be guarded by checking for C++");
   assert((Tok.is(tok::identifier) || Tok.is(tok::coloncolon) ||
           (Tok.is(tok::annot_template_id) && NextToken().is(tok::coloncolon)) ||
