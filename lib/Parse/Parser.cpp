@@ -204,8 +204,8 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
       return false;
     } else {
       Diag(Tok, diag::err_expected) << "newline";
-      while (!Tok.isAtStartOfLine()) // flush the rest of the
-        ConsumeAnyToken();           // line
+      while (Tok.isNot(tok::eof) && !Tok.isAtStartOfLine()) // flush the rest 
+        ConsumeAnyToken();                                  // of the line
       return true;
     }
   }
@@ -785,8 +785,8 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
     if (!Tok.isAtStartOfLine()) {
       Diag(Tok, diag::err_expected) << "newline";
-      while (!Tok.isAtStartOfLine()) // flush the rest of the
-        ConsumeAnyToken();           // line
+      while (Tok.isNot(tok::eof) && !Tok.isAtStartOfLine()) // flush the rest
+        ConsumeAnyToken();                                  // of the line
     }
     if (Column(Tok.getLocation()) >   // look for indentation
         Column(Declarator.getSourceRange().getBegin())) {
@@ -837,10 +837,8 @@ Parser::ParseDeclarationOrFunctionDefinition(ParsingDeclSpec &DS,
 
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
-  if (Tok.is(tok::semi) ||
-      (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() && 
-       Tok.isAtStartOfLine())) {
-    if (Tok.is(tok::semi)) ConsumeToken();
+  if (Tok.is(tok::semi)) {
+    ConsumeToken();
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS, DS);
     DS.complete(TheDecl);
     return Actions.ConvertDeclToDeclGroup(TheDecl);

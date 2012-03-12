@@ -994,10 +994,8 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(StmtVector &Stmts,
 
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
-  if (Tok.is(tok::semi) || 
-      (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() &&
-       Tok.isAtStartOfLine())) {
-    if (Tok.is(tok::semi) && RequireSemi) ConsumeToken();
+  if (Tok.is(tok::semi)) {
+    if (RequireSemi) ConsumeToken();
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS_none,
                                                        DS);
     DS.complete(TheDecl);
@@ -1742,12 +1740,23 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
   }
   
   bool EnteringContext = (DSContext == DSC_class || DSContext == DSC_top_level);
+  bool firstPass = true;
   while (1) {
     bool isInvalid = false;
     const char *PrevSpec = 0;
     unsigned DiagID = 0;
 
     SourceLocation Loc = Tok.getLocation();
+
+    if (getLangOpts().OptionalSemicolons && 
+        !firstPass && 
+        Tok.isAtStartOfLine() && 
+        !PP.isInSystemHeader()) {
+      InsertToken(tok::semi); // not great, but most reliable way to do this
+    }
+
+    if (firstPass)
+      firstPass = false;
 
     switch (Tok.getKind()) {
     default:
@@ -4098,6 +4107,8 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
       Diag(Tok, diag::err_expected_ident_lparen);
     D.SetIdentifier(0, Tok.getLocation());
     D.setInvalidType(true);
+    if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader())
+      Tok.setKind(tok::eof); // gets stuck otherwise
   }
 
  PastIdentifier:
@@ -4108,7 +4119,9 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
   if (D.getIdentifier())
     MaybeParseCXX0XAttributes(D);
 
-  while (1) {
+  while (!getLangOpts().OptionalSemicolons || 
+         PP.isInSystemHeader() ||    
+         !Tok.isAtStartOfLine()) { 
     if (Tok.is(tok::l_paren)) {
       // Enter function-declaration scope, limiting any declarators to the
       // function prototype scope, including parameter declarators.
