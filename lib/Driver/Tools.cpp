@@ -88,6 +88,39 @@ static void QuoteTarget(StringRef Target,
   }
 }
 
+static void addDirectoryList(const ArgList &Args,
+                             ArgStringList &CmdArgs,
+                             const char *ArgName,
+                             const char *EnvVar) {
+  const char *DirList = ::getenv(EnvVar);
+  if (!DirList)
+    return; // Nothing to do.
+
+  StringRef Dirs(DirList);
+  if (Dirs.empty()) // Empty string should not add '.'.
+    return;
+
+  StringRef::size_type Delim;
+  while ((Delim = Dirs.find(llvm::sys::PathSeparator)) != StringRef::npos) {
+    if (Delim == 0) { // Leading colon.
+      CmdArgs.push_back(ArgName);
+      CmdArgs.push_back(".");
+    } else {
+      CmdArgs.push_back(ArgName);
+      CmdArgs.push_back(Args.MakeArgString(Dirs.split(Delim).first));
+    }
+    Dirs = Dirs.split(Delim).second;
+  }
+
+  if (Dirs.empty()) { // Trailing colon.
+    CmdArgs.push_back(ArgName);
+    CmdArgs.push_back(".");
+  } else { // Add the last path.
+    CmdArgs.push_back(ArgName);
+    CmdArgs.push_back(Args.MakeArgString(Dirs));
+  }
+}
+
 static void AddLinkerInputs(const ToolChain &TC,
                             const InputInfoList &Inputs, const ArgList &Args,
                             ArgStringList &CmdArgs) {
@@ -128,6 +161,9 @@ static void AddLinkerInputs(const ToolChain &TC,
     } else
       A.renderAsInput(Args, CmdArgs);
   }
+
+  // LIBRARY_PATH - included following the user specified library paths.
+  addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 }
 
 /// \brief Determine whether Objective-C automated reference counting is
@@ -160,38 +196,6 @@ static void addProfileRT(const ToolChain &TC, const ArgList &Args,
     std::string(TC.getDriver().Dir) + "/../lib/libprofile_rt.a";
 
   CmdArgs.push_back(Args.MakeArgString(ProfileRT));
-}
-
-static void AddIncludeDirectoryList(const ArgList &Args,
-                                    ArgStringList &CmdArgs,
-                                    const char *ArgName,
-                                    const char *DirList) {
-  if (!DirList)
-    return; // Nothing to do.
-
-  StringRef Dirs(DirList);
-  if (Dirs.empty()) // Empty string should not add '.'.
-    return;
-
-  StringRef::size_type Delim;
-  while ((Delim = Dirs.find(llvm::sys::PathSeparator)) != StringRef::npos) {
-    if (Delim == 0) { // Leading colon.
-      CmdArgs.push_back(ArgName);
-      CmdArgs.push_back(".");
-    } else {
-      CmdArgs.push_back(ArgName);
-      CmdArgs.push_back(Args.MakeArgString(Dirs.substr(0, Delim)));
-    }
-    Dirs = Dirs.substr(Delim + 1);
-  }
-
-  if (Dirs.empty()) { // Trailing colon.
-    CmdArgs.push_back(ArgName);
-    CmdArgs.push_back(".");
-  } else { // Add the last path.
-    CmdArgs.push_back(ArgName);
-    CmdArgs.push_back(Args.MakeArgString(Dirs));
-  }
 }
 
 void Clang::AddPreprocessingOptions(Compilation &C,
@@ -399,19 +403,15 @@ void Clang::AddPreprocessingOptions(Compilation &C,
   // frontend into the driver. It will allow deleting 4 otherwise unused flags.
   // CPATH - included following the user specified includes (but prior to
   // builtin and standard includes).
-  AddIncludeDirectoryList(Args, CmdArgs, "-I", ::getenv("CPATH"));
+  addDirectoryList(Args, CmdArgs, "-I", "CPATH");
   // C_INCLUDE_PATH - system includes enabled when compiling C.
-  AddIncludeDirectoryList(Args, CmdArgs, "-c-isystem",
-                          ::getenv("C_INCLUDE_PATH"));
+  addDirectoryList(Args, CmdArgs, "-c-isystem", "C_INCLUDE_PATH");
   // CPLUS_INCLUDE_PATH - system includes enabled when compiling C++.
-  AddIncludeDirectoryList(Args, CmdArgs, "-cxx-isystem",
-                          ::getenv("CPLUS_INCLUDE_PATH"));
+  addDirectoryList(Args, CmdArgs, "-cxx-isystem", "CPLUS_INCLUDE_PATH");
   // OBJC_INCLUDE_PATH - system includes enabled when compiling ObjC.
-  AddIncludeDirectoryList(Args, CmdArgs, "-objc-isystem",
-                          ::getenv("OBJC_INCLUDE_PATH"));
+  addDirectoryList(Args, CmdArgs, "-objc-isystem", "OBJC_INCLUDE_PATH");
   // OBJCPLUS_INCLUDE_PATH - system includes enabled when compiling ObjC++.
-  AddIncludeDirectoryList(Args, CmdArgs, "-objcxx-isystem",
-                          ::getenv("OBJCPLUS_INCLUDE_PATH"));
+  addDirectoryList(Args, CmdArgs, "-objcxx-isystem", "OBJCPLUS_INCLUDE_PATH");
 
   // Add C++ include arguments, if needed.
   if (types::isCXX(Inputs[0].getType()))

@@ -8544,7 +8544,7 @@ CreateNewDecl:
       New->setAccess(PrevDecl->getAccess());
 
     DeclContext *DC = New->getDeclContext()->getRedeclContext();
-    DC->makeDeclVisibleInContext(New, /* Recoverable = */ false);
+    DC->makeDeclVisibleInContext(New);
     if (Name) // can be null along some error paths
       if (Scope *EnclosingScope = getScopeForDeclContext(S, DC))
         PushOnScopeChains(New, EnclosingScope, /* AddToContext = */ false);
@@ -8552,7 +8552,7 @@ CreateNewDecl:
     S = getNonFieldDeclScope(S);
     PushOnScopeChains(New, S, !IsForwardReference);
     if (IsForwardReference)
-      SearchDC->makeDeclVisibleInContext(New, /* Recoverable = */ false);
+      SearchDC->makeDeclVisibleInContext(New);
 
   } else {
     CurContext->addDecl(New);

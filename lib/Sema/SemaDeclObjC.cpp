@@ -766,6 +766,7 @@ ActOnStartCategoryInterface(SourceLocation AtInterfaceLoc,
     CDecl = ObjCCategoryDecl::Create(Context, CurContext, AtInterfaceLoc,
                                      ClassLoc, CategoryLoc, CategoryName,IDecl);
     CDecl->setInvalidDecl();
+    CurContext->addDecl(CDecl);
         
     if (!IDecl)
       Diag(ClassLoc, diag::err_undef_interface) << ClassName;
@@ -924,6 +925,8 @@ Decl *Sema::ActOnStartClassImplementation(
       Diag(PrevDecl->getLocation(), diag::note_previous_definition);
     } else {
       SDecl = dyn_cast_or_null<ObjCInterfaceDecl>(PrevDecl);
+      if (SDecl && !SDecl->hasDefinition())
+        SDecl = 0;
       if (!SDecl)
         Diag(SuperClassLoc, diag::err_undef_superclass)
           << SuperClassname << ClassName;
@@ -1023,7 +1026,7 @@ void Sema::CheckImplementationIvars(ObjCImplementationDecl *ImpDecl,
     // Add ivar's to class's DeclContext.
     for (unsigned i = 0, e = numIvars; i != e; ++i) {
       ivars[i]->setLexicalDeclContext(ImpDecl);
-      IDecl->makeDeclVisibleInContext(ivars[i], false);
+      IDecl->makeDeclVisibleInContext(ivars[i]);
       ImpDecl->addDecl(ivars[i]);
     }
     
@@ -1047,7 +1050,7 @@ void Sema::CheckImplementationIvars(ObjCImplementationDecl *ImpDecl,
       }
       // Instance ivar to Implementation's DeclContext.
       ImplIvar->setLexicalDeclContext(ImpDecl);
-      IDecl->makeDeclVisibleInContext(ImplIvar, false);
+      IDecl->makeDeclVisibleInContext(ImplIvar);
       ImpDecl->addDecl(ImplIvar);
     }
     return;
@@ -2018,6 +2021,10 @@ void Sema::ReadMethodPool(Selector Sel) {
 
 void Sema::AddMethodToGlobalPool(ObjCMethodDecl *Method, bool impl,
                                  bool instance) {
+  // Ignore methods of invalid containers.
+  if (cast<Decl>(Method->getDeclContext())->isInvalidDecl())
+    return;
+
   if (ExternalSource)
     ReadMethodPool(Method->getSelector());
   

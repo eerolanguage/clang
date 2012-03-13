@@ -107,13 +107,15 @@ namespace {
       assert(InnermostFileDC && InnermostFileDC->isFileContext());
 
       for (; S; S = S->getParent()) {
-        if (DeclContext *Ctx = static_cast<DeclContext*>(S->getEntity())) {
-          DeclContext *EffectiveDC = (Ctx->isFileContext() ? Ctx : InnermostFileDC);
-          visit(Ctx, EffectiveDC);
-        } else {
+        // C++ [namespace.udir]p1:
+        //   A using-directive shall not appear in class scope, but may
+        //   appear in namespace scope or in block scope.
+        DeclContext *Ctx = static_cast<DeclContext*>(S->getEntity());
+        if (Ctx && Ctx->isFileContext()) {
+          visit(Ctx, Ctx);
+        } else if (!Ctx || Ctx->isFunctionOrMethod()) {
           Scope::udir_iterator I = S->using_directives_begin(),
                              End = S->using_directives_end();
-
           for (; I != End; ++I)
             visit(*I, InnermostFileDC);
         }
