@@ -1075,11 +1075,11 @@ public:
   NamedDecl* ActOnTypedefNameDecl(Scope* S, DeclContext* DC, TypedefNameDecl *D,
                                   LookupResult &Previous, bool &Redeclaration);
 
-  /// Eero support for namespace-like prefixes
-  void ActOnPrefixTypedef(Scope *CurScope,
-                          SourceLocation TypedefLoc,
-                          SourceLocation PrefixNameLoc,
-                          IdentifierInfo *PrefixName);
+  /// Support for namespace-like prefixes
+  void ActOnUsingPrefix(Scope *CurScope,
+                        SourceLocation UsingLoc,
+                        SourceLocation PrefixNameLoc,
+                        IdentifierInfo *PrefixName);
 
   NamedDecl* ActOnVariableDeclarator(Scope* S, Declarator& D, DeclContext* DC,
                                      TypeSourceInfo *TInfo,

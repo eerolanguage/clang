@@ -1224,17 +1224,23 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
   // may be able to handle the situation. 
   // Note: some lookup failures are expected!
   // See e.g. R.isForRedeclaration().
-  return (ExternalSource && ExternalSource->LookupUnqualified(R, S));
+  bool found = (ExternalSource && ExternalSource->LookupUnqualified(R, S));
+
+  // For Eero, check for namepace-like prefixes
+  static bool inPrefixSearch = false;
+  if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+      !found && !inPrefixSearch) {
+    inPrefixSearch = true;
+    found = LookupNameWithPrefixes(R, S);
+    inPrefixSearch = false;
+  }
+  return found;
 }
 
-/// Eero
+/// Eero namespace-like prefix support
 bool Sema::LookupNameWithPrefixes(LookupResult &R, Scope *S) {
-  if (R.getLookupKind() != Sema::LookupOrdinaryName)
-    return false;
   bool found = false;
-  if (PP.isInPrimaryFile() || 
-      (R.getNameLoc().isValid() &&
-       !PP.getSourceManager().isInSystemHeader(R.getNameLoc()))) {
+  if (R.getLookupKind() == Sema::LookupOrdinaryName) {
     const DeclarationName Name = R.getLookupName();
     const std::string& name = Name.getAsString();
 
@@ -1243,14 +1249,14 @@ bool Sema::LookupNameWithPrefixes(LookupResult &R, Scope *S) {
     found = LookupName(R, S);   
 
     Scope* prefixScope = S;
-    while (!found && prefixScope) { // now check for any explicit prefix typedefs
+    while (!found && prefixScope) { // now check for any explicit prefixes
       for ( Scope::prefix_iterator it = prefixScope->prefix_begin(); 
             !found && (it != prefixScope->prefix_end());
             it++ ) {
         R.setLookupName(&(PP.getIdentifierTable().get(*it + name)));
         found = LookupName(R, S);
       }
-      prefixScope = prefixScope->getParent(); // keep looking in enclosing scopes
+      prefixScope = prefixScope->getParent(); // look in enclosing scopes
     }
     if (!found) R.setLookupName(Name); // restore orig name for diagnostics
   }
@@ -2208,8 +2214,7 @@ NamedDecl *Sema::LookupSingleName(Scope *S, DeclarationName Name,
                                   LookupNameKind NameKind,
                                   RedeclarationKind Redecl) {
   LookupResult R(*this, Name, Loc, NameKind, Redecl);
-  if (!LookupName(R, S) && getLangOpts().Eero)
-    LookupNameWithPrefixes(R, S);
+  LookupName(R, S);
   return R.getAsSingle<NamedDecl>();
 }
 

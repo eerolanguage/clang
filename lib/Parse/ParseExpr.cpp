@@ -1219,19 +1219,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     cutOffParsing();
     return ExprError();
   }
-  case tok::kw_typedef: // should only get here with Eero "typedef XX... ..."
-    if (Eero && GetLookAheadToken(1).is(tok::identifier)) {
-      IdentifierInfo* prefix = GetLookAheadToken(1).getIdentifierInfo();
-      Actions.ActOnPrefixTypedef(getCurScope(),
-                                 ConsumeToken(), // typedef
-                                 ConsumeToken(), // prefix
-                                 prefix);
-      ConsumeToken(); // ellipsis
-      ConsumeToken(); // ellipsis
-      return ExprEmpty();
-    }
-    NotCastExpr = true;
-    return ExprError();
   case tok::l_square:
     if (getLangOpts().CPlusPlus0x) {
       if (getLangOpts().ObjC1) {

@@ -294,7 +294,7 @@ KEYWORD(true                        , BOOLSUPPORT|KEYALTIVEC)
 KEYWORD(try                         , KEYCXX|KEYEERO)
 KEYWORD(typename                    , KEYCXX)
 KEYWORD(typeid                      , KEYCXX)
-KEYWORD(using                       , KEYCXX)
+KEYWORD(using                       , KEYCXX|KEYEERO)
 KEYWORD(virtual                     , KEYCXX)
 KEYWORD(wchar_t                     , KEYCXX)
 

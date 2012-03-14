@@ -3247,10 +3247,6 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
 
     // storage-class-specifier
   case tok::kw_typedef:
-    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
-        GetLookAheadToken(1).is(tok::identifier) && 
-        GetLookAheadToken(2).is(tok::ellipsis) && 
-        GetLookAheadToken(3).is(tok::ellipsis)) { return false; }
   case tok::kw_extern:
   case tok::kw___private_extern__:
   case tok::kw_static:

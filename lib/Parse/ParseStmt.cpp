@@ -213,6 +213,23 @@ Retry:
   }
 
   default: {
+    // check for Eero "using prefix XX"
+    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+        (Kind == tok::kw_using) &&
+        GetLookAheadToken(1).is(tok::identifier) &&
+        GetLookAheadToken(2).is(tok::identifier)) {
+      const IdentifierInfo *II = NextToken().getIdentifierInfo();
+      if (II->getName() == "prefix") {
+        SourceLocation UsingLoc = ConsumeToken();
+        ConsumeToken(); // "prefix" pseudo keyword
+        IdentifierInfo* prefix = Tok.getIdentifierInfo();
+        Actions.ActOnUsingPrefix(getCurScope(),
+                                 UsingLoc,
+                                 ConsumeToken(), // the prefix
+                                 prefix);
+        return StmtEmpty();
+      }
+    }
     if ((getLangOpts().CPlusPlus || !OnlyStatement) && isDeclarationStatement()) {
       SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
       DeclGroupPtrTy Decl = ParseDeclaration(Stmts, Declarator::BlockContext,
