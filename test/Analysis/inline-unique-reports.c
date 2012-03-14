@@ -34,12 +34,12 @@ void test_bug_2() {
 // CHECK:         <key>start</key>
 // CHECK:          <array>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>9</integer>
+// CHECK:            <key>line</key><integer>14</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>9</integer>
+// CHECK:            <key>line</key><integer>14</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
@@ -47,12 +47,12 @@ void test_bug_2() {
 // CHECK:         <key>end</key>
 // CHECK:          <array>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>10</integer>
+// CHECK:            <key>line</key><integer>15</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>10</integer>
+// CHECK:            <key>line</key><integer>15</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
@@ -64,7 +64,7 @@ void test_bug_2() {
 // CHECK:      <key>kind</key><string>event</string>
 // CHECK:      <key>location</key>
 // CHECK:      <dict>
-// CHECK:       <key>line</key><integer>10</integer>
+// CHECK:       <key>line</key><integer>15</integer>
 // CHECK:       <key>col</key><integer>3</integer>
 // CHECK:       <key>file</key><integer>0</integer>
 // CHECK:      </dict>
@@ -72,12 +72,12 @@ void test_bug_2() {
 // CHECK:      <array>
 // CHECK:        <array>
 // CHECK:         <dict>
-// CHECK:          <key>line</key><integer>10</integer>
+// CHECK:          <key>line</key><integer>15</integer>
 // CHECK:          <key>col</key><integer>3</integer>
 // CHECK:          <key>file</key><integer>0</integer>
 // CHECK:         </dict>
 // CHECK:         <dict>
-// CHECK:          <key>line</key><integer>10</integer>
+// CHECK:          <key>line</key><integer>15</integer>
 // CHECK:          <key>col</key><integer>8</integer>
 // CHECK:          <key>file</key><integer>0</integer>
 // CHECK:         </dict>
@@ -97,9 +97,9 @@ void test_bug_2() {
 // CHECK:       <key>file</key><integer>0</integer>
 // CHECK:      </dict>
 // CHECK:      <key>extended_message</key>
-// CHECK:      <string>Entered call to &apos;bug&apos;</string>
+// CHECK:      <string>Entered call
 // CHECK:      <key>message</key>
-// CHECK: <string>Entered call to &apos;bug&apos;</string>
+// CHECK: <string>Entered call
 // CHECK:     </dict>
 // CHECK:     <dict>
 // CHECK:      <key>kind</key><string>control</string>

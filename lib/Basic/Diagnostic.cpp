@@ -357,7 +357,7 @@ void DiagnosticsEngine::Report(const StoredDiagnostic &storedDiag) {
   NumDiagArgs = 0;
 
   NumDiagRanges = storedDiag.range_size();
-  assert(NumDiagRanges < sizeof(DiagRanges)/sizeof(DiagRanges[0]) &&
+  assert(NumDiagRanges < DiagnosticsEngine::MaxRanges &&
          "Too many arguments to diagnostic!");
   unsigned i = 0;
   for (StoredDiagnostic::range_iterator
@@ -365,11 +365,13 @@ void DiagnosticsEngine::Report(const StoredDiagnostic &storedDiag) {
          RE = storedDiag.range_end(); RI != RE; ++RI)
     DiagRanges[i++] = *RI;
 
-  FixItHints.clear();
+  assert(NumDiagRanges < DiagnosticsEngine::MaxFixItHints &&
+         "Too many arguments to diagnostic!");
+  NumDiagFixItHints = 0;
   for (StoredDiagnostic::fixit_iterator
          FI = storedDiag.fixit_begin(),
          FE = storedDiag.fixit_end(); FI != FE; ++FI)
-    FixItHints.push_back(*FI);
+    DiagFixItHints[NumDiagFixItHints++] = *FI;
 
   assert(Client && "DiagnosticConsumer not set!");
   Level DiagLevel = storedDiag.getLevel();
@@ -383,34 +385,18 @@ void DiagnosticsEngine::Report(const StoredDiagnostic &storedDiag) {
   CurDiagID = ~0U;
 }
 
-void DiagnosticBuilder::FlushCounts() {
-  DiagObj->NumDiagArgs = NumArgs;
-  DiagObj->NumDiagRanges = NumRanges;
-}
-
-bool DiagnosticBuilder::Emit() {
-  // If DiagObj is null, then its soul was stolen by the copy ctor
-  // or the user called Emit().
-  if (DiagObj == 0) return false;
-
-  // When emitting diagnostics, we set the final argument count into
-  // the DiagnosticsEngine object.
-  FlushCounts();
-
+bool DiagnosticsEngine::EmitCurrentDiagnostic() {
   // Process the diagnostic, sending the accumulated information to the
   // DiagnosticConsumer.
-  bool Emitted = DiagObj->ProcessDiag();
+  bool Emitted = ProcessDiag();
 
   // Clear out the current diagnostic object.
-  unsigned DiagID = DiagObj->CurDiagID;
-  DiagObj->Clear();
+  unsigned DiagID = CurDiagID;
+  Clear();
 
   // If there was a delayed diagnostic, emit it now.
-  if (DiagObj->DelayedDiagID && DiagObj->DelayedDiagID != DiagID)
-    DiagObj->ReportDelayed();
-
-  // This diagnostic is dead.
-  DiagObj = 0;
+  if (DelayedDiagID && DelayedDiagID != DiagID)
+    ReportDelayed();
 
   return Emitted;
 }

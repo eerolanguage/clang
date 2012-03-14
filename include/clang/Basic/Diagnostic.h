@@ -636,13 +636,22 @@ private:
     /// MaxArguments - The maximum number of arguments we can hold. We currently
     /// only support up to 10 arguments (%0-%9).  A single diagnostic with more
     /// than that almost certainly has to be simplified anyway.
-    MaxArguments = 10
+    MaxArguments = 10,
+
+    /// MaxRanges - The maximum number of ranges we can hold.
+    MaxRanges = 10,
+
+    /// MaxFixItHints - The maximum number of ranges we can hold.
+    MaxFixItHints = 10
   };
 
   /// NumDiagArgs - This contains the number of entries in Arguments.
   signed char NumDiagArgs;
-  /// NumRanges - This is the number of ranges in the DiagRanges array.
+  /// NumDiagRanges - This is the number of ranges in the DiagRanges array.
   unsigned char NumDiagRanges;
+  /// NumDiagFixItHints - This is the number of hints in the DiagFixItHints
+  /// array.
+  unsigned char NumDiagFixItHints;
 
   /// DiagArgumentsKind - This is an array of ArgumentKind::ArgumentKind enum
   /// values, with one for each argument.  This specifies whether the argument
@@ -660,13 +669,12 @@ private:
   /// sort of argument kind it is.
   intptr_t DiagArgumentsVal[MaxArguments];
 
-  /// DiagRanges - The list of ranges added to this diagnostic.  It currently
-  /// only support 10 ranges, could easily be extended if needed.
-  CharSourceRange DiagRanges[10];
+  /// DiagRanges - The list of ranges added to this diagnostic.
+  CharSourceRange DiagRanges[MaxRanges];
 
-  /// FixItHints - If valid, provides a hint with some code
-  /// to insert, remove, or modify at a particular position.
-  SmallVector<FixItHint, 6> FixItHints;
+  /// FixItHints - If valid, provides a hint with some code to insert, remove,
+  /// or modify at a particular position.
+  FixItHint DiagFixItHints[MaxFixItHints];
 
   DiagnosticMappingInfo makeMappingInfo(diag::Mapping Map, SourceLocation L) {
     bool isPragma = L.isValid();
@@ -691,6 +699,9 @@ private:
   bool ProcessDiag() {
     return Diags->ProcessDiag(*this);
   }
+
+  /// \brief Emit the current diagnostic and clear the diagnostic state.
+  bool EmitCurrentDiagnostic();
 
   friend class ASTReader;
   friend class ASTWriter;
@@ -744,51 +755,26 @@ public:
 /// for example.
 class DiagnosticBuilder {
   mutable DiagnosticsEngine *DiagObj;
-  mutable unsigned NumArgs, NumRanges;
+  mutable unsigned NumArgs, NumRanges, NumFixits;
 
   void operator=(const DiagnosticBuilder&); // DO NOT IMPLEMENT
   friend class DiagnosticsEngine;
   explicit DiagnosticBuilder(DiagnosticsEngine *diagObj)
-    : DiagObj(diagObj), NumArgs(0), NumRanges(0) {
-    DiagObj->FixItHints.clear();
+    : DiagObj(diagObj), NumArgs(0), NumRanges(0), NumFixits(0) {
+    assert(diagObj && "DiagnosticBuilder requires a valid DiagnosticsEngine!");
   }
 
   friend class PartialDiagnostic;
 
 protected:
-  void FlushCounts();
-  
-public:
-  /// Copy constructor.  When copied, this "takes" the diagnostic info from the
-  /// input and neuters it.
-  DiagnosticBuilder(const DiagnosticBuilder &D) {
-    DiagObj = D.DiagObj;
-    D.DiagObj = 0;
-    NumArgs = D.NumArgs;
-    NumRanges = D.NumRanges;
+  void FlushCounts() {
+    DiagObj->NumDiagArgs = NumArgs;
+    DiagObj->NumDiagRanges = NumRanges;
+    DiagObj->NumDiagFixItHints = NumFixits;
   }
 
-  /// \brief Simple enumeration value used to give a name to the
-  /// suppress-diagnostic constructor.
-  enum SuppressKind { Suppress };
-
-  /// \brief Create an empty DiagnosticBuilder object that represents
-  /// no actual diagnostic.
-  explicit DiagnosticBuilder(SuppressKind)
-    : DiagObj(0), NumArgs(0), NumRanges(0) { }
-
-  /// \brief Force the diagnostic builder to emit the diagnostic now.
-  ///
-  /// Once this function has been called, the DiagnosticBuilder object
-  /// should not be used again before it is destroyed.
-  ///
-  /// \returns true if a diagnostic was emitted, false if the
-  /// diagnostic was suppressed.
-  bool Emit();
-
-  /// Destructor - The dtor emits the diagnostic if it hasn't already
-  /// been emitted.
-  ~DiagnosticBuilder() { Emit(); }
+  /// \brief Clear out the current diagnostic.
+  void Clear() { DiagObj = 0; }
 
   /// isActive - Determine whether this diagnostic is still active.
   bool isActive() const { return DiagObj != 0; }
@@ -805,9 +791,49 @@ public:
   ///
   /// \pre \c isActive()
   SourceLocation getLocation() const { return DiagObj->CurDiagLoc; }
+
+  /// \brief Force the diagnostic builder to emit the diagnostic now.
+  ///
+  /// Once this function has been called, the DiagnosticBuilder object
+  /// should not be used again before it is destroyed.
+  ///
+  /// \returns true if a diagnostic was emitted, false if the
+  /// diagnostic was suppressed.
+  bool Emit() {
+    // If DiagObj is null, then its soul was stolen by the copy ctor
+    // or the user called Emit().
+    if (DiagObj == 0) return false;
+
+    // When emitting diagnostics, we set the final argument count into
+    // the DiagnosticsEngine object.
+    FlushCounts();
+
+    // Process the diagnostic.
+    bool Result = DiagObj->EmitCurrentDiagnostic();
+
+    // This diagnostic is dead.
+    DiagObj = 0;
+
+    return Result;
+  }
+
   
-  /// \brief Clear out the current diagnostic.
-  void Clear() { DiagObj = 0; }
+public:
+  /// Copy constructor.  When copied, this "takes" the diagnostic info from the
+  /// input and neuters it.
+  DiagnosticBuilder(const DiagnosticBuilder &D) {
+    DiagObj = D.DiagObj;
+    D.DiagObj = 0;
+    NumArgs = D.NumArgs;
+    NumRanges = D.NumRanges;
+    NumFixits = D.NumFixits;
+  }
+
+  /// Destructor - The dtor emits the diagnostic if it hasn't already
+  /// been emitted.
+  ~DiagnosticBuilder() {
+    Emit();
+  }
   
   /// Operator bool: conversion of DiagnosticBuilder to bool always returns
   /// true.  This allows is to be used in boolean error contexts like:
@@ -815,34 +841,33 @@ public:
   operator bool() const { return true; }
 
   void AddString(StringRef S) const {
+    assert(isActive() && "Clients must not add to cleared diagnostic!");
     assert(NumArgs < DiagnosticsEngine::MaxArguments &&
            "Too many arguments to diagnostic!");
-    if (DiagObj) {
-      DiagObj->DiagArgumentsKind[NumArgs] = DiagnosticsEngine::ak_std_string;
-      DiagObj->DiagArgumentsStr[NumArgs++] = S;
-    }
+    DiagObj->DiagArgumentsKind[NumArgs] = DiagnosticsEngine::ak_std_string;
+    DiagObj->DiagArgumentsStr[NumArgs++] = S;
   }
 
   void AddTaggedVal(intptr_t V, DiagnosticsEngine::ArgumentKind Kind) const {
+    assert(isActive() && "Clients must not add to cleared diagnostic!");
     assert(NumArgs < DiagnosticsEngine::MaxArguments &&
            "Too many arguments to diagnostic!");
-    if (DiagObj) {
-      DiagObj->DiagArgumentsKind[NumArgs] = Kind;
-      DiagObj->DiagArgumentsVal[NumArgs++] = V;
-    }
+    DiagObj->DiagArgumentsKind[NumArgs] = Kind;
+    DiagObj->DiagArgumentsVal[NumArgs++] = V;
   }
 
   void AddSourceRange(const CharSourceRange &R) const {
-    assert(NumRanges <
-           sizeof(DiagObj->DiagRanges)/sizeof(DiagObj->DiagRanges[0]) &&
+    assert(isActive() && "Clients must not add to cleared diagnostic!");
+    assert(NumRanges < DiagnosticsEngine::MaxRanges &&
            "Too many arguments to diagnostic!");
-    if (DiagObj)
-      DiagObj->DiagRanges[NumRanges++] = R;
+    DiagObj->DiagRanges[NumRanges++] = R;
   }
 
   void AddFixItHint(const FixItHint &Hint) const {
-    if (DiagObj)
-      DiagObj->FixItHints.push_back(Hint);
+    assert(isActive() && "Clients must not add to cleared diagnostic!");
+    assert(NumFixits < DiagnosticsEngine::MaxFixItHints &&
+           "Too many arguments to diagnostic!");
+    DiagObj->DiagFixItHints[NumFixits++] = Hint;
   }
 };
 
@@ -1018,16 +1043,16 @@ public:
   }
 
   unsigned getNumFixItHints() const {
-    return DiagObj->FixItHints.size();
+    return DiagObj->NumDiagFixItHints;
   }
 
   const FixItHint &getFixItHint(unsigned Idx) const {
-    return DiagObj->FixItHints[Idx];
+    assert(Idx < getNumFixItHints() && "Invalid index!");
+    return DiagObj->DiagFixItHints[Idx];
   }
 
   const FixItHint *getFixItHints() const {
-    return getNumFixItHints()?
-             DiagObj->FixItHints.data() : 0;
+    return getNumFixItHints()? DiagObj->DiagFixItHints : 0;
   }
 
   /// FormatDiagnostic - Format this diagnostic into a string, substituting the

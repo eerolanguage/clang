@@ -117,11 +117,24 @@ llvm::DIDescriptor CGDebugInfo::getContextDescriptor(const Decl *Context) {
 StringRef CGDebugInfo::getFunctionName(const FunctionDecl *FD) {
   assert (FD && "Invalid FunctionDecl!");
   IdentifierInfo *FII = FD->getIdentifier();
-  if (FII)
+  FunctionTemplateSpecializationInfo *Info
+    = FD->getTemplateSpecializationInfo();
+  if (!Info && FII)
     return FII->getName();
 
   // Otherwise construct human readable name for debug info.
   std::string NS = FD->getNameAsString();
+
+  // Add any template specialization args.
+  if (Info) {
+    const TemplateArgumentList *TArgs = Info->TemplateArguments;
+    const TemplateArgument *Args = TArgs->data();
+    unsigned NumArgs = TArgs->size();
+    PrintingPolicy Policy(CGM.getLangOpts());
+    NS += TemplateSpecializationType::PrintTemplateArgumentList(Args,
+                                                                NumArgs,
+                                                                Policy);
+  }
 
   // Copy this name on the side and use its reference.
   char *StrPtr = DebugInfoNames.Allocate<char>(NS.length());
@@ -831,7 +844,7 @@ CGDebugInfo::getOrCreateMethodType(const CXXMethodDecl *Method,
     = getOrCreateType(QualType(Method->getType()->getAs<FunctionProtoType>(),
                                0),
                       Unit);
-  
+
   // Add "this" pointer.
   llvm::DIArray Args = llvm::DICompositeType(FnTy).getTypeArray();
   assert (Args.getNumElements() && "Invalid number of arguments!");
@@ -946,14 +959,16 @@ CGDebugInfo::CreateCXXMemberFunction(const CXXMethodDecl *Method,
   }
   if (Method->hasPrototype())
     Flags |= llvm::DIDescriptor::FlagPrototyped;
-    
+
+  llvm::DIArray TParamsArray = CollectFunctionTemplateParams(Method, Unit);
   llvm::DISubprogram SP =
     DBuilder.createMethod(RecordTy, MethodName, MethodLinkageName, 
                           MethodDefUnit, MethodLine,
                           MethodTy, /*isLocalToUnit=*/false, 
                           /* isDefinition=*/ false,
                           Virtuality, VIndex, ContainingType,
-                          Flags, CGM.getLangOpts().Optimize);
+                          Flags, CGM.getLangOpts().Optimize, NULL,
+                          TParamsArray);
   
   SPCache[Method->getCanonicalDecl()] = llvm::WeakVH(SP);
 
@@ -967,14 +982,25 @@ void CGDebugInfo::
 CollectCXXMemberFunctions(const CXXRecordDecl *RD, llvm::DIFile Unit,
                           SmallVectorImpl<llvm::Value *> &EltTys,
                           llvm::DIType RecordTy) {
-  for(CXXRecordDecl::method_iterator I = RD->method_begin(),
-        E = RD->method_end(); I != E; ++I) {
-    const CXXMethodDecl *Method = *I;
-    
-    if (Method->isImplicit() && !Method->isUsed())
+
+  // Since we want more than just the individual member decls if we
+  // have templated functions iterate over every declaration to gather
+  // the functions.
+  for(DeclContext::decl_iterator I = RD->decls_begin(),
+        E = RD->decls_end(); I != E; ++I) {
+    Decl *D = *I;
+    if (D->isImplicit() && !D->isUsed())
       continue;
 
-    EltTys.push_back(CreateCXXMemberFunction(Method, Unit, RecordTy));
+    if (const CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D))
+      EltTys.push_back(CreateCXXMemberFunction(Method, Unit, RecordTy));
+    else if (FunctionTemplateDecl *FTD = dyn_cast<FunctionTemplateDecl>(D))
+      for (FunctionTemplateDecl::spec_iterator SI = FTD->spec_begin(),
+            SE = FTD->spec_end(); SI != SE; ++SI) {
+        FunctionDecl *FD = *SI;
+        if (CXXMethodDecl *M = dyn_cast<CXXMethodDecl>(FD))
+          EltTys.push_back(CreateCXXMemberFunction(M, Unit, RecordTy));
+      }
   }
 }                                 
 
