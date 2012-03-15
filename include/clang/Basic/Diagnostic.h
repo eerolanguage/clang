@@ -700,8 +700,23 @@ private:
     return Diags->ProcessDiag(*this);
   }
 
+  /// @name Diagnostic Emission
+  /// @{
+protected:
+  // Sema requires access to the following functions because the current design
+  // of SFINAE requires it to use its own SemaDiagnosticBuilder, which needs to
+  // access us directly to ensure we minimize the emitted code for the common
+  // Sema::Diag() patterns.
+  friend class Sema;
+
   /// \brief Emit the current diagnostic and clear the diagnostic state.
   bool EmitCurrentDiagnostic();
+
+  unsigned getCurrentDiagID() const { return CurDiagID; }
+
+  SourceLocation getCurrentDiagLoc() const { return CurDiagLoc; }
+
+  /// @}
 
   friend class ASTReader;
   friend class ASTWriter;
@@ -757,10 +772,17 @@ class DiagnosticBuilder {
   mutable DiagnosticsEngine *DiagObj;
   mutable unsigned NumArgs, NumRanges, NumFixits;
 
+  /// \brief Status variable indicating if this diagnostic is still active.
+  ///
+  // NOTE: This field is redundant with DiagObj (IsActive iff (DiagObj == 0)),
+  // but LLVM is not currently smart enough to eliminate the null check that
+  // Emit() would end up with if we used that as our status variable.
+  mutable bool IsActive;
+
   void operator=(const DiagnosticBuilder&); // DO NOT IMPLEMENT
   friend class DiagnosticsEngine;
   explicit DiagnosticBuilder(DiagnosticsEngine *diagObj)
-    : DiagObj(diagObj), NumArgs(0), NumRanges(0), NumFixits(0) {
+    : DiagObj(diagObj), NumArgs(0), NumRanges(0), NumFixits(0), IsActive(true) {
     assert(diagObj && "DiagnosticBuilder requires a valid DiagnosticsEngine!");
   }
 
@@ -774,23 +796,13 @@ protected:
   }
 
   /// \brief Clear out the current diagnostic.
-  void Clear() { DiagObj = 0; }
-
-  /// isActive - Determine whether this diagnostic is still active.
-  bool isActive() const { return DiagObj != 0; }
-
-  /// \brief Retrieve the active diagnostic ID.
-  ///
-  /// \pre \c isActive()
-  unsigned getDiagID() const {
-    assert(isActive() && "DiagnosticsEngine is inactive");
-    return DiagObj->CurDiagID;
+  void Clear() const {
+    DiagObj = 0;
+    IsActive = false;
   }
 
-  /// \brief Retrieve the active diagnostic's location.
-  ///
-  /// \pre \c isActive()
-  SourceLocation getLocation() const { return DiagObj->CurDiagLoc; }
+  /// isActive - Determine whether this diagnostic is still active.
+  bool isActive() const { return IsActive; }
 
   /// \brief Force the diagnostic builder to emit the diagnostic now.
   ///
@@ -800,9 +812,9 @@ protected:
   /// \returns true if a diagnostic was emitted, false if the
   /// diagnostic was suppressed.
   bool Emit() {
-    // If DiagObj is null, then its soul was stolen by the copy ctor
-    // or the user called Emit().
-    if (DiagObj == 0) return false;
+    // If this diagnostic is inactive, then its soul was stolen by the copy ctor
+    // (or by a subclass, as in SemaDiagnosticBuilder).
+    if (!isActive()) return false;
 
     // When emitting diagnostics, we set the final argument count into
     // the DiagnosticsEngine object.
@@ -812,25 +824,24 @@ protected:
     bool Result = DiagObj->EmitCurrentDiagnostic();
 
     // This diagnostic is dead.
-    DiagObj = 0;
+    Clear();
 
     return Result;
   }
-
   
 public:
   /// Copy constructor.  When copied, this "takes" the diagnostic info from the
   /// input and neuters it.
   DiagnosticBuilder(const DiagnosticBuilder &D) {
     DiagObj = D.DiagObj;
-    D.DiagObj = 0;
+    IsActive = D.IsActive;
+    D.Clear();
     NumArgs = D.NumArgs;
     NumRanges = D.NumRanges;
     NumFixits = D.NumFixits;
   }
 
-  /// Destructor - The dtor emits the diagnostic if it hasn't already
-  /// been emitted.
+  /// Destructor - The dtor emits the diagnostic.
   ~DiagnosticBuilder() {
     Emit();
   }

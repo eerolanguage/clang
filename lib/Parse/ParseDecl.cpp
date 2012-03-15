@@ -36,9 +36,7 @@ TypeResult Parser::ParseTypeName(SourceRange *Range,
                                  Declarator::TheContext Context,
                                  AccessSpecifier AS,
                                  Decl **OwnedType) {
-  DeclSpecContext DSC = DSC_normal;
-  if (Context == Declarator::TrailingReturnContext)
-    DSC = DSC_trailing;
+  DeclSpecContext DSC = getDeclSpecContextFromDeclaratorContext(Context);
 
   // Parse the common declaration-specifiers piece.
   DeclSpec DS(AttrFactory);
@@ -1651,6 +1649,8 @@ Parser::getDeclSpecContextFromDeclaratorContext(unsigned Context) {
     return DSC_class;
   if (Context == Declarator::FileContext)
     return DSC_top_level;
+  if (Context == Declarator::TrailingReturnContext)
+    return DSC_trailing;
   return DSC_normal;
 }
 
@@ -4234,6 +4234,7 @@ void Parser::ParseFunctionDeclaratorIdentifierList(
 ///       parameter-declaration: [C99 6.7.5]
 ///         declaration-specifiers declarator
 /// [C++]   declaration-specifiers declarator '=' assignment-expression
+/// [C++11]                                       initializer-clause
 /// [GNU]   declaration-specifiers declarator attributes
 ///         declaration-specifiers abstract-declarator[opt]
 /// [C++]   declaration-specifiers abstract-declarator[opt]
@@ -4345,7 +4346,11 @@ void Parser::ParseParameterDeclarationClause(
                                               Sema::PotentiallyEvaluatedIfUsed,
                                                 Param);
 
-          ExprResult DefArgResult(ParseAssignmentExpression());
+          ExprResult DefArgResult;
+          if (Tok.is(tok::l_brace))
+            DefArgResult = ParseBraceInitializer();
+          else
+            DefArgResult = ParseAssignmentExpression();
           if (DefArgResult.isInvalid()) {
             Actions.ActOnParamDefaultArgumentError(Param);
             SkipUntil(tok::comma, tok::r_paren, true, true);
