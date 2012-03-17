@@ -2173,6 +2173,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    false))
     CmdArgs.push_back("-fgnu89-inline");
 
+  if (Args.hasArg(options::OPT_fno_inline))
+    CmdArgs.push_back("-fno-inline");
+
   if (Args.hasArg(options::OPT_fno_inline_functions))
     CmdArgs.push_back("-fno-inline-functions");
 
@@ -3169,6 +3172,7 @@ void darwin::CC1::RemoveCC1UnsupportedArgs(ArgStringList &CmdArgs) const {
         .Case("c++11-narrowing", true)
         .Case("conditional-uninitialized", true)
         .Case("constant-conversion", true)
+        .Case("conversion-null", true)
         .Case("CFString-literal", true)
         .Case("constant-logical-operand", true)
         .Case("custom-atomic-properties", true)

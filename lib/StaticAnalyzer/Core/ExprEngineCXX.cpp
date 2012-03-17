@@ -78,10 +78,7 @@ void ExprEngine::VisitCXXConstructExpr(const CXXConstructExpr *E,
 #if 0
   // Is the constructor elidable?
   if (E->isElidable()) {
-    VisitAggExpr(E->getArg(0), destNodes, Pred, Dst);
-    // FIXME: this is here to force propagation if VisitAggExpr doesn't
-    if (destNodes.empty())
-      destNodes.Add(Pred);
+    destNodes.Add(Pred);
     return;
   }
 #endif
@@ -271,6 +268,11 @@ void ExprEngine::VisitCXXCatchStmt(const CXXCatchStmt *CS,
                                    ExplodedNode *Pred,
                                    ExplodedNodeSet &Dst) {
   const VarDecl *VD = CS->getExceptionDecl();
+  if (!VD) {
+    Dst.Add(Pred);
+    return;
+  }
+
   const LocationContext *LCtx = Pred->getLocationContext();
   SVal V = svalBuilder.getConjuredSymbolVal(CS, LCtx, VD->getType(),
                                  currentBuilderContext->getCurrentBlockCount());

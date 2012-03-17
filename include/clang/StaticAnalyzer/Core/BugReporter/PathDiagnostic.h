@@ -41,6 +41,8 @@ class Stmt;
 namespace ento {
 
 class ExplodedNode;
+class SymExpr;
+typedef const SymExpr* SymbolRef;
 
 //===----------------------------------------------------------------------===//
 // High-level interface for handlers of path-sensitive diagnostics.
@@ -357,12 +359,67 @@ public:
   virtual void Profile(llvm::FoldingSetNodeID &ID) const;
 };
 
+/// \brief Interface for classes constructing Stack hints.
+///
+/// If a PathDiagnosticEvent occurs in a different frame than the final 
+/// diagnostic the hints can be used to summarise the effect of the call.
+class StackHintGenerator {
+public:
+  virtual ~StackHintGenerator() = 0;
+
+  /// \brief Construct the Diagnostic message for the given ExplodedNode.
+  virtual std::string getMessage(const ExplodedNode *N) = 0;
+};
+
+/// \brief Constructs a Stack hint for the given symbol.
+///
+/// The class knows how to construct the stack hint message based on
+/// traversing the CallExpr associated with the call and checking if the given
+/// symbol is returned or is one of the arguments.
+/// The hint can be customized by redefining 'getMessageForX()' methods.
+class StackHintGeneratorForSymbol : public StackHintGenerator {
+private:
+  SymbolRef Sym;
+  std::string Msg;
+
+public:
+  StackHintGeneratorForSymbol(SymbolRef S, StringRef M) : Sym(S), Msg(M) {}
+  virtual ~StackHintGeneratorForSymbol() {}
+
+  /// \brief Search the call expression for the symbol Sym and dispatch the
+  /// 'getMessageForX()' methods to construct a specific message.
+  virtual std::string getMessage(const ExplodedNode *N);
+
+  /// Prints the ordinal form of the given integer,
+  /// only valid for ValNo : ValNo > 0.
+  void printOrdinal(unsigned ValNo, llvm::raw_svector_ostream &Out);
+
+  /// Produces the message of the following form:
+  ///   'Msg via Nth parameter'
+  virtual std::string getMessageForArg(const Expr *ArgE, unsigned ArgIndex);
+  virtual std::string getMessageForReturn(const CallExpr *CallExpr) {
+    return Msg;
+  }
+  virtual std::string getMessageForSymbolNotFound() {
+    return Msg;
+  }
+};
+
 class PathDiagnosticEventPiece : public PathDiagnosticSpotPiece {
   llvm::Optional<bool> IsPrunable;
+
+  /// If the event occurs in a different frame than the final diagnostic,
+  /// supply a message that will be used to construct an extra hint on the
+  /// returns from all the calls on the stack from this event to the final
+  /// diagnostic.
+  llvm::OwningPtr<StackHintGenerator> CallStackHint;
+
 public:
   PathDiagnosticEventPiece(const PathDiagnosticLocation &pos,
-                           StringRef s, bool addPosRange = true)
-    : PathDiagnosticSpotPiece(pos, s, Event, addPosRange) {}
+                           StringRef s, bool addPosRange = true,
+                           StackHintGenerator *stackHint = 0)
+    : PathDiagnosticSpotPiece(pos, s, Event, addPosRange),
+      CallStackHint(stackHint) {}
 
   ~PathDiagnosticEventPiece();
 
@@ -380,6 +437,18 @@ public:
     return IsPrunable.hasValue() ? IsPrunable.getValue() : false;
   }
   
+  bool hasCallStackHint() {
+    return (CallStackHint != 0);
+  }
+
+  /// Produce the hint for the given node. The node contains 
+  /// information about the call for which the diagnostic can be generated.
+  StringRef getCallStackMessage(const ExplodedNode *N) {
+    if (CallStackHint)
+      return CallStackHint->getMessage(N);
+    return "";  
+  }
+
   static inline bool classof(const PathDiagnosticPiece *P) {
     return P->getKind() == Event;
   }
@@ -402,6 +471,10 @@ class PathDiagnosticCallPiece : public PathDiagnosticPiece {
   // call exit.
   bool NoExit;
 
+  // The custom string, which should appear after the call Return Diagnostic.
+  // TODO: Should we allow multiple diagnostics?
+  std::string CallStackMessage;
+
 public:
   PathDiagnosticLocation callEnter;
   PathDiagnosticLocation callEnterWithin;
@@ -415,6 +488,11 @@ public:
   const Decl *getCallee() const { return Callee; }
   void setCallee(const CallEnter &CE, const SourceManager &SM);
   
+  bool hasCallStackMessage() { return !CallStackMessage.empty(); }
+  void setCallStackMessage(StringRef st) {
+    CallStackMessage = st;
+  }
+
   virtual PathDiagnosticLocation getLocation() const {
     return callEnter;
   }

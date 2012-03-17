@@ -380,6 +380,31 @@ PathDiagnosticBuilder::getEnclosingStmtLocation(const Stmt *S) {
 //===----------------------------------------------------------------------===//
 // "Minimal" path diagnostic generation algorithm.
 //===----------------------------------------------------------------------===//
+typedef std::pair<PathDiagnosticCallPiece*, const ExplodedNode*> StackDiagPair;
+typedef SmallVector<StackDiagPair, 6> StackDiagVector;
+
+static void updateStackPiecesWithMessage(PathDiagnosticPiece *P,
+                                         StackDiagVector &CallStack) {
+  // If the piece contains a special message, add it to all the call
+  // pieces on the active stack.
+  if (PathDiagnosticEventPiece *ep =
+        dyn_cast<PathDiagnosticEventPiece>(P)) {
+
+    if (ep->hasCallStackHint())
+      for (StackDiagVector::iterator I = CallStack.begin(),
+                                     E = CallStack.end(); I != E; ++I) {
+        PathDiagnosticCallPiece *CP = I->first;
+        const ExplodedNode *N = I->second;
+        StringRef stackMsg = ep->getCallStackMessage(N);
+
+        // The last message on the path to final bug is the most important
+        // one. Since we traverse the path backwards, do not add the message
+        // if one has been previously added.
+        if  (!CP->hasCallStackMessage())
+          CP->setCallStackMessage(stackMsg);
+      }
+  }
+}
 
 static void CompactPathDiagnostic(PathPieces &path, const SourceManager& SM);
 
@@ -391,6 +416,9 @@ static void GenerateMinimalPathDiagnostic(PathDiagnostic& PD,
   const LocationContext *LC = PDB.LC;
   const ExplodedNode *NextNode = N->pred_empty()
                                         ? NULL : *(N->pred_begin());
+
+  StackDiagVector CallStack;
+
   while (NextNode) {
     N = NextNode;
     PDB.LC = N->getLocationContext();
@@ -403,6 +431,7 @@ static void GenerateMinimalPathDiagnostic(PathDiagnostic& PD,
         PathDiagnosticCallPiece::construct(N, *CE, SMgr);
       PD.getActivePath().push_front(C);
       PD.pushActivePath(&C->path);
+      CallStack.push_back(StackDiagPair(C, N));
       continue;      
     }
     
@@ -423,6 +452,10 @@ static void GenerateMinimalPathDiagnostic(PathDiagnostic& PD,
         C = PathDiagnosticCallPiece::construct(PD.getActivePath(), Caller);
       }
       C->setCallee(*CE, SMgr);
+      if (!CallStack.empty()) {
+        assert(CallStack.back().first == C);
+        CallStack.pop_back();
+      }
       continue;
     }
 
@@ -681,8 +714,10 @@ static void GenerateMinimalPathDiagnostic(PathDiagnostic& PD,
       BugReport *R = PDB.getBugReport();
       for (BugReport::visitor_iterator I = R->visitor_begin(),
            E = R->visitor_end(); I!=E; ++I) {
-        if (PathDiagnosticPiece *p = (*I)->VisitNode(N, NextNode, PDB, *R))
+        if (PathDiagnosticPiece *p = (*I)->VisitNode(N, NextNode, PDB, *R)) {
           PD.getActivePath().push_front(p);
+          updateStackPiecesWithMessage(p, CallStack);
+        }
       }
     }
   }
@@ -1019,6 +1054,7 @@ static void GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
                                             const ExplodedNode *N) {
   EdgeBuilder EB(PD, PDB);
   const SourceManager& SM = PDB.getSourceManager();
+  StackDiagVector CallStack;
 
   const ExplodedNode *NextNode = N->pred_empty() ? NULL : *(N->pred_begin());
   while (NextNode) {
@@ -1039,6 +1075,7 @@ static void GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
           PathDiagnosticCallPiece::construct(N, *CE, SM);
         PD.getActivePath().push_front(C);
         PD.pushActivePath(&C->path);
+        CallStack.push_back(StackDiagPair(C, N));
         break;
       }
       
@@ -1072,6 +1109,11 @@ static void GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
         }
         C->setCallee(*CE, SM);
         EB.addContext(CE->getCallExpr());
+
+        if (!CallStack.empty()) {
+          assert(CallStack.back().first == C);
+          CallStack.pop_back();
+        }
         break;
       }
       
@@ -1147,6 +1189,8 @@ static void GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
         const PathDiagnosticLocation &Loc = p->getLocation();
         EB.addEdge(Loc, true);
         PD.getActivePath().push_front(p);
+        updateStackPiecesWithMessage(p, CallStack);
+
         if (const Stmt *S = Loc.asStmt())
           EB.addExtendedContext(PDB.getEnclosingStmtLocation(S).asStmt());
       }
@@ -1218,6 +1262,9 @@ void BugReport::markInteresting(SymbolRef sym) {
   if (!sym)
     return;
   interestingSymbols.insert(sym);  
+
+  if (const SymbolMetadata *meta = dyn_cast<SymbolMetadata>(sym))
+    interestingRegions.insert(meta->getRegion());
 }
 
 void BugReport::markInteresting(const MemRegion *R) {
@@ -1225,7 +1272,7 @@ void BugReport::markInteresting(const MemRegion *R) {
     return;
   R = R->getBaseRegion();
   interestingRegions.insert(R);
-  
+
   if (const SymbolicRegion *SR = dyn_cast<SymbolicRegion>(R))
     interestingSymbols.insert(SR->getSymbol());
 }
@@ -1242,6 +1289,8 @@ bool BugReport::isInteresting(SVal V) const {
 bool BugReport::isInteresting(SymbolRef sym) const {
   if (!sym)
     return false;
+  // We don't currently consider metadata symbols to be interesting
+  // even if we know their region is interesting. Is that correct behavior?
   return interestingSymbols.count(sym);
 }
 

@@ -1682,6 +1682,13 @@ Stmt *RewriteModernObjC::RewriteObjCForCollectionStmt(ObjCForCollectionStmt *S,
   return 0;
 }
 
+static void Write_RethrowObject(std::string &buf) {
+  buf += "{ struct _FIN { _FIN(id reth) : rethrow(reth) {}\n";
+  buf += "\t~_FIN() { if (rethrow) objc_exception_throw(rethrow); }\n";
+  buf += "\tid rethrow;\n";
+  buf += "\t} _fin_force_rethow(_rethrow);";
+}
+
 /// RewriteObjCSynchronizedStmt -
 /// This routine rewrites @synchronized(expr) stmt;
 /// into:
@@ -1696,39 +1703,29 @@ Stmt *RewriteModernObjC::RewriteObjCSynchronizedStmt(ObjCAtSynchronizedStmt *S) 
   assert((*startBuf == '@') && "bogus @synchronized location");
 
   std::string buf;
-  buf = "objc_sync_enter((id)";
+  buf = "{ id volatile _rethrow = 0; objc_sync_enter((id)";
+  
   const char *lparenBuf = startBuf;
   while (*lparenBuf != '(') lparenBuf++;
   ReplaceText(startLoc, lparenBuf-startBuf+1, buf);
-  // We can't use S->getSynchExpr()->getLocEnd() to find the end location, since
-  // the sync expression is typically a message expression that's already
-  // been rewritten! (which implies the SourceLocation's are invalid).
   SourceLocation endLoc = S->getSynchBody()->getLocStart();
   const char *endBuf = SM->getCharacterData(endLoc);
   while (*endBuf != ')') endBuf--;
   SourceLocation rparenLoc = startLoc.getLocWithOffset(endBuf-startBuf);
   buf = ");\n";
-  // declare a new scope with two variables, _stack and _rethrow.
-  buf += "/* @try scope begin */ \n{ struct _objc_exception_data {\n";
-  buf += "int buf[18/*32-bit i386*/];\n";
-  buf += "char *pointers[4];} _stack;\n";
-  buf += "id volatile _rethrow = 0;\n";
-  buf += "objc_exception_try_enter(&_stack);\n";
-  buf += "if (!_setjmp(_stack.buf)) /* @try block continue */\n";
+  buf += "try ";
   ReplaceText(rparenLoc, 1, buf);
-  startLoc = S->getSynchBody()->getLocEnd();
-  startBuf = SM->getCharacterData(startLoc);
-
-  assert((*startBuf == '}') && "bogus @synchronized block");
-  SourceLocation lastCurlyLoc = startLoc;
-  buf = "}\nelse {\n";
-  buf += "  _rethrow = objc_exception_extract(&_stack);\n";
-  buf += "}\n";
-  buf += "{ /* implicit finally clause */\n";
-  buf += "  if (!_rethrow) objc_exception_try_exit(&_stack);\n";
   
+  SourceLocation startRBraceLoc = S->getSynchBody()->getLocEnd();
+  assert((*SM->getCharacterData(startRBraceLoc) == '}') &&
+         "bogus @synchronized block");
+  
+  buf = "} catch (id e) {_rethrow = e;}\n";
+  Write_RethrowObject(buf);
+  
+  // produce objc_sync_exit(expr);
   std::string syncBuf;
-  syncBuf += " objc_sync_exit(";
+  syncBuf += "\n\tobjc_sync_exit(";
 
   Expr *syncExpr = S->getSynchExpr();
   CastKind CK = syncExpr->getType()->isObjCObjectPointerType()
@@ -1746,16 +1743,10 @@ Stmt *RewriteModernObjC::RewriteObjCSynchronizedStmt(ObjCAtSynchronizedStmt *S) 
   syncBuf += ");";
   
   buf += syncBuf;
-  buf += "\n  if (_rethrow) objc_exception_throw(_rethrow);\n";
   buf += "}\n";
-  buf += "}";
+  buf += "}\n";
 
-  ReplaceText(lastCurlyLoc, 1, buf);
-
-  bool hasReturns = false;
-  HasReturnStmts(S->getSynchBody(), hasReturns);
-  if (hasReturns)
-    RewriteSyncReturnStmts(S->getSynchBody(), syncBuf);
+  ReplaceText(startRBraceLoc, 1, buf);
 
   return 0;
 }
@@ -1835,24 +1826,90 @@ void RewriteModernObjC::RewriteSyncReturnStmts(Stmt *S, std::string syncExitBuf)
 }
 
 Stmt *RewriteModernObjC::RewriteObjCTryStmt(ObjCAtTryStmt *S) {
+  ObjCAtFinallyStmt *finalStmt = S->getFinallyStmt();
+  bool noCatch = S->getNumCatchStmts() == 0;
+  std::string buf;
+  
+  if (finalStmt) {
+    if (noCatch)
+      buf = "{ id volatile _rethrow = 0;\n";
+    else {
+      buf = "{ id volatile _rethrow = 0;\ntry {\n";
+    }
+  }
   // Get the start location and compute the semi location.
   SourceLocation startLoc = S->getLocStart();
   const char *startBuf = SM->getCharacterData(startLoc);
 
   assert((*startBuf == '@') && "bogus @try location");
-  // @try -> try
-  ReplaceText(startLoc, 1, "");
-
+  if (finalStmt)
+    ReplaceText(startLoc, 1, buf);
+  else
+    // @try -> try
+    ReplaceText(startLoc, 1, "");
+  
   for (unsigned I = 0, N = S->getNumCatchStmts(); I != N; ++I) {
     ObjCAtCatchStmt *Catch = S->getCatchStmt(I);
+    VarDecl *catchDecl = Catch->getCatchParamDecl();
     
     startLoc = Catch->getLocStart();
-    startBuf = SM->getCharacterData(startLoc);
-    assert((*startBuf == '@') && "bogus @catch location");
-    // @catch -> catch
-    ReplaceText(startLoc, 1, "");
+    bool AtRemoved = false;
+    if (catchDecl) {
+      QualType t = catchDecl->getType();
+      if (const ObjCObjectPointerType *Ptr = t->getAs<ObjCObjectPointerType>()) {
+        // Should be a pointer to a class.
+        ObjCInterfaceDecl *IDecl = Ptr->getObjectType()->getInterface();
+        if (IDecl) {
+          std::string Result;
+          startBuf = SM->getCharacterData(startLoc);
+          assert((*startBuf == '@') && "bogus @catch location");
+          SourceLocation rParenLoc = Catch->getRParenLoc();
+          const char *rParenBuf = SM->getCharacterData(rParenLoc);
+          
+          // _objc_exc_Foo *_e as argument to catch.
+          Result = "catch (_objc_exc_"; Result += IDecl->getNameAsString();
+          Result += " *_"; Result += catchDecl->getNameAsString();
+          Result += ")";
+          ReplaceText(startLoc, rParenBuf-startBuf+1, Result);
+          // Foo *e = (Foo *)_e;
+          Result.clear();
+          Result = "{ ";
+          Result += IDecl->getNameAsString();
+          Result += " *"; Result += catchDecl->getNameAsString();
+          Result += " = ("; Result += IDecl->getNameAsString(); Result += "*)";
+          Result += "_"; Result += catchDecl->getNameAsString();
+          
+          Result += "; ";
+          SourceLocation lBraceLoc = Catch->getCatchBody()->getLocStart();
+          ReplaceText(lBraceLoc, 1, Result);
+          AtRemoved = true;
+        }
+      }
+    }
+    if (!AtRemoved)
+      // @catch -> catch
+      ReplaceText(startLoc, 1, "");
       
   }
+  if (finalStmt) {
+    buf.clear();
+    if (noCatch)
+      buf = "catch (id e) {_rethrow = e;}\n";
+    else 
+      buf = "}\ncatch (id e) {_rethrow = e;}\n";
+
+    SourceLocation startFinalLoc = finalStmt->getLocStart();
+    ReplaceText(startFinalLoc, 8, buf);
+    Stmt *body = finalStmt->getFinallyBody();
+    SourceLocation startFinalBodyLoc = body->getLocStart();
+    buf.clear();
+    Write_RethrowObject(buf);
+    ReplaceText(startFinalBodyLoc, 1, buf);
+    
+    SourceLocation endFinalBodyLoc = body->getLocEnd();
+    ReplaceText(endFinalBodyLoc, 1, "}\n}");
+  }
+
   return 0;
 }
 
@@ -1870,8 +1927,8 @@ Stmt *RewriteModernObjC::RewriteObjCThrowStmt(ObjCAtThrowStmt *S) {
   /* void objc_exception_throw(id) __attribute__((noreturn)); */
   if (S->getThrowExpr())
     buf = "objc_exception_throw(";
-  else // add an implicit argument
-    buf = "objc_exception_throw(_caught";
+  else
+    buf = "throw";
 
   // handle "@  throw" correctly.
   const char *wBuf = strchr(startBuf, 'w');
@@ -1881,7 +1938,8 @@ Stmt *RewriteModernObjC::RewriteObjCThrowStmt(ObjCAtThrowStmt *S) {
   const char *semiBuf = strchr(startBuf, ';');
   assert((*semiBuf == ';') && "@throw: can't find ';'");
   SourceLocation semiLoc = startLoc.getLocWithOffset(semiBuf-startBuf);
-  ReplaceText(semiLoc, 1, ");");
+  if (S->getThrowExpr())
+    ReplaceText(semiLoc, 1, ");");
   return 0;
 }
 
@@ -2991,7 +3049,8 @@ QualType RewriteModernObjC::getProtocolType() {
 /// The forward references (and metadata) are generated in
 /// RewriteModernObjC::HandleTranslationUnit().
 Stmt *RewriteModernObjC::RewriteObjCProtocolExpr(ObjCProtocolExpr *Exp) {
-  std::string Name = "_OBJC_PROTOCOL_" + Exp->getProtocol()->getNameAsString();
+  std::string Name = "_OBJC_PROTOCOL_REFERENCE_$_" + 
+                      Exp->getProtocol()->getNameAsString();
   IdentifierInfo *ID = &Context->Idents.get(Name);
   VarDecl *VD = VarDecl::Create(*Context, TUDecl, SourceLocation(),
                                 SourceLocation(), ID, getProtocolType(), 0,
@@ -4971,6 +5030,23 @@ void RewriteModernObjC::HandleDeclInMainFile(Decl *D) {
   // Nothing yet.
 }
 
+/// Write_ProtocolExprReferencedMetadata - This routine writer out the
+/// protocol reference symbols in the for of:
+/// struct _protocol_t *PROTOCOL_REF = &PROTOCOL_METADATA.
+static void Write_ProtocolExprReferencedMetadata(ASTContext *Context, 
+                                                 ObjCProtocolDecl *PDecl,
+                                                 std::string &Result) {
+  // Also output .objc_protorefs$B section and its meta-data.
+  if (Context->getLangOpts().MicrosoftExt)
+    Result += "__declspec(allocate(\".objc_protorefs$B\")) ";
+  Result += "struct _protocol_t *";
+  Result += "_OBJC_PROTOCOL_REFERENCE_$_";
+  Result += PDecl->getNameAsString();
+  Result += " = &";
+  Result += "_OBJC_PROTOCOL_"; Result += PDecl->getNameAsString();
+  Result += ";\n";
+}
+
 void RewriteModernObjC::HandleTranslationUnit(ASTContext &C) {
   if (Diags.hasErrorOccurred())
     return;
@@ -4980,8 +5056,10 @@ void RewriteModernObjC::HandleTranslationUnit(ASTContext &C) {
   // Here's a great place to add any extra declarations that may be needed.
   // Write out meta data for each @protocol(<expr>).
   for (llvm::SmallPtrSet<ObjCProtocolDecl *,8>::iterator I = ProtocolExprDecls.begin(),
-       E = ProtocolExprDecls.end(); I != E; ++I)
+       E = ProtocolExprDecls.end(); I != E; ++I) {
     RewriteObjCProtocolMetaData(*I, Preamble);
+    Write_ProtocolExprReferencedMetadata(Context, (*I), Preamble);
+  }
 
   InsertText(SM->getLocForStartOfFile(MainFileID), Preamble, false);
   for (unsigned i = 0, e = ObjCInterfacesSeen.size(); i < e; i++) {
@@ -5046,21 +5124,19 @@ void RewriteModernObjC::Initialize(ASTContext &context) {
     Preamble += "#pragma section(\".objc_imageinfo$B\", long, read, write)\n";
     Preamble += "#pragma section(\".objc_nlclslist$B\", long, read, write)\n";
     Preamble += "#pragma section(\".objc_nlcatlist$B\", long, read, write)\n";
-    
-    // These need be generated. But they are not,using API calls instead.
-    Preamble += "#pragma section(\".objc_selrefs$B\", long, read, write)\n";
-    Preamble += "#pragma section(\".objc_classrefs$B\", long, read, write)\n";
-    Preamble += "#pragma section(\".objc_superrefs$B\", long, read, write)\n";
-    
     Preamble += "#pragma section(\".objc_protorefs$B\", long, read, write)\n";
-    
-    
     // These are generated but not necessary for functionality.
     Preamble += "#pragma section(\".datacoal_nt$B\", long, read, write)\n";
     Preamble += "#pragma section(\".cat_cls_meth$B\", long, read, write)\n";
     Preamble += "#pragma section(\".inst_meth$B\", long, read, write)\n";
     Preamble += "#pragma section(\".cls_meth$B\", long, read, write)\n";
     Preamble += "#pragma section(\".objc_ivar$B\", long, read, write)\n";
+    
+    // These need be generated for performance. Currently they are not,
+    // using API calls instead.
+    Preamble += "#pragma section(\".objc_selrefs$B\", long, read, write)\n";
+    Preamble += "#pragma section(\".objc_classrefs$B\", long, read, write)\n";
+    Preamble += "#pragma section(\".objc_superrefs$B\", long, read, write)\n";
     
     // Add a constructor for creating temporary objects.
     Preamble += "__rw_objc_super(struct objc_object *o, struct objc_object *s) "
@@ -5093,15 +5169,15 @@ void RewriteModernObjC::Initialize(ASTContext &context) {
   Preamble += "(struct objc_class *);\n";
   Preamble += "__OBJC_RW_DLLIMPORT struct objc_object *objc_getMetaClass";
   Preamble += "(const char *);\n";
-  Preamble += "__OBJC_RW_DLLIMPORT void objc_exception_throw(struct objc_object *);\n";
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_exception_throw(id);\n";
   Preamble += "__OBJC_RW_DLLIMPORT void objc_exception_try_enter(void *);\n";
   Preamble += "__OBJC_RW_DLLIMPORT void objc_exception_try_exit(void *);\n";
   Preamble += "__OBJC_RW_DLLIMPORT struct objc_object *objc_exception_extract(void *);\n";
   Preamble += "__OBJC_RW_DLLIMPORT int objc_exception_match";
   Preamble += "(struct objc_class *, struct objc_object *);\n";
   // @synchronized hooks.
-  Preamble += "__OBJC_RW_DLLIMPORT void objc_sync_enter(struct objc_object *);\n";
-  Preamble += "__OBJC_RW_DLLIMPORT void objc_sync_exit(struct objc_object *);\n";
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_sync_enter(id);\n";
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_sync_exit(id);\n";
   Preamble += "__OBJC_RW_DLLIMPORT Protocol *objc_getProtocol(const char *);\n";
   Preamble += "#ifndef __FASTENUMERATIONSTATE\n";
   Preamble += "struct __objcFastEnumerationState {\n\t";
@@ -5935,7 +6011,7 @@ void RewriteModernObjC::RewriteObjCProtocolMetaData(ObjCProtocolDecl *PDecl,
   Result += "\n";
   if (LangOpts.MicrosoftExt)
     Result += "__declspec(allocate(\".datacoal_nt$B\")) ";
-  Result += "static struct _protocol_t _OBJC_PROTOCOL_";
+  Result += "struct _protocol_t _OBJC_PROTOCOL_";
   Result += PDecl->getNameAsString();
   Result += " __attribute__ ((used, section (\"__DATA,__datacoal_nt,coalesced\"))) = {\n";
   Result += "\t0,\n"; // id is; is null
@@ -6317,7 +6393,7 @@ void RewriteModernObjC::WriteImageInfo(std::string &Result) {
   
   Result += "static struct IMAGE_INFO { unsigned version; unsigned flag; } ";
   // version 0, ObjCABI is 2
-  Result += "L_OBJC_IMAGE_INFO = { 0, 2 };\n";
+  Result += "_OBJC_IMAGE_INFO = { 0, 2 };\n";
 }
 
 /// RewriteObjCCategoryImplDecl - Rewrite metadata for each category
@@ -6568,4 +6644,3 @@ Stmt *RewriteModernObjC::RewriteObjCIvarRefExpr(ObjCIvarRefExpr *IV) {
     ReplaceStmtWithRange(IV, Replacement, OldRange);
     return Replacement;  
 }
-
