@@ -132,6 +132,11 @@ public:
   static RetEffect MakeNoRet() {
     return RetEffect(NoRet);
   }
+
+  void Profile(llvm::FoldingSetNodeID& ID) const {
+    ID.AddInteger((unsigned) K);
+    ID.AddInteger((unsigned) O);
+  }
 };
 
 //===----------------------------------------------------------------------===//
@@ -352,7 +357,7 @@ struct ProgramStateTrait<RefBindings>
 
 namespace {
 class RetainSummary {
-  /// Args - an ordered vector of (index, ArgEffect) pairs, where index
+  /// Args - a map of (index, ArgEffect) pairs, where index
   ///  specifies the argument (starting from 0).  This can be sparsely
   ///  populated; arguments with no entry in Args use 'DefaultArgEffect'.
   ArgEffects Args;
@@ -412,6 +417,19 @@ public:
   bool operator==(const RetainSummary &Other) const {
     return Args == Other.Args && DefaultArgEffect == Other.DefaultArgEffect &&
            Receiver == Other.Receiver && Ret == Other.Ret;
+  }
+
+  /// Profile this summary for inclusion in a FoldingSet.
+  void Profile(llvm::FoldingSetNodeID& ID) const {
+    ID.Add(Args);
+    ID.Add(DefaultArgEffect);
+    ID.Add(Receiver);
+    ID.Add(Ret);
+  }
+
+  /// A retain summary is simple if it has no ArgEffects other than the default.
+  bool isSimple() const {
+    return Args.isEmpty();
   }
 };
 } // end anonymous namespace
@@ -554,6 +572,8 @@ class RetainSummaryManager {
 
   typedef ObjCSummaryCache ObjCMethodSummariesTy;
 
+  typedef llvm::FoldingSetNodeWrapper<RetainSummary> CachedSummaryNode;
+
   //==-----------------------------------------------------------------==//
   //  Data.
   //==-----------------------------------------------------------------==//
@@ -595,8 +615,9 @@ class RetainSummaryManager {
   ///   Objective-C objects.
   RetEffect ObjCInitRetE;
 
-  RetainSummary DefaultSummary;
-  const RetainSummary *StopSummary;
+  /// SimpleSummaries - Used for uniquing summaries that don't have special
+  /// effects.
+  llvm::FoldingSet<CachedSummaryNode> SimpleSummaries;
 
   //==-----------------------------------------------------------------==//
   //  Methods.
@@ -610,10 +631,6 @@ class RetainSummaryManager {
 
 public:
   RetEffect getObjAllocRetEffect() const { return ObjCAllocRetE; }
-
-  const RetainSummary *getDefaultSummary() {
-    return &DefaultSummary;
-  }
   
   const RetainSummary *getUnarySummary(const FunctionType* FT,
                                        UnaryFuncKind func);
@@ -622,27 +639,24 @@ public:
   const RetainSummary *getCFSummaryGetRule(const FunctionDecl *FD);
   const RetainSummary *getCFCreateGetRuleSummary(const FunctionDecl *FD);
 
-  const RetainSummary *getPersistentSummary(ArgEffects AE, RetEffect RetEff,
-                                            ArgEffect ReceiverEff = DoNothing,
-                                            ArgEffect DefaultEff = MayEscape);
+  const RetainSummary *getPersistentSummary(const RetainSummary &OldSumm);
 
-  const RetainSummary *getPersistentSummary(RetEffect RE,
+  const RetainSummary *getPersistentSummary(RetEffect RetEff,
                                             ArgEffect ReceiverEff = DoNothing,
                                             ArgEffect DefaultEff = MayEscape) {
-    return getPersistentSummary(getArgEffects(), RE, ReceiverEff, DefaultEff);
+    RetainSummary Summ(getArgEffects(), RetEff, DefaultEff, ReceiverEff);
+    return getPersistentSummary(Summ);
+  }
+
+  const RetainSummary *getDefaultSummary() {
+    return getPersistentSummary(RetEffect::MakeNoRet(),
+                                DoNothing, MayEscape);
   }
 
   const RetainSummary *getPersistentStopSummary() {
-    if (StopSummary)
-      return StopSummary;
-
-    StopSummary = getPersistentSummary(RetEffect::MakeNoRet(),
-                                       StopTracking, StopTracking);
-
-    return StopSummary;
+    return getPersistentSummary(RetEffect::MakeNoRet(),
+                                StopTracking, StopTracking);
   }
-
-  const RetainSummary *getInitMethodSummary(QualType RetTy);
 
   void InitializeClassMethodSummaries();
   void InitializeMethodSummaries();
@@ -720,18 +734,18 @@ public:
      ObjCInitRetE(gcenabled 
                     ? RetEffect::MakeGCNotOwned()
                     : (usesARC ? RetEffect::MakeARCNotOwned()
-                               : RetEffect::MakeOwnedWhenTrackedReceiver())),
-     DefaultSummary(AF.getEmptyMap() /* per-argument effects (none) */,
-                    RetEffect::MakeNoRet() /* return effect */,
-                    MayEscape, /* default argument effect */
-                    DoNothing /* receiver effect */),
-     StopSummary(0) {
-
+                               : RetEffect::MakeOwnedWhenTrackedReceiver())) {
     InitializeClassMethodSummaries();
     InitializeMethodSummaries();
   }
 
   const RetainSummary *getSummary(const FunctionDecl *FD);
+
+  const RetainSummary *getMethodSummary(Selector S, IdentifierInfo *ClsName,
+                                        const ObjCInterfaceDecl *ID,
+                                        const ObjCMethodDecl *MD,
+                                        QualType RetTy,
+                                        ObjCMethodSummariesTy &CachedSummaries);
 
   const RetainSummary *getInstanceMethodSummary(const ObjCMessage &msg,
                                                 ProgramStateRef state,
@@ -739,31 +753,18 @@ public:
 
   const RetainSummary *getInstanceMethodSummary(const ObjCMessage &msg,
                                                 const ObjCInterfaceDecl *ID) {
-    return getInstanceMethodSummary(msg.getSelector(), 0,
-                            ID, msg.getMethodDecl(), msg.getType(Ctx));
+    return getMethodSummary(msg.getSelector(), 0, ID, msg.getMethodDecl(),
+                            msg.getType(Ctx), ObjCMethodSummaries);
   }
-
-  const RetainSummary *getInstanceMethodSummary(Selector S,
-                                                IdentifierInfo *ClsName,
-                                                const ObjCInterfaceDecl *ID,
-                                                const ObjCMethodDecl *MD,
-                                                QualType RetTy);
-
-  const RetainSummary *getClassMethodSummary(Selector S,
-                                             IdentifierInfo *ClsName,
-                                             const ObjCInterfaceDecl *ID,
-                                             const ObjCMethodDecl *MD,
-                                             QualType RetTy);
 
   const RetainSummary *getClassMethodSummary(const ObjCMessage &msg) {
     const ObjCInterfaceDecl *Class = 0;
     if (!msg.isInstanceMessage())
       Class = msg.getReceiverInterface();
 
-    return getClassMethodSummary(msg.getSelector(),
-                                 Class? Class->getIdentifier() : 0,
-                                 Class,
-                                 msg.getMethodDecl(), msg.getType(Ctx));
+    return getMethodSummary(msg.getSelector(), Class->getIdentifier(),
+                            Class, msg.getMethodDecl(), msg.getType(Ctx),
+                            ObjCClassMethodSummaries);
   }
 
   /// getMethodSummary - This version of getMethodSummary is used to query
@@ -775,13 +776,16 @@ public:
     IdentifierInfo *ClsName = ID->getIdentifier();
     QualType ResultTy = MD->getResultType();
 
+    ObjCMethodSummariesTy *CachedSummaries;
     if (MD->isInstanceMethod())
-      return getInstanceMethodSummary(S, ClsName, ID, MD, ResultTy);
+      CachedSummaries = &ObjCMethodSummaries;
     else
-      return getClassMethodSummary(S, ClsName, ID, MD, ResultTy);
+      CachedSummaries = &ObjCClassMethodSummaries;
+
+    return getMethodSummary(S, ClsName, ID, MD, ResultTy, *CachedSummaries);
   }
 
-  const RetainSummary *getCommonMethodSummary(const ObjCMethodDecl *MD,
+  const RetainSummary *getStandardMethodSummary(const ObjCMethodDecl *MD,
                                               Selector S, QualType RetTy);
 
   void updateSummaryFromAnnotations(const RetainSummary *&Summ,
@@ -795,12 +799,6 @@ public:
   bool isARCEnabled() const { return ARCEnabled; }
   
   bool isARCorGCEnabled() const { return GCEnabled || ARCEnabled; }
-
-  const RetainSummary *copySummary(const RetainSummary *OldSumm) {
-    RetainSummary *Summ = (RetainSummary *) BPAlloc.Allocate<RetainSummary>();
-    new (Summ) RetainSummary(*OldSumm);
-    return Summ;
-  }
 };
 
 // Used to avoid allocating long-term (BPAlloc'd) memory for default retain
@@ -810,23 +808,17 @@ public:
 class RetainSummaryTemplate {
   RetainSummaryManager &Manager;
   const RetainSummary *&RealSummary;
-  const RetainSummary *BaseSummary;
   RetainSummary ScratchSummary;
   bool Accessed;
 public:
-  RetainSummaryTemplate(const RetainSummary *&real, const RetainSummary &base,
-                        RetainSummaryManager &manager)
-  : Manager(manager),
-    RealSummary(real),
-    BaseSummary(&base),
-    ScratchSummary(base),
+  RetainSummaryTemplate(const RetainSummary *&real, const RetainSummary &base, 
+                        RetainSummaryManager &mgr)
+  : Manager(mgr), RealSummary(real), ScratchSummary(real ? *real : base),
     Accessed(false) {}
 
   ~RetainSummaryTemplate() {
     if (Accessed)
-      RealSummary = Manager.copySummary(&ScratchSummary);
-    else if (!RealSummary)
-      RealSummary = BaseSummary;
+      RealSummary = Manager.getPersistentSummary(ScratchSummary);
   }
 
   RetainSummary &operator*() {
@@ -853,12 +845,26 @@ ArgEffects RetainSummaryManager::getArgEffects() {
 }
 
 const RetainSummary *
-RetainSummaryManager::getPersistentSummary(ArgEffects AE, RetEffect RetEff,
-                                           ArgEffect ReceiverEff,
-                                           ArgEffect DefaultEff) {
-  // Create the summary and return it.
+RetainSummaryManager::getPersistentSummary(const RetainSummary &OldSumm) {
+  // Unique "simple" summaries -- those without ArgEffects.
+  if (OldSumm.isSimple()) {
+    llvm::FoldingSetNodeID ID;
+    OldSumm.Profile(ID);
+
+    void *Pos;
+    CachedSummaryNode *N = SimpleSummaries.FindNodeOrInsertPos(ID, Pos);
+
+    if (!N) {
+      N = (CachedSummaryNode *) BPAlloc.Allocate<CachedSummaryNode>();
+      new (N) CachedSummaryNode(OldSumm);
+      SimpleSummaries.InsertNode(N, Pos);
+    }
+
+    return &N->getValue();
+  }
+
   RetainSummary *Summ = (RetainSummary *) BPAlloc.Allocate<RetainSummary>();
-  new (Summ) RetainSummary(AE, RetEff, DefaultEff, ReceiverEff);
+  new (Summ) RetainSummary(OldSumm);
   return Summ;
 }
 
@@ -1125,25 +1131,13 @@ RetainSummaryManager::getCFSummaryGetRule(const FunctionDecl *FD) {
 // Summary creation for Selectors.
 //===----------------------------------------------------------------------===//
 
-const RetainSummary *
-RetainSummaryManager::getInitMethodSummary(QualType RetTy) {
-  assert(ScratchArgs.isEmpty());
-  // 'init' methods conceptually return a newly allocated object and claim
-  // the receiver.
-  if (cocoa::isCocoaObjectRef(RetTy) ||
-      coreFoundation::isCFObjectRef(RetTy))
-    return getPersistentSummary(ObjCInitRetE, DecRefMsg);
-
-  return getDefaultSummary();
-}
-
 void
 RetainSummaryManager::updateSummaryFromAnnotations(const RetainSummary *&Summ,
                                                    const FunctionDecl *FD) {
   if (!FD)
     return;
 
-  RetainSummaryTemplate Template(Summ, DefaultSummary, *this);
+  RetainSummaryTemplate Template(Summ, *getDefaultSummary(), *this);
 
   // Effects on the parameters.
   unsigned parm_idx = 0;
@@ -1191,38 +1185,7 @@ RetainSummaryManager::updateSummaryFromAnnotations(const RetainSummary *&Summ,
   if (!MD)
     return;
 
-  RetainSummaryTemplate Template(Summ, DefaultSummary, *this);
-  
-  // Check the method family, and apply any default annotations.
-  switch (MD->getMethodFamily()) {
-    case OMF_None:
-      break;
-    case OMF_init:
-      Template->setRetEffect(ObjCInitRetE);
-      Template->setReceiverEffect(DecRefMsg);
-      break;
-    case OMF_alloc:
-    case OMF_new:
-    case OMF_copy:
-    case OMF_mutableCopy:
-      Template->setRetEffect(ObjCAllocRetE);
-      break;
-    case OMF_autorelease:
-      Template->setReceiverEffect(Autorelease);
-    case OMF_retain:
-      Template->setReceiverEffect(IncRefMsg);
-      break;
-    case OMF_release:
-      Template->setReceiverEffect(DecRefMsg);
-      break;
-    case OMF_self:
-    case OMF_performSelector:
-    case OMF_retainCount:
-    case OMF_dealloc:
-    case OMF_finalize:
-      break;
-  }
-
+  RetainSummaryTemplate Template(Summ, *getDefaultSummary(), *this);
   bool isTrackedLoc = false;
 
   // Effects on the receiver.
@@ -1271,8 +1234,8 @@ RetainSummaryManager::updateSummaryFromAnnotations(const RetainSummary *&Summ,
 }
 
 const RetainSummary *
-RetainSummaryManager::getCommonMethodSummary(const ObjCMethodDecl *MD,
-                                             Selector S, QualType RetTy) {
+RetainSummaryManager::getStandardMethodSummary(const ObjCMethodDecl *MD,
+                                               Selector S, QualType RetTy) {
 
   if (MD) {
     // Scan the method decl for 'void*' arguments.  These should be treated
@@ -1289,8 +1252,74 @@ RetainSummaryManager::getCommonMethodSummary(const ObjCMethodDecl *MD,
       }
   }
 
-  // Any special effect for the receiver?
+  // Any special effects?
   ArgEffect ReceiverEff = DoNothing;
+  RetEffect ResultEff = RetEffect::MakeNoRet();
+
+  // Check the method family, and apply any default annotations.
+  switch (MD ? MD->getMethodFamily() : S.getMethodFamily()) {
+    case OMF_None:
+    case OMF_performSelector:
+      // Assume all Objective-C methods follow Cocoa Memory Management rules.
+      // FIXME: Does the non-threaded performSelector family really belong here?
+      // The selector could be, say, @selector(copy).
+      if (cocoa::isCocoaObjectRef(RetTy))
+        ResultEff = RetEffect::MakeNotOwned(RetEffect::ObjC);
+      else if (coreFoundation::isCFObjectRef(RetTy)) {
+        // ObjCMethodDecl currently doesn't consider CF objects as valid return 
+        // values for alloc, new, copy, or mutableCopy, so we have to
+        // double-check with the selector. This is ugly, but there aren't that
+        // many Objective-C methods that return CF objects, right?
+        if (MD) {
+          switch (S.getMethodFamily()) {
+          case OMF_alloc:
+          case OMF_new:
+          case OMF_copy:
+          case OMF_mutableCopy:
+            ResultEff = RetEffect::MakeOwned(RetEffect::CF, true);
+            break;
+          default:
+            ResultEff = RetEffect::MakeNotOwned(RetEffect::CF);        
+            break;
+          }
+        } else {
+          ResultEff = RetEffect::MakeNotOwned(RetEffect::CF);        
+        }
+      }
+      break;
+    case OMF_init:
+      ResultEff = ObjCInitRetE;
+      ReceiverEff = DecRefMsg;
+      break;
+    case OMF_alloc:
+    case OMF_new:
+    case OMF_copy:
+    case OMF_mutableCopy:
+      if (cocoa::isCocoaObjectRef(RetTy))
+        ResultEff = ObjCAllocRetE;
+      else if (coreFoundation::isCFObjectRef(RetTy))
+        ResultEff = RetEffect::MakeOwned(RetEffect::CF, true);
+      break;
+    case OMF_autorelease:
+      ReceiverEff = Autorelease;
+      break;
+    case OMF_retain:
+      ReceiverEff = IncRefMsg;
+      break;
+    case OMF_release:
+      ReceiverEff = DecRefMsg;
+      break;
+    case OMF_dealloc:
+      ReceiverEff = Dealloc;
+      break;
+    case OMF_self:
+      // -self is handled specially by the ExprEngine to propagate the receiver.
+      break;
+    case OMF_retainCount:
+    case OMF_finalize:
+      // These methods don't return objects.
+      break;
+  }
 
   // If one of the arguments in the selector has the keyword 'delegate' we
   // should stop tracking the reference count for the receiver.  This is
@@ -1303,29 +1332,11 @@ RetainSummaryManager::getCommonMethodSummary(const ObjCMethodDecl *MD,
       ReceiverEff = StopTracking;
   }
 
-  // Look for methods that return an owned object.
-  if (cocoa::isCocoaObjectRef(RetTy)) {
-    // EXPERIMENTAL: assume the Cocoa conventions for all objects returned
-    //  by instance methods.
-    RetEffect E = cocoa::followsFundamentalRule(S, MD)
-                  ? ObjCAllocRetE : RetEffect::MakeNotOwned(RetEffect::ObjC);
-
-    return getPersistentSummary(E, ReceiverEff, MayEscape);
-  }
-
-  // Look for methods that return an owned core foundation object.
-  if (coreFoundation::isCFObjectRef(RetTy)) {
-    RetEffect E = cocoa::followsFundamentalRule(S, MD)
-      ? RetEffect::MakeOwned(RetEffect::CF, true)
-      : RetEffect::MakeNotOwned(RetEffect::CF);
-
-    return getPersistentSummary(E, ReceiverEff, MayEscape);
-  }
-
-  if (ScratchArgs.isEmpty() && ReceiverEff == DoNothing)
+  if (ScratchArgs.isEmpty() && ReceiverEff == DoNothing &&
+      ResultEff.getKind() == RetEffect::NoRet)
     return getDefaultSummary();
 
-  return getPersistentSummary(RetEffect::MakeNoRet(), ReceiverEff, MayEscape);
+  return getPersistentSummary(ResultEff, ReceiverEff, MayEscape);
 }
 
 const RetainSummary *
@@ -1372,51 +1383,22 @@ RetainSummaryManager::getInstanceMethodSummary(const ObjCMessage &msg,
 }
 
 const RetainSummary *
-RetainSummaryManager::getInstanceMethodSummary(Selector S,
-                                               IdentifierInfo *ClsName,
-                                               const ObjCInterfaceDecl *ID,
-                                               const ObjCMethodDecl *MD,
-                                               QualType RetTy) {
+RetainSummaryManager::getMethodSummary(Selector S, IdentifierInfo *ClsName,
+                                       const ObjCInterfaceDecl *ID,
+                                       const ObjCMethodDecl *MD, QualType RetTy,
+                                       ObjCMethodSummariesTy &CachedSummaries) {
 
   // Look up a summary in our summary cache.
-  const RetainSummary *Summ = ObjCMethodSummaries.find(ID, ClsName, S);
+  const RetainSummary *Summ = CachedSummaries.find(ID, ClsName, S);
 
   if (!Summ) {
-    assert(ScratchArgs.isEmpty());
-
-    // "initXXX": pass-through for receiver.
-    if (cocoa::deriveNamingConvention(S, MD) == cocoa::InitRule)
-      Summ = getInitMethodSummary(RetTy);
-    else
-      Summ = getCommonMethodSummary(MD, S, RetTy);
+    Summ = getStandardMethodSummary(MD, S, RetTy);
 
     // Annotations override defaults.
     updateSummaryFromAnnotations(Summ, MD);
 
     // Memoize the summary.
-    ObjCMethodSummaries[ObjCSummaryKey(ID, ClsName, S)] = Summ;
-  }
-
-  return Summ;
-}
-
-const RetainSummary *
-RetainSummaryManager::getClassMethodSummary(Selector S, IdentifierInfo *ClsName,
-                                            const ObjCInterfaceDecl *ID,
-                                            const ObjCMethodDecl *MD,
-                                            QualType RetTy) {
-
-  assert(ClsName && "Class name must be specified.");
-  const RetainSummary *Summ = ObjCClassMethodSummaries.find(ID, ClsName, S);
-
-  if (!Summ) {
-    Summ = getCommonMethodSummary(MD, S, RetTy);
-
-    // Annotations override defaults.
-    updateSummaryFromAnnotations(Summ, MD);
-
-    // Memoize the summary.
-    ObjCClassMethodSummaries[ObjCSummaryKey(ID, ClsName, S)] = Summ;
+    CachedSummaries[ObjCSummaryKey(ID, ClsName, S)] = Summ;
   }
 
   return Summ;
@@ -2055,8 +2037,8 @@ PathDiagnosticPiece *CFRefReportVisitor::VisitNode(const ExplodedNode *N,
 
           if (PrevV.getKind() == RefVal::Released) {
             assert(GCEnabled && CurrV.getCount() > 0);
-            os << " The object is not eligible for garbage collection until the "
-            "retain count reaches 0 again.";
+            os << " The object is not eligible for garbage collection until "
+                  "the retain count reaches 0 again.";
           }
 
           break;
@@ -2066,8 +2048,12 @@ PathDiagnosticPiece *CFRefReportVisitor::VisitNode(const ExplodedNode *N,
           break;
 
         case RefVal::ReturnedOwned:
-          os << "Object returned to caller as an owning reference (single retain "
-          "count transferred to caller)";
+          // Autoreleases can be applied after marking a node ReturnedOwned.
+          if (CurrV.getAutoreleaseCount())
+            return NULL;
+
+          os << "Object returned to caller as an owning reference (single "
+                "retain count transferred to caller)";
           break;
 
         case RefVal::ReturnedNotOwned:

@@ -872,7 +872,8 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
   if (SS.isNotEmpty() && !SS.isInvalid()) {
     SemanticContext = computeDeclContext(SS, true);
     if (!SemanticContext) {
-      // FIXME: Produce a reasonable diagnostic here
+      Diag(NameLoc, diag::err_template_qualified_declarator_no_match)
+        << SS.getScopeRep() << SS.getRange();
       return true;
     }
 
@@ -886,7 +887,9 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
       ContextRAII SavedContext(*this, SemanticContext);
       if (RebuildTemplateParamsInCurrentInstantiation(TemplateParams))
         Invalid = true;
-    }
+    } else if (CurContext->isRecord() && TUK != TUK_Friend &&
+               TUK != TUK_Reference)
+      diagnoseQualifiedDeclInClass(SS, SemanticContext, Name, NameLoc);
         
     LookupQualifiedName(Previous, SemanticContext);
   } else {
@@ -1065,7 +1068,7 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
     PrevClassTemplate->setMemberSpecialization();
 
   // Set the access specifier.
-  if (!Invalid && TUK != TUK_Friend)
+  if (!Invalid && TUK != TUK_Friend && NewTemplate->getDeclContext()->isRecord())
     SetMemberAccessSpecifier(NewTemplate, PrevClassTemplate, AS);
 
   // Set the lexical context of these templates

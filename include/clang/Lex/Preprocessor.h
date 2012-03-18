@@ -1256,6 +1256,7 @@ private:
   void HandleIncludeNextDirective(SourceLocation HashLoc, Token &Tok);
   void HandleIncludeMacrosDirective(SourceLocation HashLoc, Token &Tok);
   void HandleImportDirective(SourceLocation HashLoc, Token &Tok);
+  void HandleMicrosoftImportDirective(Token &Tok);
 
   // Macro handling.
   void HandleDefineDirective(Token &Tok);
