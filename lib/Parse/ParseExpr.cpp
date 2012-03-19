@@ -2412,6 +2412,15 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     Actions.ActOnBlockArguments(ParamInfo, getCurScope());
   }
 
+
+  ExprResult Result(true);
+  if (!Tok.is(tok::l_brace) && !getLangOpts().OffSideRule) {
+    // Saw something like: ^expr
+    Diag(Tok, diag::err_expected_expression);
+    Actions.ActOnBlockError(CaretLoc, getCurScope());
+    return ExprError();
+  }
+
   StmtResult Stmt(StmtError());
 
   // Support blocks with an inline single expression or a
@@ -2451,14 +2460,6 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     return ExprError();
   }
   
-  ExprResult Result(true);
-  if (!Tok.is(tok::l_brace) && !getLangOpts().OffSideRule) {
-    // Saw something like: ^expr
-    Diag(Tok, diag::err_expected_expression);
-    Actions.ActOnBlockError(CaretLoc, getCurScope());
-    return ExprError();
-  }
-
   BlockScope.Exit();
   if (!Stmt.isInvalid())
     Result = Actions.ActOnBlockStmtExpr(CaretLoc, Stmt.take(), getCurScope());
