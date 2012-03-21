@@ -25,4 +25,7 @@ void *sel_registerName(const char *);
 }
 @end
 
-// CHECK: id obj = (*(id *)((char *)newInv + OBJC_IVAR_$_NSInvocation__container));
+// CHECK: id obj = (*(id *)((char *)newInv + OBJC_IVAR_$_NSInvocation$_container));
+// rdar://11076938
+// CHECK: struct _class_t *superclass;
+// CHECK: __declspec(dllimport) extern struct objc_cache _objc_empty_cache;

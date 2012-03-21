@@ -3171,6 +3171,14 @@ void RewriteModernObjC::RewriteObjCInternalStruct(ObjCInterfaceDecl *CDecl,
     llvm_unreachable("struct already synthesize- RewriteObjCInternalStruct");
 }
 
+static void WriteInternalIvarName(ObjCInterfaceDecl *IDecl,
+                                  ObjCIvarDecl *IvarDecl, std::string &Result) {
+  Result += "OBJC_IVAR_$_";
+  Result += IDecl->getName();
+  Result += "$";
+  Result += IvarDecl->getName();
+}
+
 /// RewriteIvarOffsetSymbols - Rewrite ivar offset symbols of those ivars which
 /// have been referenced in an ivar access expression.
 void RewriteModernObjC::RewriteIvarOffsetSymbols(ObjCInterfaceDecl *CDecl,
@@ -3193,9 +3201,9 @@ void RewriteModernObjC::RewriteIvarOffsetSymbols(ObjCInterfaceDecl *CDecl,
       if (CDecl->getImplementation())
         Result += "__declspec(dllexport) ";
     }
-    Result += "extern unsigned long OBJC_IVAR_$_";
-    Result += CDecl->getName(); Result += "_";
-    Result += IvarDecl->getName(); Result += ";";
+    Result += "extern unsigned long ";
+    WriteInternalIvarName(CDecl, IvarDecl, Result);
+    Result += ";";
   }
 }
 
@@ -5261,7 +5269,7 @@ void RewriteModernObjC::RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
 
 /// struct _class_t {
 ///   struct _class_t *isa;
-///   struct _class_t * const superclass;
+///   struct _class_t *superclass;
 ///   void *cache;
 ///   IMP *vtable;
 ///   struct _class_ro_t *ro;
@@ -5269,7 +5277,7 @@ void RewriteModernObjC::RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
 
 /// struct _category_t {
 ///   const char * const name;
-///   struct _class_t *const cls;
+///   struct _class_t *cls;
 ///   const struct _method_list_t * const instance_methods;
 ///   const struct _method_list_t * const class_methods;
 ///   const struct _protocol_list_t * const protocols;
@@ -5346,7 +5354,7 @@ static void WriteModernMetadataDeclarations(ASTContext *Context, std::string &Re
   
   Result += "\nstruct _class_t {\n";
   Result += "\tstruct _class_t *isa;\n";
-  Result += "\tstruct _class_t *const superclass;\n";
+  Result += "\tstruct _class_t *superclass;\n";
   Result += "\tvoid *cache;\n";
   Result += "\tvoid *vtable;\n";
   Result += "\tstruct _class_ro_t *ro;\n";
@@ -5354,14 +5362,14 @@ static void WriteModernMetadataDeclarations(ASTContext *Context, std::string &Re
   
   Result += "\nstruct _category_t {\n";
   Result += "\tconst char * const name;\n";
-  Result += "\tstruct _class_t *const cls;\n";
+  Result += "\tstruct _class_t *cls;\n";
   Result += "\tconst struct _method_list_t *const instance_methods;\n";
   Result += "\tconst struct _method_list_t *const class_methods;\n";
   Result += "\tconst struct _protocol_list_t *const protocols;\n";
   Result += "\tconst struct _prop_list_t *const properties;\n";
   Result += "};\n";
   
-  Result += "extern void *_objc_empty_cache;\n";
+  Result += "__declspec(dllimport) extern struct objc_cache _objc_empty_cache;\n";
   Result += "extern void *_objc_empty_vtable;\n";
   
   meta_data_declared = true;
@@ -5587,9 +5595,19 @@ static void Write__class_ro_t_initializer(ASTContext *Context, std::string &Resu
 
 static void Write_class_t(ASTContext *Context, std::string &Result,
                           StringRef VarName,
-                          const ObjCInterfaceDecl *CDecl, bool metadata) {
+                          const ObjCInterfaceDecl *CDecl, bool metaclass) {
+  bool rootClass = (!CDecl->getSuperClass());
+  const ObjCInterfaceDecl *RootClass = CDecl;
   
-  if (metadata && !CDecl->getSuperClass()) {
+  if (!rootClass) {
+    // Find the Root class
+    RootClass = CDecl->getSuperClass();
+    while (RootClass->getSuperClass()) {
+      RootClass = RootClass->getSuperClass();
+    }
+  }
+
+  if (metaclass && rootClass) {
     // Need to handle a case of use of forward declaration.
     Result += "\n";
     if (CDecl->getImplementation())
@@ -5599,7 +5617,7 @@ static void Write_class_t(ASTContext *Context, std::string &Result,
     Result += ";\n";
   }
   // Also, for possibility of 'super' metadata class not having been defined yet.
-  if (CDecl->getSuperClass()) {
+  if (!rootClass) {
     Result += "\n";
     if (CDecl->getSuperClass()->getImplementation())
       Result += "__declspec(dllexport) ";
@@ -5607,48 +5625,106 @@ static void Write_class_t(ASTContext *Context, std::string &Result,
     Result += VarName;
     Result += CDecl->getSuperClass()->getNameAsString();
     Result += ";\n";
+    
+    if (metaclass) {
+      if (RootClass->getImplementation())
+        Result += "__declspec(dllexport) ";
+      Result += "extern struct _class_t "; 
+      Result += VarName;
+      Result += RootClass->getNameAsString();
+      Result += ";\n";
+    }
   }
   
   Result += "\n__declspec(dllexport) struct _class_t "; Result += VarName; Result += CDecl->getNameAsString();
   Result += " __attribute__ ((used, section (\"__DATA,__objc_data\"))) = {\n";
   Result += "\t";
-  if (metadata) {
-    if (CDecl->getSuperClass()) {
-      Result += "&"; Result += VarName;
-      Result += CDecl->getSuperClass()->getNameAsString();
+  if (metaclass) {
+    if (!rootClass) {
+      Result += "0, // &"; Result += VarName;
+      Result += RootClass->getNameAsString();
       Result += ",\n\t";
-      Result += "&"; Result += VarName;
+      Result += "0, // &"; Result += VarName;
       Result += CDecl->getSuperClass()->getNameAsString();
       Result += ",\n\t";
     }
     else {
-      Result += "&"; Result += VarName; 
+      Result += "0, // &"; Result += VarName; 
       Result += CDecl->getNameAsString();
       Result += ",\n\t";
-      Result += "&OBJC_CLASS_$_"; Result += CDecl->getNameAsString();
+      Result += "0, // &OBJC_CLASS_$_"; Result += CDecl->getNameAsString();
       Result += ",\n\t";
     }
   }
   else {
-    Result += "&OBJC_METACLASS_$_"; 
+    Result += "0, // &OBJC_METACLASS_$_"; 
     Result += CDecl->getNameAsString();
     Result += ",\n\t";
-    if (CDecl->getSuperClass()) {
-      Result += "&"; Result += VarName;
+    if (!rootClass) {
+      Result += "0, // &"; Result += VarName;
       Result += CDecl->getSuperClass()->getNameAsString();
       Result += ",\n\t";
     }
     else 
       Result += "0,\n\t";
   }
-  Result += "(void *)&_objc_empty_cache,\n\t";
-  Result += "(void *)&_objc_empty_vtable,\n\t";
-  if (metadata)
+  Result += "0, // (void *)&_objc_empty_cache,\n\t";
+  Result += "0, // unused, was (void *)&_objc_empty_vtable,\n\t";
+  if (metaclass)
     Result += "&_OBJC_METACLASS_RO_$_";
   else
     Result += "&_OBJC_CLASS_RO_$_";
   Result += CDecl->getNameAsString();
   Result += ",\n};\n";
+  
+  // Add static function to initialize some of the meta-data fields.
+  // avoid doing it twice.
+  if (metaclass)
+    return;
+  
+  const ObjCInterfaceDecl *SuperClass = 
+    rootClass ? CDecl : CDecl->getSuperClass();
+  
+  Result += "static void OBJC_CLASS_SETUP_$_";
+  Result += CDecl->getNameAsString();
+  Result += "(void ) {\n";
+  Result += "\tOBJC_METACLASS_$_"; Result += CDecl->getNameAsString();
+  Result += ".isa = "; Result += "&OBJC_METACLASS_$_";
+  Result += RootClass->getNameAsString(); Result += ";\n";
+  
+  Result += "\tOBJC_METACLASS_$_"; Result += CDecl->getNameAsString();
+  Result += ".superclass = ";
+  if (rootClass)
+    Result += "&OBJC_CLASS_$_";
+  else
+     Result += "&OBJC_METACLASS_$_";
+
+  Result += SuperClass->getNameAsString(); Result += ";\n";
+  
+  Result += "\tOBJC_METACLASS_$_"; Result += CDecl->getNameAsString();
+  Result += ".cache = "; Result += "&_objc_empty_cache"; Result += ";\n";
+  
+  Result += "\tOBJC_CLASS_$_"; Result += CDecl->getNameAsString();
+  Result += ".isa = "; Result += "&OBJC_METACLASS_$_";
+  Result += CDecl->getNameAsString(); Result += ";\n";
+  
+  if (!rootClass) {
+    Result += "\tOBJC_CLASS_$_"; Result += CDecl->getNameAsString();
+    Result += ".superclass = "; Result += "&OBJC_CLASS_$_";
+    Result += SuperClass->getNameAsString(); Result += ";\n";
+  }
+  
+  Result += "\tOBJC_CLASS_$_"; Result += CDecl->getNameAsString();
+  Result += ".cache = "; Result += "&_objc_empty_cache"; Result += ";\n";
+  Result += "}\n";
+  
+  Result += "#pragma section(\".objc_inithooks$B\", long, read, write)\n";
+  Result += "__declspec(allocate(\".objc_inithooks$B\")) ";
+  Result += "static void *OBJC_CLASS_SETUP2_$_";
+  Result += CDecl->getNameAsString();
+  Result += " = (void *)&OBJC_CLASS_SETUP_$_"; 
+  Result += CDecl->getNameAsString();
+  Result += ";\n\n";
 }
 
 static void Write_category_t(RewriteModernObjC &RewriteObj, ASTContext *Context, 
@@ -5677,7 +5753,7 @@ static void Write_category_t(RewriteModernObjC &RewriteObj, ASTContext *Context,
   Result += " __attribute__ ((used, section (\"__DATA,__objc_const\"))) = \n";
   Result += "{\n";
   Result += "\t\""; Result += ClassName; Result += "\",\n";
-  Result += "\t&"; Result += "OBJC_CLASS_$_"; Result += ClassName;
+  Result += "\t0, // &"; Result += "OBJC_CLASS_$_"; Result += ClassName;
   Result += ",\n";
   if (InstanceMethods.size() > 0) {
     Result += "\t(const struct _method_list_t *)&";  
@@ -5715,6 +5791,31 @@ static void Write_category_t(RewriteModernObjC &RewriteObj, ASTContext *Context,
     Result += "\t0,\n";
   
   Result += "};\n";
+  
+  // Add static function to initialize the class pointer in the category structure.
+  Result += "static void OBJC_CATEGORY_SETUP_$_";
+  Result += ClassDecl->getNameAsString();
+  Result += "_$_";
+  Result += CatName;
+  Result += "(void ) {\n";
+  Result += "\t_OBJC_$_CATEGORY_"; 
+  Result += ClassDecl->getNameAsString();
+  Result += "_$_";
+  Result += CatName;
+  Result += ".cls = "; Result += "&OBJC_CLASS_$_"; Result += ClassName;
+  Result += ";\n}\n";
+  
+  Result += "#pragma section(\".objc_inithooks$B\", long, read, write)\n";
+  Result += "__declspec(allocate(\".objc_inithooks$B\")) ";
+  Result += "static void *OBJC_CATEGORY_SETUP2_$_";
+  Result += ClassDecl->getNameAsString();
+  Result += "_$_";
+  Result += CatName;
+  Result += " = (void *)&OBJC_CATEGORY_SETUP_$_"; 
+  Result += ClassDecl->getNameAsString();
+  Result += "_$_";
+  Result += CatName;
+  Result += ";\n\n";
 }
 
 static void Write__extendedMethodTypes_initializer(RewriteModernObjC &RewriteObj,
@@ -5746,8 +5847,7 @@ static void Write__extendedMethodTypes_initializer(RewriteModernObjC &RewriteObj
 static void Write_IvarOffsetVar(ASTContext *Context,
                                 std::string &Result, 
                                 ArrayRef<ObjCIvarDecl *> Ivars, 
-                                StringRef VarName, 
-                                StringRef ClassName) {
+                                ObjCInterfaceDecl *CDecl) {
   // FIXME. visibilty of offset symbols may have to be set; for Darwin
   // this is what happens:
   /**
@@ -5771,10 +5871,7 @@ static void Write_IvarOffsetVar(ASTContext *Context,
       Result += "unsigned long int "; 
     else
       Result += "__declspec(dllexport) unsigned long int ";
-    
-    Result += VarName;
-    Result += ClassName; Result += "_";
-    Result += IvarDecl->getName(); 
+    WriteInternalIvarName(CDecl, IvarDecl, Result);
     Result += " __attribute__ ((used, section (\"__DATA,__objc_ivar\")))";
     Result += " = ";
     if (IvarDecl->isBitField()) {
@@ -5784,7 +5881,7 @@ static void Write_IvarOffsetVar(ASTContext *Context,
     }
     else {
       Result += "__OFFSETOFIVAR__(struct ";
-      Result += ClassName;
+      Result += CDecl->getNameAsString();
       Result += "_IMPL, "; 
       Result += IvarDecl->getName(); Result += ");\n";
     }
@@ -5795,14 +5892,14 @@ static void Write__ivar_list_t_initializer(RewriteModernObjC &RewriteObj,
                                            ASTContext *Context, std::string &Result,
                                            ArrayRef<ObjCIvarDecl *> Ivars,
                                            StringRef VarName,
-                                           StringRef ClassName) {
+                                           ObjCInterfaceDecl *CDecl) {
   if (Ivars.size() > 0) {
-    Write_IvarOffsetVar(Context, Result, Ivars, "OBJC_IVAR_$_", ClassName);
+    Write_IvarOffsetVar(Context, Result, Ivars, CDecl);
     
     Result += "\nstatic ";
     Write__ivar_list_t_TypeDecl(Result, Ivars.size());
     Result += " "; Result += VarName;
-    Result += ClassName;
+    Result += CDecl->getNameAsString();
     Result += " __attribute__ ((used, section (\"__DATA,__objc_const\"))) = {\n";
     Result += "\t"; Result += "sizeof(_ivar_t)"; Result += ",\n";
     Result += "\t"; Result += utostr(Ivars.size()); Result += ",\n";
@@ -5812,9 +5909,8 @@ static void Write__ivar_list_t_initializer(RewriteModernObjC &RewriteObj,
         Result += "\t{{";
       else
         Result += "\t {";
-      
-      Result += "(unsigned long int *)&OBJC_IVAR_$_";
-      Result += ClassName; Result += "_"; Result += IvarDecl->getName();
+      Result += "(unsigned long int *)&";
+      WriteInternalIvarName(CDecl, IvarDecl, Result);
       Result += ", ";
       
       Result += "\""; Result += IvarDecl->getName(); Result += "\", ";
@@ -6088,7 +6184,7 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
   
   Write__ivar_list_t_initializer(*this, Context, Result, IVars, 
                                  "_OBJC_$_INSTANCE_VARIABLES_",
-                                 CDecl->getNameAsString());
+                                 CDecl);
   
   // Build _objc_method_list for class's instance methods if needed
   SmallVector<ObjCMethodDecl *, 32>
@@ -6241,6 +6337,8 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
 void RewriteModernObjC::RewriteMetaDataIntoBuffer(std::string &Result) {
   int ClsDefCount = ClassImplementation.size();
   int CatDefCount = CategoryImplementation.size();
+  if (LangOpts.MicrosoftExt)
+    Result += "#pragma optimize(\"g\", on)";
   
   // For each implemented class, write out all its meta data.
   for (int i = 0; i < ClsDefCount; i++)
@@ -6310,6 +6408,8 @@ void RewriteModernObjC::RewriteMetaDataIntoBuffer(std::string &Result) {
     }
     Result += "};\n";
   }
+  if (LangOpts.MicrosoftExt)
+    Result += "#pragma optimize(\"\", on)\n";
 }
 
 void RewriteModernObjC::WriteImageInfo(std::string &Result) {
@@ -6523,10 +6623,9 @@ Stmt *RewriteModernObjC::RewriteObjCIvarRefExpr(ObjCIvarRefExpr *IV) {
       assert(clsDeclared && "RewriteObjCIvarRefExpr(): Can't find class");
       
       // Build name of symbol holding ivar offset.
-      std::string IvarOffsetName = "OBJC_IVAR_$_";
-      IvarOffsetName += clsDeclared->getIdentifier()->getName();
-      IvarOffsetName += "_";
-      IvarOffsetName += D->getName();
+      std::string IvarOffsetName;
+      WriteInternalIvarName(clsDeclared, D, IvarOffsetName);
+      
       ReferencedIvars[clsDeclared].insert(D);
       
       // cast offset to "char *".
