@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 // This file reports various statistics about analyzer visitation.
 //===----------------------------------------------------------------------===//
+#define DEBUG_TYPE "StatsChecker"
 
 #include "ClangSACheckers.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
@@ -20,9 +21,15 @@
 #include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/Statistic.h"
 
 using namespace clang;
 using namespace ento;
+
+STATISTIC(NumBlocks,
+          "The # of blocks in top level functions");
+STATISTIC(NumBlocksUnreachable,
+          "The # of unreachable blocks in analyzing top level functions");
 
 namespace {
 class AnalyzerStatsChecker : public Checker<check::EndAnalysis> {
@@ -36,17 +43,21 @@ void AnalyzerStatsChecker::checkEndAnalysis(ExplodedGraph &G,
                                             ExprEngine &Eng) const {
   const CFG *C  = 0;
   const Decl *D = 0;
-  const LocationContext *LC = 0;
   const SourceManager &SM = B.getSourceManager();
   llvm::SmallPtrSet<const CFGBlock*, 256> reachable;
 
-  // Iterate over explodedgraph
+  // Root node should have the location context of the top most function.
+  const ExplodedNode *GraphRoot = *G.roots_begin();
+  const LocationContext *LC = GraphRoot->getLocation().getLocationContext();
+
+  // Iterate over the exploded graph.
   for (ExplodedGraph::node_iterator I = G.nodes_begin();
       I != G.nodes_end(); ++I) {
     const ProgramPoint &P = I->getLocation();
-    // Save the LocationContext if we don't have it already
-    if (!LC)
-      LC = P.getLocationContext();
+
+    // Only check the coverage in the top level function.
+    if (LC != P.getLocationContext())
+      continue;
 
     if (const BlockEntrance *BE = dyn_cast<BlockEntrance>(&P)) {
       const CFGBlock *CB = BE->getBlock();
@@ -72,6 +83,9 @@ void AnalyzerStatsChecker::checkEndAnalysis(ExplodedGraph &G,
 
   // We never 'reach' the entry block, so correct the unreachable count
   unreachable--;
+  // There is no BlockEntrance corresponding to the exit block as well, so
+  // assume it is reached as well.
+  unreachable--;
 
   // Generate the warning string
   SmallString<128> buf;
@@ -89,6 +103,9 @@ void AnalyzerStatsChecker::checkEndAnalysis(ExplodedGraph &G,
     }
   }
   
+  NumBlocksUnreachable += unreachable;
+  NumBlocks += total;
+
   output << " -> Total CFGBlocks: " << total << " | Unreachable CFGBlocks: "
       << unreachable << " | Exhausted Block: "
       << (Eng.wasBlocksExhausted() ? "yes" : "no")

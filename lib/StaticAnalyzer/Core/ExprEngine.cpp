@@ -44,6 +44,12 @@ STATISTIC(NumRemoveDeadBindings,
             "The # of times RemoveDeadBindings is called");
 STATISTIC(NumRemoveDeadBindingsSkipped,
             "The # of times RemoveDeadBindings is skipped");
+STATISTIC(NumMaxBlockCountReached,
+            "The # of aborted paths due to reaching the maximum block count in "
+            "a top level function");
+STATISTIC(NumMaxBlockCountReachedInInlined,
+            "The # of aborted paths due to reaching the maximum block count in "
+            "an inlined function");
 
 //===----------------------------------------------------------------------===//
 // Utility functions.
@@ -975,6 +981,14 @@ void ExprEngine::processCFGBlockEntrance(NodeBuilderWithSinks &nodeBuilder) {
   if (nodeBuilder.getContext().getCurrentBlockCount() >= AMgr.getMaxVisit()) {
     static SimpleProgramPointTag tag("ExprEngine : Block count exceeded");
     nodeBuilder.generateNode(pred->getState(), pred, &tag, true);
+
+    // Check if we stopped at the top level function or not.
+    // Root node should have the location context of the top most function.
+    if ((*G.roots_begin())->getLocation().getLocationContext() !=
+        pred->getLocation().getLocationContext())
+      NumMaxBlockCountReachedInInlined++;
+    else
+      NumMaxBlockCountReached++;
   }
 }
 
@@ -1370,6 +1384,13 @@ void ExprEngine::VisitCommonDeclRefExpr(const Expr *Ex, const NamedDecl *D,
                       ProgramPoint::PostLValueKind);
     return;
   }
+  if (isa<FieldDecl>(D)) {
+    // FIXME: Compute lvalue of fields.
+    Bldr.generateNode(Ex, Pred, state->BindExpr(Ex, LCtx, UnknownVal()),
+		      false, 0, ProgramPoint::PostLValueKind);
+    return;
+  }
+
   assert (false &&
           "ValueDecl support for this ValueDecl not implemented.");
 }
@@ -1454,21 +1475,22 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
 ///  This method is used by evalStore and (soon) VisitDeclStmt, and others.
 void ExprEngine::evalBind(ExplodedNodeSet &Dst, const Stmt *StoreE,
                           ExplodedNode *Pred,
-                          SVal location, SVal Val, bool atDeclInit,
-                          ProgramPoint::Kind PointKind) {
+                          SVal location, SVal Val, bool atDeclInit) {
 
   // Do a previsit of the bind.
   ExplodedNodeSet CheckedSet;
   getCheckerManager().runCheckersForBind(CheckedSet, Pred, location, Val,
-                                         StoreE, *this, PointKind);
+                                         StoreE, *this,
+                                         ProgramPoint::PostStmtKind);
 
-  // TODO:AZ Remove TmpDst after NB refactoring is done.
   ExplodedNodeSet TmpDst;
   StmtNodeBuilder Bldr(CheckedSet, TmpDst, *currentBuilderContext);
 
+  const LocationContext *LC = Pred->getLocationContext();
   for (ExplodedNodeSet::iterator I = CheckedSet.begin(), E = CheckedSet.end();
        I!=E; ++I) {
-    ProgramStateRef state = (*I)->getState();
+    ExplodedNode *PredI = *I;
+    ProgramStateRef state = PredI->getState();
 
     if (atDeclInit) {
       const VarRegion *VR =
@@ -1479,7 +1501,12 @@ void ExprEngine::evalBind(ExplodedNodeSet &Dst, const Stmt *StoreE,
       state = state->bindLoc(location, Val);
     }
 
-    Bldr.generateNode(StoreE, *I, state, false, 0, PointKind);
+    const MemRegion *LocReg = 0;
+    if (loc::MemRegionVal *LocRegVal = dyn_cast<loc::MemRegionVal>(&location))
+      LocReg = LocRegVal->getRegion();
+
+    const ProgramPoint L = PostStore(StoreE, LC, LocReg, 0);
+    Bldr.generateNode(L, PredI, state, false);
   }
 
   Dst.insert(TmpDst);
@@ -1517,8 +1544,7 @@ void ExprEngine::evalStore(ExplodedNodeSet &Dst, const Expr *AssignE,
     return;
 
   for (ExplodedNodeSet::iterator NI=Tmp.begin(), NE=Tmp.end(); NI!=NE; ++NI)
-    evalBind(Dst, StoreE, *NI, location, Val, false,
-             ProgramPoint::PostStoreKind);
+    evalBind(Dst, StoreE, *NI, location, Val, false);
 }
 
 void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *Ex,

@@ -73,7 +73,9 @@ namespace {
     
     TypeDecl *ProtocolTypeDecl;
     VarDecl *GlobalVarDecl;
+    Expr *GlobalConstructionExp;
     unsigned RewriteFailedDiag;
+    unsigned GlobalBlockRewriteFailedDiag;
     // ObjC string constant support.
     unsigned NumObjCStringLiterals;
     VarDecl *ConstantStringClassReference;
@@ -572,6 +574,11 @@ RewriteModernObjC::RewriteModernObjC(std::string inFile, raw_ostream* OS,
   IsHeader = IsHeaderFile(inFile);
   RewriteFailedDiag = Diags.getCustomDiagID(DiagnosticsEngine::Warning,
                "rewriting sub-expression within a macro (may not be correct)");
+  // FIXME. This should be an error. But if block is not called, it is OK. And it
+  // may break including some headers.
+  GlobalBlockRewriteFailedDiag = Diags.getCustomDiagID(DiagnosticsEngine::Warning,
+    "rewriting block literal declared in global scope is not implemented");
+          
   TryFinallyContainsReturnDiag = Diags.getCustomDiagID(
                DiagnosticsEngine::Warning,
                "rewriter doesn't support user-specified control flow semantics "
@@ -606,6 +613,7 @@ void RewriteModernObjC::InitializeCommon(ASTContext &context) {
   CurFunctionDef = 0;
   CurFunctionDeclToDeclareForBlock = 0;
   GlobalVarDecl = 0;
+  GlobalConstructionExp = 0;
   SuperStructDecl = 0;
   ProtocolTypeDecl = 0;
   ConstantStringDecl = 0;
@@ -3263,7 +3271,7 @@ std::string RewriteModernObjC::SynthesizeBlockFunc(BlockExpr *CE, int i,
   QualType RT = AFT->getResultType();
   std::string StructRef = "struct " + Tag;
   std::string S = "static " + RT.getAsString(Context->getPrintingPolicy()) + " __" +
-                  funcName.str() + "_" + "block_func_" + utostr(i);
+                  funcName.str() + "_block_func_" + utostr(i);
 
   BlockDecl *BD = CE->getBlockDecl();
 
@@ -3626,7 +3634,27 @@ void RewriteModernObjC::SynthesizeBlockLiterals(SourceLocation FunLocStart,
       SC += "restrict ";
     InsertText(FunLocStart, SC);
   }
+  if (GlobalConstructionExp) {
+    // extra fancy dance for global literal expression.
+    
+    // Always the latest block expression on the block stack.
+    std::string Tag = "__";
+    Tag += FunName;
+    Tag += "_block_impl_";
+    Tag += utostr(Blocks.size()-1);
+    std::string globalBuf = "static ";
+    globalBuf += Tag; globalBuf += " ";
+    std::string SStr;
   
+    llvm::raw_string_ostream constructorExprBuf(SStr);
+    GlobalConstructionExp->printPretty(constructorExprBuf, *Context, 0,
+                                         PrintingPolicy(LangOpts));
+    globalBuf += constructorExprBuf.str();
+    globalBuf += ";\n";
+    InsertText(FunLocStart, globalBuf);
+    GlobalConstructionExp = 0;
+  }
+
   Blocks.clear();
   InnerDeclRefsCount.clear();
   InnerDeclRefs.clear();
@@ -4409,7 +4437,9 @@ FunctionDecl *RewriteModernObjC::SynthBlockInitFunctionDecl(StringRef name) {
 
 Stmt *RewriteModernObjC::SynthBlockInitExpr(BlockExpr *Exp,
           const SmallVector<DeclRefExpr *, 8> &InnerBlockDeclRefs) {
+  
   const BlockDecl *block = Exp->getBlockDecl();
+  
   Blocks.push_back(Exp);
 
   CollectBlockDeclRefInfo(Exp);
@@ -4454,9 +4484,16 @@ Stmt *RewriteModernObjC::SynthBlockInitExpr(BlockExpr *Exp,
   else if (GlobalVarDecl)
     FuncName = std::string(GlobalVarDecl->getNameAsString());
 
+  bool GlobalBlockExpr = 
+    block->getDeclContext()->getRedeclContext()->isFileContext();
+  
+  if (GlobalBlockExpr && !GlobalVarDecl) {
+    Diags.Report(block->getLocation(), GlobalBlockRewriteFailedDiag);
+    GlobalBlockExpr = false;
+  }
+  
   std::string BlockNumber = utostr(Blocks.size()-1);
 
-  std::string Tag = "__" + FuncName + "_block_impl_" + BlockNumber;
   std::string Func = "__" + FuncName + "_block_func_" + BlockNumber;
 
   // Get a pointer to the function type so we can cast appropriately.
@@ -4467,6 +4504,14 @@ Stmt *RewriteModernObjC::SynthBlockInitExpr(BlockExpr *Exp,
   Expr *NewRep;
 
   // Simulate a contructor call...
+  std::string Tag;
+  
+  if (GlobalBlockExpr)
+    Tag = "__global_";
+  else
+    Tag = "__";
+  Tag += FuncName + "_block_impl_" + BlockNumber;
+  
   FD = SynthBlockInitFunctionDecl(Tag);
   DeclRefExpr *DRE = new (Context) DeclRefExpr(FD, false, FType, VK_RValue,
                                                SourceLocation());
@@ -4588,6 +4633,14 @@ Stmt *RewriteModernObjC::SynthBlockInitExpr(BlockExpr *Exp,
   }
   NewRep = new (Context) CallExpr(*Context, DRE, &InitExprs[0], InitExprs.size(),
                                   FType, VK_LValue, SourceLocation());
+  
+  if (GlobalBlockExpr) {
+    assert (GlobalConstructionExp == 0 && 
+            "SynthBlockInitExpr - GlobalConstructionExp must be null");
+    GlobalConstructionExp = NewRep;
+    NewRep = DRE;
+  }
+  
   NewRep = new (Context) UnaryOperator(NewRep, UO_AddrOf,
                              Context->getPointerType(NewRep->getType()),
                              VK_RValue, OK_Ordinary, SourceLocation());
@@ -5089,18 +5142,16 @@ void RewriteModernObjC::Initialize(ASTContext &context) {
   if (LangOpts.MicrosoftExt) {
     Preamble += "#define __OBJC_RW_DLLIMPORT extern \"C\" __declspec(dllimport)\n";
     Preamble += "#define __OBJC_RW_STATICIMPORT extern \"C\"\n";
-  } else
+  } 
+  else
     Preamble += "#define __OBJC_RW_DLLIMPORT extern\n";
-  Preamble += "__OBJC_RW_DLLIMPORT struct objc_object *objc_msgSend";
-  Preamble += "(struct objc_object *, struct objc_selector *, ...);\n";
-  Preamble += "__OBJC_RW_DLLIMPORT struct objc_object *objc_msgSendSuper";
-  Preamble += "(struct objc_super *, struct objc_selector *, ...);\n";
-  Preamble += "__OBJC_RW_DLLIMPORT struct objc_object* objc_msgSend_stret";
-  Preamble += "(struct objc_object *, struct objc_selector *, ...);\n";
-  Preamble += "__OBJC_RW_DLLIMPORT struct objc_object* objc_msgSendSuper_stret";
-  Preamble += "(struct objc_super *, struct objc_selector *, ...);\n";
-  Preamble += "__OBJC_RW_DLLIMPORT double objc_msgSend_fpret";
-  Preamble += "(struct objc_object *, struct objc_selector *, ...);\n";
+  
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_msgSend(void);\n";
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_msgSendSuper(void);\n";
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_msgSend_stret(void);\n";
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_msgSendSuper_stret(void);\n";
+  Preamble += "__OBJC_RW_DLLIMPORT void objc_msgSend_fpret(void);\n";
+
   Preamble += "__OBJC_RW_DLLIMPORT struct objc_object *objc_getClass";
   Preamble += "(const char *);\n";
   Preamble += "__OBJC_RW_DLLIMPORT struct objc_class *class_getSuperclass";
@@ -5227,10 +5278,10 @@ void RewriteModernObjC::RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
 
 /// struct _protocol_t {
 ///   id isa;  // NULL
-///   const char * const protocol_name;
+///   const char *protocol_name;
 ///   const struct _protocol_list_t * protocol_list; // super protocols
-///   const struct method_list_t * const instance_methods;
-///   const struct method_list_t * const class_methods;
+///   const struct method_list_t *instance_methods;
+///   const struct method_list_t *class_methods;
 ///   const struct method_list_t *optionalInstanceMethods;
 ///   const struct method_list_t *optionalClassMethods;
 ///   const struct _prop_list_t * properties;
@@ -5258,13 +5309,13 @@ void RewriteModernObjC::RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
 ///   uint32_t const instanceStart;
 ///   uint32_t const instanceSize;
 ///   uint32_t const reserved;  // only when building for 64bit targets
-///   const uint8_t * const ivarLayout;
-///   const char *const name;
-///   const struct _method_list_t * const baseMethods;
-///   const struct _protocol_list_t *const baseProtocols;
-///   const struct _ivar_list_t *const ivars;
-///   const uint8_t * const weakIvarLayout;
-///   const struct _prop_list_t * const properties;
+///   const uint8_t *ivarLayout;
+///   const char *name;
+///   const struct _method_list_t *baseMethods;
+///   const struct _protocol_list_t *baseProtocols;
+///   const struct _ivar_list_t *ivars;
+///   const uint8_t *weakIvarLayout;
+///   const struct _prop_list_t *properties;
 /// }
 
 /// struct _class_t {
@@ -5276,12 +5327,12 @@ void RewriteModernObjC::RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
 /// }
 
 /// struct _category_t {
-///   const char * const name;
+///   const char *name;
 ///   struct _class_t *cls;
-///   const struct _method_list_t * const instance_methods;
-///   const struct _method_list_t * const class_methods;
-///   const struct _protocol_list_t * const protocols;
-///   const struct _prop_list_t * const properties;
+///   const struct _method_list_t *instance_methods;
+///   const struct _method_list_t *class_methods;
+///   const struct _protocol_list_t *protocols;
+///   const struct _prop_list_t *properties;
 /// }
 
 /// MessageRefTy - LLVM for:
@@ -5316,10 +5367,10 @@ static void WriteModernMetadataDeclarations(ASTContext *Context, std::string &Re
   
   Result += "\nstruct _protocol_t {\n";
   Result += "\tvoid * isa;  // NULL\n";
-  Result += "\tconst char * const protocol_name;\n";
+  Result += "\tconst char *protocol_name;\n";
   Result += "\tconst struct _protocol_list_t * protocol_list; // super protocols\n";
-  Result += "\tconst struct method_list_t * const instance_methods;\n";
-  Result += "\tconst struct method_list_t * const class_methods;\n";
+  Result += "\tconst struct method_list_t *instance_methods;\n";
+  Result += "\tconst struct method_list_t *class_methods;\n";
   Result += "\tconst struct method_list_t *optionalInstanceMethods;\n";
   Result += "\tconst struct method_list_t *optionalClassMethods;\n";
   Result += "\tconst struct _prop_list_t * properties;\n";
@@ -5343,13 +5394,13 @@ static void WriteModernMetadataDeclarations(ASTContext *Context, std::string &Re
   const llvm::Triple &Triple(Context->getTargetInfo().getTriple());
   if (Triple.getArch() == llvm::Triple::x86_64)
     Result += "\tunsigned int const reserved;\n";
-  Result += "\tconst unsigned char * const ivarLayout;\n";
-  Result += "\tconst char *const name;\n";
-  Result += "\tconst struct _method_list_t * const baseMethods;\n";
-  Result += "\tconst struct _objc_protocol_list *const baseProtocols;\n";
-  Result += "\tconst struct _ivar_list_t *const ivars;\n";
-  Result += "\tconst unsigned char *const weakIvarLayout;\n";
-  Result += "\tconst struct _prop_list_t *const properties;\n";
+  Result += "\tconst unsigned char *ivarLayout;\n";
+  Result += "\tconst char *name;\n";
+  Result += "\tconst struct _method_list_t *baseMethods;\n";
+  Result += "\tconst struct _objc_protocol_list *baseProtocols;\n";
+  Result += "\tconst struct _ivar_list_t *ivars;\n";
+  Result += "\tconst unsigned char *weakIvarLayout;\n";
+  Result += "\tconst struct _prop_list_t *properties;\n";
   Result += "};\n";
   
   Result += "\nstruct _class_t {\n";
@@ -5361,12 +5412,12 @@ static void WriteModernMetadataDeclarations(ASTContext *Context, std::string &Re
   Result += "};\n";
   
   Result += "\nstruct _category_t {\n";
-  Result += "\tconst char * const name;\n";
+  Result += "\tconst char *name;\n";
   Result += "\tstruct _class_t *cls;\n";
-  Result += "\tconst struct _method_list_t *const instance_methods;\n";
-  Result += "\tconst struct _method_list_t *const class_methods;\n";
-  Result += "\tconst struct _protocol_list_t *const protocols;\n";
-  Result += "\tconst struct _prop_list_t *const properties;\n";
+  Result += "\tconst struct _method_list_t *instance_methods;\n";
+  Result += "\tconst struct _method_list_t *class_methods;\n";
+  Result += "\tconst struct _protocol_list_t *protocols;\n";
+  Result += "\tconst struct _prop_list_t *properties;\n";
   Result += "};\n";
   
   Result += "__declspec(dllimport) extern struct objc_cache _objc_empty_cache;\n";
@@ -5736,7 +5787,7 @@ static void Write_category_t(RewriteModernObjC &RewriteObj, ASTContext *Context,
                              ArrayRef<ObjCProtocolDecl *> RefedProtocols,
                              ArrayRef<ObjCPropertyDecl *> ClassProperties) {
   
-  StringRef ClassName = ClassDecl->getNameAsString();
+  StringRef ClassName = ClassDecl->getName();
   // must declare an extern class object in case this class is not implemented 
   // in this TU.
   Result += "\n";
@@ -6248,7 +6299,7 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
     ClassProperties.push_back(*I);
   
   Write_prop_list_t_initializer(*this, Context, Result, ClassProperties,
-                                 /* Container */0,
+                                 /* Container */IDecl,
                                  "_OBJC_$_PROP_LIST_",
                                  CDecl->getNameAsString());
 
@@ -6337,8 +6388,6 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
 void RewriteModernObjC::RewriteMetaDataIntoBuffer(std::string &Result) {
   int ClsDefCount = ClassImplementation.size();
   int CatDefCount = CategoryImplementation.size();
-  if (LangOpts.MicrosoftExt)
-    Result += "#pragma optimize(\"g\", on)";
   
   // For each implemented class, write out all its meta data.
   for (int i = 0; i < ClsDefCount; i++)
@@ -6408,8 +6457,6 @@ void RewriteModernObjC::RewriteMetaDataIntoBuffer(std::string &Result) {
     }
     Result += "};\n";
   }
-  if (LangOpts.MicrosoftExt)
-    Result += "#pragma optimize(\"\", on)\n";
 }
 
 void RewriteModernObjC::WriteImageInfo(std::string &Result) {

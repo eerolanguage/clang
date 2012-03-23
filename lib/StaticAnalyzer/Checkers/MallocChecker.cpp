@@ -82,11 +82,14 @@ struct ReallocPair {
   }
 };
 
+typedef std::pair<const Stmt*, const MemRegion*> LeakInfo;
+
 class MallocChecker : public Checker<check::DeadSymbols,
                                      check::EndPath,
                                      check::PreStmt<ReturnStmt>,
                                      check::PreStmt<CallExpr>,
                                      check::PostStmt<CallExpr>,
+                                     check::PostStmt<BlockExpr>,
                                      check::Location,
                                      check::Bind,
                                      eval::Assume,
@@ -114,6 +117,7 @@ public:
 
   void checkPreStmt(const CallExpr *S, CheckerContext &C) const;
   void checkPostStmt(const CallExpr *CE, CheckerContext &C) const;
+  void checkPostStmt(const BlockExpr *BE, CheckerContext &C) const;
   void checkDeadSymbols(SymbolReaper &SymReaper, CheckerContext &C) const;
   void checkEndPath(CheckerContext &C) const;
   void checkPreStmt(const ReturnStmt *S, CheckerContext &C) const;
@@ -185,8 +189,8 @@ private:
 
   /// Find the location of the allocation for Sym on the path leading to the
   /// exploded node N.
-  const Stmt *getAllocationSite(const ExplodedNode *N, SymbolRef Sym,
-                                CheckerContext &C) const;
+  LeakInfo getAllocationSite(const ExplodedNode *N, SymbolRef Sym,
+                             CheckerContext &C) const;
 
   void reportLeak(SymbolRef Sym, ExplodedNode *N, CheckerContext &C) const;
 
@@ -797,17 +801,30 @@ ProgramStateRef MallocChecker::CallocMem(CheckerContext &C, const CallExpr *CE){
   return MallocMemAux(C, CE, TotalSize, zeroVal, state);
 }
 
-const Stmt *
+LeakInfo
 MallocChecker::getAllocationSite(const ExplodedNode *N, SymbolRef Sym,
                                  CheckerContext &C) const {
   const LocationContext *LeakContext = N->getLocationContext();
   // Walk the ExplodedGraph backwards and find the first node that referred to
   // the tracked symbol.
   const ExplodedNode *AllocNode = N;
+  const MemRegion *ReferenceRegion = 0;
 
   while (N) {
-    if (!N->getState()->get<RegionState>(Sym))
+    ProgramStateRef State = N->getState();
+    if (!State->get<RegionState>(Sym))
       break;
+
+    // Find the most recent expression bound to the symbol in the current
+    // context.
+    if (!ReferenceRegion) {
+      if (const MemRegion *MR = C.getLocationRegionIfPostStore(N)) {
+        SVal Val = State->getSVal(MR);
+        if (Val.getAsLocSymbol() == Sym)
+          ReferenceRegion = MR;
+      }
+    }
+
     // Allocation node, is the last node in the current context in which the
     // symbol was tracked.
     if (N->getLocationContext() == LeakContext)
@@ -816,10 +833,11 @@ MallocChecker::getAllocationSite(const ExplodedNode *N, SymbolRef Sym,
   }
 
   ProgramPoint P = AllocNode->getLocation();
-  if (!isa<StmtPoint>(P))
-    return 0;
+  const Stmt *AllocationStmt = 0;
+  if (isa<StmtPoint>(P))
+    AllocationStmt = cast<StmtPoint>(P).getStmt();
 
-  return cast<StmtPoint>(P).getStmt();
+  return LeakInfo(AllocationStmt, ReferenceRegion);
 }
 
 void MallocChecker::reportLeak(SymbolRef Sym, ExplodedNode *N,
@@ -839,12 +857,23 @@ void MallocChecker::reportLeak(SymbolRef Sym, ExplodedNode *N,
   // With leaks, we want to unique them by the location where they were
   // allocated, and only report a single path.
   PathDiagnosticLocation LocUsedForUniqueing;
-  if (const Stmt *AllocStmt = getAllocationSite(N, Sym, C))
+  const Stmt *AllocStmt = 0;
+  const MemRegion *Region = 0;
+  llvm::tie(AllocStmt, Region) = getAllocationSite(N, Sym, C);
+  if (AllocStmt)
     LocUsedForUniqueing = PathDiagnosticLocation::createBegin(AllocStmt,
                             C.getSourceManager(), N->getLocationContext());
 
-  BugReport *R = new BugReport(*BT_Leak,
-    "Memory is never released; potential memory leak", N, LocUsedForUniqueing);
+  SmallString<200> buf;
+  llvm::raw_svector_ostream os(buf);
+  os << "Memory is never released; potential leak";
+  if (Region) {
+    os << " of memory pointed to by '";
+    Region->dumpPretty(os);
+    os <<'\'';
+  }
+
+  BugReport *R = new BugReport(*BT_Leak, os.str(), N, LocUsedForUniqueing);
   R->markInteresting(Sym);
   // FIXME: This is a hack to make sure the MallocBugVisitor gets to look at
   // the ExplodedNode chain first, in order to mark any failed realloc symbols
@@ -979,6 +1008,46 @@ void MallocChecker::checkPreStmt(const ReturnStmt *S, CheckerContext &C) const {
   // If this function body is not inlined, check if the symbol is escaping.
   if (C.getLocationContext()->getParent() == 0)
     checkEscape(Sym, E, C);
+}
+
+// TODO: Blocks should be either inlined or should call invalidate regions
+// upon invocation. After that's in place, special casing here will not be 
+// needed.
+void MallocChecker::checkPostStmt(const BlockExpr *BE,
+                                  CheckerContext &C) const {
+
+  // Scan the BlockDecRefExprs for any object the retain count checker
+  // may be tracking.
+  if (!BE->getBlockDecl()->hasCaptures())
+    return;
+
+  ProgramStateRef state = C.getState();
+  const BlockDataRegion *R =
+    cast<BlockDataRegion>(state->getSVal(BE,
+                                         C.getLocationContext()).getAsRegion());
+
+  BlockDataRegion::referenced_vars_iterator I = R->referenced_vars_begin(),
+                                            E = R->referenced_vars_end();
+
+  if (I == E)
+    return;
+
+  SmallVector<const MemRegion*, 10> Regions;
+  const LocationContext *LC = C.getLocationContext();
+  MemRegionManager &MemMgr = C.getSValBuilder().getRegionManager();
+
+  for ( ; I != E; ++I) {
+    const VarRegion *VR = *I;
+    if (VR->getSuperRegion() == R) {
+      VR = MemMgr.getVarRegion(VR->getDecl(), LC);
+    }
+    Regions.push_back(VR);
+  }
+
+  state =
+    state->scanReachableSymbols<StopTrackingCallback>(Regions.data(),
+                                    Regions.data() + Regions.size()).getState();
+  C.addTransition(state);
 }
 
 bool MallocChecker::checkUseAfterFree(SymbolRef Sym, CheckerContext &C,

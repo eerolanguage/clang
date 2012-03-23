@@ -1450,8 +1450,7 @@ bool Sema::LookupQualifiedName(LookupResult &R, DeclContext *LookupCtx,
   assert((!isa<TagDecl>(LookupCtx) ||
           LookupCtx->isDependentContext() ||
           cast<TagDecl>(LookupCtx)->isCompleteDefinition() ||
-          Context.getTypeDeclType(cast<TagDecl>(LookupCtx))->getAs<TagType>()
-            ->isBeingDefined()) &&
+          cast<TagDecl>(LookupCtx)->isBeingDefined()) &&
          "Declaration context must already be complete!");
 
   // Perform qualified name lookup into the LookupCtx.

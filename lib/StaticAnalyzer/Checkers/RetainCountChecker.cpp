@@ -985,6 +985,14 @@ const RetainSummary * RetainSummaryManager::getSummary(const FunctionDecl *FD) {
       // correctly.
       ScratchArgs = AF.add(ScratchArgs, 12, StopTracking);
       S = getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
+    } else if (FName == "dispatch_set_context") {
+      // <rdar://problem/11059275> - The analyzer currently doesn't have
+      // a good way to reason about the finalizer function for libdispatch.
+      // If we pass a context object that is memory managed, stop tracking it.
+      // FIXME: this hack should possibly go away once we can handle
+      // libdispatch finalizers.
+      ScratchArgs = AF.add(ScratchArgs, 1, StopTracking);
+      S = getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
     }
 
     // Did we get a summary?
@@ -2106,38 +2114,6 @@ PathDiagnosticPiece *CFRefReportVisitor::VisitNode(const ExplodedNode *N,
   return P;
 }
 
-namespace {
-  class FindUniqueBinding :
-  public StoreManager::BindingsHandler {
-    SymbolRef Sym;
-    const MemRegion* Binding;
-    bool First;
-
-  public:
-    FindUniqueBinding(SymbolRef sym) : Sym(sym), Binding(0), First(true) {}
-
-    bool HandleBinding(StoreManager& SMgr, Store store, const MemRegion* R,
-                       SVal val) {
-
-      SymbolRef SymV = val.getAsSymbol();
-      if (!SymV || SymV != Sym)
-        return true;
-
-      if (Binding) {
-        First = false;
-        return false;
-      }
-      else
-        Binding = R;
-
-      return true;
-    }
-
-    operator bool() { return First && Binding; }
-    const MemRegion *getRegion() { return Binding; }
-  };
-}
-
 // Find the first node in the current function context that referred to the
 // tracked symbol and the memory location that value was stored to. Note, the
 // value is only reported if the allocation occurred in the same function as
@@ -2156,7 +2132,7 @@ GetAllocationSite(ProgramStateManager& StateMgr, const ExplodedNode *N,
     if (!B.lookup(Sym))
       break;
 
-    FindUniqueBinding FB(Sym);
+    StoreManager::FindUniqueBinding FB(Sym);
     StateMgr.iterBindings(St, FB);
     if (FB) FirstBinding = FB.getRegion();
 

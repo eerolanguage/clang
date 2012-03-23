@@ -1165,7 +1165,8 @@ unsigned ASTContext::getPreferredTypeAlign(const Type *T) const {
   if (const ComplexType* CT = T->getAs<ComplexType>())
     T = CT->getElementType().getTypePtr();
   if (T->isSpecificBuiltinType(BuiltinType::Double) ||
-      T->isSpecificBuiltinType(BuiltinType::LongLong))
+      T->isSpecificBuiltinType(BuiltinType::LongLong) ||
+      T->isSpecificBuiltinType(BuiltinType::ULongLong))
     return std::max(ABIAlign, (unsigned)getTypeSize(T));
 
   return ABIAlign;
@@ -4200,7 +4201,7 @@ bool ASTContext::getObjCEncodingForMethodDecl(const ObjCMethodDecl *Decl,
 /// kPropertyGetter = 'G',     // followed by getter selector name
 /// kPropertySetter = 'S',     // followed by setter selector name
 /// kPropertyInstanceVariable = 'V'  // followed by instance variable  name
-/// kPropertyType = 't'              // followed by old-style type encoding.
+/// kPropertyType = 'T'              // followed by old-style type encoding.
 /// kPropertyWeak = 'W'              // 'weak' property
 /// kPropertyStrong = 'P'            // property GC'able
 /// kPropertyNonAtomic = 'N'         // property non-atomic
