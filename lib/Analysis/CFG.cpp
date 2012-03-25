@@ -288,7 +288,8 @@ class CFGBuilder {
 
   // Caches boolean evaluations of expressions to avoid multiple re-evaluations
   // during construction of branches for chained logical operators.
-  llvm::DenseMap<Expr *, TryResult> CachedBoolEvals;
+  typedef llvm::DenseMap<Expr *, TryResult> CachedBoolEvalsTy;
+  CachedBoolEvalsTy CachedBoolEvals;
 
 public:
   explicit CFGBuilder(ASTContext *astContext,
@@ -450,15 +451,14 @@ private:
     if (BinaryOperator *Bop = dyn_cast<BinaryOperator>(S)) {
       if (Bop->isLogicalOp()) {
         // Check the cache first.
-        typedef llvm::DenseMap<Expr *, TryResult>::iterator eval_iterator;
-        eval_iterator I;
-        bool Inserted;
-        llvm::tie(I, Inserted) =
-            CachedBoolEvals.insert(std::make_pair(S, TryResult()));
-        if (!Inserted)
+        CachedBoolEvalsTy::iterator I = CachedBoolEvals.find(S);
+        if (I != CachedBoolEvals.end())
           return I->second; // already in map;
-    
-        return (I->second = evaluateAsBooleanConditionNoCache(S));
+
+        // Retrieve result at first, or the map might be updated.
+        TryResult Result = evaluateAsBooleanConditionNoCache(S);
+        CachedBoolEvals[S] = Result; // update or insert
+        return Result;
       }
     }
 
