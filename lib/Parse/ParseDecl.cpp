@@ -3396,15 +3396,17 @@ bool Parser::isConstructorDeclarator() {
     return false;
   }
 
-  // Current class name must be followed by a left parentheses.
+  // Current class name must be followed by a left parenthesis.
   if (Tok.isNot(tok::l_paren)) {
     TPA.Revert();
     return false;
   }
   ConsumeParen();
 
-  // A right parentheses or ellipsis signals that we have a constructor.
-  if (Tok.is(tok::r_paren) || Tok.is(tok::ellipsis)) {
+  // A right parenthesis, or ellipsis followed by a right parenthesis signals
+  // that we have a constructor.
+  if (Tok.is(tok::r_paren) ||
+      (Tok.is(tok::ellipsis) && NextToken().is(tok::r_paren))) {
     TPA.Revert();
     return true;
   }
@@ -3421,7 +3423,43 @@ bool Parser::isConstructorDeclarator() {
   // Check whether the next token(s) are part of a declaration
   // specifier, in which case we have the start of a parameter and,
   // therefore, we know that this is a constructor.
-  bool IsConstructor = isDeclarationSpecifier();
+  bool IsConstructor = false;
+  if (isDeclarationSpecifier())
+    IsConstructor = true;
+  else if (Tok.is(tok::identifier) ||
+           (Tok.is(tok::annot_cxxscope) && NextToken().is(tok::identifier))) {
+    // We've seen "C ( X" or "C ( X::Y", but "X" / "X::Y" is not a type.
+    // This might be a parenthesized member name, but is more likely to
+    // be a constructor declaration with an invalid argument type. Keep
+    // looking.
+    if (Tok.is(tok::annot_cxxscope))
+      ConsumeToken();
+    ConsumeToken();
+
+    // If this is not a constructor, we must be parsing a declarator,
+    // which must have one of the following syntactic forms (see the
+    // grammar extract at the start of ParseDirectDeclarator):
+    switch (Tok.getKind()) {
+    case tok::l_paren:
+      // C(X   (   int));
+    case tok::l_square:
+      // C(X   [   5]);
+      // C(X   [   [attribute]]);
+    case tok::coloncolon:
+      // C(X   ::   Y);
+      // C(X   ::   *p);
+    case tok::r_paren:
+      // C(X   )
+      // Assume this isn't a constructor, rather than assuming it's a
+      // constructor with an unnamed parameter of an ill-formed type.
+      break;
+
+    default:
+      IsConstructor = true;
+      break;
+    }
+  }
+
   TPA.Revert();
   return IsConstructor;
 }
@@ -3550,7 +3588,8 @@ void Parser::ParseDeclarator(Declarator &D) {
 /// ptr-operator production.
 ///
 /// If the grammar of this construct is extended, matching changes must also be
-/// made to TryParseDeclarator and MightBeDeclarator.
+/// made to TryParseDeclarator and MightBeDeclarator, and possibly to
+/// isConstructorDeclarator.
 ///
 ///       declarator: [C99 6.7.5] [C++ 8p4, dcl.decl]
 /// [C]     pointer[opt] direct-declarator
@@ -3742,6 +3781,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
 ///          '~' class-name
 ///         template-id
 ///
+/// Note, any additional constructs added here may need corresponding changes
+/// in isConstructorDeclarator.
 void Parser::ParseDirectDeclarator(Declarator &D) {
   DeclaratorScopeObj DeclScopeObj(*this, D.getCXXScopeSpec());
 
@@ -3974,7 +4015,8 @@ void Parser::ParseParenDeclarator(Declarator &D) {
     // paren, because we haven't seen the identifier yet.
     isGrouping = true;
   } else if (Tok.is(tok::r_paren) ||           // 'int()' is a function.
-             (getLangOpts().CPlusPlus && Tok.is(tok::ellipsis)) || // C++ int(...)
+             (getLangOpts().CPlusPlus && Tok.is(tok::ellipsis) &&
+              NextToken().is(tok::r_paren)) || // C++ int(...)
              isDeclarationSpecifier()) {       // 'int(int)' is a function.
     // This handles C99 6.7.5.3p11: in "typedef int X; void foo(X)", X is
     // considered to be a type, not a K&R identifier-list.

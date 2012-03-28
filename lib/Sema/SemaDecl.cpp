@@ -4502,7 +4502,14 @@ namespace {
 class DifferentNameValidatorCCC : public CorrectionCandidateCallback {
  public:
   DifferentNameValidatorCCC(CXXRecordDecl *Parent)
-      : ExpectedParent(Parent ? Parent->getCanonicalDecl() : 0) {}
+      : ExpectedParent(Parent ? Parent->getCanonicalDecl() : 0) {
+    // Don't allow any additional qualification.
+    // FIXME: It would be nice to perform this additional qualification. 
+    // However, DiagnoseInvalidRedeclaration is unable to handle the 
+    // qualification, because it doesn't know how to pass the corrected
+    // nested-name-specifier through to ActOnFunctionDeclarator.
+    AllowAddedQualifier = false;
+  }
 
   virtual bool ValidateCandidate(const TypoCorrection &candidate) {
     if (candidate.getEditDistance() == 0)
@@ -7807,7 +7814,9 @@ bool Sema::CheckEnumRedeclaration(SourceLocation EnumLoc, bool IsScoped,
   }
 
   if (IsFixed && Prev->isFixed()) {
-    if (!Context.hasSameUnqualifiedType(EnumUnderlyingTy,
+    if (!EnumUnderlyingTy->isDependentType() &&
+        !Prev->getIntegerType()->isDependentType() &&
+        !Context.hasSameUnqualifiedType(EnumUnderlyingTy,
                                         Prev->getIntegerType())) {
       Diag(EnumLoc, diag::err_enum_redeclare_type_mismatch)
         << EnumUnderlyingTy << Prev->getIntegerType();

@@ -1081,8 +1081,17 @@ static void addExceptionArgs(const ArgList &Args, types::ID InputType,
                              bool KernelOrKext, bool IsRewriter,
                              unsigned objcABIVersion,
                              ArgStringList &CmdArgs) {
-  if (KernelOrKext)
+  if (KernelOrKext) {
+    // -mkernel and -fapple-kext imply no exceptions, so claim exception related
+    // arguments now to avoid warnings about unused arguments.
+    Args.ClaimAllArgs(options::OPT_fexceptions);
+    Args.ClaimAllArgs(options::OPT_fno_exceptions);
+    Args.ClaimAllArgs(options::OPT_fobjc_exceptions);
+    Args.ClaimAllArgs(options::OPT_fno_objc_exceptions);
+    Args.ClaimAllArgs(options::OPT_fcxx_exceptions);
+    Args.ClaimAllArgs(options::OPT_fno_cxx_exceptions);
     return;
+  }
 
   // Exceptions are enabled by default.
   bool ExceptionsEnabled = true;
@@ -1478,6 +1487,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_strict_aliasing,
                     getToolChain().IsStrictAliasingDefault()))
     CmdArgs.push_back("-relaxed-aliasing");
+  if (Args.hasFlag(options::OPT_fstrict_enums, options::OPT_fno_strict_enums,
+                   false))
+    CmdArgs.push_back("-fstrict-enums");
   if (!Args.hasFlag(options::OPT_foptimize_sibling_calls,
                     options::OPT_fno_optimize_sibling_calls))
     CmdArgs.push_back("-mdisable-tail-calls");
@@ -1965,9 +1977,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fvisibility_inlines_hidden);
 
   // -fhosted is default.
-  if (KernelOrKext || Args.hasFlag(options::OPT_ffreestanding,
-                                   options::OPT_fhosted,
-                                   false))
+  if (Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) ||
+      KernelOrKext)
     CmdArgs.push_back("-ffreestanding");
 
   // Forward -f (flag) options which we can pass directly.
@@ -2076,6 +2087,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fapple-kext");
     if (!Args.hasArg(options::OPT_fbuiltin))
       CmdArgs.push_back("-fno-builtin");
+    Args.ClaimAllArgs(options::OPT_fno_builtin);
   }
   // -fbuiltin is default.
   else if (!Args.hasFlag(options::OPT_fbuiltin, options::OPT_fno_builtin))
@@ -2122,8 +2134,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-elide-constructors");
 
   // -frtti is default.
-  if (KernelOrKext ||
-      !Args.hasFlag(options::OPT_frtti, options::OPT_fno_rtti))
+  if (!Args.hasFlag(options::OPT_frtti, options::OPT_fno_rtti) ||
+      KernelOrKext)
     CmdArgs.push_back("-fno-rtti");
 
   // -fshort-enums=0 is default for all architectures except Hexagon.
@@ -2144,12 +2156,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-threadsafe-statics");
 
   // -fuse-cxa-atexit is default.
-  if (KernelOrKext ||
-    !Args.hasFlag(options::OPT_fuse_cxa_atexit, options::OPT_fno_use_cxa_atexit,
-                  getToolChain().getTriple().getOS() != llvm::Triple::Cygwin &&
+  if (!Args.hasFlag(options::OPT_fuse_cxa_atexit,
+                    options::OPT_fno_use_cxa_atexit,
+                   getToolChain().getTriple().getOS() != llvm::Triple::Cygwin &&
                   getToolChain().getTriple().getOS() != llvm::Triple::MinGW32 &&
-                  getToolChain().getTriple().getArch() !=
-                  llvm::Triple::hexagon))
+              getToolChain().getTriple().getArch() != llvm::Triple::hexagon) ||
+      KernelOrKext)
     CmdArgs.push_back("-fno-use-cxa-atexit");
 
   // -fms-extensions=0 is default.
@@ -2400,6 +2412,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       Args.hasArg(options::OPT_fapple_kext)) {
     if (!Args.hasArg(options::OPT_fcommon))
       CmdArgs.push_back("-fno-common");
+    Args.ClaimAllArgs(options::OPT_fno_common);
   }
 
   // -fcommon is default, only pass non-default.

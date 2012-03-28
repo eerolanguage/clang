@@ -236,7 +236,7 @@ def client__name : JoinedOrSeparate<"-client_name">;
 def combine : Flag<"-combine">, Flags<[DriverOption, Unsupported]>;
 def compatibility__version : JoinedOrSeparate<"-compatibility_version">;
 def coverage : Flag<"-coverage">;
-def cpp_precomp : Flag<"-cpp-precomp">;
+def cpp_precomp : Flag<"-cpp-precomp">, Group<clang_ignored_f_Group>;
 def current__version : JoinedOrSeparate<"-current_version">;
 def cxx_isystem : JoinedOrSeparate<"-cxx-isystem">, Group<clang_i_Group>;
 def c : Flag<"-c">, Flags<[DriverOption]>,
@@ -444,6 +444,7 @@ def fno_show_source_location : Flag<"-fno-show-source-location">, Group<f_Group>
 def fno_spell_checking : Flag<"-fno-spell-checking">, Group<f_Group>;
 def fno_stack_protector : Flag<"-fno-stack-protector">, Group<f_Group>;
 def fno_strict_aliasing : Flag<"-fno-strict-aliasing">, Group<f_Group>;
+def fno_strict_enums : Flag<"-fno-strict-enums">, Group<f_Group>;
 def fno_strict_overflow : Flag<"-fno-strict-overflow">, Group<f_Group>;
 def fno_threadsafe_statics : Flag<"-fno-threadsafe-statics">, Group<f_Group>;
 def fno_use_cxa_atexit : Flag<"-fno-use-cxa-atexit">, Group<f_Group>;
@@ -515,6 +516,7 @@ def fsigned_char : Flag<"-fsigned-char">, Group<f_Group>;
 def fstack_protector_all : Flag<"-fstack-protector-all">, Group<f_Group>;
 def fstack_protector : Flag<"-fstack-protector">, Group<f_Group>;
 def fstrict_aliasing : Flag<"-fstrict-aliasing">, Group<f_Group>;
+def fstrict_enums : Flag<"-fstrict-enums">, Group<f_Group>;
 def fstrict_overflow : Flag<"-fstrict-overflow">, Group<f_Group>;
 def fsyntax_only : Flag<"-fsyntax-only">, Flags<[DriverOption]>;
 def ftabstop_EQ : Joined<"-ftabstop=">, Group<f_Group>;
@@ -684,7 +686,7 @@ def m_Separate : Separate<"-m">, Group<m_Group>;
 def m_Joined : Joined<"-m">, Group<m_Group>;
 def no_canonical_prefixes : Flag<"-no-canonical-prefixes">, Flags<[HelpHidden]>,
   HelpText<"Use relative instead of canonical paths">;
-def no_cpp_precomp : Flag<"-no-cpp-precomp">;
+def no_cpp_precomp : Flag<"-no-cpp-precomp">, Group<clang_ignored_f_Group>;
 def no_integrated_as : Flag<"-no-integrated-as">, Flags<[DriverOption]>;
 def no_integrated_cpp : Flag<"-no-integrated-cpp">, Flags<[DriverOption]>;
 def no__dead__strip__inits__and__terms : Flag<"-no_dead_strip_inits_and_terms">;

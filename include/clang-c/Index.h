@@ -3543,6 +3543,26 @@ clang_getCompletionAnnotation(CXCompletionString completion_string,
                               unsigned annotation_number);
 
 /**
+ * \brief Retrieve the parent context of the given completion string.
+ *
+ * The parent context of a completion string is the semantic parent of 
+ * the declaration (if any) that the code completion represents. For example,
+ * a code completion for an Objective-C method would have the method's class
+ * or protocol as its context.
+ *
+ * \param completion_string The code completion string whose parent is
+ * being queried.
+ *
+ * \param kind If non-NULL, will be set to the kind of the parent context,
+ * or CXCursor_NotImplemented if there is no context.
+ *
+ * \param Returns the name of the completion parent, e.g., "NSObject" if
+ * the completion string represents a method in the NSObject class.
+ */
+CINDEX_LINKAGE CXString
+clang_getCompletionParent(CXCompletionString completion_string,
+                          enum CXCursorKind *kind);
+/**
  * \brief Retrieve a completion string for an arbitrary declaration or macro
  * definition cursor.
  *
@@ -4494,7 +4514,12 @@ typedef enum {
    * \brief Implicit function/class template instantiations should be indexed.
    * If this is not set, implicit instantiations will be ignored.
    */
-  CXIndexOpt_IndexImplicitTemplateInstantiations = 0x4
+  CXIndexOpt_IndexImplicitTemplateInstantiations = 0x4,
+
+  /**
+   * \brief Suppress all compiler warnings when parsing for indexing.
+   */
+  CXIndexOpt_SuppressWarnings = 0x8
 } CXIndexOptFlags;
 
 /**

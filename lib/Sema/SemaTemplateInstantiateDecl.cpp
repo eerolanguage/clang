@@ -558,9 +558,18 @@ Decl *TemplateDeclInstantiator::VisitStaticAssertDecl(StaticAssertDecl *D) {
 }
 
 Decl *TemplateDeclInstantiator::VisitEnumDecl(EnumDecl *D) {
+  EnumDecl *PrevDecl = 0;
+  if (D->getPreviousDecl()) {
+    NamedDecl *Prev = SemaRef.FindInstantiatedDecl(D->getLocation(),
+                                                   D->getPreviousDecl(),
+                                                   TemplateArgs);
+    if (!Prev) return 0;
+    PrevDecl = cast<EnumDecl>(Prev);
+  }
+
   EnumDecl *Enum = EnumDecl::Create(SemaRef.Context, Owner, D->getLocStart(),
                                     D->getLocation(), D->getIdentifier(),
-                                    /*PrevDecl=*/0, D->isScoped(),
+                                    PrevDecl, D->isScoped(),
                                     D->isScopedUsingClassTag(), D->isFixed());
   if (D->isFixed()) {
     if (TypeSourceInfo *TI = D->getIntegerTypeSourceInfo()) {
@@ -588,9 +597,20 @@ Decl *TemplateDeclInstantiator::VisitEnumDecl(EnumDecl *D) {
   if (SubstQualifier(D, Enum)) return 0;
   Owner->addDecl(Enum);
 
-  // FIXME: If this is a redeclaration:
-  // CheckEnumRedeclaration(Enum->getLocation(), Enum->isScoped(),
-  //                        Enum->getIntegerType(), Prev);
+  EnumDecl *Def = D->getDefinition();
+  if (Def && Def != D) {
+    // If this is an out-of-line definition of an enum member template, check
+    // that the underlying types match in the instantiation of both
+    // declarations.
+    if (TypeSourceInfo *TI = Def->getIntegerTypeSourceInfo()) {
+      SourceLocation UnderlyingLoc = TI->getTypeLoc().getBeginLoc();
+      QualType DefnUnderlying =
+        SemaRef.SubstType(TI->getType(), TemplateArgs,
+                          UnderlyingLoc, DeclarationName());
+      SemaRef.CheckEnumRedeclaration(Def->getLocation(), Def->isScoped(),
+                                     DefnUnderlying, Enum);
+    }
+  }
 
   if (D->getDeclContext()->isFunctionOrMethod())
     SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, Enum);
@@ -599,9 +619,12 @@ Decl *TemplateDeclInstantiator::VisitEnumDecl(EnumDecl *D) {
   // specialization causes the implicit instantiation of the declarations, but
   // not the definitions of scoped member enumerations.
   // FIXME: There appears to be no wording for what happens for an enum defined
-  // within a block scope, but we treat that like a member of a class template.
-  if (!Enum->isScoped() && D->getDefinition())
-    InstantiateEnumDefinition(Enum, D);
+  // within a block scope, but we treat that much like a member template. Only
+  // instantiate the definition when visiting the definition in that case, since
+  // we will visit all redeclarations.
+  if (!Enum->isScoped() && Def &&
+      (!D->getDeclContext()->isFunctionOrMethod() || D->isCompleteDefinition()))
+    InstantiateEnumDefinition(Enum, Def);
 
   return Enum;
 }
@@ -3266,6 +3289,20 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
           << D->getDeclName()
           << Context.getTypeDeclType(cast<CXXRecordDecl>(ParentDC));
         Diag(D->getLocation(), diag::note_non_instantiated_member_here);
+      } else if (EnumConstantDecl *ED = dyn_cast<EnumConstantDecl>(D)) {
+        // This enumeration constant was found when the template was defined,
+        // but can't be found in the instantiation. This can happen if an
+        // unscoped enumeration member is explicitly specialized.
+        EnumDecl *Enum = cast<EnumDecl>(ED->getLexicalDeclContext());
+        EnumDecl *Spec = cast<EnumDecl>(FindInstantiatedDecl(Loc, Enum,
+                                                             TemplateArgs));
+        assert(Spec->getTemplateSpecializationKind() ==
+                 TSK_ExplicitSpecialization);
+        Diag(Loc, diag::err_enumerator_does_not_exist)
+          << D->getDeclName()
+          << Context.getTypeDeclType(cast<TypeDecl>(Spec->getDeclContext()));
+        Diag(Spec->getLocation(), diag::note_enum_specialized_here)
+          << Context.getTypeDeclType(Spec);
       } else {
         // We should have found something, but didn't.
         llvm_unreachable("Unable to find instantiation of declaration!");
