@@ -484,6 +484,7 @@ static const char *getLLVMArchSuffixForARM(StringRef CPU) {
     .Cases("arm1156t2-s",  "arm1156t2f-s", "v6t2")
     .Cases("cortex-a8", "cortex-a9", "v7")
     .Case("cortex-m3", "v7m")
+    .Case("cortex-m4", "v7m")
     .Case("cortex-m0", "v6m")
     .Default("");
 }
@@ -1347,6 +1348,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     } else if (JA.getType() == types::TY_AST) {
       CmdArgs.push_back("-emit-pch");
     } else if (JA.getType() == types::TY_RewrittenObjC) {
+      CmdArgs.push_back("-rewrite-objc");
+    } else if (JA.getType() == types::TY_RewrittenLegacyObjC) {
       CmdArgs.push_back("-rewrite-objc");
       IsRewriter = true;
     } else {
@@ -3618,6 +3621,9 @@ void darwin::Compile::ConstructJob(Compilation &C, const JobAction &JA,
   ArgStringList CmdArgs;
 
   assert(Inputs.size() == 1 && "Unexpected number of inputs!");
+
+  // Silence warning about unused --serialize-diagnostics
+  Args.ClaimAllArgs(options::OPT__serialize_diags);
 
   types::ID InputType = Inputs[0].getType();
   const Arg *A;

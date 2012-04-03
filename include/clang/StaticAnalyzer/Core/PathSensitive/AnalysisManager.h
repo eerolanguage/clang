@@ -30,8 +30,6 @@ namespace idx {
 namespace ento {
   class CheckerManager;
 
-typedef llvm::SmallPtrSet<const Decl*,24> SetOfDecls;
-
 class AnalysisManager : public BugReporterData {
   virtual void anchor();
   AnalysisDeclContextManager AnaCtxMgr;
@@ -91,9 +89,9 @@ public:
   /// \brief The mode of function selection used during inlining.
   AnalysisInliningMode InliningMode;
 
-  /// \brief Re-analyze paths leading to exhausted nodes with a different
-  /// strategy for better code coverage.
-  bool RetryExhausted;
+  /// \brief Do not re-analyze paths leading to exhausted nodes with a different
+  /// strategy. We get better code coverage when retry is enabled.
+  bool NoRetryExhausted;
 
 public:
   AnalysisManager(ASTContext &ctx, DiagnosticsEngine &diags, 
@@ -112,7 +110,7 @@ public:
                   unsigned inlineMaxStack,
                   unsigned inlineMaxFunctionSize,
                   AnalysisInliningMode inliningMode,
-                  bool retry);
+                  bool NoRetry);
 
   /// Construct a clone of the given AnalysisManager with the given ASTContext
   /// and DiagnosticsEngine.

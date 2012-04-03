@@ -174,6 +174,11 @@ bool CoreEngine::ExecuteWorkList(const LocationContext *L, unsigned Steps,
     assert (Entry->succ_size() == 1 &&
             "Entry block must have 1 successor.");
 
+    // Mark the entry block as visited.
+    FunctionSummaries->markVisitedBasicBlock(Entry->getBlockID(),
+                                             L->getDecl(),
+                                             L->getCFG()->getNumBlockIDs());
+
     // Get the solitary successor.
     const CFGBlock *Succ = *(Entry->succ_begin());
 
@@ -263,21 +268,28 @@ void CoreEngine::dispatchWorkItem(ExplodedNode* Pred, ProgramPoint Loc,
   }
 }
 
-void CoreEngine::ExecuteWorkListWithInitialState(const LocationContext *L, 
+bool CoreEngine::ExecuteWorkListWithInitialState(const LocationContext *L,
                                                  unsigned Steps,
                                                  ProgramStateRef InitState, 
                                                  ExplodedNodeSet &Dst) {
-  ExecuteWorkList(L, Steps, InitState);
+  bool DidNotFinish = ExecuteWorkList(L, Steps, InitState);
   for (ExplodedGraph::eop_iterator I = G->eop_begin(), 
                                    E = G->eop_end(); I != E; ++I) {
     Dst.Add(*I);
   }
+  return DidNotFinish;
 }
 
 void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
 
   const CFGBlock *Blk = L.getDst();
   NodeBuilderContext BuilderCtx(*this, Blk, Pred);
+
+  // Mark this block as visited.
+  const LocationContext *LC = Pred->getLocationContext();
+  FunctionSummaries->markVisitedBasicBlock(Blk->getBlockID(),
+                                           LC->getDecl(),
+                                           LC->getCFG()->getNumBlockIDs());
 
   // Check if we are entering the EXIT block.
   if (Blk == &(L.getLocationContext()->getCFG()->getExit())) {
@@ -296,7 +308,7 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
   ExplodedNodeSet dstNodes;
   BlockEntrance BE(Blk, Pred->getLocationContext());
   NodeBuilderWithSinks nodeBuilder(Pred, dstNodes, BuilderCtx, BE);
-  SubEng.processCFGBlockEntrance(nodeBuilder);
+  SubEng.processCFGBlockEntrance(L, nodeBuilder);
 
   // Auto-generate a node.
   if (!nodeBuilder.hasGeneratedNodes()) {
@@ -305,23 +317,17 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
 
   // Enqueue nodes onto the worklist.
   enqueue(dstNodes);
-
-  // Make sink nodes as exhausted.
-  const SmallVectorImpl<ExplodedNode*> &Sinks =  nodeBuilder.getSinks();
-  for (SmallVectorImpl<ExplodedNode*>::const_iterator
-         I =Sinks.begin(), E = Sinks.end(); I != E; ++I) {
-    blocksExhausted.push_back(std::make_pair(L, *I));
-  }
 }
 
 void CoreEngine::HandleBlockEntrance(const BlockEntrance &L,
                                        ExplodedNode *Pred) {
 
   // Increment the block counter.
+  const LocationContext *LC = Pred->getLocationContext();
+  unsigned BlockId = L.getBlock()->getBlockID();
   BlockCounter Counter = WList->getBlockCounter();
-  Counter = BCounterFactory.IncrementCount(Counter, 
-                             Pred->getLocationContext()->getCurrentStackFrame(),
-                                           L.getBlock()->getBlockID());
+  Counter = BCounterFactory.IncrementCount(Counter, LC->getCurrentStackFrame(),
+                                           BlockId);
   WList->setBlockCounter(Counter);
 
   // Process the entrance of the block.

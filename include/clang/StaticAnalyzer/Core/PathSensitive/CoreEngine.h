@@ -18,6 +18,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/Analysis/AnalysisContext.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExplodedGraph.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/FunctionSummary.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/WorkList.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/BlockCounter.h"
 #include "llvm/ADT/OwningPtr.h"
@@ -42,6 +43,7 @@ class NodeBuilder;
 class CoreEngine {
   friend struct NodeBuilderContext;
   friend class NodeBuilder;
+  friend class ExprEngine;
   friend class CommonNodeBuilder;
   friend class IndirectGotoNodeBuilder;
   friend class SwitchNodeBuilder;
@@ -82,6 +84,10 @@ private:
   /// AnalysisConsumer. It can be null.
   SetOfDecls *AnalyzedCallees;
 
+  /// The information about functions shared by the whole translation unit.
+  /// (This data is owned by AnalysisConsumer.)
+  FunctionSummariesTy *FunctionSummaries;
+
   void generateNode(const ProgramPoint &Loc,
                     ProgramStateRef State,
                     ExplodedNode *Pred);
@@ -103,11 +109,13 @@ private:
 public:
   /// Construct a CoreEngine object to analyze the provided CFG using
   ///  a DFS exploration of the exploded graph.
-  CoreEngine(SubEngine& subengine, SetOfDecls *VisitedCallees)
+  CoreEngine(SubEngine& subengine, SetOfDecls *VisitedCallees,
+             FunctionSummariesTy *FS)
     : SubEng(subengine), G(new ExplodedGraph()),
       WList(WorkList::makeBFS()),
       BCounterFactory(G->getAllocator()),
-      AnalyzedCallees(VisitedCallees) {}
+      AnalyzedCallees(VisitedCallees),
+      FunctionSummaries(FS){}
 
   ~CoreEngine() {
     delete WList;
@@ -124,7 +132,8 @@ public:
   ///  steps.  Returns true if there is still simulation state on the worklist.
   bool ExecuteWorkList(const LocationContext *L, unsigned Steps,
                        ProgramStateRef InitState);
-  void ExecuteWorkListWithInitialState(const LocationContext *L,
+  /// Returns true if there is still simulation state on the worklist.
+  bool ExecuteWorkListWithInitialState(const LocationContext *L,
                                        unsigned Steps,
                                        ProgramStateRef InitState, 
                                        ExplodedNodeSet &Dst);

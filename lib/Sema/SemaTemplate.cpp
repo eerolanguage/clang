@@ -872,8 +872,12 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
   if (SS.isNotEmpty() && !SS.isInvalid()) {
     SemanticContext = computeDeclContext(SS, true);
     if (!SemanticContext) {
-      Diag(NameLoc, diag::err_template_qualified_declarator_no_match)
-        << SS.getScopeRep() << SS.getRange();
+      // FIXME: Horrible, horrible hack! We can't currently represent this
+      // in the AST, and historically we have just ignored such friend
+      // class templates, so don't complain here.
+      if (TUK != TUK_Friend)
+        Diag(NameLoc, diag::err_template_qualified_declarator_no_match)
+          << SS.getScopeRep() << SS.getRange();
       return true;
     }
 
@@ -887,9 +891,8 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
       ContextRAII SavedContext(*this, SemanticContext);
       if (RebuildTemplateParamsInCurrentInstantiation(TemplateParams))
         Invalid = true;
-    } else if (CurContext->isRecord() && TUK != TUK_Friend &&
-               TUK != TUK_Reference)
-      diagnoseQualifiedDeclInClass(SS, SemanticContext, Name, NameLoc);
+    } else if (TUK != TUK_Friend && TUK != TUK_Reference)
+      diagnoseQualifiedDeclaration(SS, SemanticContext, Name, NameLoc);
         
     LookupQualifiedName(Previous, SemanticContext);
   } else {

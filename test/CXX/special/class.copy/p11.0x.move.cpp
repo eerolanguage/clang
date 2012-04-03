@@ -82,7 +82,7 @@ InaccessibleMoveBase::InaccessibleMoveBase(InaccessibleMoveBase&&) = default; //
 // -- any direct or virtual base class or non-static data member of a type with
 //    a destructor that is deleted or inaccessible
 struct NoAccessDtor {
-  NoAccessDtor(NoAccessDtor&&);
+  NoAccessDtor(NoAccessDtor&&); // expected-note{{copy constructor is implicitly deleted because 'NoAccessDtor' has a user-declared move constructor}}
 private:
   ~NoAccessDtor();
   friend struct HasAccessDtor;
@@ -100,7 +100,7 @@ struct HasAccessDtor {
 };
 HasAccessDtor::HasAccessDtor(HasAccessDtor&&) = default;
 
-struct HasNoAccessDtorBase : NoAccessDtor { // expected-note{{here}}
+struct HasNoAccessDtorBase : NoAccessDtor { // expected-note{{copy constructor of 'HasNoAccessDtorBase' is implicitly deleted because base class 'NoAccessDtor' has a deleted copy constructor}}
 };
 extern HasNoAccessDtorBase HNADBa;
 HasNoAccessDtorBase HNADBb(HNADBa); // expected-error{{implicitly-deleted copy constructor}}
@@ -123,7 +123,7 @@ struct NonMove {
   CopyOnly CO;
   NonMove(NonMove&&);
 };
-NonMove::NonMove(NonMove&&) = default; // expected-error{{would delete}}
+NonMove::NonMove(NonMove&&) = default; // ok under DR1402
 
 struct Moveable {
   Moveable();
@@ -135,3 +135,30 @@ struct HasMove {
   HasMove(HasMove&&);
 };
 HasMove::HasMove(HasMove&&) = default;
+
+namespace DR1402 {
+  struct member {
+    member();
+    member(const member&);
+    member& operator=(const member&);
+    ~member();
+  };
+
+  struct A {
+    member m_;
+
+    A() = default;
+    A(const A&) = default;
+    A& operator=(const A&) = default;
+    A(A&&) = default;
+    A& operator=(A&&) = default;
+    ~A() = default;
+  };
+
+  // ok, A's explicitly-defaulted move operations copy m_.
+  void f() {
+    A a, b(a), c(static_cast<A&&>(a));
+    a = b;
+    b = static_cast<A&&>(c);
+  }
+}

@@ -1094,10 +1094,18 @@ Sema::ActOnForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
 /// x can be an arbitrary l-value expression.  Bind it up as a
 /// full-expression.
 StmtResult Sema::ActOnForEachLValueExpr(Expr *E) {
+  // Reduce placeholder expressions here.  Note that this rejects the
+  // use of pseudo-object l-values in this position.
+  ExprResult result = CheckPlaceholderExpr(E);
+  if (result.isInvalid()) return StmtError();
+  E = result.take();
+
   CheckImplicitConversions(E);
-  ExprResult Result = MaybeCreateExprWithCleanups(E);
-  if (Result.isInvalid()) return StmtError();
-  return Owned(static_cast<Stmt*>(Result.get()));
+
+  result = MaybeCreateExprWithCleanups(E);
+  if (result.isInvalid()) return StmtError();
+
+  return Owned(static_cast<Stmt*>(result.take()));
 }
 
 ExprResult
@@ -1960,24 +1968,21 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     return ActOnCapScopeReturnStmt(ReturnLoc, RetValExp);
 
   QualType FnRetType;
-  QualType DeclaredRetType;
+  QualType RelatedRetType;
   if (const FunctionDecl *FD = getCurFunctionDecl()) {
     FnRetType = FD->getResultType();
-    DeclaredRetType = FnRetType;
     if (FD->hasAttr<NoReturnAttr>() ||
         FD->getType()->getAs<FunctionType>()->getNoReturnAttr())
       Diag(ReturnLoc, diag::warn_noreturn_function_has_return_expr)
         << FD->getDeclName();
   } else if (ObjCMethodDecl *MD = getCurMethodDecl()) {
-    DeclaredRetType = MD->getResultType();
+    FnRetType = MD->getResultType();
     if (MD->hasRelatedResultType() && MD->getClassInterface()) {
       // In the implementation of a method with a related return type, the
       // type used to type-check the validity of return statements within the 
       // method body is a pointer to the type of the class being implemented.
-      FnRetType = Context.getObjCInterfaceType(MD->getClassInterface());
-      FnRetType = Context.getObjCObjectPointerType(FnRetType);
-    } else {
-      FnRetType = DeclaredRetType;
+      RelatedRetType = Context.getObjCInterfaceType(MD->getClassInterface());
+      RelatedRetType = Context.getObjCObjectPointerType(RelatedRetType);
     }
   } else // If we don't have a function/method context, bail.
     return StmtError();
@@ -2060,6 +2065,21 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     if (!FnRetType->isDependentType() && !RetValExp->isTypeDependent()) {
       // we have a non-void function with an expression, continue checking
 
+      if (!RelatedRetType.isNull()) {
+        // If we have a related result type, perform an extra conversion here.
+        // FIXME: The diagnostics here don't really describe what is happening.
+        InitializedEntity Entity =
+            InitializedEntity::InitializeTemporary(RelatedRetType);
+        
+        ExprResult Res = PerformCopyInitialization(Entity, SourceLocation(),
+                                                   RetValExp);
+        if (Res.isInvalid()) {
+          // FIXME: Cleanup temporaries here, anyway?
+          return StmtError();
+        }
+        RetValExp = Res.takeAs<Expr>();
+      }
+
       // C99 6.8.6.4p3(136): The return statement is not an assignment. The
       // overlap restriction of subclause 6.5.16.1 does not apply to the case of
       // function return.
@@ -2083,17 +2103,6 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     }
 
     if (RetValExp) {
-      // If we type-checked an Objective-C method's return type based
-      // on a related return type, we may need to adjust the return
-      // type again. Do so now.
-      if (DeclaredRetType != FnRetType) {
-        ExprResult result = PerformImplicitConversion(RetValExp,
-                                                      DeclaredRetType,
-                                                      AA_Returning);
-        if (result.isInvalid()) return StmtError();
-        RetValExp = result.take();
-      }
-
       CheckImplicitConversions(RetValExp, ReturnLoc);
       RetValExp = MaybeCreateExprWithCleanups(RetValExp);
     }

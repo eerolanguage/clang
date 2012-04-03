@@ -208,6 +208,7 @@ namespace {
   /// A PseudoOpBuilder for Objective-C @properties.
   class ObjCPropertyOpBuilder : public PseudoOpBuilder {
     ObjCPropertyRefExpr *RefExpr;
+    ObjCPropertyRefExpr *SyntacticRefExpr;
     OpaqueValueExpr *InstanceReceiver;
     ObjCMethodDecl *Getter;
 
@@ -217,7 +218,7 @@ namespace {
   public:
     ObjCPropertyOpBuilder(Sema &S, ObjCPropertyRefExpr *refExpr) :
       PseudoOpBuilder(S, refExpr->getLocation()), RefExpr(refExpr),
-      InstanceReceiver(0), Getter(0), Setter(0) {
+      SyntacticRefExpr(0), InstanceReceiver(0), Getter(0), Setter(0) {
     }
 
     ExprResult buildRValueOperation(Expr *op);
@@ -538,6 +539,10 @@ Expr *ObjCPropertyOpBuilder::rebuildAndCaptureObject(Expr *syntacticBase) {
       ObjCPropertyRefRebuilder(S, InstanceReceiver).rebuild(syntacticBase);
   }
 
+  if (ObjCPropertyRefExpr *
+        refE = dyn_cast<ObjCPropertyRefExpr>(syntacticBase->IgnoreParens()))
+    SyntacticRefExpr = refE;
+
   return syntacticBase;
 }
 
@@ -545,7 +550,10 @@ Expr *ObjCPropertyOpBuilder::rebuildAndCaptureObject(Expr *syntacticBase) {
 ExprResult ObjCPropertyOpBuilder::buildGet() {
   findGetter();
   assert(Getter);
-  
+
+  if (SyntacticRefExpr)
+    SyntacticRefExpr->setIsMessagingGetter();
+
   QualType receiverType;
   if (RefExpr->isClassReceiver()) {
     receiverType = S.Context.getObjCInterfaceType(RefExpr->getClassReceiver());
@@ -580,6 +588,9 @@ ExprResult ObjCPropertyOpBuilder::buildSet(Expr *op, SourceLocation opcLoc,
                                            bool captureSetValueAsResult) {
   bool hasSetter = findSetter();
   assert(hasSetter); (void) hasSetter;
+
+  if (SyntacticRefExpr)
+    SyntacticRefExpr->setIsMessagingSetter();
 
   QualType receiverType;
   if (RefExpr->isClassReceiver()) {
@@ -842,14 +853,20 @@ Sema::ObjCSubscriptKind
   // If we don't have a class type in C++, there's no way we can get an
   // expression of integral or enumeration type.
   const RecordType *RecordTy = T->getAs<RecordType>();
-  if (!RecordTy)
+  if (!RecordTy && T->isObjCObjectPointerType())
     // All other scalar cases are assumed to be dictionary indexing which
     // caller handles, with diagnostics if needed.
     return OS_Dictionary;
-  if (!getLangOpts().CPlusPlus || RecordTy->isIncompleteType()) {
+  if (!getLangOpts().CPlusPlus || 
+      !RecordTy || RecordTy->isIncompleteType()) {
     // No indexing can be done. Issue diagnostics and quit.
-    Diag(FromE->getExprLoc(), diag::err_objc_subscript_type_conversion)
-    << FromE->getType();
+    const Expr *IndexExpr = FromE->IgnoreParenImpCasts();
+    if (isa<StringLiteral>(IndexExpr))
+      Diag(FromE->getExprLoc(), diag::err_objc_subscript_pointer)
+        << T << FixItHint::CreateInsertion(FromE->getExprLoc(), "@");
+    else
+      Diag(FromE->getExprLoc(), diag::err_objc_subscript_type_conversion)
+        << T;
     return OS_Error;
   }
   

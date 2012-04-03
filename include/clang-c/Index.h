@@ -204,6 +204,61 @@ CINDEX_LINKAGE CXIndex clang_createIndex(int excludeDeclarationsFromPCH,
  */
 CINDEX_LINKAGE void clang_disposeIndex(CXIndex index);
 
+typedef enum {
+  /**
+   * \brief Used to indicate that no special CXIndex options are needed.
+   */
+  CXGlobalOpt_None = 0x0,
+
+  /**
+   * \brief Used to indicate that threads that libclang creates for indexing
+   * purposes should use background priority.
+   * Affects \see clang_indexSourceFile, \see clang_indexTranslationUnit,
+   * \see clang_parseTranslationUnit, \see clang_saveTranslationUnit.
+   */
+  CXGlobalOpt_ThreadBackgroundPriorityForIndexing = 0x1,
+
+  /**
+   * \brief Used to indicate that threads that libclang creates for editing
+   * purposes should use background priority.
+   * Affects \see clang_reparseTranslationUnit, \see clang_codeCompleteAt,
+   * \see clang_annotateTokens
+   */
+  CXGlobalOpt_ThreadBackgroundPriorityForEditing = 0x2,
+
+  /**
+   * \brief Used to indicate that all threads that libclang creates should use
+   * background priority.
+   */
+  CXGlobalOpt_ThreadBackgroundPriorityForAll =
+      CXGlobalOpt_ThreadBackgroundPriorityForIndexing |
+      CXGlobalOpt_ThreadBackgroundPriorityForEditing
+
+} CXGlobalOptFlags;
+
+/**
+ * \brief Sets general options associated with a CXIndex. 
+ *
+ * For example:
+ * \code
+ * CXIndex idx = ...;
+ * clang_CXIndex_setGlobalOptions(idx,
+ *     clang_CXIndex_getGlobalOptions(idx) |
+ *     CXGlobalOpt_ThreadBackgroundPriorityForIndexing);
+ * \endcode
+ *
+ * \param options A bitmask of options, a bitwise OR of CXGlobalOpt_XXX flags.
+ */
+CINDEX_LINKAGE void clang_CXIndex_setGlobalOptions(CXIndex, unsigned options);
+
+/**
+ * \brief Gets the general options associated with a CXIndex.
+ *
+ * \returns A bitmask of options, a bitwise OR of CXGlobalOpt_XXX flags that
+ * are associated with the given CXIndex object.
+ */
+CINDEX_LINKAGE unsigned clang_CXIndex_getGlobalOptions(CXIndex);
+
 /**
  * \defgroup CINDEX_FILES File manipulation routines
  *
@@ -2849,6 +2904,21 @@ CINDEX_LINKAGE CXString clang_constructUSR_ObjCProperty(const char *property,
 CINDEX_LINKAGE CXString clang_getCursorSpelling(CXCursor);
 
 /**
+ * \brief Retrieve a range for a piece that forms the cursors spelling name.
+ * Most of the times there is only one range for the complete spelling but for
+ * objc methods and objc message expressions, there are multiple pieces for each
+ * selector identifier.
+ * 
+ * \param pieceIndex the index of the spelling name piece. If this is greater
+ * than the actual number of pieces, it will return a NULL (invalid) range.
+ *  
+ * \param options Reserved.
+ */
+CINDEX_LINKAGE CXSourceRange clang_Cursor_getSpellingNameRange(CXCursor,
+                                                          unsigned pieceIndex,
+                                                          unsigned options);
+
+/**
  * \brief Retrieve the display name for the entity referenced by this cursor.
  *
  * The display name contains extra information that helps identify the cursor,
@@ -2930,6 +3000,20 @@ CINDEX_LINKAGE unsigned clang_isCursorDefinition(CXCursor);
  * \returns The canonical cursor for the entity referred to by the given cursor.
  */
 CINDEX_LINKAGE CXCursor clang_getCanonicalCursor(CXCursor);
+
+
+/**
+ * \brief If the cursor points to a selector identifier in a objc method or
+ * message expression, this returns the selector index.
+ *
+ * After getting a cursor with \see clang_getCursor, this can be called to
+ * determine if the location points to a selector identifier.
+ *
+ * \returns The selector index if the cursor is an objc method or message
+ * expression and the cursor is pointing to a selector identifier, or -1
+ * otherwise.
+ */
+CINDEX_LINKAGE int clang_Cursor_getObjCSelectorIndex(CXCursor);
 
 /**
  * @}

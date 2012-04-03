@@ -433,6 +433,9 @@ def err_default_arg_unparsed : Error<
   "unexpected end of default argument expression">;
 def err_parser_impl_limit_overflow : Error<
   "parser recursion limit reached, program too complex">, DefaultFatal;
+def err_misplaced_ellipsis_in_declaration : Error<
+  "'...' must %select{immediately precede declared identifier|"
+  "be innermost component of anonymous pack declaration}0">;
 
 // C++ derived classes
 def err_dup_virtual : Error<"duplicate 'virtual' in base specifier">;
@@ -482,6 +485,7 @@ def err_unknown_template_name : Error<
 def err_expected_comma_greater : Error<
   "expected ',' or '>' in template-parameter-list">;
 def err_expected_class_before : Error<"expected 'class' before '%0'">;
+def err_expected_class_instead : Error<"expected 'class' instead of '%0'">;
 def err_template_spec_syntax_non_template : Error<
   "identifier followed by '<' indicates a class template specialization but "
   "%0 %select{does not refer to a template|refers to a function "

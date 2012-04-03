@@ -53,6 +53,9 @@ static ExplodedNode::Auditor* CreateUbiViz();
 
 STATISTIC(NumFunctionTopLevel, "The # of functions at top level.");
 STATISTIC(NumFunctionsAnalyzed, "The # of functions analysed (as top level).");
+STATISTIC(NumBlocksInAnalyzedFunctions,
+                     "The # of basic blocks in the analyzed functions.");
+STATISTIC(PercentReachableBlocks, "The % of reachable basic blocks.");
 
 //===----------------------------------------------------------------------===//
 // Special PathDiagnosticConsumers.
@@ -104,6 +107,10 @@ public:
   /// Time the analyzes time of each translation unit.
   static llvm::Timer* TUTotalTimer;
 
+  /// The information about analyzed functions shared throughout the
+  /// translation unit.
+  FunctionSummariesTy FunctionSummaries;
+
   AnalysisConsumer(const Preprocessor& pp,
                    const std::string& outdir,
                    const AnalyzerOptions& opts,
@@ -118,6 +125,13 @@ public:
   }
 
   ~AnalysisConsumer() {
+    // Count how many basic blocks we have not covered.
+    NumBlocksInAnalyzedFunctions = FunctionSummaries.getTotalNumBasicBlocks();
+    if (NumBlocksInAnalyzedFunctions > 0)
+      PercentReachableBlocks =
+        (FunctionSummaries.getTotalNumVisitedBasicBlocks() * 100) /
+          NumBlocksInAnalyzedFunctions;
+
     if (Opts.PrintStats)
       delete TUTotalTimer;
   }
@@ -204,7 +218,7 @@ public:
                                   Opts.InlineMaxStackDepth,
                                   Opts.InlineMaxFunctionSize,
                                   Opts.InliningMode,
-                                  Opts.RetryExhausted));
+                                  Opts.NoRetryExhausted));
   }
 
   virtual void HandleTranslationUnit(ASTContext &C);
@@ -449,7 +463,7 @@ void AnalysisConsumer::ActionExprEngine(Decl *D, bool ObjCGCEnabled,
   if (!Mgr->getCFG(D))
     return;
 
-  ExprEngine Eng(*Mgr, ObjCGCEnabled, VisitedCallees);
+  ExprEngine Eng(*Mgr, ObjCGCEnabled, VisitedCallees, &FunctionSummaries);
 
   // Set the graph auditor.
   OwningPtr<ExplodedNode::Auditor> Auditor;

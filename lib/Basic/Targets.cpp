@@ -509,7 +509,7 @@ public:
   SolarisTargetInfo(const std::string& triple)
     : OSTargetInfo<Target>(triple) {
     this->UserLabelPrefix = "";
-    this->WCharType = this->SignedLong;
+    this->WCharType = this->SignedInt;
     // FIXME: WIntType should be SignedLong
   }
 };
@@ -2791,6 +2791,7 @@ public:
       .Cases("arm1156t2-s", "arm1156t2f-s", "6T2")
       .Cases("cortex-a8", "cortex-a9", "7A")
       .Case("cortex-m3", "7M")
+      .Case("cortex-m4", "7M")
       .Case("cortex-m0", "6M")
       .Default(0);
   }
@@ -3521,6 +3522,9 @@ public:
     case 'd': // Equivalent to "r" unless generating MIPS16 code.
     case 'y': // Equivalent to "r", backwards compatibility only.
     case 'f': // floating-point registers.
+    case 'c': // $25 for indirect jumps
+    case 'l': // lo register
+    case 'x': // hilo register pair
       Info.setAllowsRegister();
       return true;
     }
@@ -3847,6 +3851,7 @@ public:
     if (Opts.CPlusPlus)
       Builder.defineMacro("_GNU_SOURCE");
 
+    Builder.defineMacro("__LITTLE_ENDIAN__");
     Builder.defineMacro("__native_client__");
     getArchDefines(Opts, Builder);
   }

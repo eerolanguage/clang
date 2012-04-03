@@ -108,6 +108,28 @@ static AvailabilityResult DiagnoseAvailabilityOfDecl(Sema &S,
     return Result;
 }
 
+/// \brief Emit a note explaining that this function is deleted or unavailable.
+void Sema::NoteDeletedFunction(FunctionDecl *Decl) {
+  CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(Decl);
+
+  if (Method && Method->isDeleted() && !Method->isDeletedAsWritten()) {
+    // If the method was explicitly defaulted, point at that declaration.
+    if (!Method->isImplicit())
+      Diag(Decl->getLocation(), diag::note_implicitly_deleted);
+
+    // Try to diagnose why this special member function was implicitly
+    // deleted. This might fail, if that reason no longer applies.
+    CXXSpecialMember CSM = getSpecialMember(Method);
+    if (CSM != CXXInvalid)
+      ShouldDeleteSpecialMember(Method, CSM, /*Diagnose=*/true);
+
+    return;
+  }
+
+  Diag(Decl->getLocation(), diag::note_unavailable_here)
+    << 1 << Decl->isDeleted();
+}
+
 /// \brief Determine whether the use of this declaration is valid, and
 /// emit any corresponding diagnostics.
 ///
@@ -151,7 +173,7 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
   if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
     if (FD->isDeleted()) {
       Diag(Loc, diag::err_deleted_function_use);
-      Diag(D->getLocation(), diag::note_unavailable_here) << 1 << true;
+      NoteDeletedFunction(FD);
       return true;
     }
   }
@@ -3115,18 +3137,18 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
     BaseExpr = LHSExp;
     IndexExpr = RHSExp;
     ResultType = PTy->getPointeeType();
-  } else if (const PointerType *PTy = RHSTy->getAs<PointerType>()) {
-     // Handle the uncommon case of "123[Ptr]".
-    BaseExpr = RHSExp;
-    IndexExpr = LHSExp;
-    ResultType = PTy->getPointeeType();
   } else if (const ObjCObjectPointerType *PTy =
-               LHSTy->getAs<ObjCObjectPointerType>()) {
+             LHSTy->getAs<ObjCObjectPointerType>()) {
     BaseExpr = LHSExp;
     IndexExpr = RHSExp;
     Result = BuildObjCSubscriptExpression(RLoc, BaseExpr, IndexExpr, 0, 0);
     if (!Result.isInvalid())
       return Owned(Result.take());
+    ResultType = PTy->getPointeeType();
+  } else if (const PointerType *PTy = RHSTy->getAs<PointerType>()) {
+     // Handle the uncommon case of "123[Ptr]".
+    BaseExpr = RHSExp;
+    IndexExpr = LHSExp;
     ResultType = PTy->getPointeeType();
   } else if (const ObjCObjectPointerType *PTy =
                RHSTy->getAs<ObjCObjectPointerType>()) {
@@ -10087,6 +10109,17 @@ bool Sema::tryCaptureVariable(VarDecl *Var, SourceLocation Loc,
         return true;
       }
 
+      // Forbid the block-capture of autoreleasing variables.
+      if (CaptureType.getObjCLifetime() == Qualifiers::OCL_Autoreleasing) {
+        if (BuildAndDiagnose) {
+          Diag(Loc, diag::err_arc_autoreleasing_capture)
+            << /*block*/ 0;
+          Diag(Var->getLocation(), diag::note_previous_decl)
+            << Var->getDeclName();
+        }
+        return true;
+      }
+
       if (HasBlocksAttr || CaptureType->isReferenceType()) {
         // Block capture by reference does not change the capture or
         // declaration reference types.
@@ -10178,6 +10211,16 @@ bool Sema::tryCaptureVariable(VarDecl *Var, SourceLocation Loc,
       if (const ReferenceType *RefType = CaptureType->getAs<ReferenceType>()){
         if (!RefType->getPointeeType()->isFunctionType())
           CaptureType = RefType->getPointeeType();
+      }
+
+      // Forbid the lambda copy-capture of autoreleasing variables.
+      if (CaptureType.getObjCLifetime() == Qualifiers::OCL_Autoreleasing) {
+        if (BuildAndDiagnose) {
+          Diag(Loc, diag::err_arc_autoreleasing_capture) << /*lambda*/ 1;
+          Diag(Var->getLocation(), diag::note_previous_decl)
+            << Var->getDeclName();
+        }
+        return true;
       }
     }
 

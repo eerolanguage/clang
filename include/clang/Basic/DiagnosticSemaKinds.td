@@ -27,7 +27,12 @@ def err_typecheck_converted_constant_expression_disallowed : Error<
 def err_expr_not_cce : Error<
   "%select{case value|enumerator value|non-type template argument}0 "
   "is not a constant expression">;
-def err_cce_narrowing : Error<
+def err_cce_narrowing : ExtWarn<
+  "%select{case value|enumerator value|non-type template argument}0 "
+  "%select{cannot be narrowed from type %2 to %3|"
+  "evaluates to %2, which cannot be narrowed to type %3}1">,
+  InGroup<CXX11Narrowing>, DefaultError;
+def err_cce_narrowing_sfinae : Error<
   "%select{case value|enumerator value|non-type template argument}0 "
   "%select{cannot be narrowed from type %2 to %3|"
   "evaluates to %2, which cannot be narrowed to type %3}1">;
@@ -1184,6 +1189,10 @@ def warn_cxx98_compat_temp_copy : Warning<
   "an inaccessible constructor|find no viable constructor|find ambiguous "
   "constructors|invoke a deleted constructor}0 in C++98">,
   InGroup<CXX98CompatBindToTemporaryCopy>, DefaultIgnore;
+def err_selected_explicit_constructor : Error<
+  "chosen constructor is explicit in copy-initialization">;
+def note_constructor_declared_here : Note<
+  "constructor declared here">;
 
 // C++11 decltype
 def err_decltype_in_declarator : Error<
@@ -1980,8 +1989,9 @@ def note_ovl_candidate_deleted : Note<
     "constructor (the implicit move constructor)|"
     "function (the implicit copy assignment operator)|"
     "function (the implicit move assignment operator)|"
-    "constructor (inherited)}0%1 "
-    "has been explicitly %select{made unavailable|deleted}2">;
+    "constructor (inherited)}0%1 has been "
+    "%select{explicitly made unavailable|explicitly deleted|"
+    "implicitly deleted}2">;
 
 // Giving the index of the bad argument really clutters this message, and
 // it's relatively unimportant because 1) it's generally obvious which
@@ -2499,7 +2509,7 @@ def err_function_template_spec_no_match : Error<
     "no function template matches function template specialization %0">;
 def err_function_template_spec_ambiguous : Error<
     "function template specialization %0 ambiguously refers to more than one "
-    "function template; explicitly specify%select{|additional }1 template "
+    "function template; explicitly specify%select{| additional}1 template "
     "arguments to identify a particular function template">;
 def note_function_template_spec_matched : Note<
     "function template matches specialization %0">;
@@ -2789,6 +2799,8 @@ def warn_unavailable_fwdclass_message : Warning<
 def note_unavailable_here : Note<
   "%select{declaration|function}0 has been explicitly marked "
   "%select{unavailable|deleted|deprecated}1 here">;
+def note_implicitly_deleted : Note<
+  "explicitly defaulted function was implicitly deleted here">;
 def warn_not_enough_argument : Warning<
   "not enough variable arguments in %0 declaration to fit a sentinel">,
   InGroup<Sentinel>;
@@ -2815,6 +2827,34 @@ def err_redefinition_extern_inline : Error<
 def warn_cxx98_compat_friend_redefinition : Warning<
   "friend function %0 would be implicitly redefined in C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
+
+def note_deleted_dtor_no_operator_delete : Note<
+  "virtual destructor requires an unambiguous, accessible 'operator delete'">;
+def note_deleted_special_member_class_subobject : Note<
+  "%select{default constructor|copy constructor|move constructor|"
+  "copy assignment operator|move assignment operator|destructor}0 of "
+  "%select{||||union }4%1 is implicitly deleted because "
+  "%select{base class %3|field %3}2 has "
+  "%select{no|a deleted|multiple|an inaccessible|a non-trivial}4 "
+  "%select{%select{default constructor|copy constructor|move constructor|copy "
+  "assignment operator|move assignment operator|destructor}0|destructor}5"
+  "%select{||s||}4">;
+def note_deleted_default_ctor_uninit_field : Note<
+  "default constructor of %0 is implicitly deleted because field %1 of "
+  "%select{reference|const-qualified}3 type %2 would not be initialized">;
+def note_deleted_default_ctor_all_const : Note<
+  "default constructor of %0 is implicitly deleted because all "
+  "%select{data members|data members of an anonymous union member}1"
+  " are const-qualified">;
+def note_deleted_copy_ctor_rvalue_reference : Note<
+  "copy constructor of %0 is implicitly deleted because field %1 is of "
+  "rvalue reference type %2">;
+def note_deleted_copy_user_declared_move : Note<
+  "copy %select{constructor|assignment operator}0 is implicitly deleted because"
+  " %1 has a user-declared move %select{constructor|assignment operator}2">;
+def note_deleted_assign_field : Note<
+  "%select{copy|move}0 assignment operator of %0 is implicitly deleted "
+  "because field %1 is of %select{reference|const-qualified}3 type %2">;
 
 // This should eventually be an error.
 def warn_undefined_internal : Warning<
@@ -2990,18 +3030,18 @@ def err_illegal_initializer : Error<
 def err_illegal_initializer_type : Error<"illegal initializer type %0">;
 def err_init_list_type_narrowing_sfinae : Error<
   "type %0 cannot be narrowed to %1 in initializer list">;
-def err_init_list_type_narrowing : Warning<
+def err_init_list_type_narrowing : ExtWarn<
   "type %0 cannot be narrowed to %1 in initializer list">, 
   InGroup<CXX11Narrowing>, DefaultError;
 def err_init_list_variable_narrowing_sfinae : Error<
   "non-constant-expression cannot be narrowed from type %0 to %1 in "
   "initializer list">;
-def err_init_list_variable_narrowing : Warning<
+def err_init_list_variable_narrowing : ExtWarn<
   "non-constant-expression cannot be narrowed from type %0 to %1 in "
   "initializer list">, InGroup<CXX11Narrowing>, DefaultError;
 def err_init_list_constant_narrowing_sfinae : Error<
   "constant expression evaluates to %0 which cannot be narrowed to type %1">;
-def err_init_list_constant_narrowing : Warning<
+def err_init_list_constant_narrowing : ExtWarn<
   "constant expression evaluates to %0 which cannot be narrowed to type %1">,
   InGroup<CXX11Narrowing>, DefaultError;
 def warn_init_list_type_narrowing : Warning<
@@ -3265,6 +3305,9 @@ def warn_err_new_delete_object_array : Warning<
 def err_arc_autoreleasing_var : Error<
   "%select{__block variables|global variables|fields|ivars}0 cannot have "
   "__autoreleasing ownership">;
+def err_arc_autoreleasing_capture : Error<
+  "cannot capture __autoreleasing variable in a "
+  "%select{block|lambda by copy}0">;
 def err_arc_thread_ownership : Error<
   "thread-local variable has non-trivial ownership: type is %0">;
 def err_arc_indirect_no_ownership : Error<
@@ -3779,8 +3822,11 @@ def err_objc_multiple_subscript_type_conversion : Error<
   "indexing expression is invalid because subscript type %0 has "
   "multiple type conversion functions">;
 def err_objc_subscript_type_conversion : Error<
-  "indexing expression is invalid because subscript type %0 is not an intergal"
-  "or objective-C pointer type">;
+  "indexing expression is invalid because subscript type %0 is not an integral"
+  " or objective-C pointer type">;
+def err_objc_subscript_pointer : Error<
+  "indexing expression is invalid because subscript type %0 is not an"
+  " objective-C pointer">;
 def err_objc_indexing_method_result_type : Error<
   "method for accessing %select{dictionary|array}1 element must have Objective-C"
   " object return type instead of %0">;

@@ -24,15 +24,19 @@ namespace llvm {
   class CrashRecoveryContext;
 }
 
+namespace clang {
+
 class CIndexer {
   bool OnlyLocalDecls;
   bool DisplayDiagnostics;
+  unsigned Options; // CXGlobalOptFlags.
 
   llvm::sys::Path ResourcesPath;
   std::string WorkingDir;
 
 public:
- CIndexer() : OnlyLocalDecls(false), DisplayDiagnostics(false) { }
+ CIndexer() : OnlyLocalDecls(false), DisplayDiagnostics(false),
+              Options(CXGlobalOpt_None) { }
   
   /// \brief Whether we only want to see "local" declarations (that did not
   /// come from a previous precompiled header). If false, we want to see all
@@ -45,6 +49,13 @@ public:
     DisplayDiagnostics = Display;
   }
 
+  unsigned getCXGlobalOptFlags() const { return Options; }
+  void setCXGlobalOptFlags(unsigned options) { Options = options; }
+
+  bool isOptEnabled(CXGlobalOptFlags opt) const {
+    return Options & opt;
+  }
+
   /// \brief Get the path of the clang resource files.
   std::string getClangResourcesPath();
 
@@ -52,7 +63,6 @@ public:
   void setWorkingDirectory(const std::string &Dir) { WorkingDir = Dir; }
 };
 
-namespace clang {
   /**
    * \brief Given a set of "unsaved" files, create temporary files and 
    * construct the clang -cc1 argument list needed to perform the remapping.
@@ -77,6 +87,10 @@ namespace clang {
   /// \return False if a crash was detected.
   bool RunSafely(llvm::CrashRecoveryContext &CRC,
                  void (*Fn)(void*), void *UserData, unsigned Size = 0);
+
+  /// \brief Set the thread priority to background.
+  /// FIXME: Move to llvm/Support.
+  void setThreadBackgroundPriority();
 
   /// \brief Print libclang's resource usage to standard error.
   void PrintLibclangResourceUsage(CXTranslationUnit TU);

@@ -171,7 +171,8 @@ static void PrintRange(CXSourceRange R, const char *str) {
   if (!begin_file || !end_file)
     return;
 
-  printf(" %s=", str);
+  if (str)
+    printf(" %s=", str);
   PrintExtent(stdout, begin_line, begin_column, end_line, end_column);
 }
 
@@ -1439,7 +1440,31 @@ static int inspect_cursor_at(int argc, const char **argv) {
       if (I + 1 == Repeats) {
         CXCompletionString completionString = clang_getCursorCompletionString(
                                                                         Cursor);
+        CXSourceLocation CursorLoc = clang_getCursorLocation(Cursor);
+        CXString Spelling;
+        const char *cspell;
+        unsigned line, column;
+        clang_getSpellingLocation(CursorLoc, 0, &line, &column, 0);
+        printf("%d:%d ", line, column);
         PrintCursor(Cursor);
+        PrintCursorExtent(Cursor);
+        Spelling = clang_getCursorSpelling(Cursor);
+        cspell = clang_getCString(Spelling);
+        if (cspell && strlen(cspell) != 0) {
+          unsigned pieceIndex;
+          printf(" Spelling=%s (", cspell);
+          for (pieceIndex = 0; ; ++pieceIndex) {
+            CXSourceRange range =
+              clang_Cursor_getSpellingNameRange(Cursor, pieceIndex, 0);
+            if (clang_Range_isNull(range))
+              break;
+            PrintRange(range, 0);
+          }
+          printf(")");
+        }
+        clang_disposeString(Spelling);
+        if (clang_Cursor_getObjCSelectorIndex(Cursor) != -1)
+          printf(" Selector index=%d",clang_Cursor_getObjCSelectorIndex(Cursor));
         if (completionString != NULL) {
           printf("\nCompletion string: ");
           print_completion_string(completionString, stdout);

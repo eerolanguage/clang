@@ -2311,8 +2311,9 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
     CXXDestructorDecl *DD = RD->getDestructor();
     assert(DD && "record without a destructor");
     Result->setMethod(DD);
-    Result->setSuccess(!DD->isDeleted());
-    Result->setConstParamMatch(false);
+    Result->setKind(DD->isDeleted() ?
+                    SpecialMemberOverloadResult::NoMemberOrDeleted :
+                    SpecialMemberOverloadResult::SuccessNonConst);
     return Result;
   }
 
@@ -2382,7 +2383,8 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
   // will always be a (possibly implicit) declaration to shadow any others.
   OverloadCandidateSet OCS((SourceLocation()));
   DeclContext::lookup_iterator I, E;
-  Result->setConstParamMatch(false);
+  SpecialMemberOverloadResult::Kind SuccessKind =
+      SpecialMemberOverloadResult::SuccessNonConst;
 
   llvm::tie(I, E) = RD->lookup(Name);
   assert((I != E) &&
@@ -2421,7 +2423,7 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
         QualType ArgType = M->getType()->getAs<FunctionProtoType>()->getArgType(0);
         if (!ArgType->isReferenceType() ||
             ArgType->getPointeeType().isConstQualified())
-          Result->setConstParamMatch(true);
+          SuccessKind = SpecialMemberOverloadResult::SuccessConst;
       }
     } else if (FunctionTemplateDecl *Tmpl =
                  dyn_cast<FunctionTemplateDecl>(Cand)) {
@@ -2443,18 +2445,22 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
   switch (OCS.BestViableFunction(*this, SourceLocation(), Best)) {
     case OR_Success:
       Result->setMethod(cast<CXXMethodDecl>(Best->Function));
-      Result->setSuccess(true);
+      Result->setKind(SuccessKind);
       break;
 
     case OR_Deleted:
       Result->setMethod(cast<CXXMethodDecl>(Best->Function));
-      Result->setSuccess(false);
+      Result->setKind(SpecialMemberOverloadResult::NoMemberOrDeleted);
       break;
 
     case OR_Ambiguous:
+      Result->setMethod(0);
+      Result->setKind(SpecialMemberOverloadResult::Ambiguous);
+      break;
+
     case OR_No_Viable_Function:
       Result->setMethod(0);
-      Result->setSuccess(false);
+      Result->setKind(SpecialMemberOverloadResult::NoMemberOrDeleted);
       break;
   }
 

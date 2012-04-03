@@ -52,10 +52,11 @@ using namespace clang::cxcursor;
 using namespace clang::cxstring;
 using namespace clang::cxtu;
 
-CXTranslationUnit cxtu::MakeCXTranslationUnit(ASTUnit *TU) {
+CXTranslationUnit cxtu::MakeCXTranslationUnit(CIndexer *CIdx, ASTUnit *TU) {
   if (!TU)
     return 0;
   CXTranslationUnit D = new CXTranslationUnitImpl();
+  D->CIdx = CIdx;
   D->TUData = TU;
   D->StringPool = createCXStringPool();
   D->Diagnostics = 0;
@@ -2411,12 +2412,31 @@ CXIndex clang_createIndex(int excludeDeclarationsFromPCH,
     CIdxr->setOnlyLocalDecls();
   if (displayDiagnostics)
     CIdxr->setDisplayDiagnostics();
+
+  if (getenv("LIBCLANG_BGPRIO_INDEX"))
+    CIdxr->setCXGlobalOptFlags(CIdxr->getCXGlobalOptFlags() |
+                               CXGlobalOpt_ThreadBackgroundPriorityForIndexing);
+  if (getenv("LIBCLANG_BGPRIO_EDIT"))
+    CIdxr->setCXGlobalOptFlags(CIdxr->getCXGlobalOptFlags() |
+                               CXGlobalOpt_ThreadBackgroundPriorityForEditing);
+
   return CIdxr;
 }
 
 void clang_disposeIndex(CXIndex CIdx) {
   if (CIdx)
     delete static_cast<CIndexer *>(CIdx);
+}
+
+void clang_CXIndex_setGlobalOptions(CXIndex CIdx, unsigned options) {
+  if (CIdx)
+    static_cast<CIndexer *>(CIdx)->setCXGlobalOptFlags(options);
+}
+
+unsigned clang_CXIndex_getGlobalOptions(CXIndex CIdx) {
+  if (CIdx)
+    return static_cast<CIndexer *>(CIdx)->getCXGlobalOptFlags();
+  return 0;
 }
 
 void clang_toggleCrashRecovery(unsigned isEnabled) {
@@ -2441,7 +2461,7 @@ CXTranslationUnit clang_createTranslationUnit(CXIndex CIdx,
                                   0, 0,
                                   /*CaptureDiagnostics=*/true,
                                   /*AllowPCHWithCompilerErrors=*/true);
-  return MakeCXTranslationUnit(TU);
+  return MakeCXTranslationUnit(CXXIdx, TU);
 }
 
 unsigned clang_defaultEditingTranslationUnitOptions() {
@@ -2489,6 +2509,9 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
     return;
 
   CIndexer *CXXIdx = static_cast<CIndexer *>(CIdx);
+
+  if (CXXIdx->isOptEnabled(CXGlobalOpt_ThreadBackgroundPriorityForIndexing))
+    setThreadBackgroundPriority();
 
   bool PrecompilePreamble = options & CXTranslationUnit_PrecompiledPreamble;
   // FIXME: Add a flag for modules.
@@ -2601,7 +2624,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
     }
   }
 
-  PTUI->result = MakeCXTranslationUnit(Unit.take());
+  PTUI->result = MakeCXTranslationUnit(CXXIdx, Unit.take());
 }
 CXTranslationUnit clang_parseTranslationUnit(CXIndex CIdx,
                                              const char *source_filename,
@@ -2647,16 +2670,67 @@ CXTranslationUnit clang_parseTranslationUnit(CXIndex CIdx,
 unsigned clang_defaultSaveOptions(CXTranslationUnit TU) {
   return CXSaveTranslationUnit_None;
 }  
-  
+
+namespace {
+
+struct SaveTranslationUnitInfo {
+  CXTranslationUnit TU;
+  const char *FileName;
+  unsigned options;
+  CXSaveError result;
+};
+
+}
+
+static void clang_saveTranslationUnit_Impl(void *UserData) {
+  SaveTranslationUnitInfo *STUI =
+    static_cast<SaveTranslationUnitInfo*>(UserData);
+
+  CIndexer *CXXIdx = (CIndexer*)STUI->TU->CIdx;
+  if (CXXIdx->isOptEnabled(CXGlobalOpt_ThreadBackgroundPriorityForIndexing))
+    setThreadBackgroundPriority();
+
+  STUI->result = static_cast<ASTUnit *>(STUI->TU->TUData)->Save(STUI->FileName);
+}
+
 int clang_saveTranslationUnit(CXTranslationUnit TU, const char *FileName,
                               unsigned options) {
   if (!TU)
     return CXSaveError_InvalidTU;
-  
-  CXSaveError result = static_cast<ASTUnit *>(TU->TUData)->Save(FileName);
-  if (getenv("LIBCLANG_RESOURCE_USAGE"))
+
+  ASTUnit *CXXUnit = static_cast<ASTUnit *>(TU->TUData);
+  ASTUnit::ConcurrencyCheck Check(*CXXUnit);
+
+  SaveTranslationUnitInfo STUI = { TU, FileName, options, CXSaveError_None };
+
+  if (!CXXUnit->getDiagnostics().hasUnrecoverableErrorOccurred() ||
+      getenv("LIBCLANG_NOTHREADS")) {
+    clang_saveTranslationUnit_Impl(&STUI);
+
+    if (getenv("LIBCLANG_RESOURCE_USAGE"))
+      PrintLibclangResourceUsage(TU);
+
+    return STUI.result;
+  }
+
+  // We have an AST that has invalid nodes due to compiler errors.
+  // Use a crash recovery thread for protection.
+
+  llvm::CrashRecoveryContext CRC;
+
+  if (!RunSafely(CRC, clang_saveTranslationUnit_Impl, &STUI)) {
+    fprintf(stderr, "libclang: crash detected during AST saving: {\n");
+    fprintf(stderr, "  'filename' : '%s'\n", FileName);
+    fprintf(stderr, "  'options' : %d,\n", options);
+    fprintf(stderr, "}\n");
+
+    return CXSaveError_Unknown;
+
+  } else if (getenv("LIBCLANG_RESOURCE_USAGE")) {
     PrintLibclangResourceUsage(TU);
-  return result;
+  }
+
+  return STUI.result;
 }
 
 void clang_disposeTranslationUnit(CXTranslationUnit CTUnit) {
@@ -2702,6 +2776,10 @@ static void clang_reparseTranslationUnit_Impl(void *UserData) {
 
   if (!TU)
     return;
+
+  CIndexer *CXXIdx = (CIndexer*)TU->CIdx;
+  if (CXXIdx->isOptEnabled(CXGlobalOpt_ThreadBackgroundPriorityForEditing))
+    setThreadBackgroundPriority();
 
   ASTUnit *CXXUnit = static_cast<ASTUnit *>(TU->TUData);
   ASTUnit::ConcurrencyCheck Check(*CXXUnit);
@@ -2823,8 +2901,17 @@ static Decl *getDeclFromExpr(Stmt *E) {
     return ME->getMemberDecl();
   if (ObjCIvarRefExpr *RE = dyn_cast<ObjCIvarRefExpr>(E))
     return RE->getDecl();
-  if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(E))
-    return PRE->isExplicitProperty() ? PRE->getExplicitProperty() : 0;
+  if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(E)) {
+    if (PRE->isExplicitProperty())
+      return PRE->getExplicitProperty();
+    // It could be messaging both getter and setter as in:
+    // ++myobj.myprop;
+    // in which case prefer to associate the setter since it is less obvious
+    // from inspecting the source that the setter is going to get called.
+    if (PRE->isMessagingSetter())
+      return PRE->getImplicitPropertySetter();
+    return PRE->getImplicitPropertyGetter();
+  }
   if (PseudoObjectExpr *POE = dyn_cast<PseudoObjectExpr>(E))
     return getDeclFromExpr(POE->getSyntacticForm());
   if (OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(E))
@@ -2866,6 +2953,8 @@ static SourceLocation getLocationFromExpr(Expr *E) {
     return Ivar->getLocation();
   if (SizeOfPackExpr *SizeOfPack = dyn_cast<SizeOfPackExpr>(E))
     return SizeOfPack->getPackLoc();
+  if (ObjCPropertyRefExpr *PropRef = dyn_cast<ObjCPropertyRefExpr>(E))
+    return PropRef->getLocation();
   
   return E->getLocStart();
 }
@@ -3076,6 +3165,63 @@ CXString clang_getCursorSpelling(CXCursor C) {
   }
 
   return createCXString("");
+}
+
+CXSourceRange clang_Cursor_getSpellingNameRange(CXCursor C,
+                                                unsigned pieceIndex,
+                                                unsigned options) {
+  if (clang_Cursor_isNull(C))
+    return clang_getNullRange();
+
+  ASTContext &Ctx = getCursorContext(C);
+
+  if (clang_isStatement(C.kind)) {
+    Stmt *S = getCursorStmt(C);
+    if (LabelStmt *Label = dyn_cast_or_null<LabelStmt>(S)) {
+      if (pieceIndex > 0)
+        return clang_getNullRange();
+      return cxloc::translateSourceRange(Ctx, Label->getIdentLoc());
+    }
+
+    return clang_getNullRange();
+  }
+
+  if (C.kind == CXCursor_ObjCMessageExpr) {
+    if (ObjCMessageExpr *
+          ME = dyn_cast_or_null<ObjCMessageExpr>(getCursorExpr(C))) {
+      if (pieceIndex >= ME->getNumSelectorLocs())
+        return clang_getNullRange();
+      return cxloc::translateSourceRange(Ctx, ME->getSelectorLoc(pieceIndex));
+    }
+  }
+
+  if (C.kind == CXCursor_ObjCInstanceMethodDecl ||
+      C.kind == CXCursor_ObjCClassMethodDecl) {
+    if (ObjCMethodDecl *
+          MD = dyn_cast_or_null<ObjCMethodDecl>(getCursorDecl(C))) {
+      if (pieceIndex >= MD->getNumSelectorLocs())
+        return clang_getNullRange();
+      return cxloc::translateSourceRange(Ctx, MD->getSelectorLoc(pieceIndex));
+    }
+  }
+
+  // FIXME: A CXCursor_InclusionDirective should give the location of the
+  // filename, but we don't keep track of this.
+
+  // FIXME: A CXCursor_AnnotateAttr should give the location of the annotation
+  // but we don't keep track of this.
+
+  // FIXME: A CXCursor_AsmLabelAttr should give the location of the label
+  // but we don't keep track of this.
+
+  // Default handling, give the location of the cursor.
+
+  if (pieceIndex > 0)
+    return clang_getNullRange();
+
+  CXSourceLocation CXLoc = clang_getCursorLocation(C);
+  SourceLocation Loc = cxloc::translateSourceLocation(CXLoc);
+  return cxloc::translateSourceRange(Ctx, Loc);
 }
 
 CXString clang_getCursorDisplayName(CXCursor C) {
@@ -4279,6 +4425,10 @@ CXCursor clang_getCanonicalCursor(CXCursor C) {
   
   return C;
 }
+
+int clang_Cursor_getObjCSelectorIndex(CXCursor cursor) {
+  return cxcursor::getSelectorIdentifierIndexAndLoc(cursor).first;
+}
   
 unsigned clang_getNumOverloadedDecls(CXCursor C) {
   if (C.kind != CXCursor_OverloadedDeclRef)
@@ -5086,6 +5236,10 @@ static void clang_annotateTokensImpl(void *UserData) {
   const unsigned NumTokens = ((clang_annotateTokens_Data*)UserData)->NumTokens;
   CXCursor *Cursors = ((clang_annotateTokens_Data*)UserData)->Cursors;
 
+  CIndexer *CXXIdx = (CIndexer*)TU->CIdx;
+  if (CXXIdx->isOptEnabled(CXGlobalOpt_ThreadBackgroundPriorityForEditing))
+    setThreadBackgroundPriority();
+
   // Determine the region of interest, which contains all of the tokens.
   SourceRange RegionOfInterest;
   RegionOfInterest.setBegin(
@@ -5657,6 +5811,13 @@ void SetSafetyThreadStackSize(unsigned Value) {
   SafetyStackThreadSize = Value;
 }
 
+}
+
+void clang::setThreadBackgroundPriority() {
+  // FIXME: Move to llvm/Support and make it cross-platform.
+#ifdef __APPLE__
+  setpriority(PRIO_DARWIN_THREAD, 0, PRIO_DARWIN_BG);
+#endif
 }
 
 extern "C" {

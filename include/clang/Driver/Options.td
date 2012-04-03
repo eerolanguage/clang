@@ -21,6 +21,7 @@ include "OptParser.td"
 def CompileOnly_Group     : OptionGroup<"<CompileOnly group>">;
 
 def I_Group               : OptionGroup<"<I group>">, Group<CompileOnly_Group>;
+def L_Group               : OptionGroup<"<L group>">, Group<CompileOnly_Group>;
 def M_Group               : OptionGroup<"<M group>">, Group<CompileOnly_Group>;
 def T_Group               : OptionGroup<"<T group>">;
 def O_Group               : OptionGroup<"<O group>">, Group<CompileOnly_Group>;
@@ -736,6 +737,8 @@ def read__only__relocs : Separate<"-read_only_relocs">;
 def remap : Flag<"-remap">;
 def rewrite_objc : Flag<"-rewrite-objc">, Flags<[DriverOption]>,
   HelpText<"Rewrite Objective-C source to C++">;
+def rewrite_legacy_objc : Flag<"-rewrite-legacy-objc">, Flags<[DriverOption]>,
+  HelpText<"Rewrite Legacy Objective-C source to C++">;
 def rdynamic : Flag<"-rdynamic">;
 def rpath : Separate<"-rpath">, Flags<[LinkerInput]>;
 def rtlib_EQ : Joined<"-rtlib=">;
@@ -765,7 +768,7 @@ def static_libgcc : Flag<"-static-libgcc">;
 def static_libstdcxx : Flag<"-static-libstdc++">;
 def static : Flag<"-static">, Flags<[NoArgumentUnused]>;
 def std_default_EQ : Joined<"-std-default=">;
-def std_EQ : Joined<"-std=">;
+def std_EQ : Joined<"-std=">, Group<L_Group>;
 def stdlib_EQ : Joined<"-stdlib=">;
 def sub__library : JoinedOrSeparate<"-sub_library">;
 def sub__umbrella : JoinedOrSeparate<"-sub_umbrella">;
