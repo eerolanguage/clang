@@ -3610,8 +3610,6 @@ Sema::ActOnCallExpr(Scope *S, Expr *Fn, SourceLocation LParenLoc,
           << FixItHint::CreateRemoval(
                                     SourceRange(Args[0]->getLocStart(),
                                                 Args[NumArgs-1]->getLocEnd()));
-
-        NumArgs = 0;
       }
 
       return Owned(new (Context) CallExpr(Context, Fn, 0, 0, Context.VoidTy,
@@ -8548,11 +8546,25 @@ static Expr *maybeRebuildARCConsumingStmt(Stmt *Statement) {
   return cleanups;
 }
 
+void Sema::ActOnStartStmtExpr() {
+  PushExpressionEvaluationContext(ExprEvalContexts.back().Context);
+}
+
+void Sema::ActOnStmtExprError() {
+  DiscardCleanupsInEvaluationContext();
+  PopExpressionEvaluationContext();
+}
+
 ExprResult
 Sema::ActOnStmtExpr(SourceLocation LPLoc, Stmt *SubStmt,
                     SourceLocation RPLoc) { // "({..})"
   assert(SubStmt && isa<CompoundStmt>(SubStmt) && "Invalid action invocation!");
   CompoundStmt *Compound = cast<CompoundStmt>(SubStmt);
+
+  if (hasAnyUnrecoverableErrorsInThisFunction())
+    DiscardCleanupsInEvaluationContext();
+  assert(!ExprNeedsCleanups && "cleanups within StmtExpr not correctly bound!");
+  PopExpressionEvaluationContext();
 
   bool isFileScope
     = (getCurFunctionOrMethodDecl() == 0) && (getCurBlock() == 0);

@@ -2813,8 +2813,10 @@ public:
   ExprResult ActOnAddrLabel(SourceLocation OpLoc, SourceLocation LabLoc,
                             LabelDecl *TheDecl);
 
+  void ActOnStartStmtExpr();
   ExprResult ActOnStmtExpr(SourceLocation LPLoc, Stmt *SubStmt,
                            SourceLocation RPLoc); // "({..})"
+  void ActOnStmtExprError();
 
   // __builtin_offsetof(type, identifier(.identifier|[expr])*)
   struct OffsetOfComponent {
