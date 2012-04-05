@@ -652,6 +652,9 @@ def warn_arc_perform_selector_leaks : Warning<
   InGroup<DiagGroup<"arc-performSelector-leaks">>;
 def err_gc_weak_property_strong_type : Error<
   "weak attribute declared on a __strong type property in GC mode">;
+def warn_receiver_is_weak : Warning <
+  "weak receiver may be unpredictably null in ARC mode">,
+  InGroup<DiagGroup<"receiver-is-weak">>, DefaultIgnore;
 
 def error_synthesized_ivar_yet_not_supported : Error<
   "instance variable synthesis not yet supported"
@@ -1729,7 +1732,7 @@ def warn_impcast_bitfield_precision_constant : Warning<
 def warn_impcast_literal_float_to_integer : Warning<
   "implicit conversion turns literal floating-point number into integer: "
   "%0 to %1">,
-  InGroup<LiteralConversion>, DefaultIgnore;
+  InGroup<LiteralConversion>;
 def warn_impcast_string_literal_to_bool : Warning<
   "implicit conversion turns string literal into bool: %0 to %1">,
   InGroup<StringConversion>, DefaultIgnore;
@@ -2358,14 +2361,22 @@ def err_template_arg_field : Error<
   "non-type template argument refers to non-static data member %0">;
 def err_template_arg_method : Error<
   "non-type template argument refers to non-static member function %0">;
-def err_template_arg_function_not_extern : Error<
-  "non-template argument refers to function %0 with internal linkage">;
-def err_template_arg_object_not_extern : Error<
-  "non-template argument refers to object %0 that does not have external "
-  "linkage">;
+def err_template_arg_object_no_linkage : Error<
+  "non-type template argument refers to %select{function|object}0 %1 that "
+  "does not have linkage">;
+def warn_cxx98_compat_template_arg_object_internal : Warning<
+  "non-type template argument referring to %select{function|object}0 %1 with "
+  "internal linkage is incompatible with C++98">,
+  InGroup<CXX98Compat>, DefaultIgnore;
+def ext_template_arg_object_internal : ExtWarn<
+  "non-type template argument referring to %select{function|object}0 %1 with "
+  "internal linkage is a C++11 extension">, InGroup<CXX11>;
+def err_template_arg_thread_local : Error<
+  "non-type template argument refers to thread-local object">;
 def note_template_arg_internal_object : Note<
-  "non-template argument refers to %select{function|object}0 here">;
-def note_template_arg_refers_here : Note<"non-template argument refers here">;
+  "non-type template argument refers to %select{function|object}0 here">;
+def note_template_arg_refers_here : Note<
+  "non-type template argument refers here">;
 def err_template_arg_not_object_or_func : Error<
   "non-type template argument does not refer to an object or function">;
 def err_template_arg_not_pointer_to_member_form : Error<
@@ -3758,7 +3769,7 @@ def warn_null_in_comparison_operation : Warning<
   InGroup<DiagGroup<"null-arithmetic">>;
 
 def err_invalid_this_use : Error<
-  "invalid use of 'this' outside of a nonstatic member function">;
+  "invalid use of 'this' outside of a non-static member function">;
 def err_invalid_member_use_in_static_method : Error<
   "invalid use of member %0 in static member function">;
 def err_invalid_qualified_function_type : Error<
@@ -3774,7 +3785,10 @@ def err_ref_qualifier_overload : Error<
   "without a ref-qualifier|with ref-qualifier '&'|with ref-qualifier '&&'}1">;
 
 def err_invalid_non_static_member_use : Error<
-  "invalid use of nonstatic data member %0">;
+  "invalid use of non-static data member %0">;
+def err_nested_non_static_member_use : Error<
+  "%select{call to non-static member function|use of non-static data member}0 "
+  "%2 of %1 from nested type %3">;
 def warn_cxx98_compat_non_static_member_use : Warning<
   "use of non-static data member %0 in an unevaluated context is "
   "incompatible with C++98">, InGroup<CXX98Compat>, DefaultIgnore;
