@@ -204,7 +204,10 @@ const FileEntry *DirectoryLookup::LookupFile(
     HeaderSearch &HS,
     SmallVectorImpl<char> *SearchPath,
     SmallVectorImpl<char> *RelativePath,
-    Module **SuggestedModule) const {
+    Module **SuggestedModule,
+    bool &InUserSpecifiedSystemFramework) const {
+  InUserSpecifiedSystemFramework = false;
+
   SmallString<1024> TmpDir;
   if (isNormalDir()) {
     // Concatenate the requested file onto the directory.
@@ -239,7 +242,7 @@ const FileEntry *DirectoryLookup::LookupFile(
 
   if (isFramework())
     return DoFrameworkLookup(Filename, HS, SearchPath, RelativePath,
-                             SuggestedModule);
+                             SuggestedModule, InUserSpecifiedSystemFramework);
 
   assert(isHeaderMap() && "Unknown directory lookup");
   const FileEntry * const Result = getHeaderMap()->LookupFile(
@@ -266,7 +269,8 @@ const FileEntry *DirectoryLookup::DoFrameworkLookup(
     HeaderSearch &HS,
     SmallVectorImpl<char> *SearchPath,
     SmallVectorImpl<char> *RelativePath,
-    Module **SuggestedModule) const 
+    Module **SuggestedModule,
+    bool &InUserSpecifiedSystemFramework) const
 {
   FileManager &FileMgr = HS.getFileMgr();
 
@@ -275,12 +279,12 @@ const FileEntry *DirectoryLookup::DoFrameworkLookup(
   if (SlashPos == StringRef::npos) return 0;
 
   // Find out if this is the home for the specified framework, by checking
-  // HeaderSearch.  Possible answer are yes/no and unknown.
-  const DirectoryEntry *&FrameworkDirCache =
+  // HeaderSearch.  Possible answers are yes/no and unknown.
+  HeaderSearch::FrameworkCacheEntry &CacheEntry =
     HS.LookupFrameworkCache(Filename.substr(0, SlashPos));
 
   // If it is known and in some other directory, fail.
-  if (FrameworkDirCache && FrameworkDirCache != getFrameworkDir())
+  if (CacheEntry.Directory && CacheEntry.Directory != getFrameworkDir())
     return 0;
 
   // Otherwise, construct the path to this framework dir.
@@ -298,21 +302,31 @@ const FileEntry *DirectoryLookup::DoFrameworkLookup(
   // FrameworkName = "/System/Library/Frameworks/Cocoa.framework/"
   FrameworkName += ".framework/";
 
-  // If the cache entry is still unresolved, query to see if the cache entry is
-  // still unresolved.  If so, check its existence now.
-  if (FrameworkDirCache == 0) {
+  // If the cache entry was unresolved, populate it now.
+  if (CacheEntry.Directory == 0) {
     HS.IncrementFrameworkLookupCount();
 
     // If the framework dir doesn't exist, we fail.
-    // FIXME: It's probably more efficient to query this with FileMgr.getDir.
-    bool Exists;
-    if (llvm::sys::fs::exists(FrameworkName.str(), Exists) || !Exists)
-      return 0;
+    const DirectoryEntry *Dir = FileMgr.getDirectory(FrameworkName.str());
+    if (Dir == 0) return 0;
 
     // Otherwise, if it does, remember that this is the right direntry for this
     // framework.
-    FrameworkDirCache = getFrameworkDir();
+    CacheEntry.Directory = getFrameworkDir();
+
+    // If this is a user search directory, check if the framework has been
+    // user-specified as a system framework.
+    if (getDirCharacteristic() == SrcMgr::C_User) {
+      SmallString<1024> SystemFrameworkMarker(FrameworkName);
+      SystemFrameworkMarker += ".system_framework";
+      if (llvm::sys::fs::exists(SystemFrameworkMarker.str())) {
+        CacheEntry.IsUserSpecifiedSystemFramework = true;
+      }
+    }
   }
+
+  // Set the 'user-specified system framework' flag.
+  InUserSpecifiedSystemFramework = CacheEntry.IsUserSpecifiedSystemFramework;
 
   if (RelativePath != NULL) {
     RelativePath->clear();
@@ -478,9 +492,10 @@ const FileEntry *HeaderSearch::LookupFile(
 
   // Check each directory in sequence to see if it contains this file.
   for (; i != SearchDirs.size(); ++i) {
+    bool InUserSpecifiedSystemFramework = false;
     const FileEntry *FE =
       SearchDirs[i].LookupFile(Filename, *this, SearchPath, RelativePath,
-                               SuggestedModule);
+                               SuggestedModule, InUserSpecifiedSystemFramework);
     if (!FE) continue;
 
     CurDir = &SearchDirs[i];
@@ -488,6 +503,12 @@ const FileEntry *HeaderSearch::LookupFile(
     // This file is a system header or C++ unfriendly if the dir is.
     HeaderFileInfo &HFI = getFileInfo(FE);
     HFI.DirInfo = CurDir->getDirCharacteristic();
+
+    // If the directory characteristic is User but this framework was
+    // user-specified to be treated as a system framework, promote the
+    // characteristic.
+    if (HFI.DirInfo == SrcMgr::C_User && InUserSpecifiedSystemFramework)
+      HFI.DirInfo = SrcMgr::C_System;
 
     // If this file is found in a header map and uses the framework style of
     // includes, then this header is part of a framework we're building.
@@ -562,26 +583,25 @@ LookupSubframeworkHeader(StringRef Filename,
        FrameworkPos[DotFrameworkLen] != '\\'))
     return 0;
 
-  SmallString<1024> FrameworkName(ContextName,
-                                        FrameworkPos+DotFrameworkLen+1);
+  SmallString<1024> FrameworkName(ContextName, FrameworkPos+DotFrameworkLen+1);
 
   // Append Frameworks/HIToolbox.framework/
   FrameworkName += "Frameworks/";
   FrameworkName.append(Filename.begin(), Filename.begin()+SlashPos);
   FrameworkName += ".framework/";
 
-  llvm::StringMapEntry<const DirectoryEntry *> &CacheLookup =
+  llvm::StringMapEntry<FrameworkCacheEntry> &CacheLookup =
     FrameworkMap.GetOrCreateValue(Filename.substr(0, SlashPos));
 
   // Some other location?
-  if (CacheLookup.getValue() &&
+  if (CacheLookup.getValue().Directory &&
       CacheLookup.getKeyLength() == FrameworkName.size() &&
       memcmp(CacheLookup.getKeyData(), &FrameworkName[0],
              CacheLookup.getKeyLength()) != 0)
     return 0;
 
   // Cache subframework.
-  if (CacheLookup.getValue() == 0) {
+  if (CacheLookup.getValue().Directory == 0) {
     ++NumSubFrameworkLookups;
 
     // If the framework dir doesn't exist, we fail.
@@ -590,7 +610,7 @@ LookupSubframeworkHeader(StringRef Filename,
 
     // Otherwise, if it does, remember that this is the right direntry for this
     // framework.
-    CacheLookup.setValue(Dir);
+    CacheLookup.getValue().Directory = Dir;
   }
 
   const FileEntry *FE = 0;

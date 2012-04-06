@@ -34,13 +34,13 @@ class ObjCContainersChecker : public Checker< check::PreStmt<CallExpr>,
   mutable OwningPtr<BugType> BT;
   inline void initBugType() const {
     if (!BT)
-      BT.reset(new BugType("CFArray API", "Core Foundation/Objective-C"));
+      BT.reset(new BugType("CFArray API",
+                           categories::CoreFoundationObjectiveC));
   }
 
   inline SymbolRef getArraySym(const Expr *E, CheckerContext &C) const {
     SVal ArrayRef = C.getState()->getSVal(E, C.getLocationContext());
     SymbolRef ArraySym = ArrayRef.getAsSymbol();
-    assert(ArraySym);
     return ArraySym;
   }
 
@@ -120,8 +120,12 @@ void ObjCContainersChecker::checkPreStmt(const CallExpr *CE,
     // Retrieve the size.
     // Find out if we saw this array symbol before and have information about it.
     const Expr *ArrayExpr = CE->getArg(0);
-    const DefinedSVal *Size =
-                            State->get<ArraySizeMap>(getArraySym(ArrayExpr, C));
+    SymbolRef ArraySym = getArraySym(ArrayExpr, C);
+    if (!ArraySym)
+      return;
+
+    const DefinedSVal *Size = State->get<ArraySizeMap>(ArraySym);
+
     if (!Size)
       return;
 
