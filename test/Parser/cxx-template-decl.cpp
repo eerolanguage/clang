@@ -6,13 +6,13 @@ template  x;            // expected-error {{C++ requires a type specifier for al
                         // expected-error {{does not refer}}
 export template x;      // expected-error {{expected '<' after 'template'}}
 export template<class T> class x0; // expected-warning {{exported templates are unsupported}}
-template < ;            // expected-error {{parse error}} \
+template < ;            // expected-error {{expected template parameter}} \
 // expected-error{{expected ',' or '>' in template-parameter-list}} \
 // expected-warning {{declaration does not declare anything}}
 template <template X> struct Err1; // expected-error {{expected '<' after 'template'}} \
 // expected-error{{extraneous}}
-template <template <typename> > struct Err2;       // expected-error {{template template parameters require 'class' after the argument list}}
-template <template <typename> Foo> struct Err3;    // expected-error {{template template parameters require 'class' after the argument list}}
+template <template <typename> > struct Err2;       // expected-error {{template template parameter requires 'class' after the parameter list}}
+template <template <typename> Foo> struct Err3;    // expected-error {{template template parameter requires 'class' after the parameter list}}
 
 // Template function declarations
 template <typename T> void foo();

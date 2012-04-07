@@ -272,24 +272,25 @@ static const RecordType *getRecordType(QualType QT) {
 
 /// \brief Thread Safety Analysis: Checks that the passed in RecordType
 /// resolves to a lockable object. May flag an error.
-static bool checkForLockableRecord(Sema &S, Decl *D, const AttributeList &Attr,
-                                   const RecordType *RT) {
-  // Flag error if could not get record type for this argument.
+static void checkForLockableRecord(Sema &S, Decl *D, const AttributeList &Attr,
+                                   QualType Ty) {
+  const RecordType *RT = getRecordType(Ty);
+                                   
+  // Warn if could not get record type for this argument.
   if (!RT) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_not_class)
-      << Attr.getName();
-    return false;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_argument_not_class)
+      << Attr.getName() << Ty.getAsString();
+    return;
   }
   // Don't check for lockable if the class hasn't been defined yet. 
   if (RT->isIncompleteType())
-    return true;
-  // Flag error if the type is not lockable.
+    return;
+  // Warn if the type is not lockable.
   if (!RT->getDecl()->getAttr<LockableAttr>()) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_not_lockable)
-      << Attr.getName();
-    return false;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_argument_not_lockable)
+      << Attr.getName() << Ty.getAsString();
+    return;
   }
-  return true;
 }
 
 /// \brief Thread Safety Analysis: Checks that all attribute arguments, starting
@@ -331,12 +332,10 @@ static bool checkAttrArgsAreLockableObjs(Sema &S, Decl *D,
           return false;
         }
         ArgTy = FD->getParamDecl(ParamIdxFromZero)->getType();
-        RT = getRecordType(ArgTy);
       }
     }
 
-    if (!checkForLockableRecord(S, D, Attr, RT))
-      return false;
+    checkForLockableRecord(S, D, Attr, ArgTy);
 
     Args.push_back(ArgExp);
   }
@@ -394,9 +393,7 @@ static void handleGuardedByAttr(Sema &S, Decl *D, const AttributeList &Attr,
     return;
 
   if (!Arg->isTypeDependent()) {
-    if (!checkForLockableRecord(S, D, Attr, getRecordType(Arg->getType())))
-      return;
-    // FIXME -- semantic checks for dependent attributes
+    checkForLockableRecord(S, D, Attr, Arg->getType());
   }
 
   if (pointer)
@@ -481,7 +478,7 @@ static void handleAcquireOrderAttr(Sema &S, Decl *D, const AttributeList &Attr,
   if (!QT->isDependentType()) {
     const RecordType *RT = getRecordType(QT);
     if (!RT || !RT->getDecl()->getAttr<LockableAttr>()) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_decl_not_lockable)
+      S.Diag(Attr.getLoc(), diag::warn_attribute_decl_not_lockable)
               << Attr.getName();
       return;
     }
@@ -651,8 +648,7 @@ static void handleLockReturnedAttr(Sema &S, Decl *D,
     return;
 
   // check that the argument is lockable object
-  if (!checkForLockableRecord(S, D, Attr, getRecordType(Arg->getType())))
-    return;
+  checkForLockableRecord(S, D, Attr, Arg->getType());
 
   D->addAttr(::new (S.Context) LockReturnedAttr(Attr.getRange(), S.Context, Arg));
 }
@@ -1591,6 +1587,22 @@ static void handleArcWeakrefUnavailableAttr(Sema &S, Decl *D,
   
   D->addAttr(::new (S.Context) ArcWeakrefUnavailableAttr(
                                           Attr.getRange(), S.Context));
+}
+
+static void handleObjCRootClassAttr(Sema &S, Decl *D, 
+                                    const AttributeList &Attr) {
+  if (!isa<ObjCInterfaceDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_requires_objc_interface);
+    return;
+  }
+  
+  unsigned NumArgs = Attr.getNumArgs();
+  if (NumArgs > 0) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 0;
+    return;
+  }
+  
+  D->addAttr(::new (S.Context) ObjCRootClassAttr(Attr.getRange(), S.Context));
 }
 
 static void handleObjCRequiresPropertyDefsAttr(Sema &S, Decl *D, 
@@ -3657,6 +3669,9 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_unavailable: handleUnavailableAttr (S, D, Attr); break;
   case AttributeList::AT_objc_arc_weak_reference_unavailable: 
     handleArcWeakrefUnavailableAttr (S, D, Attr); 
+    break;
+  case AttributeList::AT_objc_root_class:
+    handleObjCRootClassAttr(S, D, Attr);
     break;
   case AttributeList::AT_objc_requires_property_definitions: 
     handleObjCRequiresPropertyDefsAttr (S, D, Attr); 

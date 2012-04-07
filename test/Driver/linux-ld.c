@@ -92,6 +92,20 @@
 // CHECK-64-TO-32: "-L[[SYSROOT]]/usr/lib"
 //
 // RUN: %clang -no-canonical-prefixes %s -### -o %t.o 2>&1 \
+// RUN:     -target x86_64-unknown-linux -m32 \
+// RUN:     -gcc-toolchain %S/Inputs/multilib_64bit_linux_tree/usr \
+// RUN:     --sysroot=%S/Inputs/multilib_32bit_linux_tree \
+// RUN:   | FileCheck --check-prefix=CHECK-64-TO-32-SYSROOT %s
+// CHECK-64-TO-32-SYSROOT: "{{.*}}ld{{(.exe)?}}" "--sysroot=[[SYSROOT:[^"]+]]"
+// CHECK-64-TO-32-SYSROOT: "{{.*}}/usr/lib/gcc/x86_64-unknown-linux/4.6.0/32/crtbegin.o"
+// CHECK-64-TO-32-SYSROOT: "-L{{[^"]*}}/Inputs/multilib_64bit_linux_tree/usr/lib/gcc/x86_64-unknown-linux/4.6.0/32"
+// CHECK-64-TO-32-SYSROOT: "-L[[SYSROOT]]/lib/../lib32"
+// CHECK-64-TO-32-SYSROOT: "-L[[SYSROOT]]/usr/lib/../lib32"
+// CHECK-64-TO-32-SYSROOT: "-L{{[^"]*}}/Inputs/multilib_64bit_linux_tree/usr/lib/gcc/x86_64-unknown-linux/4.6.0"
+// CHECK-64-TO-32-SYSROOT: "-L[[SYSROOT]]/lib"
+// CHECK-64-TO-32-SYSROOT: "-L[[SYSROOT]]/usr/lib"
+//
+// RUN: %clang -no-canonical-prefixes %s -### -o %t.o 2>&1 \
 // RUN:     -target i386-unknown-linux -m32 \
 // RUN:     -ccc-install-dir %S/Inputs/fake_install_tree/bin \
 // RUN:     --sysroot=%S/Inputs/basic_linux_tree \
@@ -173,26 +187,35 @@
 // CHECK-SUSE-10-3-PPC64: "-L[[SYSROOT]]/usr/lib/../lib64"
 //
 // Check that we do not pass --hash-style=gnu and --hash-style=both to linker
-// when build for MIPS platforms.
+// and provide correct path to the dynamic linker and emulation mode when build
+// for MIPS platforms.
 // RUN: %clang %s -### -o %t.o 2>&1 \
 // RUN:     -target mips-linux-gnu -ccc-clang-archs mips \
 // RUN:   | FileCheck --check-prefix=CHECK-MIPS %s
 // CHECK-MIPS: "{{.*}}ld{{(.exe)?}}"
+// CHECK-MIPS: "-m" "elf32btsmip"
+// CHECK-MIPS: "-dynamic-linker" "{{.*}}/lib/ld.so.1"
 // CHECK-MIPS-NOT: "--hash-style={{gnu|both}}"
 // RUN: %clang %s -### -o %t.o 2>&1 \
 // RUN:     -target mipsel-linux-gnu -ccc-clang-archs mipsel \
 // RUN:   | FileCheck --check-prefix=CHECK-MIPSEL %s
 // CHECK-MIPSEL: "{{.*}}ld{{(.exe)?}}"
+// CHECK-MIPSEL: "-m" "elf32ltsmip"
+// CHECK-MIPSEL: "-dynamic-linker" "{{.*}}/lib/ld.so.1"
 // CHECK-MIPSEL-NOT: "--hash-style={{gnu|both}}"
 // RUN: %clang %s -### -o %t.o 2>&1 \
 // RUN:     -target mips64-linux-gnu -ccc-clang-archs mips64 \
 // RUN:   | FileCheck --check-prefix=CHECK-MIPS64 %s
 // CHECK-MIPS64: "{{.*}}ld{{(.exe)?}}"
+// CHECK-MIPS64: "-m" "elf64btsmip"
+// CHECK-MIPS64: "-dynamic-linker" "{{.*}}/lib64/ld.so.1"
 // CHECK-MIPS64-NOT: "--hash-style={{gnu|both}}"
 // RUN: %clang %s -### -o %t.o 2>&1 \
 // RUN:     -target mips64el-linux-gnu -ccc-clang-archs mips64el \
 // RUN:   | FileCheck --check-prefix=CHECK-MIPS64EL %s
 // CHECK-MIPS64EL: "{{.*}}ld{{(.exe)?}}"
+// CHECK-MIPS64EL: "-m" "elf64ltsmip"
+// CHECK-MIPS64EL: "-dynamic-linker" "{{.*}}/lib64/ld.so.1"
 // CHECK-MIPS64EL-NOT: "--hash-style={{gnu|both}}"
 //
 // Thoroughly exercise the Debian multiarch environment.

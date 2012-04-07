@@ -8567,6 +8567,9 @@ void Sema::ActOnStartStmtExpr() {
 }
 
 void Sema::ActOnStmtExprError() {
+  // Note that function is also called by TreeTransform when leaving a
+  // StmtExpr scope without rebuilding anything.
+
   DiscardCleanupsInEvaluationContext();
   PopExpressionEvaluationContext();
 }
@@ -10477,7 +10480,8 @@ namespace {
 bool MarkReferencedDecls::TraverseTemplateArgument(
   const TemplateArgument &Arg) {
   if (Arg.getKind() == TemplateArgument::Declaration) {
-    S.MarkAnyDeclReferenced(Loc, Arg.getAsDecl());
+    if (Decl *D = Arg.getAsDecl())
+      S.MarkAnyDeclReferenced(Loc, D);
   }
 
   return Inherited::TraverseTemplateArgument(Arg);

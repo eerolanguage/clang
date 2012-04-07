@@ -444,6 +444,13 @@ def note_receiver_is_id : Note<
   "receiver is treated with 'id' type for purpose of method lookup">;
 def note_suppressed_class_declare : Note<
   "class with specified objc_requires_property_definitions attribute is declared here">;
+def err_objc_root_class_subclass : Error<
+  "objc_root_class attribute may only be specified on a root class declaration">;
+def warn_objc_root_class_missing : Warning<
+	"class %0 defined without specifying a base class">,
+  InGroup<ObjCRootClass>, DefaultIgnore;
+def note_objc_needs_superclass : Note<
+  "add a super class to fix this problem">;
 def warn_dup_category_def : Warning<
   "duplicate definition of category %1 on interface %0">;
 def err_conflicting_super_class : Error<"conflicting super class name %0">;
@@ -877,8 +884,13 @@ def note_access_natural : Note<
 def note_access_constrained_by_path : Note<
   "constrained by %select{|implicitly }1%select{private|protected}0"
   " inheritance here">;
-def note_access_protected_restricted : Note<
-  "object type %select{|%1 }0must derive from context type %2">;
+def note_access_protected_restricted_noobject : Note<
+  "must name member using the type of the current context %0">;
+def note_access_protected_restricted_ctordtor : Note<
+  "protected %select{constructor|destructor}0 can only be used to "
+  "%select{construct|destroy}0 a base class subobject">;
+def note_access_protected_restricted_object : Note<
+  "can only access this member on an object of type %0">;
 def warn_cxx98_compat_sfinae_access_control : Warning<
   "substitution failure due to access control is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore, NoSFINAE;
@@ -1643,12 +1655,18 @@ def err_attribute_argument_out_of_range : Error<
   "%plural{0:no parameters to index into|"
   "1:can only be 1, since there is one parameter|"
   ":must be between 1 and %2}2">;
-def err_attribute_argument_not_lockable : Error<
+def warn_attribute_argument_not_lockable : Warning<
   "%0 attribute requires arguments whose type is annotated "
-  "with 'lockable' attribute">;
-def err_attribute_decl_not_lockable : Error<
+  "with 'lockable' attribute; type here is '%1'">,
+  InGroup<ThreadSafety>, DefaultIgnore;
+def warn_attribute_decl_not_lockable : Warning<
   "%0 attribute can only be applied in a context annotated "
-  "with 'lockable' attribute">;
+  "with 'lockable' attribute">,
+  InGroup<ThreadSafety>, DefaultIgnore;
+def warn_attribute_argument_not_class : Warning<
+  "%0 attribute requires arguments that are class type or point to"
+  " class type; type here is '%1'">,
+  InGroup<ThreadSafety>, DefaultIgnore;   
 def warn_unlock_but_no_lock : Warning<
   "unlocking '%0' that was not locked">,
   InGroup<ThreadSafety>, DefaultIgnore;
@@ -2326,6 +2344,8 @@ def err_template_arg_not_integral_or_enumeral : Error<
 def err_template_arg_not_ice : Error<
   "non-type template argument of type %0 is not an integral constant "
   "expression">;
+def err_template_arg_untyped_null_constant : Error<
+  "null non-type template argument must be cast to template parameter type %0">;
 def err_deduced_non_type_template_arg_type_mismatch : Error<
   "deduced non-type template argument does not have the same type as the "
   "its corresponding template parameter (%0 vs %1)">;
