@@ -937,6 +937,7 @@ bool Parser::DiagnoseProhibitedCXX11Attribute() {
       << SourceRange(BeginLoc, EndLoc);
     return true;
   }
+  llvm_unreachable("All cases handled above.");
 }
 
 void Parser::DiagnoseProhibitedAttributes(ParsedAttributesWithRange &attrs) {
@@ -3528,11 +3529,11 @@ bool Parser::isConstructorDeclarator() {
 ///
 void Parser::ParseTypeQualifierListOpt(DeclSpec &DS,
                                        bool VendorAttributesAllowed,
-                                       bool CXX0XAttributesAllowed) {
-  if (getLangOpts().CPlusPlus0x && CXX0XAttributesAllowed &&
+                                       bool CXX11AttributesAllowed) {
+  if (getLangOpts().CPlusPlus0x && CXX11AttributesAllowed &&
       isCXX11AttributeSpecifier()) {
     ParsedAttributesWithRange attrs(AttrFactory);
-    ParseCXX0XAttributes(attrs);
+    ParseCXX11Attributes(attrs);
     DS.takeAttributesFrom(attrs);
   }
 
@@ -4102,7 +4103,8 @@ void Parser::ParseParenDeclarator(Declarator &D) {
   } else if (Tok.is(tok::r_paren) ||           // 'int()' is a function.
              (getLangOpts().CPlusPlus && Tok.is(tok::ellipsis) &&
               NextToken().is(tok::r_paren)) || // C++ int(...)
-             isDeclarationSpecifier()) {       // 'int(int)' is a function.
+             isDeclarationSpecifier() ||       // 'int(int)' is a function.
+             isCXX11AttributeSpecifier()) {    // 'int([[]]int)' is a function.
     // This handles C99 6.7.5.3p11: in "typedef int X; void foo(X)", X is
     // considered to be a type, not a K&R identifier-list.
     isGrouping = false;
@@ -4382,9 +4384,9 @@ void Parser::ParseFunctionDeclaratorIdentifierList(
 /// after the opening parenthesis. This function will not parse a K&R-style
 /// identifier list.
 ///
-/// D is the declarator being parsed.  If attrs is non-null, then the caller
-/// parsed those arguments immediately after the open paren - they should be
-/// considered to be the first argument of a parameter.
+/// D is the declarator being parsed.  If FirstArgAttrs is non-null, then the
+/// caller parsed those arguments immediately after the open paren - they should
+/// be considered to be part of the first parameter.
 ///
 /// After returning, ParamInfo will hold the parsed parameters. EllipsisLoc will
 /// be the location of the ellipsis, if any was parsed.
@@ -4407,15 +4409,18 @@ void Parser::ParseFunctionDeclaratorIdentifierList(
 /// [C++]   declaration-specifiers abstract-declarator[opt]
 ///           '=' assignment-expression
 /// [GNU]   declaration-specifiers abstract-declarator[opt] attributes
+/// [C++11] attribute-specifier-seq parameter-declaration
 ///
 void Parser::ParseParameterDeclarationClause(
        Declarator &D,
-       ParsedAttributes &attrs,
+       ParsedAttributes &FirstArgAttrs,
        SmallVector<DeclaratorChunk::ParamInfo, 16> &ParamInfo,
        SourceLocation &EllipsisLoc) {
 
   while (1) {
     if (Tok.is(tok::ellipsis)) {
+      // FIXME: Issue a diagnostic if we parsed an attribute-specifier-seq
+      // before deciding this was a parameter-declaration-clause.
       EllipsisLoc = ConsumeToken();     // Consume the ellipsis.
       break;
     }
@@ -4423,6 +4428,9 @@ void Parser::ParseParameterDeclarationClause(
     // Parse the declaration-specifiers.
     // Just use the ParsingDeclaration "scope" of the declarator.
     DeclSpec DS(AttrFactory);
+
+    // Parse any C++11 attributes.
+    MaybeParseCXX0XAttributes(DS.getAttributes());
 
     // Skip any Microsoft attributes before a param.
     if (getLangOpts().MicrosoftExt && Tok.is(tok::l_square))
@@ -4432,12 +4440,10 @@ void Parser::ParseParameterDeclarationClause(
 
     // If the caller parsed attributes for the first argument, add them now.
     // Take them so that we only apply the attributes to the first parameter.
-    // FIXME: If we saw an ellipsis first, this code is not reached. Are the
-    // attributes lost? Should they even be allowed?
     // FIXME: If we can leave the attributes in the token stream somehow, we can
-    // get rid of a parameter (attrs) and this statement. It might be too much
-    // hassle.
-    DS.takeAttributesFrom(attrs);
+    // get rid of a parameter (FirstArgAttrs) and this statement. It might be
+    // too much hassle.
+    DS.takeAttributesFrom(FirstArgAttrs);
 
     ParseDeclarationSpecifiers(DS);
 

@@ -4430,11 +4430,11 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_r);
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
-  if (getToolChain().getDriver().CCCIsCXX)
-    getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
+    if (getToolChain().getDriver().CCCIsCXX)
+      getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
     CmdArgs.push_back("-lgcc_s");
     if (!Args.hasArg(options::OPT_shared)) {
       CmdArgs.push_back("-lgcc");
@@ -5089,6 +5089,10 @@ void linuxtools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("-EL");
   }
+
+  Args.AddLastArg(CmdArgs, options::OPT_march_EQ);
+  Args.AddLastArg(CmdArgs, options::OPT_mcpu_EQ);
+  Args.AddLastArg(CmdArgs, options::OPT_mfpu_EQ);
 
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
                        options::OPT_Xassembler);

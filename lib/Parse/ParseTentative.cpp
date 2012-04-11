@@ -485,18 +485,17 @@ Parser::isCXX11AttributeSpecifier(bool Disambiguate,
     //   If a keyword or an alternative token that satisfies the syntactic
     //   requirements of an identifier is contained in an attribute-token,
     //   it is considered an identifier.
-    if (!Tok.getIdentifierInfo()) {
+    SourceLocation Loc;
+    if (!TryParseCXX11AttributeIdentifier(Loc)) {
       IsAttribute = false;
       break;
     }
-    ConsumeToken();
     if (Tok.is(tok::coloncolon)) {
       ConsumeToken();
-      if (!Tok.getIdentifierInfo()) {
+      if (!TryParseCXX11AttributeIdentifier(Loc)) {
         IsAttribute = false;
         break;
       }
-      ConsumeToken();
     }
 
     // Parse the attribute-argument-clause, if present.
@@ -1322,6 +1321,11 @@ Parser::TPResult Parser::TryParseParameterDeclarationClause() {
       else
         return TPResult::False();
     }
+
+    // An attribute-specifier-seq here is a sign of a function declarator.
+    if (isCXX11AttributeSpecifier(/*Disambiguate*/false,
+                                  /*OuterMightBeMessageSend*/true))
+      return TPResult::True();
 
     ParsedAttributes attrs(AttrFactory);
     MaybeParseMicrosoftAttributes(attrs);

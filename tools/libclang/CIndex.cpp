@@ -51,6 +51,7 @@ using namespace clang;
 using namespace clang::cxcursor;
 using namespace clang::cxstring;
 using namespace clang::cxtu;
+using namespace clang::cxindex;
 
 CXTranslationUnit cxtu::MakeCXTranslationUnit(CIndexer *CIdx, ASTUnit *TU) {
   if (!TU)
@@ -2482,7 +2483,7 @@ clang_createTranslationUnitFromSourceFile(CXIndex CIdx,
                                     unsaved_files, num_unsaved_files,
                                     Options);
 }
-  
+
 struct ParseTranslationUnitInfo {
   CXIndex CIdx;
   const char *source_filename;
@@ -2587,6 +2588,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
   }
   
   unsigned NumErrors = Diags->getClient()->getNumErrors();
+  OwningPtr<ASTUnit> ErrUnit;
   OwningPtr<ASTUnit> Unit(
     ASTUnit::LoadFromCommandLine(Args->size() ? &(*Args)[0] : 0 
                                  /* vector::data() not portable */,
@@ -2601,27 +2603,13 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
                                  PrecompilePreamble,
                                  TUKind,
                                  CacheCodeCompetionResults,
-                                 /*AllowPCHWithCompilerErrors=*/true));
+                                 /*AllowPCHWithCompilerErrors=*/true,
+                                 &ErrUnit));
 
   if (NumErrors != Diags->getClient()->getNumErrors()) {
     // Make sure to check that 'Unit' is non-NULL.
-    if (CXXIdx->getDisplayDiagnostics() && Unit.get()) {
-      for (ASTUnit::stored_diag_iterator D = Unit->stored_diag_begin(), 
-                                      DEnd = Unit->stored_diag_end();
-           D != DEnd; ++D) {
-        CXStoredDiagnostic Diag(*D, Unit->getASTContext().getLangOpts());
-        CXString Msg = clang_formatDiagnostic(&Diag,
-                                    clang_defaultDiagnosticDisplayOptions());
-        fprintf(stderr, "%s\n", clang_getCString(Msg));
-        clang_disposeString(Msg);
-      }
-#ifdef LLVM_ON_WIN32
-      // On Windows, force a flush, since there may be multiple copies of
-      // stderr and stdout in the file system, all with different buffers
-      // but writing to the same device.
-      fflush(stderr);
-#endif
-    }
+    if (CXXIdx->getDisplayDiagnostics())
+      printDiagsToStderr(Unit ? Unit.get() : ErrUnit.get());
   }
 
   PTUI->result = MakeCXTranslationUnit(CXXIdx, Unit.take());
@@ -5535,6 +5523,8 @@ void clang_getOverriddenCursors(CXCursor cursor,
     *num_overridden = 0;
   if (!overridden || !num_overridden)
     return;
+  if (!clang_isDeclaration(cursor.kind))
+    return;
 
   SmallVector<CXCursor, 8> Overridden;
   cxcursor::getOverriddenCursors(cursor, Overridden);
@@ -5817,6 +5807,27 @@ void clang::setThreadBackgroundPriority() {
   // FIXME: Move to llvm/Support and make it cross-platform.
 #ifdef __APPLE__
   setpriority(PRIO_DARWIN_THREAD, 0, PRIO_DARWIN_BG);
+#endif
+}
+
+void cxindex::printDiagsToStderr(ASTUnit *Unit) {
+  if (!Unit)
+    return;
+
+  for (ASTUnit::stored_diag_iterator D = Unit->stored_diag_begin(), 
+                                  DEnd = Unit->stored_diag_end();
+       D != DEnd; ++D) {
+    CXStoredDiagnostic Diag(*D, Unit->getASTContext().getLangOpts());
+    CXString Msg = clang_formatDiagnostic(&Diag,
+                                clang_defaultDiagnosticDisplayOptions());
+    fprintf(stderr, "%s\n", clang_getCString(Msg));
+    clang_disposeString(Msg);
+  }
+#ifdef LLVM_ON_WIN32
+  // On Windows, force a flush, since there may be multiple copies of
+  // stderr and stdout in the file system, all with different buffers
+  // but writing to the same device.
+  fflush(stderr);
 #endif
 }
 
