@@ -4812,6 +4812,10 @@ void RewriteModernObjC::RewriteByRefVar(VarDecl *ND) {
   // {0, &ND, some_flag, __size=sizeof(struct __Block_byref_ND), 
   //  initializer-if-any};
   bool hasInit = (ND->getInit() != 0);
+  // FIXME. rewriter does not support __block c++ objects which
+  // require construction.
+  if (hasInit && dyn_cast<CXXConstructExpr>(ND->getInit()))
+    hasInit = false;
   unsigned flags = 0;
   if (HasCopyAndDispose)
     flags |= BLOCK_HAS_COPY_DISPOSE;
@@ -6416,7 +6420,8 @@ static void Write__extendedMethodTypes_initializer(RewriteModernObjC &RewriteObj
   }
 }
 
-static void Write_IvarOffsetVar(ASTContext *Context,
+static void Write_IvarOffsetVar(RewriteModernObjC &RewriteObj,
+                                ASTContext *Context,
                                 std::string &Result, 
                                 ArrayRef<ObjCIvarDecl *> Ivars, 
                                 ObjCInterfaceDecl *CDecl) {
@@ -6446,17 +6451,8 @@ static void Write_IvarOffsetVar(ASTContext *Context,
     WriteInternalIvarName(CDecl, IvarDecl, Result);
     Result += " __attribute__ ((used, section (\"__DATA,__objc_ivar\")))";
     Result += " = ";
-    if (IvarDecl->isBitField()) {
-      // FIXME: The hack below doesn't work for bitfields. For now, we simply
-      // place all bitfields at offset 0.
-      Result += "0;\n";
-    }
-    else {
-      Result += "__OFFSETOFIVAR__(struct ";
-      Result += CDecl->getNameAsString();
-      Result += "_IMPL, "; 
-      Result += IvarDecl->getName(); Result += ");\n";
-    }
+    RewriteObj.RewriteIvarOffsetComputation(IvarDecl, Result);
+    Result += ";\n";
   }
 }
 
@@ -6466,7 +6462,7 @@ static void Write__ivar_list_t_initializer(RewriteModernObjC &RewriteObj,
                                            StringRef VarName,
                                            ObjCInterfaceDecl *CDecl) {
   if (Ivars.size() > 0) {
-    Write_IvarOffsetVar(Context, Result, Ivars, CDecl);
+    Write_IvarOffsetVar(RewriteObj, Context, Result, Ivars, CDecl);
     
     Result += "\nstatic ";
     Write__ivar_list_t_TypeDecl(Result, Ivars.size());
@@ -6875,11 +6871,7 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
     
     ObjCIvarDecl *IVD = CDecl->all_declared_ivar_begin();
     if (IVD) {
-      InstanceStart += "__OFFSETOFIVAR__(struct ";
-      InstanceStart += CDecl->getNameAsString();
-      InstanceStart += "_IMPL, ";
-      InstanceStart += IVD->getNameAsString();
-      InstanceStart += ")";
+      RewriteIvarOffsetComputation(IVD, InstanceStart);
     }
     else 
       InstanceStart = InstanceSize;

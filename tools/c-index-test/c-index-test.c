@@ -663,6 +663,23 @@ static enum CXChildVisitResult PrintTypeKind(CXCursor cursor, CXCursor p,
         clang_disposeString(RS);
       }
     }
+    /* Print the argument types if they exist. */
+    {
+      int numArgs = clang_Cursor_getNumArguments(cursor);
+      if (numArgs != -1 && numArgs != 0) {
+        int i;
+        printf(" [args=");
+        for (i = 0; i < numArgs; ++i) {
+          CXType T = clang_getCursorType(clang_Cursor_getArgument(cursor, i));
+          if (T.kind != CXType_Invalid) {
+            CXString S = clang_getTypeKindSpelling(T.kind);
+            printf(" %s", clang_getCString(S));
+            clang_disposeString(S);
+          }
+        }
+        printf("]");
+      }
+    }
     /* Print if this is a non-POD type. */
     printf(" [isPOD=%d]", clang_isPODType(T));
 
@@ -2569,9 +2586,9 @@ static void printDiagnosticSet(CXDiagnosticSet Diags, unsigned indent) {
     CXSourceLocation DiagLoc;
     CXDiagnostic D;
     CXFile File;
-    CXString FileName, DiagSpelling, DiagOption;
+    CXString FileName, DiagSpelling, DiagOption, DiagCat;
     unsigned line, column, offset;
-    const char *DiagOptionStr = 0;
+    const char *DiagOptionStr = 0, *DiagCatStr = 0;
     
     D = clang_getDiagnosticInSet(Diags, i);
     DiagLoc = clang_getDiagnosticLocation(D);
@@ -2592,6 +2609,12 @@ static void printDiagnosticSet(CXDiagnosticSet Diags, unsigned indent) {
     DiagOptionStr = clang_getCString(DiagOption);
     if (DiagOptionStr) {
       fprintf(stderr, " [%s]", DiagOptionStr);
+    }
+    
+    DiagCat = clang_getDiagnosticCategoryText(D);
+    DiagCatStr = clang_getCString(DiagCat);
+    if (DiagCatStr) {
+      fprintf(stderr, " [%s]", DiagCatStr);
     }
     
     fprintf(stderr, "\n");

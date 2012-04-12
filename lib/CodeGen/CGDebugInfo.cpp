@@ -1181,6 +1181,15 @@ llvm::DIType CGDebugInfo::getOrCreateRecordType(QualType RTy,
   return T;
 }
 
+/// getOrCreateInterfaceType - Emit an objective c interface type standalone
+/// debug info.
+llvm::DIType CGDebugInfo::getOrCreateInterfaceType(QualType D,
+						   SourceLocation Loc) {
+  llvm::DIType T = getOrCreateType(D, getOrCreateFile(Loc));
+  DBuilder.retainType(T);
+  return T;
+}
+
 /// CreateType - get structure or union type.
 llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty) {
   RecordDecl *RD = Ty->getDecl();
@@ -1282,6 +1291,7 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
 				 RuntimeLang);
     return FwdDecl;
   }
+
   ID = Def;
 
   // Bit size, align and offset of the type.
@@ -1296,7 +1306,7 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
     DBuilder.createStructType(Unit, ID->getName(), DefUnit,
                               Line, Size, Align, Flags,
                               llvm::DIArray(), RuntimeLang);
-  
+
   // Otherwise, insert it into the CompletedTypeCache so that recursive uses
   // will find it and we're emitting the complete type.
   CompletedTypeCache[QualType(Ty, 0).getAsOpaquePtr()] = RealDecl;
@@ -1999,12 +2009,13 @@ void CGDebugInfo::EmitFunctionStart(GlobalDecl GD, QualType FnType,
     }
     Name = getFunctionName(FD);
     // Use mangled name as linkage name for c/c++ functions.
-    if (!Fn->hasInternalLinkage())
+    if (FD->hasPrototype()) {
       LinkageName = CGM.getMangledName(GD);
+      Flags |= llvm::DIDescriptor::FlagPrototyped;
+    }
     if (LinkageName == Name)
       LinkageName = StringRef();
-    if (FD->hasPrototype())
-      Flags |= llvm::DIDescriptor::FlagPrototyped;
+
     if (const NamespaceDecl *NSDecl =
         dyn_cast_or_null<NamespaceDecl>(FD->getDeclContext()))
       FDContext = getOrCreateNameSpace(NSDecl);
