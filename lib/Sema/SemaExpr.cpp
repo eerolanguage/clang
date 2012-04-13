@@ -374,10 +374,6 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
   QualType T = E->getType();
   assert(!T.isNull() && "r-value conversion on typeless expression?");
 
-  // We can't do lvalue-to-rvalue on atomics yet.
-  if (T->isAtomicType())
-    return Owned(E);
-
   // We don't want to throw lvalue-to-rvalue casts on top of
   // expressions of certain types in C++.
   if (getLangOpts().CPlusPlus &&
@@ -413,6 +409,15 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
   ExprResult Res = Owned(ImplicitCastExpr::Create(Context, T, CK_LValueToRValue,
                                                   E, 0, VK_RValue));
 
+  // C11 6.3.2.1p2:
+  //   ... if the lvalue has atomic type, the value has the non-atomic version 
+  //   of the type of the lvalue ...
+  if (const AtomicType *Atomic = T->getAs<AtomicType>()) {
+    T = Atomic->getValueType().getUnqualifiedType();
+    Res = Owned(ImplicitCastExpr::Create(Context, T, CK_AtomicToNonAtomic,
+                                         Res.get(), 0, VK_RValue));
+  }
+  
   return Res;
 }
 
@@ -9106,15 +9111,6 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
 
   BSI->TheDecl->setBody(cast<CompoundStmt>(Body));
 
-  for (BlockDecl::capture_const_iterator ci = BSI->TheDecl->capture_begin(),
-       ce = BSI->TheDecl->capture_end(); ci != ce; ++ci) {
-    const VarDecl *variable = ci->getVariable();
-    QualType T = variable->getType();
-    QualType::DestructionKind destructKind = T.isDestructedType();
-    if (destructKind != QualType::DK_none)
-      getCurFunction()->setHasBranchProtectedScope();
-  }
-
   computeNRVO(Body, getCurBlock());
   
   BlockExpr *Result = new (Context) BlockExpr(BSI->TheDecl, BlockTy);
@@ -9122,10 +9118,23 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
   PopFunctionScopeInfo(&WP, Result->getBlockDecl(), Result);
 
   // If the block isn't obviously global, i.e. it captures anything at
-  // all, mark this full-expression as needing a cleanup.
+  // all, then we need to do a few things in the surrounding context:
   if (Result->getBlockDecl()->hasCaptures()) {
+    // First, this expression has a new cleanup object.
     ExprCleanupObjects.push_back(Result->getBlockDecl());
     ExprNeedsCleanups = true;
+
+    // It also gets a branch-protected scope if any of the captured
+    // variables needs destruction.
+    for (BlockDecl::capture_const_iterator
+           ci = Result->getBlockDecl()->capture_begin(),
+           ce = Result->getBlockDecl()->capture_end(); ci != ce; ++ci) {
+      const VarDecl *var = ci->getVariable();
+      if (var->getType().isDestructedType() != QualType::DK_none) {
+        getCurFunction()->setHasBranchProtectedScope();
+        break;
+      }
+    }
   }
 
   return Owned(Result);
@@ -11259,6 +11268,22 @@ ExprResult
 Sema::ActOnObjCBoolLiteral(SourceLocation OpLoc, tok::TokenKind Kind) {
   assert((Kind == tok::kw___objc_yes || Kind == tok::kw___objc_no) &&
          "Unknown Objective-C Boolean value!");
+  QualType ObjCBoolLiteralQT = Context.ObjCBuiltinBoolTy;
+  // signed char is the default type for boolean literals. Use 'BOOL'
+  // instead, if BOOL typedef is visible in its scope instead.
+  Decl *TD = 
+    LookupSingleName(TUScope, &Context.Idents.get("BOOL"), 
+                     SourceLocation(), LookupOrdinaryName);
+  if (TypedefDecl *BoolTD = dyn_cast_or_null<TypedefDecl>(TD)) {
+    QualType QT = BoolTD->getUnderlyingType();
+    if (!QT->isIntegralOrUnscopedEnumerationType()) {
+      Diag(OpLoc, diag::warn_bool_for_boolean_literal) << QT;
+      Diag(BoolTD->getLocation(), diag::note_previous_declaration);
+    }
+    else
+      ObjCBoolLiteralQT = QT;
+  }
+  
   return Owned(new (Context) ObjCBoolLiteralExpr(Kind == tok::kw___objc_yes,
-                                        Context.ObjCBuiltinBoolTy, OpLoc));
+                                        ObjCBoolLiteralQT, OpLoc));
 }

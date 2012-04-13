@@ -113,6 +113,10 @@ public:
   unsigned FixToTemporaries : 1;           ///< Apply fixes to temporary files.
   unsigned ARCMTMigrateEmitARCErrors : 1;  /// Emit ARC errors even if the
                                            /// migrator can fix them
+  unsigned SkipFunctionBodies : 1;         ///< Skip over function bodies to
+                                           /// speed up parsing in cases you do
+                                           /// not need them (e.g. with code
+                                           /// completion).
 
   enum {
     ARCMT_None,
@@ -189,6 +193,7 @@ public:
     ShowVersion = 0;
     ARCMTAction = ARCMT_None;
     ARCMTMigrateEmitARCErrors = 0;
+    SkipFunctionBodies = 0;
     ObjCMTAction = ObjCMT_None;
   }
 

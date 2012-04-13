@@ -2910,11 +2910,9 @@ Decl *Parser::ParseLexedObjCMethodDefs(LexedMethod &LM) {
   // specified Declarator for the method.
   Actions.ActOnStartOfObjCMethodDef(getCurScope(), MDecl);
     
-  if (PP.isCodeCompletionEnabled()) {
-      if (trySkippingFunctionBodyForCodeCompletion()) {
-          BodyScope.Exit();
-          return Actions.ActOnFinishFunctionBody(MDecl, 0);
-      }
+  if (SkipFunctionBodies && trySkippingFunctionBody()) {
+    BodyScope.Exit();
+    return Actions.ActOnFinishFunctionBody(MDecl, 0);
   }
     
   StmtResult FnBody(ParseCompoundStatementBody());

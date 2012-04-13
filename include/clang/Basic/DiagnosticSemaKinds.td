@@ -1547,6 +1547,9 @@ def warn_objc_redundant_literal_use : Warning<
   "using %0 with a literal is redundant">, InGroup<ObjCRedundantLiteralUse>;
 }
 
+def warn_bool_for_boolean_literal : Warning<
+  "BOOL of type %0 is non-intergal and unsuitable for a "
+  "boolean literal - ignored">, InGroup<DiagGroup<"numeric-literals">>;
 def err_only_annotate_after_access_spec : Error<
   "access specifier can only have annotation attributes">;
 def err_attribute_section_invalid_for_target : Error<
@@ -4367,22 +4370,22 @@ def ext_typecheck_convert_pointer_int : ExtWarn<
   "%select{assigning to|passing|returning|converting|initializing|sending|casting}2"
   " %0 "
   "%select{from|to parameter of type|from a function with result type|to type|"
-  "with an expression of type|to parameter of type|to type}2 %1; "
-  "%select{|dereference with *|"
-  "take the address with &|"
-  "remove *|"
-  "remove &}3">,
+  "with an expression of type|to parameter of type|to type}2 %1"
+  "%select{|; dereference with *|"
+  "; take the address with &|"
+  "; remove *|"
+  "; remove &}3">,
   InGroup<IntConversion>;
 def ext_typecheck_convert_int_pointer : ExtWarn<
   "incompatible integer to pointer conversion "
   "%select{assigning to|passing|returning|converting|initializing|sending|casting}2"
   " %0 "
   "%select{from|to parameter of type|from a function with result type|to type|"
-  "with an expression of type|to parameter of type|to type}2 %1; "
-  "%select{|dereference with *|"
-  "take the address with &|"
-  "remove *|"
-  "remove &}3">,
+  "with an expression of type|to parameter of type|to type}2 %1"
+  "%select{|; dereference with *|"
+  "; take the address with &|"
+  "; remove *|"
+  "; remove &}3">,
   InGroup<IntConversion>;
 def ext_typecheck_convert_pointer_void_func : Extension<
   "%select{assigning to|passing|returning|converting|initializing|sending|casting}2"
@@ -4403,10 +4406,10 @@ def ext_typecheck_convert_incompatible_pointer : ExtWarn<
   " %0 "
   "%select{from|to parameter of type|from a function with result type|to type|"
   "with an expression of type|to parameter of type|to type}2 %1"
-  "%select{|dereference with *|"
-  "take the address with &|"
-  "remove *|"
-  "remove &}3">,
+  "%select{|; dereference with *|"
+  "; take the address with &|"
+  "; remove *|"
+  "; remove &}3">,
   InGroup<IncompatiblePointerTypes>;
 def ext_typecheck_convert_discards_qualifiers : ExtWarn<
   "%select{assigning to|passing|returning|converting|initializing|sending|casting}2"
@@ -4522,12 +4525,15 @@ def err_atomic_builtin_pointer_size : Error<
 def err_atomic_op_needs_atomic : Error<
   "first argument to atomic operation must be a pointer to _Atomic "
   "type (%0 invalid)">;
+def err_atomic_op_needs_trivial_copy : Error<
+  "first argument to atomic operation must be a pointer to a trivially-copyable"
+  " type (%0 invalid)">;
 def err_atomic_op_needs_atomic_int_or_ptr : Error<
-  "first argument to atomic operation must be a pointer to atomic "
-  "integer or pointer (%0 invalid)">;
-def err_atomic_op_logical_needs_atomic_int : Error<
-  "first argument to logical atomic operation must be a pointer to atomic "
-  "integer (%0 invalid)">;
+  "first argument to atomic operation must be a pointer to %select{|atomic }0"
+  "integer or pointer (%1 invalid)">;
+def err_atomic_op_bitwise_needs_atomic_int : Error<
+  "first argument to bitwise atomic operation must be a pointer to "
+  "%select{|atomic }0integer (%1 invalid)">;
 
 def err_deleted_function_use : Error<"attempt to use a deleted function">;
 

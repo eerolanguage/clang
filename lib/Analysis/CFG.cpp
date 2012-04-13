@@ -310,7 +310,6 @@ private:
   // Visitors to walk an AST and construct the CFG.
   CFGBlock *VisitAddrLabelExpr(AddrLabelExpr *A, AddStmtChoice asc);
   CFGBlock *VisitBinaryOperator(BinaryOperator *B, AddStmtChoice asc);
-  CFGBlock *VisitBlockExpr(BlockExpr *E, AddStmtChoice asc);
   CFGBlock *VisitBreakStmt(BreakStmt *B);
   CFGBlock *VisitCXXCatchStmt(CXXCatchStmt *S);
   CFGBlock *VisitExprWithCleanups(ExprWithCleanups *E,
@@ -336,12 +335,14 @@ private:
   CFGBlock *VisitDeclSubExpr(DeclStmt *DS);
   CFGBlock *VisitDefaultStmt(DefaultStmt *D);
   CFGBlock *VisitDoStmt(DoStmt *D);
+  CFGBlock *VisitLambdaExpr(LambdaExpr *E, AddStmtChoice asc);
   CFGBlock *VisitForStmt(ForStmt *F);
   CFGBlock *VisitGotoStmt(GotoStmt *G);
   CFGBlock *VisitIfStmt(IfStmt *I);
   CFGBlock *VisitImplicitCastExpr(ImplicitCastExpr *E, AddStmtChoice asc);
   CFGBlock *VisitIndirectGotoStmt(IndirectGotoStmt *I);
   CFGBlock *VisitLabelStmt(LabelStmt *L);
+  CFGBlock *VisitLambdaExpr(LambdaExpr *L);
   CFGBlock *VisitMemberExpr(MemberExpr *M, AddStmtChoice asc);
   CFGBlock *VisitObjCAtCatchStmt(ObjCAtCatchStmt *S);
   CFGBlock *VisitObjCAutoreleasePoolStmt(ObjCAutoreleasePoolStmt *S);
@@ -361,6 +362,7 @@ private:
   CFGBlock *Visit(Stmt *S, AddStmtChoice asc = AddStmtChoice::NotAlwaysAdd);
   CFGBlock *VisitStmt(Stmt *S, AddStmtChoice asc);
   CFGBlock *VisitChildren(Stmt *S);
+  CFGBlock *VisitNoRecurse(Expr *E, AddStmtChoice asc);
 
   // Visitors to walk an AST and generate destructors of temporaries in
   // full expression.
@@ -984,7 +986,7 @@ CFGBlock *CFGBuilder::Visit(Stmt * S, AddStmtChoice asc) {
       return VisitBinaryOperator(cast<BinaryOperator>(S), asc);
 
     case Stmt::BlockExprClass:
-      return VisitBlockExpr(cast<BlockExpr>(S), asc);
+      return VisitNoRecurse(cast<Expr>(S), asc);
 
     case Stmt::BreakStmtClass:
       return VisitBreakStmt(cast<BreakStmt>(S));
@@ -1063,6 +1065,9 @@ CFGBlock *CFGBuilder::Visit(Stmt * S, AddStmtChoice asc) {
 
     case Stmt::LabelStmtClass:
       return VisitLabelStmt(cast<LabelStmt>(S));
+
+    case Stmt::LambdaExprClass:
+      return VisitLambdaExpr(cast<LambdaExpr>(S), asc);
 
     case Stmt::MemberExprClass:
       return VisitMemberExpr(cast<MemberExpr>(S), asc);
@@ -1235,7 +1240,7 @@ CFGBlock *CFGBuilder::VisitBinaryOperator(BinaryOperator *B,
   return (LBlock ? LBlock : RBlock);
 }
 
-CFGBlock *CFGBuilder::VisitBlockExpr(BlockExpr *E, AddStmtChoice asc) {
+CFGBlock *CFGBuilder::VisitNoRecurse(Expr *E, AddStmtChoice asc) {
   if (asc.alwaysAdd(*this, E)) {
     autoCreateBlock();
     appendStmt(Block, E);
@@ -1716,6 +1721,19 @@ CFGBlock *CFGBuilder::VisitLabelStmt(LabelStmt *L) {
   return LabelBlock;
 }
 
+CFGBlock *CFGBuilder::VisitLambdaExpr(LambdaExpr *E, AddStmtChoice asc) {
+  CFGBlock *LastBlock = VisitNoRecurse(E, asc);
+  for (LambdaExpr::capture_init_iterator it = E->capture_init_begin(),
+       et = E->capture_init_end(); it != et; ++it) {
+    if (Expr *Init = *it) {
+      CFGBlock *Tmp = Visit(Init);
+      if (Tmp != 0)
+        LastBlock = Tmp;
+    }
+  }
+  return LastBlock;
+}
+  
 CFGBlock *CFGBuilder::VisitGotoStmt(GotoStmt *G) {
   // Goto is a control-flow statement.  Thus we stop processing the current
   // block and create a new one.
