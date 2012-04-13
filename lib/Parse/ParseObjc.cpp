@@ -1998,7 +1998,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
     Actions.ActOnStartOfObjCMethodDef(getCurScope(), MDecl);
       
     if (PP.isCodeCompletionEnabled()) {
-      if (trySkippingFunctionBodyForCodeCompletion()) {
+      if (trySkippingFunctionBody()) {
           BodyScope.Exit();
           return Actions.ActOnFinishFunctionBody(MDecl, 0);
       }
