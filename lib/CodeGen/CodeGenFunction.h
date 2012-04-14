@@ -1948,6 +1948,7 @@ public:
   void EmitLabel(const LabelDecl *D); // helper for EmitLabelStmt.
 
   void EmitLabelStmt(const LabelStmt &S);
+  void EmitAttributedStmt(const AttributedStmt &S);
   void EmitGotoStmt(const GotoStmt &S);
   void EmitIndirectGotoStmt(const IndirectGotoStmt &S);
   void EmitIfStmt(const IfStmt &S);
@@ -2103,6 +2104,8 @@ public:
   LValue EmitNullInitializationLValue(const CXXScalarValueInitExpr *E);
   LValue EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *E);
   LValue EmitOpaqueValueLValue(const OpaqueValueExpr *e);
+
+  RValue EmitRValueForField(llvm::Value *Addr, const FieldDecl *FD);
 
   class ConstantEmission {
     llvm::PointerIntPair<llvm::Constant*, 1, bool> ValueAndIsReference;

@@ -360,7 +360,6 @@ Sema::ActOnDefaultStmt(SourceLocation DefaultLoc, SourceLocation ColonLoc,
 StmtResult
 Sema::ActOnLabelStmt(SourceLocation IdentLoc, LabelDecl *TheDecl,
                      SourceLocation ColonLoc, Stmt *SubStmt) {
-  
   // If the label was multiply defined, reject it now.
   if (TheDecl->getStmt()) {
     Diag(IdentLoc, diag::err_redefinition_of_label) << TheDecl->getDeclName();
@@ -373,6 +372,16 @@ Sema::ActOnLabelStmt(SourceLocation IdentLoc, LabelDecl *TheDecl,
   TheDecl->setStmt(LS);
   if (!TheDecl->isGnuLocal())
     TheDecl->setLocation(IdentLoc);
+  return Owned(LS);
+}
+
+StmtResult Sema::ActOnAttributedStmt(SourceLocation AttrLoc,
+                                     const AttrVec &Attrs,
+                                     Stmt *SubStmt) {
+  // Fill in the declaration and return it. Variable length will require to
+  // change this to AttributedStmt::Create(Context, ....);
+  // and probably using ArrayRef
+  AttributedStmt *LS = new (Context) AttributedStmt(AttrLoc, Attrs, SubStmt);
   return Owned(LS);
 }
 
