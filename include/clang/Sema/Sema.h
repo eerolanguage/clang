@@ -2778,6 +2778,42 @@ public:
                                  Expr *Op);
   CastKind PrepareScalarCast(ExprResult &src, QualType destType);
 
+  // Eero: "cast" to/from an object type (boxing/unboxing)
+  ExprResult ActOnObjectCast(Scope *S,
+                             SourceLocation LParenLoc,
+                             QualType CastType, 
+                             SourceLocation RParenLoc,
+                             QualType CastExprType,
+                             Expr* CastExpr);
+
+  // Eero: "cast" a built in numeric value (e.g. int or float) to an object type
+  ExprResult ActOnArithmeticTypeToObjectCast(Scope *S,
+                                             SourceLocation LParenLoc,
+                                             ParsedType ClassType, 
+                                             SourceLocation RParenLoc,
+                                             Expr* CastExpr);
+
+  // Eero: "cast" an object to a built in numeric value (e.g. int or float)
+  ExprResult ActOnObjectToArithmeticTypeCast(Scope *S,
+                                             SourceLocation LParenLoc,
+                                             QualType ArithmeticType, 
+                                             SourceLocation RParenLoc,
+                                             Expr* CastExpr);
+
+  // Eero: "cast" a C-style string (char*) to an object type
+  ExprResult ActOnCStringTypeToObjectCast(Scope *S,
+                                          SourceLocation LParenLoc,
+                                          ParsedType ClassType, 
+                                          SourceLocation RParenLoc,
+                                          Expr* CastExpr);
+
+  // Eero: "cast" an object to a C-style string (const char*)
+  ExprResult ActOnObjectToCStringTypeCast(Scope *S,
+                                          SourceLocation LParenLoc,
+                                          QualType CStringType, 
+                                          SourceLocation RParenLoc,
+                                          Expr* CastExpr);  
+
   /// \brief Build an altivec or OpenCL literal.
   ExprResult BuildVectorLiteral(SourceLocation LParenLoc,
                                 SourceLocation RParenLoc, Expr *E,

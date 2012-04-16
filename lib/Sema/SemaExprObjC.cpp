@@ -3047,3 +3047,272 @@ ExprResult Sema::ActOnObjCBridgedCast(Scope *S,
   return BuildObjCBridgedCast(LParenLoc, Kind, BridgeKeywordLoc, TSInfo, 
                               SubExpr);
 }
+
+// Eero: "cast" to/from an object type (boxing/unboxing)
+ExprResult Sema::ActOnObjectCast(Scope *S,
+                                 SourceLocation LParenLoc,
+                                 QualType CastType, 
+                                 SourceLocation RParenLoc,
+                                 QualType CastExprType,
+                                 Expr *CastExpr) {
+  ExprResult result = ExprError();
+
+  if (CastType->isObjCObjectPointerType()) { // boxing
+    ParsedType Ty = ParsedType::make(CastType->getPointeeType());
+
+    if (CastExprType->isArithmeticType() &&  // a builtin numeric type
+        CastExprType->isBuiltinType()) {     //
+      result = ActOnArithmeticTypeToObjectCast(S, 
+                                               LParenLoc, 
+                                               Ty, 
+                                               RParenLoc, 
+                                               CastExpr);
+
+    } else if (CastExprType->isPointerType() && // a C string (char*)
+               CastExprType->getPointeeType()->isCharType()) {
+      result = ActOnCStringTypeToObjectCast(S, 
+                                            LParenLoc, 
+                                            Ty, 
+                                            RParenLoc, 
+                                            CastExpr);
+
+    } else if (CastExprType->isConstantArrayType() && // a C string literal
+               Context.getAsConstantArrayType(CastExprType)->
+                  getElementType()->isCharType()) {
+        result = ActOnCStringTypeToObjectCast(S, 
+                                              LParenLoc, 
+                                              Ty, 
+                                              RParenLoc, 
+                                              CastExpr);
+    }
+  } else { // unboxing
+    if (CastType->isArithmeticType() && // a primitive arithmetic
+        CastType->isBuiltinType()) {    // data type
+      result = ActOnObjectToArithmeticTypeCast(S, 
+                                               LParenLoc, 
+                                               CastType, 
+                                               RParenLoc, 
+                                               CastExpr);
+
+    } else if (CastType->isPointerType() && // a C string (char*)
+               CastType->getPointeeType()->isCharType()) {
+      result = ActOnObjectToCStringTypeCast(S, 
+                                            LParenLoc, 
+                                            CastType, 
+                                            RParenLoc, 
+                                            CastExpr);
+    }
+  }
+
+  if (result.isInvalid()) {
+    Diag(LParenLoc, diag::err_unsupported_class_or_object_cast)
+        << CastExpr->getSourceRange()
+        << CastExprType << CastType;
+  }
+
+  return result;
+}
+
+// Eero: "cast" a built-in numeric value (e.g. int or float) to an object type,
+// using class method selectors "numberWith<Type>".
+ExprResult Sema::ActOnArithmeticTypeToObjectCast(Scope *S,
+                                                 SourceLocation LParenLoc,
+                                                 ParsedType ClassType, 
+                                                 SourceLocation RParenLoc,
+                                                 Expr* CastExpr) {
+
+  const BuiltinType *BT = CastExpr->getType()->getAs<BuiltinType>();
+  std::string suffix;
+  ExprResult result;
+  
+  switch (BT->getKind()) {
+    case BuiltinType::Bool:
+      suffix = "Bool";
+      break;
+    case BuiltinType::Char_U:
+    case BuiltinType::UChar:
+      suffix = "UnsignedChar";
+      break;
+    case BuiltinType::UShort:
+      suffix = "UnsignedShort";
+      break;
+    case BuiltinType::UInt:
+      suffix = "UnsignedInt";
+      break;
+    case BuiltinType::ULong:
+      suffix = "UnsignedLong";
+      break;
+    case BuiltinType::ULongLong:
+      suffix = "UnsignedLongLong";
+      break;
+    case BuiltinType::Char_S:
+    case BuiltinType::SChar:
+      suffix = "Char";
+      break;
+    case BuiltinType::Short:
+      suffix = "Short";
+      break;
+    case BuiltinType::Int:
+      suffix = "Int";
+      break;
+    case BuiltinType::Long:
+      suffix = "Long";
+      break;
+    case BuiltinType::LongLong:
+      suffix = "LongLong";
+      break;
+    case BuiltinType::Float:
+      suffix = "Float";
+      break;
+    case BuiltinType::Double:
+      suffix = "Double";
+      break;
+    case BuiltinType::LongDouble:
+      suffix = "LongDouble"; // Note: does not exist for NSNumber, but other 
+      break;                 // classes may support it
+    default:
+      Diag(LParenLoc, diag::err_unsupported_class_or_object_cast)
+          << CastExpr->getSourceRange()
+          << CastExpr->getType() << GetTypeFromParser(ClassType);        
+      result = ExprError();
+      break;
+  }
+
+  if (!suffix.empty()) {
+    IdentifierInfo &II = PP.getIdentifierTable().get("numberWith" + suffix);      
+    Selector Sel = PP.getSelectorTable().getUnarySelector(&II);
+
+    result = ActOnClassMessage(S,
+                               ClassType,
+                               Sel,
+                               LParenLoc, RParenLoc, CastExpr->getLocEnd(),
+                               MultiExprArg(*this,&CastExpr,1));
+  }
+  
+  return result;
+}
+
+// Eero: "cast" an object to a built in numeric value (e.g. int or float)
+// using instance method selectors "<type>Value".
+ExprResult Sema::ActOnObjectToArithmeticTypeCast(Scope *S,
+                                                 SourceLocation LParenLoc,
+                                                 QualType ArithmeticType, 
+                                                 SourceLocation RParenLoc,
+                                                 Expr* CastExpr) {
+
+  const BuiltinType *BT = ArithmeticType->getAs<BuiltinType>();
+  std::string prefix;
+  ExprResult result;
+  
+  switch (BT->getKind()) {
+    case BuiltinType::Bool:
+      prefix = "bool";
+      break;
+    case BuiltinType::Char_U:
+    case BuiltinType::UChar:
+      prefix = "unsignedChar";
+      break;
+    case BuiltinType::UShort:
+      prefix = "unsignedShort";
+      break;
+    case BuiltinType::UInt:
+      prefix = "unsignedInt";
+      break;
+    case BuiltinType::ULong:
+      prefix = "unsignedLong";
+      break;
+    case BuiltinType::ULongLong:
+      prefix = "unsignedLongLong";
+      break;
+    case BuiltinType::Char_S:
+    case BuiltinType::SChar:
+      prefix = "char";
+      break;
+    case BuiltinType::Short:
+      prefix = "short";
+      break;
+    case BuiltinType::Int:
+      prefix = "int";
+      break;
+    case BuiltinType::Long:
+      prefix = "long";
+      break;
+    case BuiltinType::LongLong:
+      prefix = "longLong";
+      break;
+    case BuiltinType::Float:
+      prefix = "float";
+      break;
+    case BuiltinType::Double:
+      prefix = "double";
+      break;
+    case BuiltinType::LongDouble:
+      prefix = "longDouble"; // Note: does not exist for NSNumber, but other 
+      break;                 // classes may support it
+    default:
+      Diag(LParenLoc, diag::err_unsupported_class_or_object_cast)
+          << CastExpr->getSourceRange()
+          << CastExpr->getType() << ArithmeticType;        
+      result = ExprError();
+      break;
+  }
+
+  if (!prefix.empty()) {
+    IdentifierInfo &II = PP.getIdentifierTable().get( prefix + "Value");      
+    Selector Sel = PP.getSelectorTable().getNullarySelector(&II);
+
+    result = ActOnInstanceMessage(S,
+                                  CastExpr, 
+                                  Sel,
+                                  LParenLoc,
+                                  RParenLoc,
+                                  CastExpr->getLocEnd(),
+                                  MultiExprArg());
+  }
+  
+  return result;
+}
+
+// Eero: "cast" a C-style string (char*) to an object type,
+// using class method selector "stringWithUTF8String".
+ExprResult Sema::ActOnCStringTypeToObjectCast(Scope *S,
+                                              SourceLocation LParenLoc,
+                                              ParsedType ClassType, 
+                                              SourceLocation RParenLoc,
+                                              Expr* CastExpr) {
+
+  IdentifierInfo &II = PP.getIdentifierTable().get("stringWithUTF8String");      
+  Selector Sel = PP.getSelectorTable().getUnarySelector(&II);
+
+  return ActOnClassMessage(S,
+                           ClassType,
+                           Sel,
+                           LParenLoc, RParenLoc, CastExpr->getLocEnd(),
+                           MultiExprArg(*this,&CastExpr,1));
+}
+
+// Eero: "cast" an object to a C-style string (const char*)
+// using instance method selector "UTF8String".
+ExprResult Sema::ActOnObjectToCStringTypeCast(Scope *S,
+                                              SourceLocation LParenLoc,
+                                              QualType CStringType, 
+                                              SourceLocation RParenLoc,
+                                              Expr* CastExpr) {
+
+  if (!CStringType->getPointeeType().isConstQualified()) {
+    Diag(LParenLoc, diag::ext_typecheck_convert_discards_qualifiers) 
+      << CastExpr->getType() << CStringType << AA_Converting
+      << CastExpr->getSourceRange();
+  }
+
+  IdentifierInfo &II = PP.getIdentifierTable().get("UTF8String");      
+  Selector Sel = PP.getSelectorTable().getNullarySelector(&II);
+
+  return ActOnInstanceMessage(S,
+                              CastExpr, 
+                              Sel,
+                              LParenLoc,
+                              RParenLoc,
+                              CastExpr->getLocEnd(),
+                              MultiExprArg());
+}

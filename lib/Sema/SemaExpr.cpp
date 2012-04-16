@@ -4329,6 +4329,30 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
     ExprResult Result = MaybeConvertParenListExprToParenExpr(S, CastExpr);
     if (Result.isInvalid()) return ExprError();
     CastExpr = Result.take();
+  } else if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+    // Treat "(String)x" as "(String*)x"
+    if (castType->isObjCObjectType()) { 
+      castType = Context.getObjCObjectPointerType(castType);
+      castTInfo = Context.getTrivialTypeSourceInfo(castType);
+    }
+    // Eero supports objc object boxing/unboxing that looks like casts
+    const QualType castExprType = CastExpr->getType();
+    if (!castType->isVoidPointerType() &&      // ignore void* casts
+        !castExprType->isVoidPointerType() &&  //
+        !castType->isBlockPointerType() &&     // ignore block casts
+        !castExprType->isBlockPointerType() && //
+        !(castType->isPointerType() &&         // ignore struct* (CF) casts
+          castType->getPointeeType()->isStructureType()) && 
+        !(castExprType->isPointerType() &&     //
+          castExprType->getPointeeType()->isStructureType())) {
+      // Either cast-type or expr-to-cast must be objc object types,
+      // but ignore class-to-class casts
+      if (castType->isObjCObjectPointerType() !=
+          castExprType->isObjCObjectPointerType()) {
+        return ActOnObjectCast(S, LParenLoc, castType, RParenLoc, 
+                               castExprType, CastExpr);
+      }
+    }
   }
 
   return BuildCStyleCastExpr(LParenLoc, castTInfo, RParenLoc, CastExpr);

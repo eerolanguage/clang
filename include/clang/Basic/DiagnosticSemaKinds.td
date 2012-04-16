@@ -3990,6 +3990,10 @@ def note_parameter_named_here : Note<
 def note_parameter_here : Note<
   "passing argument to parameter here">;
 
+// Eero casts object to/from primitive data types
+def err_unsupported_class_or_object_cast : Error<
+  "cast from %0 to %1 is not supported">;
+
 // C++ casts
 // These messages adhere to the TryCast pattern: %0 is an int specifying the
 // cast type, %1 is the source type, %2 is the destination type.
