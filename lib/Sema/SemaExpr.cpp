@@ -9797,6 +9797,13 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
   // FIXME: Is this really right?
   if (CurContext == Func) return;
 
+  // Instantiate the exception specification for any function which is
+  // used: CodeGen will need it.
+  if (Func->getTemplateInstantiationPattern() &&
+      Func->getType()->castAs<FunctionProtoType>()->getExceptionSpecType()
+        == EST_Uninstantiated)
+    InstantiateExceptionSpec(Loc, Func);
+
   // Implicit instantiation of function templates and member functions of
   // class templates.
   if (Func->isImplicitlyInstantiable()) {
@@ -11292,22 +11299,6 @@ ExprResult
 Sema::ActOnObjCBoolLiteral(SourceLocation OpLoc, tok::TokenKind Kind) {
   assert((Kind == tok::kw___objc_yes || Kind == tok::kw___objc_no) &&
          "Unknown Objective-C Boolean value!");
-  QualType ObjCBoolLiteralQT = Context.ObjCBuiltinBoolTy;
-  // signed char is the default type for boolean literals. Use 'BOOL'
-  // instead, if BOOL typedef is visible in its scope instead.
-  Decl *TD = 
-    LookupSingleName(TUScope, &Context.Idents.get("BOOL"), 
-                     SourceLocation(), LookupOrdinaryName);
-  if (TypedefDecl *BoolTD = dyn_cast_or_null<TypedefDecl>(TD)) {
-    QualType QT = BoolTD->getUnderlyingType();
-    if (!QT->isIntegralOrUnscopedEnumerationType()) {
-      Diag(OpLoc, diag::warn_bool_for_boolean_literal) << QT;
-      Diag(BoolTD->getLocation(), diag::note_previous_declaration);
-    }
-    else
-      ObjCBoolLiteralQT = QT;
-  }
-  
   return Owned(new (Context) ObjCBoolLiteralExpr(Kind == tok::kw___objc_yes,
-                                        ObjCBoolLiteralQT, OpLoc));
+                                        Context.ObjCBuiltinBoolTy, OpLoc));
 }

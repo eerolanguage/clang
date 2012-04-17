@@ -522,6 +522,11 @@ public:
   QualType Transform##CLASS##Type(TypeLocBuilder &TLB, CLASS##TypeLoc T);
 #include "clang/AST/TypeLocNodes.def"
 
+  QualType TransformFunctionProtoType(TypeLocBuilder &TLB,
+                                      FunctionProtoTypeLoc TL,
+                                      CXXRecordDecl *ThisContext,
+                                      unsigned ThisTypeQuals);
+
   StmtResult
   TransformSEHHandler(Stmt *Handler);
 
@@ -4165,12 +4170,18 @@ template<typename Derived>
 QualType
 TreeTransform<Derived>::TransformFunctionProtoType(TypeLocBuilder &TLB,
                                                    FunctionProtoTypeLoc TL) {
+  return getDerived().TransformFunctionProtoType(TLB, TL, 0, 0);
+}
+
+template<typename Derived>
+QualType
+TreeTransform<Derived>::TransformFunctionProtoType(TypeLocBuilder &TLB,
+                                                   FunctionProtoTypeLoc TL,
+                                                   CXXRecordDecl *ThisContext,
+                                                   unsigned ThisTypeQuals) {
   // Transform the parameters and return type.
   //
-  // We instantiate in source order, with the return type first followed by
-  // the parameters, because users tend to expect this (even if they shouldn't
-  // rely on it!).
-  //
+  // We are required to instantiate the params and return type in source order.
   // When the function has a trailing return type, we instantiate the
   // parameters before the return type,  since the return type can then refer
   // to the parameters themselves (via decltype, sizeof, etc.).
@@ -4189,9 +4200,19 @@ TreeTransform<Derived>::TransformFunctionProtoType(TypeLocBuilder &TLB,
                                                  ParamTypes, &ParamDecls))
       return QualType();
 
-    ResultType = getDerived().TransformType(TLB, TL.getResultLoc());
-    if (ResultType.isNull())
-      return QualType();
+    {
+      // C++11 [expr.prim.general]p3:
+      //   If a declaration declares a member function or member function 
+      //   template of a class X, the expression this is a prvalue of type 
+      //   "pointer to cv-qualifier-seq X" between the optional cv-qualifer-seq
+      //   and the end of the function-definition, member-declarator, or 
+      //   declarator.
+      Sema::CXXThisScopeRAII ThisScope(SemaRef, ThisContext, ThisTypeQuals);
+      
+      ResultType = getDerived().TransformType(TLB, TL.getResultLoc());
+      if (ResultType.isNull())
+        return QualType();
+    }
   }
   else {
     ResultType = getDerived().TransformType(TLB, TL.getResultLoc());
@@ -4205,6 +4226,8 @@ TreeTransform<Derived>::TransformFunctionProtoType(TypeLocBuilder &TLB,
                                                  ParamTypes, &ParamDecls))
       return QualType();
   }
+
+  // FIXME: Need to transform the exception-specification too.
 
   QualType Result = TL.getType();
   if (getDerived().AlwaysRebuild() ||

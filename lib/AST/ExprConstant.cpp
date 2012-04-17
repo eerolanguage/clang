@@ -934,6 +934,7 @@ static bool IsGlobalLValue(APValue::LValueBase B) {
   case Expr::ObjCStringLiteralClass:
   case Expr::ObjCEncodeExprClass:
   case Expr::CXXTypeidExprClass:
+  case Expr::CXXUuidofExprClass:
     return true;
   case Expr::CallExprClass:
     return IsStringLiteralCall(cast<CallExpr>(E));
@@ -2872,6 +2873,7 @@ public:
   bool VisitStringLiteral(const StringLiteral *E) { return Success(E); }
   bool VisitObjCEncodeExpr(const ObjCEncodeExpr *E) { return Success(E); }
   bool VisitCXXTypeidExpr(const CXXTypeidExpr *E);
+  bool VisitCXXUuidofExpr(const CXXUuidofExpr *E);
   bool VisitArraySubscriptExpr(const ArraySubscriptExpr *E);
   bool VisitUnaryDeref(const UnaryOperator *E);
   bool VisitUnaryReal(const UnaryOperator *E);
@@ -2976,6 +2978,10 @@ bool LValueExprEvaluator::VisitCXXTypeidExpr(const CXXTypeidExpr *E) {
   }
   return Success(E);
 }
+
+bool LValueExprEvaluator::VisitCXXUuidofExpr(const CXXUuidofExpr *E) {
+  return Success(E);
+} 
 
 bool LValueExprEvaluator::VisitMemberExpr(const MemberExpr *E) {
   // Handle static data members.
@@ -5082,14 +5088,37 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
         }
       }
 
+      // The comparison here must be unsigned, and performed with the same
+      // width as the pointer.
+      unsigned PtrSize = Info.Ctx.getTypeSize(LHSTy);
+      uint64_t CompareLHS = LHSOffset.getQuantity();
+      uint64_t CompareRHS = RHSOffset.getQuantity();
+      assert(PtrSize <= 64 && "Unexpected pointer width");
+      uint64_t Mask = ~0ULL >> (64 - PtrSize);
+      CompareLHS &= Mask;
+      CompareRHS &= Mask;
+
+      // If there is a base and this is a relational operator, we can only
+      // compare pointers within the object in question; otherwise, the result
+      // depends on where the object is located in memory.
+      if (!LHSValue.Base.isNull() && E->isRelationalOp()) {
+        QualType BaseTy = getType(LHSValue.Base);
+        if (BaseTy->isIncompleteType())
+          return Error(E);
+        CharUnits Size = Info.Ctx.getTypeSizeInChars(BaseTy);
+        uint64_t OffsetLimit = Size.getQuantity();
+        if (CompareLHS > OffsetLimit || CompareRHS > OffsetLimit)
+          return Error(E);
+      }
+
       switch (E->getOpcode()) {
       default: llvm_unreachable("missing comparison operator");
-      case BO_LT: return Success(LHSOffset < RHSOffset, E);
-      case BO_GT: return Success(LHSOffset > RHSOffset, E);
-      case BO_LE: return Success(LHSOffset <= RHSOffset, E);
-      case BO_GE: return Success(LHSOffset >= RHSOffset, E);
-      case BO_EQ: return Success(LHSOffset == RHSOffset, E);
-      case BO_NE: return Success(LHSOffset != RHSOffset, E);
+      case BO_LT: return Success(CompareLHS < CompareRHS, E);
+      case BO_GT: return Success(CompareLHS > CompareRHS, E);
+      case BO_LE: return Success(CompareLHS <= CompareRHS, E);
+      case BO_GE: return Success(CompareLHS >= CompareRHS, E);
+      case BO_EQ: return Success(CompareLHS == CompareRHS, E);
+      case BO_NE: return Success(CompareLHS != CompareRHS, E);
       }
     }
   }
