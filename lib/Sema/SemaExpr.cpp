@@ -8216,6 +8216,13 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
   // Emit warnings for tricky precedence issues, e.g. "bitfield & 0x4 == 0"
   DiagnoseBinOpPrecedence(*this, Opc, TokLoc, LHSExpr, RHSExpr);
 
+  // Eero support for objc object binary operators
+  if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+      LHSExpr->getType()->isObjCObjectPointerType() && 
+      RHSExpr->getType()->isObjCObjectPointerType()) {
+    return ActOnObjectBinOp(S, TokLoc, Kind, Opc, LHSExpr, RHSExpr);
+  }
+
   return BuildBinOp(S, TokLoc, Opc, LHSExpr, RHSExpr);
 }
 

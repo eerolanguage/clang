@@ -3316,3 +3316,56 @@ ExprResult Sema::ActOnObjectToCStringTypeCast(Scope *S,
                               CastExpr->getLocEnd(),
                               MultiExprArg());
 }
+
+// Eero supports limited operator overloading for ObjC objects
+
+static inline std::string ConvertTokenKindToBinarySelectorName(
+  tok::TokenKind Kind, bool& invert) {
+  std::string SelectorName;
+  invert = false;
+  switch (Kind) {
+    case tok::equalequal:     SelectorName = "isEqual"; break;
+    case tok::exclaimequal:   SelectorName = "isEqual"; invert = true; break;
+    case tok::plus:           SelectorName = "plus"; break;
+    case tok::minus:          SelectorName = "minus"; break;
+    case tok::star:           SelectorName = "multipliedBy"; break;
+    case tok::slash:          SelectorName = "dividedBy"; break;
+    case tok::percent:        SelectorName = "modulo"; break;
+    case tok::less:           SelectorName = "isLess"; break;
+    case tok::lessequal:      SelectorName = "isGreater"; invert = true; break;      
+    case tok::greater:        SelectorName = "isGreater"; break;
+    case tok::greaterequal:   SelectorName = "isLess"; invert = true; break;
+    case tok::lessless:       SelectorName = "shiftLeft"; break;
+    case tok::greatergreater: SelectorName = "shiftRight"; break;
+    default:; // do nothing, leaving SelectorName empty
+  }
+  return SelectorName;
+}
+
+ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
+                                  tok::TokenKind Kind, BinaryOperatorKind Opc,
+                                  Expr *LHSExpr, Expr *RHSExpr) {
+  ExprResult result = ExprError();  
+
+  bool invert;
+  std::string SelName = ConvertTokenKindToBinarySelectorName(Kind, invert);
+
+  if (!SelName.empty()) {
+    IdentifierInfo &II = PP.getIdentifierTable().get(SelName);      
+    Selector Sel = PP.getSelectorTable().getUnarySelector(&II);
+    if (!Sel.isNull()) {
+      result = ActOnInstanceMessage(S,
+                                    LHSExpr, 
+                                    Sel,
+                                    TokLoc,
+                                    TokLoc,
+                                    TokLoc,
+                                    MultiExprArg(*this, &RHSExpr, 1));
+      if (invert) {
+        result = ActOnUnaryOp(S, TokLoc, tok::exclaim, result.take());
+      }
+    }
+  }
+
+  return result;
+}

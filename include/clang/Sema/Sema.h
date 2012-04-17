@@ -2854,6 +2854,11 @@ public:
   ExprResult CreateBuiltinBinOp(SourceLocation OpLoc, BinaryOperatorKind Opc,
                                 Expr *LHSExpr, Expr *RHSExpr);
 
+  // Eero objc object binary operators
+  ExprResult ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
+                              tok::TokenKind Kind, BinaryOperatorKind Opc,
+                              Expr *LHSExpr, Expr *RHSExpr);
+
   /// ActOnConditionalOp - Parse a ?: operation.  Note that 'LHS' may be null
   /// in the case of a the GNU conditional expr extension.
   ExprResult ActOnConditionalOp(SourceLocation QuestionLoc,
