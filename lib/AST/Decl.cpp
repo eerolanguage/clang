@@ -325,8 +325,7 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D, LVFlags F) {
       LinkageInfo TypeLV = getLVForType(Var->getType());
       if (TypeLV.linkage() != ExternalLinkage)
         return LinkageInfo::uniqueExternal();
-      LV.mergeVisibilityWithMin(TypeLV.visibility(),
-                                TypeLV.visibilityExplicit());
+      LV.mergeVisibilityWithMin(TypeLV);
     }
 
     if (Var->getStorageClass() == SC_PrivateExtern)
@@ -581,7 +580,7 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D, LVFlags F) {
     if (TypeLV.linkage() != ExternalLinkage)
       LV.mergeLinkage(UniqueExternalLinkage);
     if (!LV.visibilityExplicit())
-      LV.mergeVisibility(TypeLV.visibility(), TypeLV.visibilityExplicit());
+      LV.mergeVisibility(TypeLV);
   }
 
   return LV;
@@ -786,7 +785,7 @@ static LinkageInfo getLVForDecl(const NamedDecl *D, LVFlags Flags) {
       LinkageInfo LV;
       if (Flags.ConsiderVisibilityAttributes) {
         if (llvm::Optional<Visibility> Vis = Function->getExplicitVisibility())
-          LV.setVisibility(*Vis);
+          LV.setVisibility(*Vis, true);
       }
       
       if (const FunctionDecl *Prev = Function->getPreviousDecl()) {
@@ -807,10 +806,10 @@ static LinkageInfo getLVForDecl(const NamedDecl *D, LVFlags Flags) {
 
         LinkageInfo LV;
         if (Var->getStorageClass() == SC_PrivateExtern)
-          LV.setVisibility(HiddenVisibility);
+          LV.setVisibility(HiddenVisibility, true);
         else if (Flags.ConsiderVisibilityAttributes) {
           if (llvm::Optional<Visibility> Vis = Var->getExplicitVisibility())
-            LV.setVisibility(*Vis);
+            LV.setVisibility(*Vis, true);
         }
         
         if (const VarDecl *Prev = Var->getPreviousDecl()) {
