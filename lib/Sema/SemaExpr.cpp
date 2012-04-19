@@ -9469,10 +9469,11 @@ ExprResult Sema::VerifyIntegerConstantExpression(Expr *E,
       PDiag(diag::err_expr_not_ice) << LangOpts.CPlusPlus);
 }
 
-ExprResult Sema::VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
-                                                 PartialDiagnostic NotIceDiag,
-                                                 bool AllowFold,
-                                                 PartialDiagnostic FoldDiag) {
+ExprResult
+Sema::VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
+                                      const PartialDiagnostic &NotIceDiag,
+                                      bool AllowFold,
+                                      const PartialDiagnostic &FoldDiag) {
   SourceLocation DiagLoc = E->getLocStart();
 
   if (getLangOpts().CPlusPlus0x) {
@@ -9806,9 +9807,8 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
 
   // Instantiate the exception specification for any function which is
   // used: CodeGen will need it.
-  if (Func->getTemplateInstantiationPattern() &&
-      Func->getType()->castAs<FunctionProtoType>()->getExceptionSpecType()
-        == EST_Uninstantiated)
+  const FunctionProtoType *FPT = Func->getType()->getAs<FunctionProtoType>();
+  if (FPT && FPT->getExceptionSpecType() == EST_Uninstantiated)
     InstantiateExceptionSpec(Loc, Func);
 
   // Implicit instantiation of function templates and member functions of

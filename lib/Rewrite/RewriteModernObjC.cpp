@@ -102,7 +102,6 @@ namespace {
     FunctionDecl *CFStringFunctionDecl;
     FunctionDecl *SuperContructorFunctionDecl;
     FunctionDecl *CurFunctionDef;
-    FunctionDecl *CurFunctionDeclToDeclareForBlock;
 
     /* Misc. containers needed for meta-data rewrite. */
     SmallVector<ObjCImplementationDecl *, 8> ClassImplementation;
@@ -304,6 +303,7 @@ namespace {
     void RewriteFunctionDecl(FunctionDecl *FD);
     void RewriteBlockPointerType(std::string& Str, QualType Type);
     void RewriteBlockPointerTypeVariable(std::string& Str, ValueDecl *VD);
+    void RewriteBlockLiteralFunctionDecl(FunctionDecl *FD);
     void RewriteObjCQualifiedInterfaceTypes(Decl *Dcl);
     void RewriteTypeOfDecl(VarDecl *VD);
     void RewriteObjCQualifiedInterfaceTypes(Expr *E);
@@ -317,7 +317,7 @@ namespace {
     Stmt *RewriteMessageExpr(ObjCMessageExpr *Exp);
     Stmt *RewriteObjCStringLiteral(ObjCStringLiteral *Exp);
     Stmt *RewriteObjCBoolLiteralExpr(ObjCBoolLiteralExpr *Exp);
-    Stmt *RewriteObjCNumericLiteralExpr(ObjCNumericLiteral *Exp);
+    Stmt *RewriteObjCBoxedExpr(ObjCBoxedExpr *Exp);
     Stmt *RewriteObjCArrayLiteralExpr(ObjCArrayLiteral *Exp);
     Stmt *RewriteObjCDictionaryLiteralExpr(ObjCDictionaryLiteral *Exp);
     Stmt *RewriteObjCProtocolExpr(ObjCProtocolExpr *Exp);
@@ -622,7 +622,6 @@ void RewriteModernObjC::InitializeCommon(ASTContext &context) {
   NSStringRecord = 0;
   CurMethodDef = 0;
   CurFunctionDef = 0;
-  CurFunctionDeclToDeclareForBlock = 0;
   GlobalVarDecl = 0;
   GlobalConstructionExp = 0;
   SuperStructDecl = 0;
@@ -2245,6 +2244,28 @@ void RewriteModernObjC::RewriteBlockPointerTypeVariable(std::string& Str,
   }
 }
 
+void RewriteModernObjC::RewriteBlockLiteralFunctionDecl(FunctionDecl *FD) {
+  SourceLocation FunLocStart = FD->getTypeSpecStartLoc();
+  const FunctionType *funcType = FD->getType()->getAs<FunctionType>();
+  const FunctionProtoType *proto = dyn_cast<FunctionProtoType>(funcType);
+  if (!proto)
+    return;
+  QualType Type = proto->getResultType();
+  std::string FdStr = Type.getAsString(Context->getPrintingPolicy());
+  FdStr += " ";
+  FdStr += FD->getName();
+  FdStr +=  "(";
+  unsigned numArgs = proto->getNumArgs();
+  for (unsigned i = 0; i < numArgs; i++) {
+  QualType ArgType = proto->getArgType(i);
+  RewriteBlockPointerType(FdStr, ArgType);
+  if (i+1 < numArgs)
+    FdStr += ", ";
+  }
+  FdStr +=  ");\n";
+  InsertText(FunLocStart, FdStr);
+}
+
 // SynthSuperContructorFunctionDecl - id __rw_objc_super(id obj, id super);
 void RewriteModernObjC::SynthSuperContructorFunctionDecl() {
   if (SuperContructorFunctionDecl)
@@ -2471,7 +2492,7 @@ Stmt *RewriteModernObjC::RewriteObjCBoolLiteralExpr(ObjCBoolLiteralExpr *Exp) {
   return PE;
 }
 
-Stmt *RewriteModernObjC::RewriteObjCNumericLiteralExpr(ObjCNumericLiteral *Exp) {
+Stmt *RewriteModernObjC::RewriteObjCBoxedExpr(ObjCBoxedExpr *Exp) {
   // synthesize declaration of helper functions needed in this routine.
   if (!SelGetUidFunctionDecl)
     SynthSelGetUidFunctionDecl();
@@ -2489,13 +2510,12 @@ Stmt *RewriteModernObjC::RewriteObjCNumericLiteralExpr(ObjCNumericLiteral *Exp) 
   SmallVector<Expr*, 4> MsgExprs;
   SmallVector<Expr*, 4> ClsExprs;
   QualType argType = Context->getPointerType(Context->CharTy);
-  QualType expType = Exp->getType();
   
-  // Create a call to objc_getClass("NSNumber"). It will be th 1st argument.
-  ObjCInterfaceDecl *Class = 
-    expType->getPointeeType()->getAs<ObjCObjectType>()->getInterface();
+  // Create a call to objc_getClass("<BoxingClass>"). It will be the 1st argument.
+  ObjCMethodDecl *BoxingMethod = Exp->getBoxingMethod();
+  ObjCInterfaceDecl *BoxingClass = BoxingMethod->getClassInterface();
   
-  IdentifierInfo *clsName = Class->getIdentifier();
+  IdentifierInfo *clsName = BoxingClass->getIdentifier();
   ClsExprs.push_back(StringLiteral::Create(*Context,
                                            clsName->getName(),
                                            StringLiteral::Ascii, false,
@@ -2506,12 +2526,11 @@ Stmt *RewriteModernObjC::RewriteObjCNumericLiteralExpr(ObjCNumericLiteral *Exp) 
                                                StartLoc, EndLoc);
   MsgExprs.push_back(Cls);
   
-  // Create a call to sel_registerName("numberWithBool:"), etc.
+  // Create a call to sel_registerName("<BoxingMethod>:"), etc.
   // it will be the 2nd argument.
   SmallVector<Expr*, 4> SelExprs;
-  ObjCMethodDecl *NumericMethod = Exp->getObjCNumericLiteralMethod();
   SelExprs.push_back(StringLiteral::Create(*Context,
-                                           NumericMethod->getSelector().getAsString(),
+                                           BoxingMethod->getSelector().getAsString(),
                                            StringLiteral::Ascii, false,
                                            argType, SourceLocation()));
   CallExpr *SelExp = SynthesizeCallToFunctionDecl(SelGetUidFunctionDecl,
@@ -2519,25 +2538,25 @@ Stmt *RewriteModernObjC::RewriteObjCNumericLiteralExpr(ObjCNumericLiteral *Exp) 
                                                   StartLoc, EndLoc);
   MsgExprs.push_back(SelExp);
   
-  // User provided numeric literal is the 3rd, and last, argument.
-  Expr *userExpr  = Exp->getNumber();
-  if (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(userExpr)) {
+  // User provided sub-expression is the 3rd, and last, argument.
+  Expr *subExpr  = Exp->getSubExpr();
+  if (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(subExpr)) {
     QualType type = ICE->getType();
     const Expr *SubExpr = ICE->IgnoreParenImpCasts();
     CastKind CK = CK_BitCast;
     if (SubExpr->getType()->isIntegralType(*Context) && type->isBooleanType())
       CK = CK_IntegralToBoolean;
-    userExpr = NoTypeInfoCStyleCastExpr(Context, type, CK, userExpr);
+    subExpr = NoTypeInfoCStyleCastExpr(Context, type, CK, subExpr);
   }
-  MsgExprs.push_back(userExpr);
+  MsgExprs.push_back(subExpr);
   
   SmallVector<QualType, 4> ArgTypes;
   ArgTypes.push_back(Context->getObjCIdType());
   ArgTypes.push_back(Context->getObjCSelType());
-  for (ObjCMethodDecl::param_iterator PI = NumericMethod->param_begin(),
-       E = NumericMethod->param_end(); PI != E; ++PI)
+  for (ObjCMethodDecl::param_iterator PI = BoxingMethod->param_begin(),
+       E = BoxingMethod->param_end(); PI != E; ++PI)
     ArgTypes.push_back((*PI)->getType());
-    
+  
   QualType returnType = Exp->getType();
   // Get the type, we will need to reference it in a couple spots.
   QualType msgSendType = MsgSendFlavor->getType();
@@ -2547,13 +2566,13 @@ Stmt *RewriteModernObjC::RewriteObjCNumericLiteralExpr(ObjCNumericLiteral *Exp) 
                                                VK_LValue, SourceLocation());
   
   CastExpr *cast = NoTypeInfoCStyleCastExpr(Context,
-                                  Context->getPointerType(Context->VoidTy),
-                                  CK_BitCast, DRE);
+                                            Context->getPointerType(Context->VoidTy),
+                                            CK_BitCast, DRE);
   
   // Now do the "normal" pointer to function cast.
   QualType castType =
-    getSimpleFunctionType(returnType, &ArgTypes[0], ArgTypes.size(),
-                          NumericMethod->isVariadic());
+  getSimpleFunctionType(returnType, &ArgTypes[0], ArgTypes.size(),
+                        BoxingMethod->isVariadic());
   castType = Context->getPointerType(castType);
   cast = NoTypeInfoCStyleCastExpr(Context, castType, CK_BitCast,
                                   cast);
@@ -3986,9 +4005,13 @@ std::string RewriteModernObjC::SynthesizeBlockDescriptor(std::string DescTag,
 /// getFunctionSourceLocation - returns start location of a function
 /// definition. Complication arises when function has declared as
 /// extern "C" or extern "C" {...}
-static SourceLocation getFunctionSourceLocation (FunctionDecl *FD) {
-  if (!FD->isExternC() || FD->isMain())
+static SourceLocation getFunctionSourceLocation (RewriteModernObjC &R,
+                                                 FunctionDecl *FD) {
+  if (!FD->isExternC() || FD->isMain()) {
+    if (FD->getStorageClassAsWritten() != SC_None)
+      R.RewriteBlockLiteralFunctionDecl(FD);
     return FD->getTypeSpecStartLoc();
+  }
   const DeclContext *DC = FD->getDeclContext();
   if (const LinkageSpecDecl *LSD = dyn_cast<LinkageSpecDecl>(DC)) {
     SourceLocation BodyRBrace = LSD->getRBraceLoc();
@@ -4110,7 +4133,7 @@ void RewriteModernObjC::SynthesizeBlockLiterals(SourceLocation FunLocStart,
 }
 
 void RewriteModernObjC::InsertBlockLiteralsWithinFunction(FunctionDecl *FD) {
-  SourceLocation FunLocStart = getFunctionSourceLocation(FD);
+  SourceLocation FunLocStart = getFunctionSourceLocation(*this, FD);
   StringRef FuncName = FD->getName();
 
   SynthesizeBlockLiterals(FunLocStart, FuncName);
@@ -4758,7 +4781,7 @@ void RewriteModernObjC::RewriteByRefVar(VarDecl *ND) {
   // Insert this type in global scope. It is needed by helper function.
   SourceLocation FunLocStart;
   if (CurFunctionDef)
-     FunLocStart = getFunctionSourceLocation(CurFunctionDef);
+     FunLocStart = getFunctionSourceLocation(*this, CurFunctionDef);
   else {
     assert(CurMethodDef && "RewriteByRefVar - CurMethodDef is null");
     FunLocStart = CurMethodDef->getLocStart();
@@ -5214,8 +5237,8 @@ Stmt *RewriteModernObjC::RewriteFunctionBodyOrGlobalInitializer(Stmt *S) {
   if (ObjCBoolLiteralExpr *BoolLitExpr = dyn_cast<ObjCBoolLiteralExpr>(S))
     return RewriteObjCBoolLiteralExpr(BoolLitExpr);
   
-  if (ObjCNumericLiteral *NumericLitExpr = dyn_cast<ObjCNumericLiteral>(S))
-    return RewriteObjCNumericLiteralExpr(NumericLitExpr);
+  if (ObjCBoxedExpr *BoxedExpr = dyn_cast<ObjCBoxedExpr>(S))
+    return RewriteObjCBoxedExpr(BoxedExpr);
   
   if (ObjCArrayLiteral *ArrayLitExpr = dyn_cast<ObjCArrayLiteral>(S))
     return RewriteObjCArrayLiteralExpr(ArrayLitExpr);
@@ -5402,7 +5425,6 @@ void RewriteModernObjC::HandleDeclInMainFile(Decl *D) {
       // FIXME: If this should support Obj-C++, support CXXTryStmt
       if (CompoundStmt *Body = dyn_cast_or_null<CompoundStmt>(FD->getBody())) {
         CurFunctionDef = FD;
-        CurFunctionDeclToDeclareForBlock = FD;
         CurrentBody = Body;
         Body =
         cast_or_null<CompoundStmt>(RewriteFunctionBodyOrGlobalInitializer(Body));
@@ -5416,7 +5438,6 @@ void RewriteModernObjC::HandleDeclInMainFile(Decl *D) {
         // and any copy/dispose helper functions.
         InsertBlockLiteralsWithinFunction(FD);
         CurFunctionDef = 0;
-        CurFunctionDeclToDeclareForBlock = 0;
       }
       break;
     }
