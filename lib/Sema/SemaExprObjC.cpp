@@ -1323,6 +1323,50 @@ ObjCMethodDecl *Sema::LookupMethodInQualifiedType(Selector Sel,
   return 0;
 }
 
+static void DiagnoseARCUseOfWeakReceiver(Sema &S, Expr *Receiver) {
+  if (!Receiver)
+    return;
+  
+  Expr *RExpr = Receiver->IgnoreParenImpCasts();
+  SourceLocation Loc = RExpr->getLocStart();
+  QualType T = RExpr->getType();
+  ObjCPropertyDecl *PDecl = 0;
+  ObjCMethodDecl *GDecl = 0;
+  if (PseudoObjectExpr *POE = dyn_cast<PseudoObjectExpr>(RExpr)) {
+    RExpr = POE->getSyntacticForm();
+    if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(RExpr)) {
+      if (PRE->isImplicitProperty()) {
+        GDecl = PRE->getImplicitPropertyGetter();
+        if (GDecl) {
+          T = GDecl->getResultType();
+        }
+      }
+      else {
+        PDecl = PRE->getExplicitProperty();
+        if (PDecl) {
+          T = PDecl->getType();
+        }
+      }
+    }
+  }
+  
+  if (T.getObjCLifetime() == Qualifiers::OCL_Weak) {
+    S.Diag(Loc, diag::warn_receiver_is_weak) 
+      << ((!PDecl && !GDecl) ? 0 : (PDecl ? 1 : 2));
+    if (PDecl)
+      S.Diag(PDecl->getLocation(), diag::note_property_declare);
+    else if (GDecl)
+      S.Diag(GDecl->getLocation(), diag::note_method_declared_at) << GDecl;
+    return;
+  }
+  
+  if (PDecl && 
+      (PDecl->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_weak)) {
+    S.Diag(Loc, diag::warn_receiver_is_weak) << 1;
+    S.Diag(PDecl->getLocation(), diag::note_property_declare);
+  }
+}
+
 /// HandleExprPropertyRefExpr - Handle foo.bar where foo is a pointer to an
 /// objective C interface.  This is a property reference expression.
 ExprResult Sema::
@@ -1354,7 +1398,6 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
     // Check whether we can reference this property.
     if (DiagnoseUseOfDecl(PD, MemberLoc))
       return ExprError();
-             
     if (Super)
       return Owned(new (Context) ObjCPropertyRefExpr(PD, Context.PseudoObjectTy,
                                                      VK_LValue, OK_ObjCProperty,
@@ -1372,7 +1415,7 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
       // Check whether we can reference this property.
       if (DiagnoseUseOfDecl(PD, MemberLoc))
         return ExprError();
-      
+
       if (Super)
         return Owned(new (Context) ObjCPropertyRefExpr(PD,
                                                        Context.PseudoObjectTy,
@@ -2379,10 +2422,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
   }
 
   if (getLangOpts().ObjCAutoRefCount) {
-    if (Receiver &&
-        (Receiver->IgnoreParenImpCasts()->getType().getObjCLifetime() 
-          == Qualifiers::OCL_Weak))
-      Diag(Receiver->getLocStart(), diag::warn_receiver_is_weak);
+    DiagnoseARCUseOfWeakReceiver(*this, Receiver);
     
     // In ARC, annotate delegate init calls.
     if (Result->getMethodFamily() == OMF_init &&

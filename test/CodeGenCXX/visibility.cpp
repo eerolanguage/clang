@@ -28,6 +28,18 @@ namespace test28 {
   // CHECK-HIDDEN: @_ZN6test285myvecE = hidden global
 }
 
+namespace test29 {
+#pragma GCC visibility push(hidden)
+  struct RECT {
+    int top;
+  };
+  __attribute__ ((visibility ("default"))) extern RECT data_rect;
+  RECT data_rect = { -1};
+#pragma GCC visibility pop
+  // CHECK: @_ZN6test299data_rectE = global
+  // CHECK-HIDDEN: @_ZN6test299data_rectE = global
+}
+
 // CHECK: @_ZN5Test425VariableInHiddenNamespaceE = hidden global i32 10
 // CHECK: @_ZN5Test71aE = hidden global
 // CHECK: @_ZN5Test71bE = global
@@ -510,7 +522,7 @@ namespace PR10113 {
   };
   template class foo::bar<zed>;
   // CHECK: define weak_odr void @_ZN7PR101133foo3barINS_3zedEE3zedEv
-  // CHECK-HIDDEN: define weak_odr void @_ZN7PR101133foo3barINS_3zedEE3zedEv
+  // CHECK-HIDDEN: define weak_odr hidden void @_ZN7PR101133foo3barINS_3zedEE3zedEv
 }
 
 namespace PR11690 {
@@ -541,7 +553,7 @@ namespace PR11690_2 {
   };
   template class foo::zed<baz>;
   // CHECK: define weak_odr void @_ZN9PR11690_23foo3zedINS_3bazENS0_3barEE3barEv
-  // CHECK-HIDDEN: define weak_odr void @_ZN9PR11690_23foo3zedINS_3bazENS0_3barEE3barEv
+  // CHECK-HIDDEN: define weak_odr hidden void @_ZN9PR11690_23foo3zedINS_3bazENS0_3barEE3barEv
 }
 
 namespace test23 {

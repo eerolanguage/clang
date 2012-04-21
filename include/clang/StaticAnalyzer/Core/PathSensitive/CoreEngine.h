@@ -104,7 +104,7 @@ private:
   CoreEngine(const CoreEngine&); // Do not implement.
   CoreEngine& operator=(const CoreEngine&);
 
-  ExplodedNode *generateCallExitNode(ExplodedNode *N);
+  ExplodedNode *generateCallExitBeginNode(ExplodedNode *N);
 
 public:
   /// Construct a CoreEngine object to analyze the provided CFG using
@@ -188,10 +188,10 @@ public:
 
 // TODO: Turn into a calss.
 struct NodeBuilderContext {
-  CoreEngine &Eng;
+  const CoreEngine &Eng;
   const CFGBlock *Block;
   ExplodedNode *Pred;
-  NodeBuilderContext(CoreEngine &E, const CFGBlock *B, ExplodedNode *N)
+  NodeBuilderContext(const CoreEngine &E, const CFGBlock *B, ExplodedNode *N)
     : Eng(E), Block(B), Pred(N) { assert(B); assert(!N->isSink()); }
 
   ExplodedNode *getPred() const { return Pred; }

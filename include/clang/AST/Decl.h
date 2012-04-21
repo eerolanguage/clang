@@ -258,15 +258,15 @@ public:
     // down to one of its members. If the member has no explicit visibility,
     // the class visibility wins.
     void mergeVisibility(Visibility V, bool E = false) {
-      // If one has explicit visibility and the other doesn't, keep the
-      // explicit one.
-      if (visibilityExplicit() && !E)
+      // Never increase the visibility
+      if (visibility() < V)
         return;
-      if (!visibilityExplicit() && E)
-        setVisibility(V, E);
 
-      // If both are explicit or both are implicit, keep the minimum.
-      setVisibility(minVisibility(visibility(), V), visibilityExplicit() || E);
+      // If we have an explicit visibility, keep it
+      if (visibilityExplicit())
+        return;
+
+      setVisibility(V, E);
     }
     // Merge the visibility V, keeping the most restrictive one.
     // This is used for cases like merging the visibility of a template
@@ -277,9 +277,10 @@ public:
       if (visibility() < V)
         return;
 
-      // If this visibility is explicit, keep it.
-      if (visibilityExplicit() && !E)
+      // Don't lose the explicit bit for nothing
+      if (visibility() == V && visibilityExplicit())
         return;
+
       setVisibility(V, E);
     }
     void mergeVisibility(LinkageInfo Other) {

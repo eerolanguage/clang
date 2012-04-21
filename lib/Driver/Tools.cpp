@@ -4217,9 +4217,9 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
       if ((!runtime.HasARC && isObjCAutoRefCount(Args)) ||
           !runtime.HasSubscripting)
         getDarwinToolChain().AddLinkARCArgs(Args, CmdArgs);
-      CmdArgs.push_back("-framework");
-      CmdArgs.push_back("Foundation");
     }
+    CmdArgs.push_back("-framework");
+    CmdArgs.push_back("Foundation");
     // Link libobj.
     CmdArgs.push_back("-lobjc");
   }
@@ -5065,6 +5065,10 @@ void linuxtools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     StringRef MArch = getToolChain().getArchName();
     if (MArch == "armv7" || MArch == "armv7a" || MArch == "armv7-a")
       CmdArgs.push_back("-mfpu=neon");
+
+    StringRef ARMFloatABI = getARMFloatABI(getToolChain().getDriver(), Args,
+                                           getToolChain().getTriple());
+    CmdArgs.push_back(Args.MakeArgString("-mfloat-abi=" + ARMFloatABI));
   } else if (getToolChain().getArch() == llvm::Triple::mips ||
              getToolChain().getArch() == llvm::Triple::mipsel ||
              getToolChain().getArch() == llvm::Triple::mips64 ||

@@ -379,7 +379,7 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
     return;  
 
   // Don't try to generate diagnostics for link jobs.
-  if (FailingCommand->getCreator().isLinkJob())
+  if (FailingCommand && FailingCommand->getCreator().isLinkJob())
     return;
 
   Diag(clang::diag::note_drv_command_failed_diag_msg)
@@ -489,6 +489,21 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
         Diag(clang::diag::note_drv_command_failed_diag_msg)
           << "Error generating run script: " + Script + " " + Err;
       } else {
+        // Strip -D, -F, and -I.
+        // FIXME: This doesn't work with quotes (e.g., -D "foo bar").
+        std::string Flag[4] = {"-D ", "-F", "-I ", "-o "};
+        for (unsigned i = 0; i < 4; ++i) {
+          size_t I = 0, E = 0;
+          do {
+            I = Cmd.find(Flag[i], I);
+            if (I == std::string::npos) break;
+            
+            E = Cmd.find(" ", I + Flag[i].length());
+            if (E == std::string::npos) break;
+            Cmd.erase(I, E - I + 1);
+          } while(1);
+        }
+        // FIXME: Append the new filename with correct preprocessed suffix.
         ScriptOS << Cmd;
         Diag(clang::diag::note_drv_command_failed_diag_msg) << Script;
       }
@@ -1453,15 +1468,24 @@ const char *Driver::GetNamedOutputPath(Compilation &C,
     NamedOutput = C.getArgs().MakeArgString(Suffixed.c_str());
   }
 
-  // If we're saving temps and the temp filename conflicts with the input
-  // filename, then avoid overwriting input file.
+  // If we're saving temps and the temp file conflicts with the input file, 
+  // then avoid overwriting input file.
   if (!AtTopLevel && C.getArgs().hasArg(options::OPT_save_temps) &&
       NamedOutput == BaseName) {
-    StringRef Name = llvm::sys::path::filename(BaseInput);
-    std::pair<StringRef, StringRef> Split = Name.split('.');
-    std::string TmpName =
-      GetTemporaryPath(Split.first, types::getTypeTempSuffix(JA.getType()));
-    return C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
+
+    bool SameFile = false;
+    SmallString<256> Result;
+    llvm::sys::fs::current_path(Result);
+    llvm::sys::path::append(Result, BaseName);
+    llvm::sys::fs::equivalent(BaseInput, Result.c_str(), SameFile);
+    // Must share the same path to conflict.
+    if (SameFile) {
+      StringRef Name = llvm::sys::path::filename(BaseInput);
+      std::pair<StringRef, StringRef> Split = Name.split('.');
+      std::string TmpName =
+        GetTemporaryPath(Split.first, types::getTypeTempSuffix(JA.getType()));
+      return C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
+    }
   }
 
   // As an annoying special case, PCH generation doesn't strip the pathname.
