@@ -18,6 +18,7 @@
 #include "clang/Sema/PrettyDeclStackTrace.h"
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 using namespace clang;
 
 
@@ -896,9 +897,13 @@ ParsedType Parser::ParseObjCTypeName(ObjCDeclSpec &DS,
          context == Declarator::ObjCResultContext);
   assert((paramAttrs != 0) == (context == Declarator::ObjCParameterContext));
 
-  assert(Tok.is(tok::l_paren) && "expected (");
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+
+  assert((Tok.is(tok::l_paren) || isEero) && "expected (");
 
   BalancedDelimiterTracker T(*this, tok::l_paren);
+  if (isEero)
+    T.setOptional();
   T.consumeOpen();
 
   SourceLocation TypeStartLoc = Tok.getLocation();
@@ -952,6 +957,49 @@ ParsedType Parser::ParseObjCTypeName(ObjCDeclSpec &DS,
   return Ty;
 }
 
+/// Eero helper function which derives a variable name from a camel case 
+/// selector name (full name begins with lowercase characters, new 
+/// words start with uppercase characters).
+/// The variable name construction rules are: 
+///   1) If the selector name contains words separated by camel case, then the
+///      last word (scanning left to right), converted entirely to lowercase, is used.
+///   2) The first camel case word containing two consecutive uppercase characters
+///      encountered (scanning left to right) is used, along with all subsequent 
+///      words; no character cases are modified.
+///   3) If no uppercase characters are encountered, the entire selector name is used.
+///   4) If the first character in the selector name is uppercase, the entire selector 
+///      name is used.
+///
+/// Examples:
+///   1) Selector name "initWithString" results in variable name "string"
+///   2) Selector name "initWithUTF8String" results in variable name "UTF8String"
+///   3) Selector name "compare" results in variable name "compare"
+///   4) Selector name "CreateNewString" results in variable name "CreateNewString"
+///
+static std::string NameFromCamelCase(const std::string& aName)
+{
+  std::string name(aName);
+  size_t pos(std::string::npos);
+  bool changeCase(true);
+  
+  for (size_t i=0; i < name.length(); i++) {          
+    if (isupper(name[i])) {
+      if (i == pos + 1) {  // two consecutive uppercase chars (or if name begins with uppercase)
+        changeCase = false;
+        break;
+      } else {
+        pos = i;
+      }
+    }
+  }
+  if (pos != std::string::npos) {
+    if (changeCase)
+      name[pos] = tolower(name[pos]);
+    name = name.substr(pos);
+  }
+  return name;
+}
+
 ///   objc-method-decl:
 ///     objc-selector
 ///     objc-keyword-selector objc-parmlist[opt]
@@ -985,6 +1033,8 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                                   tok::ObjCKeywordKind MethodImplKind,
                                   bool MethodDefinition) {
   ParsingDeclRAIIObject PD(*this);
+  
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
 
   if (Tok.is(tok::code_completion)) {
     Actions.CodeCompleteObjCMethodDecl(getCurScope(), mType == tok::minus, 
@@ -996,12 +1046,17 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   // Parse the return type if present.
   ParsedType ReturnType;
   ObjCDeclSpec DSRet;
+  if (isEero) { // Eero return type defaults to void   
+    InsertToken(tok::r_paren);  // TODO: look into a cleaner way to do this  
+    InsertToken(tok::kw_void);  //   
+    InsertToken(tok::l_paren);  //  
+  } 
   if (Tok.is(tok::l_paren))
     ReturnType = ParseObjCTypeName(DSRet, Declarator::ObjCResultContext, 0);
 
   // If attributes exist before the method, parse them.
   ParsedAttributes methodAttrs(AttrFactory);
-  if (getLangOpts().ObjC2)
+  if (getLangOpts().ObjC2 && !isEero)
     MaybeParseGNUAttributes(methodAttrs);
 
   if (Tok.is(tok::code_completion)) {
@@ -1026,6 +1081,17 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
 
   SmallVector<DeclaratorChunk::ParamInfo, 8> CParamInfo;
   if (Tok.isNot(tok::colon)) {
+    // Eero: no parameters, but return type is specified
+    if (isEero && Tok.is(tok::comma) && NextToken().is(tok::kw_return)) {
+      ConsumeToken(); // comma
+      SourceLocation retLoc = ConsumeToken(); // eat the 'return' keyword
+      if (!Tok.isAtStartOfLine()) {
+        ReturnType = ParseObjCTypeName(DSRet, Declarator::ObjCResultContext, 0);
+      } else {
+        Diag(PP.getLocForEndOfToken(retLoc), diag::err_expected_type);
+      }
+    }
+
     // If attributes exist after the method, parse them.
     if (getLangOpts().ObjC2)
       MaybeParseGNUAttributes(methodAttrs);
@@ -1049,6 +1115,9 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                             Scope::FunctionPrototypeScope|Scope::DeclScope);
 
   AttributePool allParamAttrs(AttrFactory);
+
+  // For Eero: used to track generated names (for making them unique)
+  llvm::StringSet<> GeneratedNames;
   
   while (1) {
     ParsedAttributes paramAttrs(AttrFactory);
@@ -1061,8 +1130,9 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     }
     ConsumeToken(); // Eat the ':'.
 
+    SourceLocation ArgTypeLoc = Tok.getLocation();
     ArgInfo.Type = ParsedType();
-    if (Tok.is(tok::l_paren)) // Parse the argument type if present.
+    if (Tok.is(tok::l_paren) || isEero) // Parse the argument type if present.
       ArgInfo.Type = ParseObjCTypeName(ArgInfo.DeclSpec,
                                        Declarator::ObjCParameterContext,
                                        &paramAttrs);
@@ -1076,7 +1146,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     }
 
     // Code completion for the next piece of the selector.
-    if (Tok.is(tok::code_completion)) {
+    if (Tok.is(tok::code_completion) && !isEero) { // TODO: enable for eero?
       KeyIdents.push_back(SelIdent);
       Actions.CodeCompleteObjCMethodDeclSelector(getCurScope(), 
                                                  mType == tok::minus,
@@ -1087,20 +1157,43 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       cutOffParsing();
       return 0;
     }
-    
-    if (Tok.isNot(tok::identifier) && 
-        (!getLangOpts().Eero || // Some headers use these as arg var names
-         !(Tok.is(tok::kw_interface) ||
-           Tok.is(tok::kw_protocol) ||
-           Tok.is(tok::kw_selector) ||
-           Tok.is(tok::kw_property)))) {
+
+    // Eero supports default argument variable names
+    if (isEero && (Tok.isAtStartOfLine() || Tok.is(tok::comma))) {
+      std::string generatedName;
+      // derive arg var name from selector piece
+      if (SelIdent)
+        generatedName = NameFromCamelCase(SelIdent->getName());
+      else
+        generatedName = "_";
+      if (!CurParsedObjCImpl) {
+        // make the name unique to avoid compiler warnings:
+        // name, name__1, name__2, ..., name__0 
+        if (GeneratedNames.count(generatedName)) {
+          generatedName += "__";
+          generatedName += ('0' + ArgInfos.size() % 10);
+        } else {
+          GeneratedNames.insert(generatedName);
+        }
+      }
+
+      ArgInfo.Name = &PP.getIdentifierTable().get(generatedName);
+      ArgInfo.NameLoc = ArgTypeLoc;
+
+    } else if (Tok.is(tok::identifier) ||
+               Tok.is(tok::kw_interface) || // Some headers use these as arg names
+               Tok.is(tok::kw_protocol) ||  //
+               Tok.is(tok::kw_property) ||  //
+               Tok.is(tok::kw_selector)) {  //
+
+      ArgInfo.Name = Tok.getIdentifierInfo();
+      ArgInfo.NameLoc = Tok.getLocation();
+      ConsumeToken(); // Eat the identifier.
+
+    } else {
       Diag(Tok, diag::err_expected_ident); // missing argument name.
       break;
     }
-
-    ArgInfo.Name = Tok.getIdentifierInfo();
-    ArgInfo.NameLoc = Tok.getLocation();
-    ConsumeToken(); // Eat the identifier.
 
     ArgInfos.push_back(ArgInfo);
     KeyIdents.push_back(SelIdent);
@@ -1108,6 +1201,17 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
 
     // Make sure the attributes persist.
     allParamAttrs.takeAllFrom(paramAttrs.getPool());
+
+    if (isEero) {
+      if (!Tok.isAtStartOfLine() && Tok.is(tok::comma)) {
+        if (NextToken().isNot(tok::ellipsis) && 
+            NextToken().isNot(tok::kw_return)) {
+          ConsumeToken(); // eat the comma
+        }
+      } else {
+        break;
+      }
+    }
 
     // Code completion for the next piece of the selector.
     if (Tok.is(tok::code_completion)) {
@@ -1121,11 +1225,6 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       return 0;
     }
     
-    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
-        Tok.isAtStartOfLine()) { // TODO: this will change
-      break;
-    }
-
     // Check for another keyword selector.
     SelIdent = ParseObjCSelectorPiece(selLoc);
     if (!SelIdent && Tok.isNot(tok::colon))
@@ -1136,7 +1235,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   bool isVariadic = false;
 
   // Parse the (optional) parameter list.
-  while (Tok.is(tok::comma)) {
+  while (Tok.is(tok::comma) && (!isEero || NextToken().isNot(tok::kw_return))) {
     ConsumeToken();
     if (Tok.is(tok::ellipsis)) {
       isVariadic = true;
@@ -1155,6 +1254,16 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                                                     Param,
                                                    0));
 
+  }
+
+  if (isEero && Tok.is(tok::comma)) { // only happens if followed by 'return'
+    ConsumeToken(); // eat the comma
+    SourceLocation retLoc = ConsumeToken(); // eat the 'return' keyword
+    if (!Tok.isAtStartOfLine()) {
+      ReturnType = ParseObjCTypeName(DSRet, Declarator::ObjCResultContext, 0);
+    } else {
+      Diag(PP.getLocForEndOfToken(retLoc), diag::err_expected_type);
+    }
   }
 
   // FIXME: Add support for optional parameter list...
