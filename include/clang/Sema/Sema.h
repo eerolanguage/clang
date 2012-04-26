@@ -2714,6 +2714,18 @@ public:
                                 const DeclarationNameInfo &NameInfo,
                                 const TemplateArgumentListInfo *TemplateArgs);
 
+  // This struct is for use by ActOnMemberAccess to allow
+  // BuildMemberReferenceExpr to be able to reinvoke ActOnMemberAccess after
+  // changing the access operator from a '.' to a '->' (to see if that is the
+  // change needed to fix an error about an unknown member, e.g. when the class
+  // defines a custom operator->).
+  struct ActOnMemberAccessExtraArgs {
+    Scope *S;
+    UnqualifiedId &Id;
+    Decl *ObjCImpDecl;
+    bool HasTrailingLParen;
+  };
+
   ExprResult BuildMemberReferenceExpr(Expr *Base, QualType BaseType,
                                       SourceLocation OpLoc, bool IsArrow,
                                       const CXXScopeSpec &SS,
@@ -2721,7 +2733,8 @@ public:
                                       NamedDecl *FirstQualifierInScope,
                                       LookupResult &R,
                                  const TemplateArgumentListInfo *TemplateArgs,
-                                      bool SuppressQualifierCheck = false);
+                                      bool SuppressQualifierCheck = false,
+                                     ActOnMemberAccessExtraArgs *ExtraArgs = 0);
 
   ExprResult PerformMemberExprBaseConversion(Expr *Base, bool IsArrow);
   ExprResult LookupMemberExpr(LookupResult &R, ExprResult &Base,

@@ -682,3 +682,33 @@ namespace test34 {
   // CHECK: define weak_odr void @_ZN6test343barINS_3fooEEEvv
   // CHECK-HIDDEN: define weak_odr void @_ZN6test343barINS_3fooEEEvv
 }
+
+namespace test35 {
+  // This is a really ugly testcase. GCC propagates the DEFAULT in zed's
+  // definition. What we do instead is be conservative about merging
+  // implicit visibilities.
+  // FIXME: Maybe the best thing to do here is error? The test at least
+  // makes sure we don't produce a hidden symbol for foo<zed>::bar.
+  template<typename T>
+  struct DEFAULT foo {
+    void bar() {}
+  };
+  class zed;
+  template class foo<zed>;
+  class DEFAULT zed {
+  };
+  // CHECK: define weak_odr void @_ZN6test353fooINS_3zedEE3barEv
+  // CHECK-HIDDEN: define weak_odr void @_ZN6test353fooINS_3zedEE3barEv
+}
+
+namespace test36 {
+  template<typename T1, typename T2>
+  class foo {
+    void bar() {}
+  };
+  class DEFAULT S1 {};
+  struct HIDDEN S2 {};
+  template class foo<S1, S2>;
+  // CHECK: define weak_odr hidden void @_ZN6test363fooINS_2S1ENS_2S2EE3barEv
+  // CHECK-HIDDEN: define weak_odr hidden void @_ZN6test363fooINS_2S1ENS_2S2EE3barEv
+}

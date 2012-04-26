@@ -337,7 +337,7 @@ namespace {
     
     // Block specific rewrite rules.
     void RewriteBlockPointerDecl(NamedDecl *VD);
-    void RewriteByRefVar(VarDecl *VD);
+    void RewriteByRefVar(VarDecl *VD, bool firstDecl, bool lastDecl);
     Stmt *RewriteBlockDeclRefExpr(DeclRefExpr *VD);
     Stmt *RewriteLocalVariableExternalStorage(DeclRefExpr *DRE);
     void RewriteBlockPointerFunctionArgs(FunctionDecl *FD);
@@ -4133,7 +4133,9 @@ void RewriteModernObjC::SynthesizeBlockLiterals(SourceLocation FunLocStart,
 }
 
 void RewriteModernObjC::InsertBlockLiteralsWithinFunction(FunctionDecl *FD) {
-  SourceLocation FunLocStart = getFunctionSourceLocation(*this, FD);
+  SourceLocation FunLocStart = 
+    (!Blocks.empty()) ? getFunctionSourceLocation(*this, FD)
+                      : FD->getTypeSpecStartLoc();
   StringRef FuncName = FD->getName();
 
   SynthesizeBlockLiterals(FunLocStart, FuncName);
@@ -4742,7 +4744,8 @@ std::string RewriteModernObjC::SynthesizeByrefCopyDestroyHelper(VarDecl *VD,
 ///                               ND=initializer-if-any};
 ///
 ///
-void RewriteModernObjC::RewriteByRefVar(VarDecl *ND) {
+void RewriteModernObjC::RewriteByRefVar(VarDecl *ND, bool firstDecl,
+                                        bool lastDecl) {
   int flag = 0;
   int isa = 0;
   SourceLocation DeclLoc = ND->getTypeSpecStartLoc();
@@ -4787,11 +4790,11 @@ void RewriteModernObjC::RewriteByRefVar(VarDecl *ND) {
     FunLocStart = CurMethodDef->getLocStart();
   }
   InsertText(FunLocStart, ByrefType);
+  
   if (Ty.isObjCGCWeak()) {
     flag |= BLOCK_FIELD_IS_WEAK;
     isa = 1;
   }
-  
   if (HasCopyAndDispose) {
     flag = BLOCK_BYREF_CALLER;
     QualType Ty = ND->getType();
@@ -4821,21 +4824,36 @@ void RewriteModernObjC::RewriteByRefVar(VarDecl *ND) {
   RewriteByRefString(ByrefType, Name, ND);
   std::string ForwardingCastType("(");
   ForwardingCastType += ByrefType + " *)";
+  ByrefType += " " + Name + " = {(void*)";
+  ByrefType += utostr(isa);
+  ByrefType += "," +  ForwardingCastType + "&" + Name + ", ";
+  ByrefType += utostr(flags);
+  ByrefType += ", ";
+  ByrefType += "sizeof(";
+  RewriteByRefString(ByrefType, Name, ND);
+  ByrefType += ")";
+  if (HasCopyAndDispose) {
+    ByrefType += ", __Block_byref_id_object_copy_";
+    ByrefType += utostr(flag);
+    ByrefType += ", __Block_byref_id_object_dispose_";
+    ByrefType += utostr(flag);
+  }
+  
+  if (!firstDecl) {
+    // In multiple __block declarations, and for all but 1st declaration,
+    // find location of the separating comma. This would be start location
+    // where new text is to be inserted.
+    DeclLoc = ND->getLocation();
+    const char *startDeclBuf = SM->getCharacterData(DeclLoc);
+    const char *commaBuf = startDeclBuf;
+    while (*commaBuf != ',')
+      commaBuf--;
+    assert((*commaBuf == ',') && "RewriteByRefVar: can't find ','");
+    DeclLoc = DeclLoc.getLocWithOffset(commaBuf - startDeclBuf);
+    startBuf = commaBuf;
+  }
+  
   if (!hasInit) {
-    ByrefType += " " + Name + " = {(void*)";
-    ByrefType += utostr(isa);
-    ByrefType += "," +  ForwardingCastType + "&" + Name + ", ";
-    ByrefType += utostr(flags);
-    ByrefType += ", ";
-    ByrefType += "sizeof(";
-    RewriteByRefString(ByrefType, Name, ND);
-    ByrefType += ")";
-    if (HasCopyAndDispose) {
-      ByrefType += ", __Block_byref_id_object_copy_";
-      ByrefType += utostr(flag);
-      ByrefType += ", __Block_byref_id_object_dispose_";
-      ByrefType += utostr(flag);
-    }
     ByrefType += "};\n";
     unsigned nameSize = Name.size();
     // for block or function pointer declaration. Name is aleady
@@ -4845,6 +4863,7 @@ void RewriteModernObjC::RewriteByRefVar(VarDecl *ND) {
     ReplaceText(DeclLoc, endBuf-startBuf+nameSize, ByrefType);
   }
   else {
+    ByrefType += ", ";
     SourceLocation startLoc;
     Expr *E = ND->getInit();
     if (const CStyleCastExpr *ECE = dyn_cast<CStyleCastExpr>(E))
@@ -4853,39 +4872,17 @@ void RewriteModernObjC::RewriteByRefVar(VarDecl *ND) {
       startLoc = E->getLocStart();
     startLoc = SM->getExpansionLoc(startLoc);
     endBuf = SM->getCharacterData(startLoc);
-    ByrefType += " " + Name;
-    ByrefType += " = {(void*)";
-    ByrefType += utostr(isa);
-    ByrefType += "," +  ForwardingCastType + "&" + Name + ", ";
-    ByrefType += utostr(flags);
-    ByrefType += ", ";
-    ByrefType += "sizeof(";
-    RewriteByRefString(ByrefType, Name, ND);
-    ByrefType += "), ";
-    if (HasCopyAndDispose) {
-      ByrefType += "__Block_byref_id_object_copy_";
-      ByrefType += utostr(flag);
-      ByrefType += ", __Block_byref_id_object_dispose_";
-      ByrefType += utostr(flag);
-      ByrefType += ", ";
-    }
     ReplaceText(DeclLoc, endBuf-startBuf, ByrefType);
-    
-    // Complete the newly synthesized compound expression by inserting a right
-    // curly brace before the end of the declaration.
-    // FIXME: This approach avoids rewriting the initializer expression. It
-    // also assumes there is only one declarator. For example, the following
-    // isn't currently supported by this routine (in general):
-    // 
-    // double __block BYREFVAR = 1.34, BYREFVAR2 = 1.37;
-    //
-    const char *startInitializerBuf = SM->getCharacterData(startLoc);
-    const char *semiBuf = strchr(startInitializerBuf, ';');
-    assert((*semiBuf == ';') && "RewriteByRefVar: can't find ';'");
-    SourceLocation semiLoc =
-      startLoc.getLocWithOffset(semiBuf-startInitializerBuf);
 
-    InsertText(semiLoc, "}");
+    const char separator = lastDecl ? ';' : ',';
+    const char *startInitializerBuf = SM->getCharacterData(startLoc);
+    const char *separatorBuf = strchr(startInitializerBuf, separator);
+    assert((*separatorBuf == separator) && 
+           "RewriteByRefVar: can't find ';' or ','");
+    SourceLocation separatorLoc =
+      startLoc.getLocWithOffset(separatorBuf-startInitializerBuf);
+    
+    InsertText(separatorLoc, lastDecl ? "}" : "};\n");
   }
   return;
 }
@@ -5323,7 +5320,7 @@ Stmt *RewriteModernObjC::RewriteFunctionBodyOrGlobalInitializer(Stmt *S) {
             assert(!BlockByRefDeclNo.count(ND) &&
               "RewriteFunctionBodyOrGlobalInitializer: Duplicate byref decl");
             BlockByRefDeclNo[ND] = uniqueByrefDeclCount++;
-            RewriteByRefVar(VD);
+            RewriteByRefVar(VD, (DI == DS->decl_begin()), ((DI+1) == DE));
           }
           else           
             RewriteTypeOfDecl(VD);

@@ -106,6 +106,7 @@ protected:
         FullLocation.isValid() &&
         FullLocation.getSpellingLineNumber() == ExpectedLine &&
         FullLocation.getSpellingColumnNumber() == ExpectedColumn) {
+      EXPECT_TRUE(!Found);
       Found = true;
     } else if (Name == ExpectedMatch ||
                (FullLocation.isValid() &&
@@ -151,10 +152,48 @@ public:
   }
 };
 
+class NamedDeclVisitor
+  : public ExpectedLocationVisitor<NamedDeclVisitor> {
+public:
+  bool VisitNamedDecl(NamedDecl *Decl) {
+    std::string NameWithTemplateArgs;
+    Decl->getNameForDiagnostic(NameWithTemplateArgs,
+                               Decl->getASTContext().getPrintingPolicy(),
+                               true);
+    Match(NameWithTemplateArgs, Decl->getLocation());
+    return true;
+  }
+};
+
 TEST(RecursiveASTVisitor, VisitsBaseClassDeclarations) {
   TypeLocVisitor Visitor;
   Visitor.ExpectMatch("class X", 1, 30);
   EXPECT_TRUE(Visitor.runOver("class X {}; class Y : public X {};"));
+}
+
+TEST(RecursiveASTVisitor, VisitsCXXBaseSpecifiersOfForwardDeclaredClass) {
+  TypeLocVisitor Visitor;
+  Visitor.ExpectMatch("class X", 3, 18);
+  EXPECT_TRUE(Visitor.runOver(
+    "class Y;\n"
+    "class X {};\n"
+    "class Y : public X {};"));
+}
+
+TEST(RecursiveASTVisitor, VisitsCXXBaseSpecifiersWithIncompleteInnerClass) {
+  TypeLocVisitor Visitor;
+  Visitor.ExpectMatch("class X", 2, 18);
+  EXPECT_TRUE(Visitor.runOver(
+    "class X {};\n"
+    "class Y : public X { class Z; };"));
+}
+
+TEST(RecursiveASTVisitor, VisitsCXXBaseSpecifiersOfSelfReferentialType) {
+  TypeLocVisitor Visitor;
+  Visitor.ExpectMatch("X<class Y>", 2, 18);
+  EXPECT_TRUE(Visitor.runOver(
+    "template<typename T> class X {};\n"
+    "class Y : public X<Y> {};"));
 }
 
 TEST(RecursiveASTVisitor, VisitsBaseClassTemplateArguments) {
@@ -182,8 +221,7 @@ TEST(RecursiveASTVisitor, VisitsCallInTemplateInstantiation) {
     "void foo() { y<Y>(Y()); }"));
 }
 
-/* FIXME:
-TEST(RecursiveASTVisitor, VisitsCallInNestedTemplateInstantiation) {
+TEST(RecursiveASTVisitor, VisitsCallInNestedFunctionTemplateInstantiation) {
   CXXMemberCallVisitor Visitor;
   Visitor.ExpectMatch("Y::x", 4, 5);
   EXPECT_TRUE(Visitor.runOver(
@@ -195,7 +233,24 @@ TEST(RecursiveASTVisitor, VisitsCallInNestedTemplateInstantiation) {
     "};\n"
     "void foo() { Z<Y>::f<int>(); }"));
 }
-*/
+
+TEST(RecursiveASTVisitor, VisitsCallInNestedClassTemplateInstantiation) {
+  CXXMemberCallVisitor Visitor;
+  Visitor.ExpectMatch("A::x", 5, 7);
+  EXPECT_TRUE(Visitor.runOver(
+    "template <typename T1> struct X {\n"
+    "  template <typename T2> struct Y {\n"
+    "    void f() {\n"
+    "      T2 y;\n"
+    "      y.x();\n"
+    "    }\n"
+    "  };\n"
+    "};\n"
+    "struct A { void x(); };\n"
+    "int main() {\n"
+    "  (new X<A>::Y<A>())->f();\n"
+    "}"));
+}
 
 /* FIXME: According to Richard Smith this is a bug in the AST.
 TEST(RecursiveASTVisitor, VisitsBaseClassTemplateArgumentsInInstantiation) {
@@ -209,5 +264,85 @@ TEST(RecursiveASTVisitor, VisitsBaseClassTemplateArgumentsInInstantiation) {
 }
 */
 
-} // end namespace clang
+TEST(RecursiveASTVisitor, VisitsCallInPartialTemplateSpecialization) {
+  CXXMemberCallVisitor Visitor;
+  Visitor.ExpectMatch("A::x", 6, 20);
+  EXPECT_TRUE(Visitor.runOver(
+    "template <typename T1> struct X {\n"
+    "  template <typename T2, bool B> struct Y { void g(); };\n"
+    "};\n"
+    "template <typename T1> template <typename T2>\n"
+    "struct X<T1>::Y<T2, true> {\n"
+    "  void f() { T2 y; y.x(); }\n"
+    "};\n"
+    "struct A { void x(); };\n"
+    "int main() {\n"
+    "  (new X<A>::Y<A, true>())->f();\n"
+    "}\n"));
+}
 
+TEST(RecursiveASTVisitor, VisitsPartialTemplateSpecialization) {
+  // From cfe-commits/Week-of-Mon-20100830/033998.html
+  // Contrary to the approach sugggested in that email, we visit all
+  // specializations when we visit the primary template.  Visiting them when we
+  // visit the associated specialization is problematic for specializations of
+  // template members of class templates.
+  NamedDeclVisitor Visitor;
+  Visitor.ExpectMatch("A<bool>", 1, 26);
+  Visitor.ExpectMatch("A<char *>", 2, 26);
+  EXPECT_TRUE(Visitor.runOver(
+    "template <class T> class A {};\n"
+    "template <class T> class A<T*> {};\n"
+    "A<bool> ab;\n"
+    "A<char*> acp;\n"));
+}
+
+TEST(RecursiveASTVisitor, VisitsUndefinedClassTemplateSpecialization) {
+  NamedDeclVisitor Visitor;
+  Visitor.ExpectMatch("A<int>", 1, 29);
+  EXPECT_TRUE(Visitor.runOver(
+    "template<typename T> struct A;\n"
+    "A<int> *p;\n"));
+}
+
+TEST(RecursiveASTVisitor, VisitsNestedUndefinedClassTemplateSpecialization) {
+  NamedDeclVisitor Visitor;
+  Visitor.ExpectMatch("A<int>::B<char>", 2, 31);
+  EXPECT_TRUE(Visitor.runOver(
+    "template<typename T> struct A {\n"
+    "  template<typename U> struct B;\n"
+    "};\n"
+    "A<int>::B<char> *p;\n"));
+}
+
+TEST(RecursiveASTVisitor, VisitsUndefinedFunctionTemplateSpecialization) {
+  NamedDeclVisitor Visitor;
+  Visitor.ExpectMatch("A<int>", 1, 26);
+  EXPECT_TRUE(Visitor.runOver(
+    "template<typename T> int A();\n"
+    "int k = A<int>();\n"));
+}
+
+TEST(RecursiveASTVisitor, VisitsNestedUndefinedFunctionTemplateSpecialization) {
+  NamedDeclVisitor Visitor;
+  Visitor.ExpectMatch("A<int>::B<char>", 2, 35);
+  EXPECT_TRUE(Visitor.runOver(
+    "template<typename T> struct A {\n"
+    "  template<typename U> static int B();\n"
+    "};\n"
+    "int k = A<int>::B<char>();\n"));
+}
+
+TEST(RecursiveASTVisitor, NoRecursionInSelfFriend) {
+  // From cfe-commits/Week-of-Mon-20100830/033977.html
+  NamedDeclVisitor Visitor;
+  Visitor.ExpectMatch("vector_iterator<int>", 2, 7);
+  EXPECT_TRUE(Visitor.runOver(
+    "template<typename Container>\n"
+    "class vector_iterator {\n"
+    "    template <typename C> friend class vector_iterator;\n"
+    "};\n"
+    "vector_iterator<int> it_int;\n"));
+}
+
+} // end namespace clang

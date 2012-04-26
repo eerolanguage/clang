@@ -1367,6 +1367,8 @@ def err_constexpr_virtual : Error<"virtual function cannot be constexpr">;
 def err_constexpr_virtual_base : Error<
   "constexpr %select{member function|constructor}0 not allowed in "
   "%select{class|struct}1 with virtual base %plural{1:class|:classes}2">;
+def note_non_literal_incomplete : Note<
+  "incomplete type %0 is not a literal type">;
 def note_non_literal_virtual_base : Note<"%select{class|struct}0 with virtual "
   "base %plural{1:class|:classes}1 is not a literal type">;
 def note_constexpr_virtual_base_here : Note<"virtual base class declared here">;
@@ -1813,6 +1815,8 @@ def warn_attribute_unknown_visibility : Warning<"unknown visibility '%0'">;
 def warn_attribute_protected_visibility :
   Warning<"target does not support 'protected' visibility; using 'default'">,
   InGroup<DiagGroup<"unsupported-visibility">>;
+def err_mismatched_visibilit: Error<"visibility does not match previous declaration">;
+def note_previous_attribute : Note<"previous attribute is here">;
 def err_unknown_machine_mode : Error<"unknown machine mode %0">;
 def err_unsupported_machine_mode : Error<"unsupported machine mode %0">;
 def err_mode_not_primitive : Error<
@@ -2361,6 +2365,9 @@ def err_template_arg_not_ice : Error<
   "expression">;
 def err_template_arg_not_address_constant : Error<
   "non-type template argument of type %0 is not a constant expression">;
+def warn_cxx98_compat_template_arg_null : Warning<
+  "use of null pointer as non-type template argument is incompatible with "
+  "C++98">, InGroup<CXX98Compat>, DefaultIgnore;
 def err_template_arg_untyped_null_constant : Error<
   "null non-type template argument must be cast to template parameter type %0">;
 def err_template_arg_wrongtype_null_constant : Error<
@@ -3641,6 +3648,8 @@ def warn_subscript_is_char : Warning<"array subscript is of type 'char'">,
 
 def err_typecheck_incomplete_tag : Error<"incomplete definition of type %0">;
 def err_no_member : Error<"no member named %0 in %1">;
+def err_no_member_overloaded_arrow : Error<
+  "no member named %0 in %1; did you mean to use '->' instead of '.'?">;
 
 def err_member_not_yet_instantiated : Error<
   "no member %0 in %1; it has not yet been instantiated">;
@@ -3828,6 +3837,9 @@ def err_this_static_member_func : Error<
   "declaration">;
 def err_invalid_member_use_in_static_method : Error<
   "invalid use of member %0 in static member function">;
+def warn_cxx98_compat_this_outside_method : Warning<
+  "use of 'this' outside a non-static member function is incompatible "
+  "with C++98">, InGroup<CXX98Compat>, DefaultIgnore;
 def err_invalid_qualified_function_type : Error<
   "%select{static |non-}0member function %select{of type %2 |}1"
   "cannot have '%3' qualifier">;

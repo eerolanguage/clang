@@ -2512,6 +2512,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
                                      Converted.size(),
                                      SourceRange(TemplateLoc, RAngleLoc));
 
+    Sema::ContextRAII SavedContext(SemaRef, Template->getDeclContext());
     ArgType = SemaRef.SubstType(ArgType, AllTemplateArgs,
                                 Param->getDefaultArgumentLoc(),
                                 Param->getDeclName());
@@ -2560,6 +2561,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
                                    Converted.size(),
                                    SourceRange(TemplateLoc, RAngleLoc));
 
+  Sema::ContextRAII SavedContext(SemaRef, Template->getDeclContext());
   return SemaRef.SubstExpr(Param->getDefaultArgument(), AllTemplateArgs);
 }
 
@@ -2607,6 +2609,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
                                    Converted.size(),
                                    SourceRange(TemplateLoc, RAngleLoc));
 
+  Sema::ContextRAII SavedContext(SemaRef, Template->getDeclContext());
   // Substitute into the nested-name-specifier first, 
   QualifierLoc = Param->getDefaultArgument().getTemplateQualifierLoc();
   if (QualifierLoc) {
@@ -3586,6 +3589,7 @@ CheckTemplateArgumentAddressOfObjectOrFunction(Sema &S,
   if (ParamType->isPointerType() || ParamType->isNullPtrType()) {
     switch (isNullPointerValueTemplateArgument(S, Param, ParamType, Arg)) {
     case NPV_NullPointer:
+      S.Diag(Arg->getExprLoc(), diag::warn_cxx98_compat_template_arg_null);
       Converted = TemplateArgument((Decl *)0);
       return false;
 
@@ -3882,6 +3886,7 @@ static bool CheckTemplateArgumentPointerToMember(Sema &S,
   case NPV_Error:
     return true;
   case NPV_NullPointer:
+    S.Diag(Arg->getExprLoc(), diag::warn_cxx98_compat_template_arg_null);
     Converted = TemplateArgument((Decl *)0);
     return false;
   case NPV_NotNullPointer:
@@ -4317,6 +4322,7 @@ ExprResult Sema::CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
       return ExprError();
       
     case NPV_NullPointer:
+      Diag(Arg->getExprLoc(), diag::warn_cxx98_compat_template_arg_null);
       Converted = TemplateArgument((Decl *)0);
       return Owned(Arg);;
     }
