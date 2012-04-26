@@ -1047,11 +1047,8 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   ParsedType ReturnType;
   ObjCDeclSpec DSRet;
   if (isEero) { // Eero return type defaults to void   
-    InsertToken(tok::r_paren);  // TODO: look into a cleaner way to do this  
-    InsertToken(tok::kw_void);  //   
-    InsertToken(tok::l_paren);  //  
-  } 
-  if (Tok.is(tok::l_paren))
+      ReturnType = ParsedType::make(Actions.Context.VoidTy);
+  } else if (Tok.is(tok::l_paren))
     ReturnType = ParseObjCTypeName(DSRet, Declarator::ObjCResultContext, 0);
 
   // If attributes exist before the method, parse them.

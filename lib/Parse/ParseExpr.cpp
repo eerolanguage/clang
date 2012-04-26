@@ -660,7 +660,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
   NotCastExpr = false;
-  const bool Eero = getLangOpts().Eero && !PP.isInSystemHeader();
 
   // This handles all of cast-expression, unary-expression, postfix-expression,
   // and primary-expression.  We handle them together like this for efficiency
@@ -850,7 +849,8 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     break;
   }
   case tok::char_constant:     // constant: character-constant
-    if (Eero) { // eero converts 'xxx' strings to objc strings
+    // eero converts 'xxx' strings to objc strings
+    if (getLangOpts().Eero && !PP.isInSystemHeader()) {
       Tok.setKind(tok::string_literal);
       return ParseObjCAtExpression(Tok.getLocation());   
     } // TODO: should the wide versions below also be affected?
@@ -1275,6 +1275,11 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
   // parsed, see if there are any postfix-expression pieces here.
   SourceLocation Loc;
   while (1) {
+    if (getLangOpts().OptionalSemicolons && 
+        Tok.isAtStartOfLine() &&
+        (ParenCount == 0) && (BracketCount == 0)) {
+      return move(LHS);
+    }
     switch (Tok.getKind()) {
     case tok::code_completion:
       if (InMessageExpression)

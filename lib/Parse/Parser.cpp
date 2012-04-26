@@ -766,7 +766,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
       
   default:
   dont_know:
-    if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() &&
+    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
         CurParsedObjCImpl) { // in an objc implementation
       Diag(Tok, diag::err_not_allowed) << "external declaration or definition";
       // Flush everything from here to the end of the implementation, or
