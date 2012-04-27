@@ -136,6 +136,29 @@ void Parser::CheckNestedObjCContexts(SourceLocation AtLoc)
         << (int) ock;
 }
 
+// Eero helper function
+static bool isVisibilitySpecifier(Token token, Token nextToken) {
+  switch (token.getKind()) {
+    case tok::kw_private:
+    case tok::kw_public:
+    case tok::kw_protected:
+    case tok::kw_package:
+      return true;
+    case tok::at:
+      switch (nextToken.getObjCKeywordID()) {
+        case tok::objc_private:
+        case tok::objc_public:
+        case tok::objc_protected:
+        case tok::objc_package:
+          return true;
+        default:
+          return false;
+      }
+    default:
+      return false;
+  }
+} 
+
 ///
 ///   objc-interface:
 ///     objc-class-interface-attributes[opt] objc-class-interface
@@ -238,7 +261,10 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                         ProtocolLocs.data(),
                                         EndProtoLoc);
     
-    if (Tok.is(tok::l_brace))
+    if (Tok.is(tok::l_brace) || 
+        (getLangOpts().Eero && !PP.isInSystemHeader() &&
+         (isVisibilitySpecifier(Tok, NextToken()) ||
+          isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(CategoryType, tok::objc_private, AtLoc);
       
     ParseObjCInterfaceDeclList(tok::objc_not_keyword, CategoryType);
@@ -281,7 +307,10 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                      ProtocolLocs.data(),
                                      EndProtoLoc, attrs.getList());
 
-  if (Tok.is(tok::l_brace))
+  if (Tok.is(tok::l_brace) || 
+      (getLangOpts().Eero && !PP.isInSystemHeader() &&
+       (isVisibilitySpecifier(Tok, NextToken()) ||
+        isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
     ParseObjCClassInstanceVariables(ClsType, tok::objc_protected, AtLoc);
 
   ParseObjCInterfaceDeclList(tok::objc_interface, ClsType);
@@ -1378,13 +1407,16 @@ bool Parser::ParseObjCProtocolQualifiers(DeclSpec &DS) {
 void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
                                              tok::ObjCKeywordKind visibility,
                                              SourceLocation atLoc) {
-  assert(Tok.is(tok::l_brace) && "expected {");
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  assert((Tok.is(tok::l_brace) || isEero) && "expected {");
   SmallVector<Decl *, 32> AllIvarDecls;
     
   ParseScope ClassScope(this, Scope::DeclScope|Scope::ClassScope);
   ObjCDeclContextSwitch ObjCDC(*this);
 
   BalancedDelimiterTracker T(*this, tok::l_brace);
+  if (isEero)
+    T.setOptional();
   T.consumeOpen();
 
   // While we still have something to read, read the instance variables.
@@ -1399,16 +1431,12 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
       continue;
     }
 
-    if (getLangOpts().Eero) { // objc keywords without "@"s
-      switch (Tok.getKind()) {
-        case tok::kw_private:
-        case tok::kw_public:
-        case tok::kw_protected:
-        case tok::kw_package:
+    if (isEero) {
+      if (isVisibilitySpecifier(Tok, NextToken())) {
+        if (Tok.isNot(tok::at)) // handle keyword versions without '@'
           InsertToken(tok::at);
-          break;
-        default: 
-          break; // do nothing
+      } else if (Tok.isNot(tok::identifier) && !isKnownToBeTypeSpecifier(Tok)) {
+        break; // exit loop, since braces are optional
       }
     }
 
@@ -1667,7 +1695,11 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
                                     AtLoc, nameId, nameLoc,
                                     superClassId, superClassLoc);
   
-    if (Tok.is(tok::l_brace)) // we have ivars
+    // if we have ivars
+    if (Tok.is(tok::l_brace) ||
+        (getLangOpts().Eero && !PP.isInSystemHeader() &&
+         (isVisibilitySpecifier(Tok, NextToken()) ||
+          isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(ObjCImpDecl, tok::objc_private, AtLoc);
   }
   assert(ObjCImpDecl);
