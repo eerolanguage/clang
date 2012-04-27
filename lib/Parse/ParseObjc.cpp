@@ -535,12 +535,16 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
         ParseObjCPropertyAttribute(OCDS);
       }
 
+      do {
       ObjCPropertyCallback Callback(*this, allProperties,
                                     OCDS, AtLoc, LParenLoc, MethodImplKind);
 
       // Parse all the comma separated declarators.
       DeclSpec DS(AttrFactory);
       ParseStructDeclaration(DS, Callback);
+      } while (getLangOpts().Eero && !PP.isInSystemHeader() &&
+               Tok.isAtStartOfLine() && 
+               (isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier)));
 
       ExpectAndConsume(tok::semi, diag::err_expected_semi_decl_list);
       break;
