@@ -311,7 +311,7 @@ def err_templated_using_directive : Error<
 def err_templated_using_declaration : Error<
   "cannot template a using declaration">;
 def err_unexected_colon_in_nested_name_spec : Error<
-  "unexpected ':' in nested name specifier">;
+  "unexpected ':' in nested name specifier; did you mean '::'?">;
 def err_bool_redeclaration : Error<
   "redeclaration of C++ built-in type 'bool'">;
 def ext_c11_static_assert : Extension<
@@ -401,6 +401,8 @@ def err_expected_init_in_condition : Error<
   "variable declaration in condition must have an initializer">;
 def err_expected_init_in_condition_lparen : Error<
   "variable declaration in condition cannot have a parenthesized initializer">;
+def err_extraneous_rparen_in_condition : Error<
+  "extraneous ')' after condition, expected a statement">;
 def warn_parens_disambiguated_as_function_decl : Warning<
   "parentheses were disambiguated as a function declarator">,
   InGroup<VexingParse>;

@@ -763,8 +763,7 @@ static unsigned PrintActions1(const Compilation &C, Action *A,
   if (InputAction *IA = dyn_cast<InputAction>(A)) {
     os << "\"" << IA->getInputArg().getValue(C.getArgs()) << "\"";
   } else if (BindArchAction *BIA = dyn_cast<BindArchAction>(A)) {
-    os << '"' << (BIA->getArchName() ? BIA->getArchName() :
-                  C.getDefaultToolChain().getArchName()) << '"'
+    os << '"' << BIA->getArchName() << '"'
        << ", {" << PrintActions1(C, *BIA->begin(), Ids) << "}";
   } else {
     os << "{";
@@ -838,7 +837,7 @@ void Driver::BuildUniversalActions(const ToolChain &TC,
   // When there is no explicit arch for this platform, make sure we still bind
   // the architecture (to the default) so that -Xarch_ is handled correctly.
   if (!Archs.size())
-    Archs.push_back(0);
+    Archs.push_back(Args.MakeArgString(TC.getArchName()));
 
   // FIXME: We killed off some others but these aren't yet detected in a
   // functional manner. If we added information to jobs about which "auxiliary"
@@ -1347,10 +1346,13 @@ void Driver::BuildJobsForAction(Compilation &C,
   }
 
   if (const BindArchAction *BAA = dyn_cast<BindArchAction>(A)) {
-    const ToolChain *TC = &C.getDefaultToolChain();
+    const ToolChain *TC;
+    const char *ArchName = BAA->getArchName();
 
-    if (BAA->getArchName())
-      TC = &getToolChain(C.getArgs(), BAA->getArchName());
+    if (ArchName)
+      TC = &getToolChain(C.getArgs(), ArchName);
+    else
+      TC = &C.getDefaultToolChain();
 
     BuildJobsForAction(C, *BAA->begin(), TC, BAA->getArchName(),
                        AtTopLevel, LinkingOutput, Result);

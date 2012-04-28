@@ -231,9 +231,13 @@ def err_using_decl_can_not_refer_to_namespace : Error<
   "using declaration can not refer to namespace">;
 def err_using_decl_constructor : Error<
   "using declaration can not refer to a constructor">;
-def warn_cxx98_compat_using_decl_constructor : Warning<
-  "inherited constructors are incompatible with C++98">,
-  InGroup<CXX98Compat>, DefaultIgnore;
+def err_using_decl_constructor_unsupported : Error<
+  "inheriting constructors are not supported">;
+// FIXME: Replace the above error with this warning if support for
+//        inheriting constructors is implemented.
+//def warn_cxx98_compat_using_decl_constructor : Warning<
+//  "inheriting constructors are incompatible with C++98">,
+//  InGroup<CXX98Compat>, DefaultIgnore;
 def err_using_decl_destructor : Error<
   "using declaration can not refer to a destructor">;
 def err_using_decl_template_id : Error<
@@ -3531,6 +3535,8 @@ def ext_offsetof_extended_field_designator : Extension<
   InGroup<DiagGroup<"extended-offsetof">>;
 def warn_offsetof_non_pod_type : ExtWarn<"offset of on non-POD type %0">,
   InGroup<InvalidOffsetof>;
+def warn_offsetof_non_standardlayout_type : ExtWarn<
+  "offset of on non-standard-layout type %0">, InGroup<InvalidOffsetof>;
 def err_offsetof_bitfield : Error<"cannot compute offset of bit-field %0">;
 
 def warn_floatingpoint_eq : Warning<
@@ -5176,9 +5182,11 @@ def err_blocks_disable : Error<"blocks support disabled - compile with -fblocks"
 def err_block_returning_array_function : Error<
   "block cannot return %select{array|function}0 type %1">;
 
-// Builtin annotation string.
-def err_builtin_annotation_not_string_constant : Error<
-  "__builtin_annotation requires a non wide string constant">;
+// Builtin annotation
+def err_builtin_annotation_first_arg : Error<
+  "first argument to __builtin_annotation must be an integer">;
+def err_builtin_annotation_second_arg : Error<
+  "second argument to __builtin_annotation must be a non-wide string constant">;
 
 // CFString checking
 def err_cfstring_literal_not_string_constant : Error<

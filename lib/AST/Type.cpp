@@ -895,6 +895,14 @@ bool Type::isIncompleteType(NamedDecl **Def) const {
 }
 
 bool QualType::isPODType(ASTContext &Context) const {
+  // C++11 has a more relaxed definition of POD.
+  if (Context.getLangOpts().CPlusPlus0x)
+    return isCXX11PODType(Context);
+
+  return isCXX98PODType(Context);
+}
+
+bool QualType::isCXX98PODType(ASTContext &Context) const {
   // The compiler shouldn't query this for incomplete types, but the user might.
   // We return false for that case. Except for incomplete arrays of PODs, which
   // are PODs according to the standard.
@@ -902,7 +910,7 @@ bool QualType::isPODType(ASTContext &Context) const {
     return 0;
   
   if ((*this)->isIncompleteArrayType())
-    return Context.getBaseElementType(*this).isPODType(Context);
+    return Context.getBaseElementType(*this).isCXX98PODType(Context);
     
   if ((*this)->isIncompleteType())
     return false;
@@ -929,7 +937,7 @@ bool QualType::isPODType(ASTContext &Context) const {
   case Type::VariableArray:
   case Type::ConstantArray:
     // IncompleteArray is handled above.
-    return Context.getBaseElementType(*this).isPODType(Context);
+    return Context.getBaseElementType(*this).isCXX98PODType(Context);
         
   case Type::ObjCObjectPointer:
   case Type::BlockPointer:

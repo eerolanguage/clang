@@ -855,7 +855,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
                                       DeclsInGroup.data(), DeclsInGroup.size());
     StmtResult R = Actions.ActOnDeclStmt(Res, LabelLoc, Tok.getLocation());
 
-    ExpectAndConsume(tok::semi, diag::err_expected_semi_declaration);
+    ExpectAndConsumeSemi(diag::err_expected_semi_declaration);
     if (R.isUsable())
       Stmts.push_back(R.release());
   }
@@ -1021,6 +1021,16 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
 
   // Otherwise the condition is valid or the rparen is present.
   T.consumeClose();
+  
+  // Check for extraneous ')'s to catch things like "if (foo())) {".  We know
+  // that all callers are looking for a statement after the condition, so ")"
+  // isn't valid.
+  while (Tok.is(tok::r_paren)) {
+    Diag(Tok, diag::err_extraneous_rparen_in_condition)
+      << FixItHint::CreateRemoval(Tok.getLocation());
+    ConsumeParen();
+  }
+  
   return false;
 }
 
