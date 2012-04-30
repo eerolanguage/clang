@@ -61,7 +61,7 @@ void DeclToIndex::computeMap(const DeclContext &dc) {
   DeclContext::specific_decl_iterator<VarDecl> I(dc.decls_begin()),
                                                E(dc.decls_end());
   for ( ; I != E; ++I) {
-    const VarDecl *vd = *I;
+    const VarDecl *vd = &*I;
     if (isTrackedVar(vd, &dc))
       map[vd] = count++;
   }
@@ -168,7 +168,8 @@ static const BinaryOperator *getLogicalOperatorInChain(const CFGBlock *block) {
   if (block->empty())
     return 0;
 
-  const CFGStmt *cstmt = block->front().getAs<CFGStmt>();
+  CFGElement front = block->front();
+  const CFGStmt *cstmt = front.getAs<CFGStmt>();
   if (!cstmt)
     return 0;
 
