@@ -2592,6 +2592,8 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
                                        ExprArg ReceiverExpr) {
   InMessageExpressionRAIIObject InMessage(*this, true);
 
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+
   if (Tok.is(tok::code_completion)) {
     if (SuperLoc.isValid())
       Actions.CodeCompleteObjCSuperMessage(getCurScope(), SuperLoc, 0, 0,
@@ -2625,7 +2627,8 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         // We must manually skip to a ']', otherwise the expression skipper will
         // stop at the ']' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
-        SkipUntil(tok::r_square);
+        if (!isEero)
+          SkipUntil(tok::r_square);
         return ExprError();
       }
 
@@ -2658,7 +2661,8 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         // We must manually skip to a ']', otherwise the expression skipper will
         // stop at the ']' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
-        SkipUntil(tok::r_square);
+        if (!isEero)
+          SkipUntil(tok::r_square);
         return move(Res);
       }
 
@@ -2686,6 +2690,17 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         return ExprError();
       }
             
+      if (isEero) { // See if another selector piece, variadic args, or done
+        if (Tok.is(tok::comma) && 
+            ((GetLookAheadToken(1).is(tok::identifier) && // normal selector
+              GetLookAheadToken(2).is(tok::colon)) ||     //
+             GetLookAheadToken(1).is(tok::colon))) { // unnamed selector
+          ConsumeToken(); // eat the comma, proceed to next selector
+        } else { // either variadic args, or done
+          break;
+        }
+      }
+
       // Check for another keyword selector.
       selIdent = ParseObjCSelectorPiece(Loc);
       if (!selIdent && Tok.isNot(tok::colon))
@@ -2718,7 +2733,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
     return ExprError();
   }
     
-  if (Tok.isNot(tok::r_square)) {
+  if (Tok.isNot(tok::r_square) && !isEero) {
     if (Tok.is(tok::identifier))
       Diag(Tok, diag::err_expected_colon);
     else
@@ -2730,7 +2745,8 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
     return ExprError();
   }
 
-  SourceLocation RBracLoc = ConsumeBracket(); // consume ']'
+  SourceLocation RBracLoc = !isEero ? ConsumeBracket()  // consume ']'
+                                    : Tok.getLocation();
 
   unsigned nKeys = KeyIdents.size();
   if (nKeys == 0) {

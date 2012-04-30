@@ -130,7 +130,8 @@ Retry:
 
   case tok::identifier: {
     Token Next = NextToken();
-    if (Next.is(tok::colon)) { // C99 6.8.1: labeled-statement
+    if (Next.is(tok::colon) &&  // C99 6.8.1: labeled-statement
+        (!getLangOpts().Eero || PP.isInSystemHeader())) { // no labels in Eero
       // identifier ':' statement
       return ParseLabeledStatement(Attrs);
     }
@@ -303,6 +304,13 @@ Retry:
     return ParseForStatement(TrailingElseLoc);
 
   case tok::kw_goto:                // C99 6.8.6.1: goto-statement
+    // goto is still a keyword, but it can't be used in Eero
+    if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+      Diag(Tok, diag::err_not_allowed) << "'goto'";
+      ConsumeToken(); // the goto 
+      ConsumeToken(); // the label
+      return StmtError();
+    }
     Res = ParseGotoStatement();
     SemiError = "goto";
     break;

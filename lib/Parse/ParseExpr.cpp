@@ -660,6 +660,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
   NotCastExpr = false;
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
 
   // This handles all of cast-expression, unary-expression, postfix-expression,
   // and primary-expression.  We handle them together like this for efficiency
@@ -782,16 +783,29 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       break;
     }
 
+    SourceLocation LLoc;
+
+    // Look for potential Eero 'super <identifier>' or '<class> <identifier>' 
+    // message sends.
+    bool isPotentialEeroSend = false;
+    if (isEero &&
+        ((ParenCount > 0 || BracketCount > 0) || !Tok.isAtStartOfLine())) {
+      isPotentialEeroSend = true;
+      LLoc = ILoc;
+    }
+
     // In an Objective-C method, if we have "super" followed by an identifier,
     // the token sequence is ill-formed. However, if there's a ':' or ']' after
     // that identifier, this is probably a message send with a missing open
     // bracket. Treat it as such. 
     if (getLangOpts().ObjC1 && &II == Ident_super && !InMessageExpression &&
+        (!isEero || isPotentialEeroSend) &&
         getCurScope()->isInObjcMethodScope() &&
         ((Tok.is(tok::identifier) &&
-         (NextToken().is(tok::colon) || NextToken().is(tok::r_square))) ||
+         (isPotentialEeroSend || 
+          NextToken().is(tok::colon) || NextToken().is(tok::r_square))) ||
          Tok.is(tok::code_completion))) {
-      Res = ParseObjCMessageExpressionBody(SourceLocation(), ILoc, ParsedType(), 
+      Res = ParseObjCMessageExpressionBody(LLoc, ILoc, ParsedType(), 
                                            0);
       break;
     }
@@ -802,10 +816,12 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     // appropriately. Also take this path if we're performing code
     // completion after an Objective-C class name.
     if (getLangOpts().ObjC1 && 
+        (!isEero || isPotentialEeroSend) &&
         ((Tok.is(tok::identifier) && !InMessageExpression) || 
          Tok.is(tok::code_completion))) {
       const Token& Next = NextToken();
       if (Tok.is(tok::code_completion) || 
+          isPotentialEeroSend ||
           Next.is(tok::colon) || Next.is(tok::r_square))
         if (ParsedType Typ = Actions.getTypeName(II, ILoc, getCurScope()))
           if (Typ.get()->isObjCObjectOrInterfaceType()) {
@@ -823,7 +839,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
             if (Ty.isInvalid())
               break;
             
-            Res = ParseObjCMessageExpressionBody(SourceLocation(), 
+            Res = ParseObjCMessageExpressionBody(LLoc, 
                                                  SourceLocation(), 
                                                  Ty.get(), 0);
             break;
@@ -850,7 +866,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   }
   case tok::char_constant:     // constant: character-constant
     // eero converts 'xxx' strings to objc strings
-    if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+    if (isEero) {
       Tok.setKind(tok::string_literal);
       return ParseObjCAtExpression(Tok.getLocation());   
     } // TODO: should the wide versions below also be affected?
@@ -1236,7 +1252,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       Res = ParseLambdaExpression();
       break;
     }
-    if (getLangOpts().ObjC1) {
+    if (getLangOpts().ObjC1 && !isEero) {
       Res = ParseObjCMessageExpression();
       break;
     }
@@ -1274,6 +1290,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
   // Now that the primary-expression piece of the postfix-expression has been
   // parsed, see if there are any postfix-expression pieces here.
   SourceLocation Loc;
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
   while (1) {
     if (getLangOpts().OptionalSemicolons && 
         Tok.isAtStartOfLine() &&
@@ -1290,15 +1307,29 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       return ExprError();
         
     case tok::identifier:
+    {
+      bool isPotentialEeroSend = false;
+      SourceLocation LLoc;
+
+      // Look for potential Eero '<expression> <identifier>' message send
+      if (isEero && !LHS.isInvalid() &&
+          ((ParenCount > 0 || BracketCount > 0) || !Tok.isAtStartOfLine())) {
+        isPotentialEeroSend = true;
+        LLoc = LHS.get()->getLocStart();
+      }
+
       // If we see identifier: after an expression, and we're not already in a
       // message send, then this is probably a message send with a missing
       // opening bracket '['.
       if (getLangOpts().ObjC1 && !InMessageExpression && 
-          (NextToken().is(tok::colon) || NextToken().is(tok::r_square))) {
-        LHS = ParseObjCMessageExpressionBody(SourceLocation(), SourceLocation(),
+          (!isEero || isPotentialEeroSend) &&
+          (isPotentialEeroSend || 
+           NextToken().is(tok::colon) || NextToken().is(tok::r_square))) {
+        LHS = ParseObjCMessageExpressionBody(LLoc, SourceLocation(),
                                              ParsedType(), LHS.get());
         break;
       }
+    }
         
       // Fall through; this isn't a message send.
                 
@@ -1312,6 +1343,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       // if the contents of the square brackets are obviously not a valid
       // expression and recover by pretending there is no suffix.
       if (getLangOpts().ObjC1 && Tok.isAtStartOfLine() &&
+          !isEero &&
           isSimpleObjCMessageExpression())
         return move(LHS);
 
@@ -1931,6 +1963,15 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
                                             : Sema::PCC_Expression);
     cutOffParsing();
     return ExprError();
+  }
+
+  // For Eero, if we have an identifier that is followed by an 
+  // identifier or a colon, then this is probably a message send.
+  if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+      Tok.is(tok::identifier) &&
+      (NextToken().is(tok::identifier) || NextToken().is(tok::colon))) {
+    ExprType = SimpleExpr;
+    isTypeCast = false;
   }
 
   // Diagnose use of bridge casts in non-arc mode.
