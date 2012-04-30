@@ -1214,6 +1214,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                Tok.is(tok::kw_interface) || // Some headers use these as arg names
                Tok.is(tok::kw_protocol) ||  //
                Tok.is(tok::kw_property) ||  //
+               Tok.is(tok::kw_end) ||       //
                Tok.is(tok::kw_selector)) {  //
 
       ArgInfo.Name = Tok.getIdentifierInfo();
