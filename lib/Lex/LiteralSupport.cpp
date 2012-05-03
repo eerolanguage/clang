@@ -1237,7 +1237,7 @@ void StringLiteralParser::init(const Token *StringToks, unsigned NumStringToks){
         if (DiagnoseBadString(StringToks[i]))
           hadError = true;
     } else {
-      if (ThisTokBuf[0] != '"') {
+      if (!Features.Eero && ThisTokBuf[0] != '"') {
         // The file may have come from PCH and then changed after loading the
         // PCH; Fail gracefully.
         hadError = true;
