@@ -4125,13 +4125,20 @@ void Parser::ParseParenDeclarator(Declarator &D) {
   assert(!D.isPastIdentifier() && "Should be called before passing identifier");
 
   // Support compact blocks, in this case handling
-  //     "^(=> <expr_or_return_stmt>)"
-  if (getLangOpts().CompactBlocks && Tok.is(tok::equalgreater) && 
+  // "^(<return_stmt>)" or  "^(| <expr_or_return_stmt>)"
+  if (getLangOpts().CompactBlocks && 
+      (Tok.is(tok::kw_return) || 
+       Tok.is(tok::pipe)) && 
       (D.getContext() == Declarator::BlockLiteralContext)) {
     unsigned SavedTokLen = Tok.getLength();
-    Tok.setLength(0);            // mark the '=>' token as "inserted"
-    PP.EnterToken(Tok);          // push the '=>' forward
-    Tok.setKind(tok::r_paren);   // make the original '=>' a r_paren
+    if (Tok.is(tok::pipe)) {
+      Tok.setLength(0);            // mark the '|' as inserted
+      PP.EnterToken(Tok);          // push the '|' forward
+      Tok.setKind(tok::r_paren);   // make the '|' a r_paren
+    } else {
+      InsertToken(tok::pipe);
+      InsertToken(tok::r_paren);
+    }
     Tok.setLength(SavedTokLen);  // restore original length (used by Decl)
   }
 
@@ -4654,13 +4661,13 @@ void Parser::ParseParameterDeclarationClause(
             << FixItHint::CreateInsertion(EllipsisLoc, ", ");
         }
       }
-      // Support compact blocks: "^(int x => <expr_or_return_stmt>)"
-      if (getLangOpts().CompactBlocks && Tok.is(tok::equalgreater) && 
+      // Support compact blocks: "^(int x | <expr_or_return_stmt>)"
+      if (getLangOpts().CompactBlocks && Tok.is(tok::pipe) && 
           (D.getContext() == Declarator::BlockLiteralContext)) {
         unsigned SavedTokLen = Tok.getLength();
-        Tok.setLength(0);            // mark the '=>' token as "inserted"
-        PP.EnterToken(Tok);          // push the '=>' forward
-        Tok.setKind(tok::r_paren);   // make the original '=>' a r_paren
+        Tok.setLength(0);            // mark the '|' token as "inserted"
+        PP.EnterToken(Tok);          // push the '|' forward
+        Tok.setKind(tok::r_paren);   // make the original '|' a r_paren
         Tok.setLength(SavedTokLen);  // restore original length (used by Decl)
       }
       

@@ -2483,16 +2483,11 @@ ExprResult Parser::ParseBlockLiteralExpression() {
   StmtResult Stmt(StmtError());
 
   // Support blocks with an inline single expression or a
-  // single return statement. e.g. "^(int x => return x)" or
-  // "(int x) => return x"
-  if (getLangOpts().CompactBlocks && Tok.is(tok::equalgreater)) {
-    bool expectClosingParen(Tok.getLength() == 0); // if '=>' was inserted
-    ConsumeToken(); // eat the "=>"
-    if (getLangOpts().OffSideRule && // if offside rule in effect, disallow \n 
-        Tok.isAtStartOfLine() && // after '=>'; could be ambiguous otherwise.
-        !expectClosingParen) {   // don't care if within parens.
-      Diag(Tok, diag::err_not_allowed) << "newline";
-    }
+  // single return statement. e.g. "^(int x | return x)"
+  if (getLangOpts().CompactBlocks && 
+      Tok.is(tok::pipe) &&
+      Tok.getLength() == 0) { // only if inserted
+    ConsumeToken(); // eat the "|"
     if (Tok.is(tok::kw_return)) {
       Stmt = Actions.ActOnReturnStmt(ConsumeToken(), // the "return"
                                      ParseAssignmentExpression().take());
@@ -2501,8 +2496,8 @@ ExprResult Parser::ParseBlockLiteralExpression() {
       if (!Res.isInvalid())
         Stmt = StmtResult(Res.take()).take();
     }
-    if (expectClosingParen) // handle ^(int x => return x) closing paren
-      ExpectAndConsume(tok::r_paren, diag::err_expected_rparen, "");
+    // Handle ^(int x | return x) closing paren
+    ExpectAndConsume(tok::r_paren, diag::err_expected_rparen, "");
 
     if (!Stmt.isInvalid()) {     // make into a compound statement needed
       StmtVector Stmts(Actions); // by ActOnBlockStmtExpr)
