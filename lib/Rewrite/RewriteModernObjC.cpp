@@ -109,7 +109,7 @@ namespace {
     llvm::SmallPtrSet<ObjCInterfaceDecl*, 8> ObjCSynthesizedStructs;
     llvm::SmallPtrSet<ObjCProtocolDecl*, 8> ObjCSynthesizedProtocols;
     llvm::SmallPtrSet<ObjCInterfaceDecl*, 8> ObjCWrittenInterfaces;
-    llvm::SmallPtrSet<TagDecl*, 8> TagsDefinedInIvarDecls;
+    llvm::SmallPtrSet<TagDecl*, 32> GlobalDefinedTags;
     SmallVector<ObjCInterfaceDecl*, 32> ObjCInterfacesSeen;
     /// DefinedNonLazyClasses - List of defined "non-lazy" classes.
     SmallVector<ObjCInterfaceDecl*, 8> DefinedNonLazyClasses;
@@ -346,6 +346,10 @@ namespace {
                                       std::string &Result);
     
     void RewriteObjCFieldDecl(FieldDecl *fieldDecl, std::string &Result);
+    bool IsTagDefinedInsideClass(ObjCContainerDecl *IDecl, TagDecl *Tag,
+                                 bool &IsNamedDefinition);
+    void RewriteLocallyDefinedNamedAggregates(FieldDecl *fieldDecl, 
+                                              std::string &Result);
     
     bool RewriteObjCFieldDeclType(QualType &Type, std::string &Result);
     
@@ -387,23 +391,23 @@ namespace {
                                     std::string &Result);
     void RewriteObjCProtocolMetaData(ObjCProtocolDecl *Protocol,
                                      std::string &Result);
-    virtual void RewriteObjCProtocolListMetaData(
+    void RewriteObjCProtocolListMetaData(
                    const ObjCList<ObjCProtocolDecl> &Prots,
                    StringRef prefix, StringRef ClassName, std::string &Result);
-    virtual void RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
+    void RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
                                           std::string &Result);
-    virtual void RewriteClassSetupInitHook(std::string &Result);
+    void RewriteClassSetupInitHook(std::string &Result);
     
-    virtual void RewriteMetaDataIntoBuffer(std::string &Result);
-    virtual void WriteImageInfo(std::string &Result);
-    virtual void RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *CDecl,
+    void RewriteMetaDataIntoBuffer(std::string &Result);
+    void WriteImageInfo(std::string &Result);
+    void RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *CDecl,
                                              std::string &Result);
-    virtual void RewriteCategorySetupInitHook(std::string &Result);
+    void RewriteCategorySetupInitHook(std::string &Result);
     
     // Rewriting ivar
-    virtual void RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
+    void RewriteIvarOffsetComputation(ObjCIvarDecl *ivar,
                                               std::string &Result);
-    virtual Stmt *RewriteObjCIvarRefExpr(ObjCIvarRefExpr *IV);
+    Stmt *RewriteObjCIvarRefExpr(ObjCIvarRefExpr *IV);
 
     
     std::string SynthesizeByrefCopyDestroyHelper(VarDecl *VD, int flag);
@@ -984,17 +988,13 @@ void RewriteModernObjC::RewriteCategoryDecl(ObjCCategoryDecl *CatDecl) {
   SourceLocation LocStart = CatDecl->getLocStart();
 
   // FIXME: handle category headers that are declared across multiple lines.
-  ReplaceText(LocStart, 0, "// ");
-  if (CatDecl->getIvarLBraceLoc().isValid())
-    InsertText(CatDecl->getIvarLBraceLoc(), "// ");
-  for (ObjCCategoryDecl::ivar_iterator
-       I = CatDecl->ivar_begin(), E = CatDecl->ivar_end(); I != E; ++I) {
-    ObjCIvarDecl *Ivar = &*I;
-    SourceLocation LocStart = Ivar->getLocStart();
+  if (CatDecl->getIvarRBraceLoc().isValid()) {
+    ReplaceText(LocStart, 1, "/** ");
+    ReplaceText(CatDecl->getIvarRBraceLoc(), 1, "**/ ");
+  }
+  else {
     ReplaceText(LocStart, 0, "// ");
-  } 
-  if (CatDecl->getIvarRBraceLoc().isValid())
-    InsertText(CatDecl->getIvarRBraceLoc(), "// ");
+  }
   
   for (ObjCCategoryDecl::prop_iterator I = CatDecl->prop_begin(),
        E = CatDecl->prop_end(); I != E; ++I)
@@ -1220,17 +1220,13 @@ void RewriteModernObjC::RewriteImplementationDecl(Decl *OID) {
   ObjCCategoryImplDecl *CID = dyn_cast<ObjCCategoryImplDecl>(OID);
 
   if (IMD) {
-    InsertText(IMD->getLocStart(), "// ");
-    if (IMD->getIvarLBraceLoc().isValid())
-      InsertText(IMD->getIvarLBraceLoc(), "// ");
-    for (ObjCImplementationDecl::ivar_iterator
-         I = IMD->ivar_begin(), E = IMD->ivar_end(); I != E; ++I) {
-      ObjCIvarDecl *Ivar = &*I;
-      SourceLocation LocStart = Ivar->getLocStart();
-      ReplaceText(LocStart, 0, "// ");
+    if (IMD->getIvarRBraceLoc().isValid()) {
+      ReplaceText(IMD->getLocStart(), 1, "/** ");
+      ReplaceText(IMD->getIvarRBraceLoc(), 1, "**/ ");
     }
-    if (IMD->getIvarRBraceLoc().isValid())
-      InsertText(IMD->getIvarRBraceLoc(), "// ");
+    else {
+      InsertText(IMD->getLocStart(), "// ");
+    }
   }
   else
     InsertText(CID->getLocStart(), "// ");
@@ -3494,10 +3490,44 @@ bool RewriteModernObjC::BufferContainsPPDirectives(const char *startBuf,
   return false;
 }
 
+/// IsTagDefinedInsideClass - This routine checks that a named tagged type 
+/// is defined inside an objective-c class. If so, it returns true. 
+bool RewriteModernObjC::IsTagDefinedInsideClass(ObjCContainerDecl *IDecl, 
+                                                TagDecl *Tag,
+                                                bool &IsNamedDefinition) {
+  if (!IDecl)
+    return false;
+  SourceLocation TagLocation;
+  if (RecordDecl *RD = dyn_cast<RecordDecl>(Tag)) {
+    RD = RD->getDefinition();
+    if (!RD || !RD->getDeclName().getAsIdentifierInfo())
+      return false;
+    IsNamedDefinition = true;
+    TagLocation = RD->getLocation();
+    return Context->getSourceManager().isBeforeInTranslationUnit(
+                                          IDecl->getLocation(), TagLocation);
+  }
+  if (EnumDecl *ED = dyn_cast<EnumDecl>(Tag)) {
+    if (!ED || !ED->getDeclName().getAsIdentifierInfo())
+      return false;
+    IsNamedDefinition = true;
+    TagLocation = ED->getLocation();
+    return Context->getSourceManager().isBeforeInTranslationUnit(
+                                          IDecl->getLocation(), TagLocation);
+
+  }
+  return false;
+}
+
 /// RewriteObjCFieldDeclType - This routine rewrites a type into the buffer.
 /// It handles elaborated types, as well as enum types in the process.
 bool RewriteModernObjC::RewriteObjCFieldDeclType(QualType &Type, 
                                                  std::string &Result) {
+  if (isa<TypedefType>(Type)) {
+    Result += "\t";
+    return false;
+  }
+    
   if (Type->isArrayType()) {
     QualType ElemTy = Context->getBaseElementType(Type);
     return RewriteObjCFieldDeclType(ElemTy, Result);
@@ -3513,12 +3543,11 @@ bool RewriteModernObjC::RewriteObjCFieldDeclType(QualType &Type,
         assert(false && "class not allowed as an ivar type");
       
       Result += RD->getName();
-      if (TagsDefinedInIvarDecls.count(RD)) {
-        // This struct is already defined. Do not write its definition again.
+      if (GlobalDefinedTags.count(RD)) {
+        // struct/union is defined globally, use it.
         Result += " ";
         return true;
       }
-      TagsDefinedInIvarDecls.insert(RD);
       Result += " {\n";
       for (RecordDecl::field_iterator i = RD->field_begin(), 
            e = RD->field_end(); i != e; ++i) {
@@ -3534,12 +3563,11 @@ bool RewriteModernObjC::RewriteObjCFieldDeclType(QualType &Type,
     if (ED->isCompleteDefinition()) {
       Result += "\n\tenum ";
       Result += ED->getName();
-      if (TagsDefinedInIvarDecls.count(ED)) {
-        // This enum is already defined. Do not write its definition again.
+      if (GlobalDefinedTags.count(ED)) {
+        // Enum is globall defined, use it.
         Result += " ";
         return true;
       }
-      TagsDefinedInIvarDecls.insert(ED);
       
       Result += " {\n";
       for (EnumDecl::enumerator_iterator EC = ED->enumerator_begin(),
@@ -3590,6 +3618,41 @@ void RewriteModernObjC::RewriteObjCFieldDecl(FieldDecl *fieldDecl,
   Result += ";\n";
 }
 
+/// RewriteLocallyDefinedNamedAggregates - This routine rewrites locally defined
+/// named aggregate types into the input buffer.
+void RewriteModernObjC::RewriteLocallyDefinedNamedAggregates(FieldDecl *fieldDecl, 
+                                             std::string &Result) {
+  QualType Type = fieldDecl->getType();
+  if (isa<TypedefType>(Type))
+    return;
+  if (Type->isArrayType())
+    Type = Context->getBaseElementType(Type);
+  ObjCContainerDecl *IDecl = 
+    dyn_cast<ObjCContainerDecl>(fieldDecl->getDeclContext());
+  
+  TagDecl *TD = 0;
+  if (Type->isRecordType()) {
+    TD = Type->getAs<RecordType>()->getDecl();
+  }
+  else if (Type->isEnumeralType()) {
+    TD = Type->getAs<EnumType>()->getDecl();
+  }
+  
+  if (TD) {
+    if (GlobalDefinedTags.count(TD))
+      return;
+    
+    bool IsNamedDefinition = false;
+    if (IsTagDefinedInsideClass(IDecl, TD, IsNamedDefinition)) {
+      RewriteObjCFieldDeclType(Type, Result);
+      Result += ";";
+    }
+    if (IsNamedDefinition)
+      GlobalDefinedTags.insert(TD);
+  }
+    
+}
+
 /// RewriteObjCInternalStruct - Rewrite one internal struct corresponding to
 /// an objective-c class with ivars.
 void RewriteModernObjC::RewriteObjCInternalStruct(ObjCInterfaceDecl *CDecl,
@@ -3618,6 +3681,12 @@ void RewriteModernObjC::RewriteObjCInternalStruct(ObjCInterfaceDecl *CDecl,
     return;
   }
   
+  // Insert named struct/union definitions inside class to
+  // outer scope. This follows semantics of locally defined
+  // struct/unions in objective-c classes.
+  for (unsigned i = 0, e = IVars.size(); i < e; i++)
+    RewriteLocallyDefinedNamedAggregates(IVars[i], Result);
+
   Result += "\nstruct ";
   Result += CDecl->getNameAsString();
   Result += "_IMPL {\n";
@@ -3627,7 +3696,7 @@ void RewriteModernObjC::RewriteObjCInternalStruct(ObjCInterfaceDecl *CDecl,
     Result += "_IMPL "; Result += RCDecl->getNameAsString();
     Result += "_IVARS;\n";
   }
-  TagsDefinedInIvarDecls.clear();
+  
   for (unsigned i = 0, e = IVars.size(); i < e; i++)
     RewriteObjCFieldDecl(IVars[i], Result);
 
@@ -5745,7 +5814,7 @@ void RewriteModernObjC::Initialize(ASTContext &context) {
   Preamble += "\t  arr[i] = va_arg(marker, void *);\n";
   Preamble += "\tva_end( marker );\n";
   Preamble += "  };\n";
-  Preamble += "  __NSContainer_literal() {\n";
+  Preamble += "  ~__NSContainer_literal() {\n";
   Preamble += "\tdelete[] arr;\n";
   Preamble += "  }\n";
   Preamble += "};\n";
@@ -7246,15 +7315,17 @@ Stmt *RewriteModernObjC::RewriteObjCIvarRefExpr(ObjCIvarRefExpr *IV) {
                                               addExpr);
       QualType IvarT = D->getType();
 
-      if (IvarT->isRecordType()) {
+      if (!isa<TypedefType>(IvarT) && IvarT->isRecordType()) {
         RecordDecl *RD = IvarT->getAs<RecordType>()->getDecl();
         RD = RD->getDefinition();
-        bool structIsInside = RD &&
-          Context->getSourceManager().isBeforeInTranslationUnit(
-            iFaceDecl->getDecl()->getLocation(), RD->getLocation());
-        if (structIsInside) {
+        if (RD && !RD->getDeclName().getAsIdentifierInfo()) {
           // decltype(((Foo_IMPL*)0)->bar) *
-          std::string RecName = iFaceDecl->getDecl()->getName();
+          ObjCContainerDecl *CDecl = 
+            dyn_cast<ObjCContainerDecl>(D->getDeclContext());
+          // ivar in class extensions requires special treatment.
+          if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(CDecl))
+            CDecl = CatDecl->getClassInterface();
+          std::string RecName = CDecl->getName();
           RecName += "_IMPL";
           RecordDecl *RD = RecordDecl::Create(*Context, TTK_Struct, TUDecl,
                                               SourceLocation(), SourceLocation(),

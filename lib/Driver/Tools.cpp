@@ -1617,9 +1617,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         A->getOption().getID() != options::OPT_fhonor_nans)
       CmdArgs.push_back("-menable-no-nans");
 
-  // -fno-math-errno is default on Darwin. Other platforms, -fmath-errno is the
-  // default.
-  bool MathErrno = !getToolChain().getTriple().isOSDarwin();
+  // -fmath-errno is the default on some platforms, e.g. BSD-derived OSes.
+  bool MathErrno = getToolChain().IsMathErrnoDefault();
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
                                options::OPT_fmath_errno,
                                options::OPT_fno_math_errno))
@@ -2500,12 +2499,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Honor -fpack-struct= and -fpack-struct, if given. Note that
   // -fno-pack-struct doesn't apply to -fpack-struct=.
   if (Arg *A = Args.getLastArg(options::OPT_fpack_struct_EQ)) {
-    CmdArgs.push_back("-fpack-struct");
-    CmdArgs.push_back(A->getValue(Args));
+    std::string PackStructStr = "-fpack-struct=";
+    PackStructStr += A->getValue(Args);
+    CmdArgs.push_back(Args.MakeArgString(PackStructStr));
   } else if (Args.hasFlag(options::OPT_fpack_struct,
                           options::OPT_fno_pack_struct, false)) {
-    CmdArgs.push_back("-fpack-struct");
-    CmdArgs.push_back("1");
+    CmdArgs.push_back("-fpack-struct=1");
   }
 
   if (Args.hasArg(options::OPT_mkernel) ||
@@ -4211,8 +4210,6 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_fopenmp))
     // This is more complicated in gcc...
     CmdArgs.push_back("-lgomp");
-
-  getDarwinToolChain().AddLinkSearchPathArgs(Args, CmdArgs);
 
   if (isObjCRuntimeLinked(Args)) {
     // Avoid linking compatibility stubs on i386 mac.

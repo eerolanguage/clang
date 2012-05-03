@@ -61,7 +61,6 @@ NonLoc SValBuilder::makeNonLoc(const llvm::APSInt& lhs,
 NonLoc SValBuilder::makeNonLoc(const SymExpr *lhs, BinaryOperator::Opcode op,
                                const SymExpr *rhs, QualType type) {
   assert(lhs && rhs);
-  assert(haveSameType(lhs->getType(Context), rhs->getType(Context)) == true);
   assert(!Loc::isLocType(type));
   return nonloc::SymbolVal(SymMgr.getSymSymExpr(lhs, op, rhs, type));
 }
@@ -195,29 +194,31 @@ DefinedSVal SValBuilder::getBlockPointer(const BlockDecl *block,
 
 //===----------------------------------------------------------------------===//
 
-SVal SValBuilder::makeGenericVal(ProgramStateRef State,
-                                     BinaryOperator::Opcode Op,
-                                     NonLoc LHS, NonLoc RHS,
-                                     QualType ResultTy) {
-  // If operands are tainted, create a symbol to ensure that we propagate taint.
-  if (State->isTainted(RHS) || State->isTainted(LHS)) {
-    const SymExpr *symLHS;
-    const SymExpr *symRHS;
+SVal SValBuilder::makeSymExprValNN(ProgramStateRef State,
+                                   BinaryOperator::Opcode Op,
+                                   NonLoc LHS, NonLoc RHS,
+                                   QualType ResultTy) {
+  if (!State->isTainted(RHS) && !State->isTainted(LHS))
+    return UnknownVal();
+    
+  const SymExpr *symLHS = LHS.getAsSymExpr();
+  const SymExpr *symRHS = RHS.getAsSymExpr();
+  // TODO: When the Max Complexity is reached, we should conjure a symbol
+  // instead of generating an Unknown value and propagate the taint info to it.
+  const unsigned MaxComp = 10000; // 100000 28X
 
-    if (const nonloc::ConcreteInt *rInt = dyn_cast<nonloc::ConcreteInt>(&RHS)) {
-      symLHS = LHS.getAsSymExpr();
-      return makeNonLoc(symLHS, Op, rInt->getValue(), ResultTy);
-    }
-
-    if (const nonloc::ConcreteInt *lInt = dyn_cast<nonloc::ConcreteInt>(&LHS)) {
-      symRHS = RHS.getAsSymExpr();
-      return makeNonLoc(lInt->getValue(), Op, symRHS, ResultTy);
-    }
-
-    symLHS = LHS.getAsSymExpr();
-    symRHS = RHS.getAsSymExpr();
+  if (symLHS && symRHS &&
+      (symLHS->computeComplexity() + symRHS->computeComplexity()) <  MaxComp)
     return makeNonLoc(symLHS, Op, symRHS, ResultTy);
-  }
+
+  if (symLHS && symLHS->computeComplexity() < MaxComp)
+    if (const nonloc::ConcreteInt *rInt = dyn_cast<nonloc::ConcreteInt>(&RHS))
+      return makeNonLoc(symLHS, Op, rInt->getValue(), ResultTy);
+
+  if (symRHS && symRHS->computeComplexity() < MaxComp)
+    if (const nonloc::ConcreteInt *lInt = dyn_cast<nonloc::ConcreteInt>(&LHS))
+      return makeNonLoc(lInt->getValue(), Op, symRHS, ResultTy);
+
   return UnknownVal();
 }
 
@@ -340,9 +341,12 @@ SVal SValBuilder::evalCast(SVal val, QualType castTy, QualType originalTy) {
 
   // Check for casts from a region to a specific type.
   if (const MemRegion *R = val.getAsRegion()) {
+    // Handle other casts of locations to integers.
+    if (castTy->isIntegerType())
+      return evalCastFromLoc(loc::MemRegionVal(R), castTy);
+
     // FIXME: We should handle the case where we strip off view layers to get
     //  to a desugared type.
-
     if (!Loc::isLocType(castTy)) {
       // FIXME: There can be gross cases where one casts the result of a function
       // (that returns a pointer) to some other value that happens to fit

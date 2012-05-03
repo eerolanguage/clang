@@ -776,6 +776,28 @@ int rdar11269741(struct rdar11269741_b_t o)
   return p->n.m; // expected-warning {{leak}}
 }
 
+// Pointer arithmetic, returning an ElementRegion.
+void *radar11329382(unsigned bl) {
+  void *ptr = malloc (16);
+  ptr = ptr + (2 - bl);
+  return ptr; // no warning
+}
+
+void __assert_rtn(const char *, const char *, int, const char *) __attribute__((__noreturn__));
+int strcmp(const char *, const char *);
+char *a (void);
+void radar11270219(void) {
+  char *x = a(), *y = a();
+  (__builtin_expect(!(x && y), 0) ? __assert_rtn(__func__, "/Users/zaks/tmp/ex.c", 24, "x && y") : (void)0);
+  strcmp(x, y); // no warning
+}
+
+void radar_11358224_test_double_assign_ints_positive_2()
+{
+  void *ptr = malloc(16);
+  ptr = ptr; // expected-warning {{leak}}
+}
+
 // ----------------------------------------------------------------------------
 // Below are the known false positives.
 
@@ -821,5 +843,19 @@ void localArrayTest() {
   char *p = (char*)malloc(12);
   char *ArrayL[12];
   ArrayL[0] = p;
+}
+
+// Test double assignment through integers.
+static long glob;
+void test_double_assign_ints()
+{
+  void *ptr = malloc (16);  // no-warning
+  glob = (long)(unsigned long)ptr;
+}
+
+void test_double_assign_ints_positive()
+{
+  void *ptr = malloc(16);
+  (void*)(long)(unsigned long)ptr; // expected-warning {{unused}} expected-warning {{leak}}
 }
 

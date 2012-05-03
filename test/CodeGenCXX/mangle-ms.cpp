@@ -103,3 +103,16 @@ void epsilon(int a[][10][20]) {}
 void zeta(int (^)(int, int)) {}
 // CHECK: @"\01?zeta@@YAXP_EAHHH@Z@Z"
 
+void operator_new_delete() {
+  char *ptr = new char;
+// CHECK: @"\01??2@YAPAXI@Z"
+
+  delete ptr;
+// CHECK: @"\01??3@YAXPAX@Z"
+
+  char *array = new char[42];
+// CHECK: @"\01??_U@YAPAXI@Z"
+
+  delete [] array;
+// CHECK: @"\01??_V@YAXPAX@Z"
+}

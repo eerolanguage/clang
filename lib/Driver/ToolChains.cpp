@@ -287,76 +287,6 @@ void DarwinClang::AddGCCLibexecPath(unsigned darwinVersion) {
   getProgramPaths().push_back(Path);
 }
 
-void DarwinClang::AddLinkSearchPathArgs(const ArgList &Args,
-                                       ArgStringList &CmdArgs) const {
-  // The Clang toolchain uses explicit paths for internal libraries.
-
-  // Unfortunately, we still might depend on a few of the libraries that are
-  // only available in the gcc library directory (in particular
-  // libstdc++.dylib). For now, hardcode the path to the known install location.
-  // FIXME: This should get ripped out someday.  However, when building on
-  // 10.6 (darwin10), we're still relying on this to find libstdc++.dylib.
-  llvm::sys::Path P(getDriver().Dir);
-  P.eraseComponent(); // .../usr/bin -> ../usr
-  P.appendComponent("llvm-gcc-4.2");
-  P.appendComponent("lib");
-  P.appendComponent("gcc");
-  switch (getTriple().getArch()) {
-  default:
-    llvm_unreachable("Invalid Darwin arch!");
-  case llvm::Triple::x86:
-  case llvm::Triple::x86_64:
-    P.appendComponent("i686-apple-darwin10");
-    break;
-  case llvm::Triple::arm:
-  case llvm::Triple::thumb:
-    P.appendComponent("arm-apple-darwin10");
-    break;
-  case llvm::Triple::ppc:
-  case llvm::Triple::ppc64:
-    P.appendComponent("powerpc-apple-darwin10");
-    break;
-  }
-  P.appendComponent("4.2.1");
-
-  // Determine the arch specific GCC subdirectory.
-  const char *ArchSpecificDir = 0;
-  switch (getTriple().getArch()) {
-  default:
-    break;
-  case llvm::Triple::arm:
-  case llvm::Triple::thumb: {
-    std::string Triple = ComputeLLVMTriple(Args);
-    StringRef TripleStr = Triple;
-    if (TripleStr.startswith("armv5") || TripleStr.startswith("thumbv5"))
-      ArchSpecificDir = "v5";
-    else if (TripleStr.startswith("armv6") || TripleStr.startswith("thumbv6"))
-      ArchSpecificDir = "v6";
-    else if (TripleStr.startswith("armv7") || TripleStr.startswith("thumbv7"))
-      ArchSpecificDir = "v7";
-    break;
-  }
-  case llvm::Triple::ppc64:
-    ArchSpecificDir = "ppc64";
-    break;
-  case llvm::Triple::x86_64:
-    ArchSpecificDir = "x86_64";
-    break;
-  }
-
-  if (ArchSpecificDir) {
-    P.appendComponent(ArchSpecificDir);
-    bool Exists;
-    if (!llvm::sys::fs::exists(P.str(), Exists) && Exists)
-      CmdArgs.push_back(Args.MakeArgString("-L" + P.str()));
-    P.eraseComponent();
-  }
-
-  bool Exists;
-  if (!llvm::sys::fs::exists(P.str(), Exists) && Exists)
-    CmdArgs.push_back(Args.MakeArgString("-L" + P.str()));
-}
-
 void DarwinClang::AddLinkARCArgs(const ArgList &Args,
                                  ArgStringList &CmdArgs) const {
 
@@ -1866,6 +1796,7 @@ enum LinuxDistro {
   OpenSuse11_3,
   OpenSuse11_4,
   OpenSuse12_1,
+  OpenSuse12_2,
   UbuntuHardy,
   UbuntuIntrepid,
   UbuntuJaunty,
@@ -1884,7 +1815,7 @@ static bool IsRedhat(enum LinuxDistro Distro) {
 }
 
 static bool IsOpenSuse(enum LinuxDistro Distro) {
-  return Distro >= OpenSuse11_3 && Distro <= OpenSuse12_1;
+  return Distro >= OpenSuse11_3 && Distro <= OpenSuse12_2;
 }
 
 static bool IsDebian(enum LinuxDistro Distro) {
@@ -1961,6 +1892,7 @@ static LinuxDistro DetectLinuxDistro(llvm::Triple::ArchType Arch) {
       .StartsWith("openSUSE 11.3", OpenSuse11_3)
       .StartsWith("openSUSE 11.4", OpenSuse11_4)
       .StartsWith("openSUSE 12.1", OpenSuse12_1)
+      .StartsWith("openSUSE 12.2", OpenSuse12_2)
       .Default(UnknownDistro);
 
   bool Exists;

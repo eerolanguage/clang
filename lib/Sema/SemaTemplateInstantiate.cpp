@@ -1595,6 +1595,9 @@ ParmVarDecl *Sema::SubstParmVarDecl(ParmVarDecl *OldParm,
     NewParm->setUnparsedDefaultArg();
     UnparsedDefaultArgInstantiations[OldParm].push_back(NewParm);
   } else if (Expr *Arg = OldParm->getDefaultArg())
+    // FIXME: if we non-lazily instantiated non-dependent default args for
+    // non-dependent parameter types we could remove a bunch of duplicate
+    // conversion warnings for such arguments.
     NewParm->setUninstantiatedDefaultArg(Arg);
 
   NewParm->setHasInheritedDefaultArg(OldParm->hasInheritedDefaultArg());

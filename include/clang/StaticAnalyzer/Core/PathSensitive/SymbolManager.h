@@ -94,6 +94,8 @@ public:
     return symbol_iterator(this);
   }
   static symbol_iterator symbol_end() { return symbol_iterator(); }
+
+  unsigned computeComplexity() const;
 };
 
 typedef const SymExpr* SymbolRef;
@@ -553,7 +555,7 @@ public:
   BasicValueFactory &getBasicVals() { return BV; }
 };
 
-/// \class A class responsible for cleaning up unused symbols.
+/// \brief A class responsible for cleaning up unused symbols.
 class SymbolReaper {
   enum SymbolStatus {
     NotProcessed,

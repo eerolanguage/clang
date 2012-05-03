@@ -81,3 +81,26 @@ void test3() {
 #define FINIT int a3 = NULL;
   FINIT // expected-warning {{implicit conversion of NULL constant to 'int'}}
 }
+
+namespace test4 {
+  // FIXME: We should warn for non-dependent args (only when the param type is also non-dependent) only once
+  // not once for the template + once for every instantiation
+  template<typename T>
+  void tmpl(char c = NULL, // expected-warning 4 {{implicit conversion of NULL constant to 'char'}}
+            T a = NULL, // expected-warning {{implicit conversion of NULL constant to 'char'}} \
+                           expected-warning 2 {{implicit conversion of NULL constant to 'int'}}
+            T b = 1024) { // expected-warning {{implicit conversion from 'int' to 'char' changes value from 1024 to 0}}
+  }
+
+  template<typename T>
+  void tmpl2(T t = NULL) {
+  }
+
+  void func() {
+    tmpl<char>(); // expected-note 2 {{in instantiation of default function argument expression for 'tmpl<char>' required here}}
+    tmpl<int>(); // expected-note 2 {{in instantiation of default function argument expression for 'tmpl<int>' required here}}
+    // FIXME: We should warn only once for each template instantiation - not once for each call
+    tmpl<int>(); // expected-note 2 {{in instantiation of default function argument expression for 'tmpl<int>' required here}}
+    tmpl2<int*>();
+  }
+}

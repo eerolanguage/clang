@@ -941,6 +941,7 @@ const RetainSummary * RetainSummaryManager::getSummary(const FunctionDecl *FD) {
     } else if (FName == "IOBSDNameMatching" ||
                FName == "IOServiceMatching" ||
                FName == "IOServiceNameMatching" ||
+               FName == "IORegistryEntrySearchCFProperty" ||
                FName == "IORegistryEntryIDMatching" ||
                FName == "IOOpenFirmwarePathMatching") {
       // Part of <rdar://problem/6961230>. (IOKit)
@@ -3346,7 +3347,11 @@ void RetainCountChecker::checkBind(SVal loc, SVal val, const Stmt *S,
       // To test (3), generate a new state with the binding added.  If it is
       // the same state, then it escapes (since the store cannot represent
       // the binding).
-      escapes = (state == (state->bindLoc(*regionLoc, val)));
+      // Do this only if we know that the store is not supposed to generate the
+      // same state.
+      SVal StoredVal = state->getSVal(regionLoc->getRegion());
+      if (StoredVal != val)
+        escapes = (state == (state->bindLoc(*regionLoc, val)));
     }
     if (!escapes) {
       // Case 4: We do not currently model what happens when a symbol is

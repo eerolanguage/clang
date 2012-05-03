@@ -833,7 +833,8 @@ public:
   bool findMacroSpelling(SourceLocation &loc, StringRef name);
 
   /// \brief Get a string to suggest for zero-initialization of a type.
-  const char *getFixItZeroInitializerForType(QualType T) const;
+  std::string getFixItZeroInitializerForType(QualType T) const;
+  std::string getFixItZeroLiteralForType(QualType T) const;
 
   ExprResult Owned(Expr* E) { return E; }
   ExprResult Owned(ExprResult R) { return R; }
@@ -3225,16 +3226,6 @@ public:
                                    Expr *NoexceptExpr,
                                    llvm::SmallVectorImpl<QualType> &Exceptions,
                                    FunctionProtoType::ExtProtoInfo &EPI);
-
-  /// \brief Add an exception-specification to the given member function
-  /// (or member function template). The exception-specification was parsed
-  /// after the method itself was declared.
-  void actOnDelayedExceptionSpecification(Decl *Method,
-         ExceptionSpecificationType EST,
-         SourceRange SpecificationRange,
-         ArrayRef<ParsedType> DynamicExceptions,
-         ArrayRef<SourceRange> DynamicExceptionRanges,
-         Expr *NoexceptExpr);
 
   /// \brief Determine if a special member function should have a deleted
   /// definition when it is defaulted.
@@ -5876,9 +5867,6 @@ public:
                                 const IdentifierInfo *Name);
   void ComparePropertiesInBaseAndSuper(ObjCInterfaceDecl *IDecl);
 
-  void CompareMethodParamsInBaseAndSuper(Decl *IDecl,
-                                         ObjCMethodDecl *MethodDecl,
-                                         bool IsInstance);
 
   void CompareProperties(Decl *CDecl, Decl *MergeProtocols);
 
