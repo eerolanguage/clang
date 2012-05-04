@@ -393,7 +393,12 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
   // Save the original job command(s).
   std::string Cmd;
   llvm::raw_string_ostream OS(Cmd);
-  C.PrintJob(OS, C.getJobs(), "\n", false);
+  if (FailingCommand)
+    C.PrintJob(OS, *FailingCommand, "\n", false);
+  else
+    // Crash triggered by FORCE_CLANG_DIAGNOSTICS_CRASH, which doesn't have an 
+    // associated FailingCommand, so just pass all jobs.
+    C.PrintJob(OS, C.getJobs(), "\n", false);
   OS.flush();
 
   // Clear stale state and suppress tool output.
@@ -489,10 +494,23 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
         Diag(clang::diag::note_drv_command_failed_diag_msg)
           << "Error generating run script: " + Script + " " + Err;
       } else {
-        // Strip -D, -F, and -I.
+        // Strip away options not necessary to reproduce the crash.
         // FIXME: This doesn't work with quotes (e.g., -D "foo bar").
-        std::string Flag[4] = {"-D ", "-F", "-I ", "-o "};
-        for (unsigned i = 0; i < 4; ++i) {
+        SmallVector<std::string, 16> Flag;
+        Flag.push_back("-D ");
+        Flag.push_back("-F");
+        Flag.push_back("-I ");
+        Flag.push_back("-o ");
+        Flag.push_back("-coverage-file ");
+        Flag.push_back("-dependency-file ");
+        Flag.push_back("-fdebug-compilation-dir ");
+        Flag.push_back("-fmodule-cache-path ");
+        Flag.push_back("-include ");
+        Flag.push_back("-include-pch ");
+        Flag.push_back("-isysroot ");
+        Flag.push_back("-resource-dir ");
+        Flag.push_back("-serialize-diagnostic-file ");
+        for (unsigned i = 0, e = Flag.size(); i < e; ++i) {
           size_t I = 0, E = 0;
           do {
             I = Cmd.find(Flag[i], I);
@@ -503,7 +521,19 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
             Cmd.erase(I, E - I + 1);
           } while(1);
         }
-        // FIXME: Append the new filename with correct preprocessed suffix.
+        // Append the new filename with correct preprocessed suffix.
+        size_t I, E;
+        I = Cmd.find("-main-file-name ");
+        assert (I != std::string::npos && "Expected to find -main-file-name");
+        I += 16;
+        E = Cmd.find(" ", I);
+        assert (E != std::string::npos && "-main-file-name missing argument?");
+        std::string OldFilename = Cmd.substr(I, E - I);
+        std::string NewFilename = llvm::sys::path::filename(*it).str();
+        I = Cmd.rfind(OldFilename);
+        E = I + OldFilename.length() - 1;
+        I = Cmd.rfind(" ", I);
+        Cmd.replace(I + 1, E - I, NewFilename);
         ScriptOS << Cmd;
         Diag(clang::diag::note_drv_command_failed_diag_msg) << Script;
       }

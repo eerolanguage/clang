@@ -155,7 +155,13 @@ private:
 
   /// getFETokenInfoAsVoid - Retrieves the front end-specified pointer
   /// for this name as a void pointer.
-  void *getFETokenInfoAsVoid() const;
+  void *getFETokenInfoAsVoid() const {
+    if (getNameKind() == Identifier)
+      return getAsIdentifierInfo()->getFETokenInfo<void>();
+    return getFETokenInfoAsVoidSlow();
+  }
+
+  void *getFETokenInfoAsVoidSlow() const;
 
 public:
   /// DeclarationName - Used to create an empty selector.
@@ -564,7 +570,9 @@ struct DenseMapInfo<clang::DeclarationName> {
     return clang::DeclarationName::getTombstoneMarker();
   }
 
-  static unsigned getHashValue(clang::DeclarationName);
+  static unsigned getHashValue(clang::DeclarationName Name) {
+    return DenseMapInfo<void*>::getHashValue(Name.getAsOpaquePtr());
+  }
 
   static inline bool
   isEqual(clang::DeclarationName LHS, clang::DeclarationName RHS) {

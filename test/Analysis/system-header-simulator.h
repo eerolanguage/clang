@@ -36,3 +36,13 @@ FILE *funopen(const void *,
                  fpos_t (*)(void *, fpos_t, int),
                  int (*)(void *));
 
+int sqlite3_bind_text_my(int, const char*, int n, void(*)(void*));
+
+typedef void (*freeCallback) (void*);
+typedef struct {
+  int i;
+  freeCallback fc;
+} StWithCallback;
+
+int dealocateMemWhenDoneByVal(void*, StWithCallback);
+int dealocateMemWhenDoneByRef(StWithCallback*, const void*);

@@ -2473,6 +2473,26 @@ ASTReader::ASTReadResult ASTReader::validateFileEntries(ModuleFile &M) {
         Error("source location entry is incorrect");
         return Failure;
       }
+      
+      off_t StoredSize = (off_t)Record[4];
+      time_t StoredTime = (time_t)Record[5];
+
+      // Check if there was a request to override the contents of the file
+      // that was part of the precompiled header. Overridding such a file
+      // can lead to problems when lexing using the source locations from the
+      // PCH.
+      SourceManager &SM = getSourceManager();
+      if (SM.isFileOverridden(File)) {
+        Error(diag::err_fe_pch_file_overridden, Filename);
+        // After emitting the diagnostic, recover by disabling the override so
+        // that the original file will be used.
+        SM.disableFileContentsOverride(File);
+        // The FileEntry is a virtual file entry with the size of the contents
+        // that would override the original contents. Set it to the original's
+        // size/time.
+        FileMgr.modifyFileEntry(const_cast<FileEntry*>(File),
+                                StoredSize, StoredTime);
+      }
 
       // The stat info from the FileEntry came from the cached stat
       // info of the PCH, so we cannot trust it.
@@ -2482,12 +2502,12 @@ ASTReader::ASTReadResult ASTReader::validateFileEntries(ModuleFile &M) {
         StatBuf.st_mtime = File->getModificationTime();
       }
 
-      if (((off_t)Record[4] != StatBuf.st_size
+      if ((StoredSize != StatBuf.st_size
 #if !defined(LLVM_ON_WIN32)
           // In our regression testing, the Windows file system seems to
           // have inconsistent modification times that sometimes
           // erroneously trigger this error-handling path.
-           || (time_t)Record[5] != StatBuf.st_mtime
+           || StoredTime != StatBuf.st_mtime
 #endif
           )) {
         Error(diag::err_fe_pch_file_modified, Filename);
@@ -6228,18 +6248,19 @@ IdentifierTable &ASTReader::getIdentifierTable() {
 /// \brief Record that the given ID maps to the given switch-case
 /// statement.
 void ASTReader::RecordSwitchCaseID(SwitchCase *SC, unsigned ID) {
-  assert(SwitchCaseStmts[ID] == 0 && "Already have a SwitchCase with this ID");
-  SwitchCaseStmts[ID] = SC;
+  assert((*CurrSwitchCaseStmts)[ID] == 0 &&
+         "Already have a SwitchCase with this ID");
+  (*CurrSwitchCaseStmts)[ID] = SC;
 }
 
 /// \brief Retrieve the switch-case statement with the given ID.
 SwitchCase *ASTReader::getSwitchCaseWithID(unsigned ID) {
-  assert(SwitchCaseStmts[ID] != 0 && "No SwitchCase with this ID");
-  return SwitchCaseStmts[ID];
+  assert((*CurrSwitchCaseStmts)[ID] != 0 && "No SwitchCase with this ID");
+  return (*CurrSwitchCaseStmts)[ID];
 }
 
 void ASTReader::ClearSwitchCaseIDs() {
-  SwitchCaseStmts.clear();
+  CurrSwitchCaseStmts->clear();
 }
 
 void ASTReader::finishPendingActions() {
@@ -6354,7 +6375,8 @@ ASTReader::ASTReader(Preprocessor &PP, ASTContext &Context,
     DisableValidation(DisableValidation),
     DisableStatCache(DisableStatCache),
     AllowASTWithCompilerErrors(AllowASTWithCompilerErrors), 
-    CurrentGeneration(0), NumStatHits(0), NumStatMisses(0), 
+    CurrentGeneration(0), CurrSwitchCaseStmts(&SwitchCaseStmts),
+    NumStatHits(0), NumStatMisses(0), 
     NumSLocEntriesRead(0), TotalNumSLocEntries(0), 
     NumStatementsRead(0), TotalNumStatements(0), NumMacrosRead(0), 
     TotalNumMacros(0), NumSelectorsRead(0), NumMethodPoolEntriesRead(0), 

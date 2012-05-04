@@ -448,6 +448,8 @@ def err_class_extension_after_impl : Error<
   "cannot declare class extension for %0 after class implementation">;
 def note_implementation_declared : Note<
   "class implementation is declared here">;
+def not_while_in_implementation : Note<
+  "detected while default synthesizing properties in class implementation">;
 def note_class_declared : Note<
   "class is declared here">;
 def note_receiver_is_id : Note<
@@ -618,6 +620,9 @@ def warn_auto_synthesizing_protocol_property :Warning<
   "auto property synthesis will not synthesize property"
   " declared in a protocol">,
   InGroup<DiagGroup<"objc-protocol-property-synthesis">>;
+def warn_missing_explicit_synthesis : Warning <
+  "auto property synthesis is synthesizing property not explicitly synthesized">,
+  InGroup<DiagGroup<"objc-missing-property-synthesis">>, DefaultIgnore;
 def warn_property_getter_owning_mismatch : Warning<
   "property declared as returning non-retained objects"
   "; getter returning retained objects">;
@@ -5244,6 +5249,27 @@ def warn_missing_case3 : Warning<
 def warn_missing_cases : Warning<
   "%0 enumeration values not handled in switch: %1, %2, %3...">,
   InGroup<Switch>;
+
+def warn_unannotated_fallthrough : Warning<
+  "unannotated fall-through between switch labels">,
+  InGroup<ImplicitFallthrough>, DefaultIgnore;
+def note_insert_fallthrough_fixit : Note<
+  "insert '[[clang::fallthrough]];' to silence this warning">;
+def note_insert_break_fixit : Note<
+  "insert 'break;' to avoid fall-through">;
+def err_fallthrough_attr_wrong_target : Error<
+  "clang::fallthrough attribute is only allowed on empty statements">,
+  InGroup<IgnoredAttributes>;
+def note_fallthrough_insert_semi_fixit : Note<"did you forget ';'?">;
+def err_fallthrough_attr_outside_switch : Error<
+  "fallthrough annotation is outside switch statement">,
+  InGroup<IgnoredAttributes>;
+def warn_fallthrough_attr_invalid_placement : Warning<
+  "fallthrough annotation does not directly precede switch label">,
+  InGroup<ImplicitFallthrough>;
+def warn_fallthrough_attr_unreachable : Warning<
+  "fallthrough annotation in unreachable code">,
+  InGroup<ImplicitFallthrough>;
 
 def warn_unreachable_default : Warning<
   "default label in switch which covers all enumeration values">,

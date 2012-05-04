@@ -323,10 +323,10 @@ Selector DeclarationName::getObjCSelector() const {
   return Selector();
 }
 
-void *DeclarationName::getFETokenInfoAsVoid() const {
+void *DeclarationName::getFETokenInfoAsVoidSlow() const {
   switch (getNameKind()) {
   case Identifier:
-    return getAsIdentifierInfo()->getFETokenInfo<void>();
+    llvm_unreachable("Handled by getFETokenInfoAsVoid()");
 
   case CXXConstructorName:
   case CXXDestructorName:
@@ -479,12 +479,6 @@ DeclarationNameTable::getCXXLiteralOperatorName(IdentifierInfo *II) {
 
   LiteralNames->InsertNode(LiteralName, InsertPos);
   return DeclarationName(LiteralName);
-}
-
-unsigned
-llvm::DenseMapInfo<clang::DeclarationName>::
-getHashValue(clang::DeclarationName N) {
-  return DenseMapInfo<void*>::getHashValue(N.getAsOpaquePtr());
 }
 
 DeclarationNameLoc::DeclarationNameLoc(DeclarationName Name) {
