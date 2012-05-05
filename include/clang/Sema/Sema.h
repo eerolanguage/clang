@@ -944,19 +944,168 @@ public:
   /// in an Objective-C message declaration. Return the appropriate type.
   ParsedType ActOnObjCInstanceType(SourceLocation Loc);
 
+  /// \brief Abstract class used to diagnose incomplete types.
+  struct TypeDiagnoser {
+    bool Suppressed;
+    
+    TypeDiagnoser(bool Suppressed = false) : Suppressed(Suppressed) { }
+    
+    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) = 0;
+    virtual ~TypeDiagnoser() {}
+  };
+
+  static int getPrintable(int I) { return I; }
+  static unsigned getPrintable(unsigned I) { return I; }
+  static bool getPrintable(bool B) { return B; }
+  static const char * getPrintable(const char *S) { return S; }
+  static StringRef getPrintable(StringRef S) { return S; }
+  static const std::string &getPrintable(const std::string &S) { return S; }
+  static const IdentifierInfo *getPrintable(const IdentifierInfo *II) {
+    return II;
+  }
+  static DeclarationName getPrintable(DeclarationName N) { return N; }
+  static QualType getPrintable(QualType T) { return T; }
+  static SourceRange getPrintable(SourceRange R) { return R; }
+  static SourceRange getPrintable(SourceLocation L) { return L; }
+  static SourceRange getPrintable(Expr *E) { return E->getSourceRange(); }
+  static SourceRange getPrintable(TypeLoc TL) { return TL.getSourceRange();}
+  
+  template<typename T1>
+  class BoundTypeDiagnoser1 : public TypeDiagnoser {
+    unsigned DiagID;
+    const T1 &Arg1;
+    
+  public:
+    BoundTypeDiagnoser1(unsigned DiagID, const T1 &Arg1)
+      : TypeDiagnoser(DiagID == 0), DiagID(DiagID), Arg1(Arg1) { }
+    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+      if (Suppressed) return;
+      S.Diag(Loc, DiagID) << getPrintable(Arg1) << T;
+    }
+    
+    virtual ~BoundTypeDiagnoser1() { }
+  };
+
+  template<typename T1, typename T2>
+  class BoundTypeDiagnoser2 : public TypeDiagnoser {
+    unsigned DiagID;
+    const T1 &Arg1;
+    const T2 &Arg2;
+    
+  public:
+    BoundTypeDiagnoser2(unsigned DiagID, const T1 &Arg1,
+                                  const T2 &Arg2)
+      : TypeDiagnoser(DiagID == 0), DiagID(DiagID), Arg1(Arg1),
+        Arg2(Arg2) { }
+    
+    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+      if (Suppressed) return;
+      S.Diag(Loc, DiagID) << getPrintable(Arg1) << getPrintable(Arg2) << T;
+    }
+    
+    virtual ~BoundTypeDiagnoser2() { }
+  };
+
+  template<typename T1, typename T2, typename T3>
+  class BoundTypeDiagnoser3 : public TypeDiagnoser {
+    unsigned DiagID;
+    const T1 &Arg1;
+    const T2 &Arg2;
+    const T3 &Arg3;
+    
+  public:
+    BoundTypeDiagnoser3(unsigned DiagID, const T1 &Arg1,
+                                  const T2 &Arg2, const T3 &Arg3)
+    : TypeDiagnoser(DiagID == 0), DiagID(DiagID), Arg1(Arg1),
+      Arg2(Arg2), Arg3(Arg3) { }
+    
+    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+      if (Suppressed) return;
+      S.Diag(Loc, DiagID)
+        << getPrintable(Arg1) << getPrintable(Arg2) << getPrintable(Arg3) << T;
+    }
+    
+    virtual ~BoundTypeDiagnoser3() { }
+  };
+  
   bool RequireCompleteType(SourceLocation Loc, QualType T,
-                           const PartialDiagnostic &PD,
-                           std::pair<SourceLocation, PartialDiagnostic> Note);
-  bool RequireCompleteType(SourceLocation Loc, QualType T,
-                           const PartialDiagnostic &PD);
+                           TypeDiagnoser &Diagnoser);
   bool RequireCompleteType(SourceLocation Loc, QualType T,
                            unsigned DiagID);
-  bool RequireCompleteExprType(Expr *E, const PartialDiagnostic &PD,
-                               std::pair<SourceLocation,
-                                         PartialDiagnostic> Note);
+  
+  template<typename T1>
+  bool RequireCompleteType(SourceLocation Loc, QualType T,
+                           unsigned DiagID, const T1 &Arg1) {
+    BoundTypeDiagnoser1<T1> Diagnoser(DiagID, Arg1);
+    return RequireCompleteType(Loc, T, Diagnoser);
+  }
+  
+  template<typename T1, typename T2>
+  bool RequireCompleteType(SourceLocation Loc, QualType T,
+                           unsigned DiagID, const T1 &Arg1, const T2 &Arg2) {
+    BoundTypeDiagnoser2<T1, T2> Diagnoser(DiagID, Arg1, Arg2);
+    return RequireCompleteType(Loc, T, Diagnoser);
+  }
+
+  template<typename T1, typename T2, typename T3>
+  bool RequireCompleteType(SourceLocation Loc, QualType T,
+                           unsigned DiagID, const T1 &Arg1, const T2 &Arg2,
+                           const T3 &Arg3) {
+    BoundTypeDiagnoser3<T1, T2, T3> Diagnoser(DiagID, Arg1, Arg2,
+                                                        Arg3);
+    return RequireCompleteType(Loc, T, Diagnoser);
+  }
+
+  bool RequireCompleteExprType(Expr *E, TypeDiagnoser &Diagnoser);
+  bool RequireCompleteExprType(Expr *E, unsigned DiagID);
+
+  template<typename T1>
+  bool RequireCompleteExprType(Expr *E, unsigned DiagID, const T1 &Arg1) {
+    BoundTypeDiagnoser1<T1> Diagnoser(DiagID, Arg1);
+    return RequireCompleteExprType(E, Diagnoser);
+  }
+
+  template<typename T1, typename T2>
+  bool RequireCompleteExprType(Expr *E, unsigned DiagID, const T1 &Arg1,
+                               const T2 &Arg2) {
+    BoundTypeDiagnoser2<T1, T2> Diagnoser(DiagID, Arg1, Arg2);
+    return RequireCompleteExprType(E, Diagnoser);
+  }
+
+  template<typename T1, typename T2, typename T3>
+  bool RequireCompleteExprType(Expr *E, unsigned DiagID, const T1 &Arg1,
+                               const T2 &Arg2, const T3 &Arg3) {
+    BoundTypeDiagnoser3<T1, T2, T3> Diagnoser(DiagID, Arg1, Arg2,
+                                                        Arg3);
+    return RequireCompleteExprType(E, Diagnoser);
+  }
 
   bool RequireLiteralType(SourceLocation Loc, QualType T,
-                          const PartialDiagnostic &PD);
+                          TypeDiagnoser &Diagnoser);
+  bool RequireLiteralType(SourceLocation Loc, QualType T, unsigned DiagID);
+  
+  template<typename T1>
+  bool RequireLiteralType(SourceLocation Loc, QualType T,
+                          unsigned DiagID, const T1 &Arg1) {
+    BoundTypeDiagnoser1<T1> Diagnoser(DiagID, Arg1);
+    return RequireLiteralType(Loc, T, Diagnoser);
+  }
+
+  template<typename T1, typename T2>
+  bool RequireLiteralType(SourceLocation Loc, QualType T,
+                          unsigned DiagID, const T1 &Arg1, const T2 &Arg2) {
+    BoundTypeDiagnoser2<T1, T2> Diagnoser(DiagID, Arg1, Arg2);
+    return RequireLiteralType(Loc, T, Diagnoser);
+  }
+
+  template<typename T1, typename T2, typename T3>
+  bool RequireLiteralType(SourceLocation Loc, QualType T,
+                          unsigned DiagID, const T1 &Arg1, const T2 &Arg2,
+                          const T3 &Arg3) {
+    BoundTypeDiagnoser3<T1, T2, T3> Diagnoser(DiagID, Arg1, Arg2,
+                                                        Arg3);
+    return RequireLiteralType(Loc, T, Diagnoser);
+  }
 
   QualType getElaboratedType(ElaboratedTypeKeyword Keyword,
                              const CXXScopeSpec &SS, QualType T);
@@ -1573,16 +1722,59 @@ public:
   ExprResult CheckConvertedConstantExpression(Expr *From, QualType T,
                                               llvm::APSInt &Value, CCEKind CCE);
 
+  /// \brief Abstract base class used to diagnose problems that occur while
+  /// trying to convert an expression to integral or enumeration type.
+  class ICEConvertDiagnoser {
+  public:
+    bool Suppress;
+    bool SuppressConversion;
+    
+    ICEConvertDiagnoser(bool Suppress = false,
+                        bool SuppressConversion = false)
+      : Suppress(Suppress), SuppressConversion(SuppressConversion) { }
+    
+    /// \brief Emits a diagnostic complaining that the expression does not have
+    /// integral or enumeration type.
+    virtual DiagnosticBuilder diagnoseNotInt(Sema &S, SourceLocation Loc,
+                                             QualType T) = 0;
+    
+    /// \brief Emits a diagnostic when the expression has incomplete class type.
+    virtual DiagnosticBuilder diagnoseIncomplete(Sema &S, SourceLocation Loc,
+                                                 QualType T) = 0;
+    
+    /// \brief Emits a diagnostic when the only matching conversion function
+    /// is explicit.
+    virtual DiagnosticBuilder diagnoseExplicitConv(Sema &S, SourceLocation Loc,
+                                                   QualType T,
+                                                   QualType ConvTy) = 0;
+
+    /// \brief Emits a note for the explicit conversion function.
+    virtual DiagnosticBuilder
+    noteExplicitConv(Sema &S, CXXConversionDecl *Conv, QualType ConvTy) = 0;
+
+    /// \brief Emits a diagnostic when there are multiple possible conversion
+    /// functions.
+    virtual DiagnosticBuilder diagnoseAmbiguous(Sema &S, SourceLocation Loc,
+                                                QualType T) = 0;
+
+    /// \brief Emits a note for one of the candidate conversions.
+    virtual DiagnosticBuilder noteAmbiguous(Sema &S, CXXConversionDecl *Conv,
+                                            QualType ConvTy) = 0;
+
+    /// \brief Emits a diagnostic when we picked a conversion function
+    /// (for cases when we are not allowed to pick a conversion function).
+    virtual DiagnosticBuilder diagnoseConversion(Sema &S, SourceLocation Loc,
+                                                 QualType T,
+                                                 QualType ConvTy) = 0;
+    
+    virtual ~ICEConvertDiagnoser() {}
+  };
+
   ExprResult
   ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *FromE,
-                                     const PartialDiagnostic &NotIntDiag,
-                                     const PartialDiagnostic &IncompleteDiag,
-                                     const PartialDiagnostic &ExplicitConvDiag,
-                                     const PartialDiagnostic &ExplicitConvNote,
-                                     const PartialDiagnostic &AmbigDiag,
-                                     const PartialDiagnostic &AmbigNote,
-                                     const PartialDiagnostic &ConvDiag,
+                                     ICEConvertDiagnoser &Diagnoser,
                                      bool AllowScopedEnumerations);
+
   enum ObjCSubscriptKind {
     OS_Array,
     OS_Dictionary,
@@ -4326,7 +4518,31 @@ public:
   };
 
   bool RequireNonAbstractType(SourceLocation Loc, QualType T,
-                              const PartialDiagnostic &PD);
+                              TypeDiagnoser &Diagnoser);
+  template<typename T1>
+  bool RequireNonAbstractType(SourceLocation Loc, QualType T,
+                              unsigned DiagID,
+                              const T1 &Arg1) {
+    BoundTypeDiagnoser1<T1> Diagnoser(DiagID, Arg1);
+    return RequireNonAbstractType(Loc, T, Diagnoser);
+  }
+
+  template<typename T1, typename T2>
+  bool RequireNonAbstractType(SourceLocation Loc, QualType T,
+                              unsigned DiagID,
+                              const T1 &Arg1, const T2 &Arg2) {
+    BoundTypeDiagnoser2<T1, T2> Diagnoser(DiagID, Arg1, Arg2);
+    return RequireNonAbstractType(Loc, T, Diagnoser);
+  }
+
+  template<typename T1, typename T2, typename T3>
+  bool RequireNonAbstractType(SourceLocation Loc, QualType T,
+                              unsigned DiagID,
+                              const T1 &Arg1, const T2 &Arg2, const T3 &Arg3) {
+    BoundTypeDiagnoser3<T1, T2, T3> Diagnoser(DiagID, Arg1, Arg2, Arg3);
+    return RequireNonAbstractType(Loc, T, Diagnoser);
+  }
+
   void DiagnoseAbstractType(const CXXRecordDecl *RD);
 
   bool RequireNonAbstractType(SourceLocation Loc, QualType T, unsigned DiagID,
@@ -6617,20 +6833,29 @@ public:
   /// in the global scope.
   bool CheckObjCDeclScope(Decl *D);
 
+  /// \brief Abstract base class used for diagnosing integer constant
+  /// expression violations.
+  class VerifyICEDiagnoser {
+  public:
+    bool Suppress;
+    
+    VerifyICEDiagnoser(bool Suppress = false) : Suppress(Suppress) { }
+    
+    virtual void diagnoseNotICE(Sema &S, SourceLocation Loc, SourceRange SR) =0;
+    virtual void diagnoseFold(Sema &S, SourceLocation Loc, SourceRange SR);
+    virtual ~VerifyICEDiagnoser() { }
+  };
+    
   /// VerifyIntegerConstantExpression - Verifies that an expression is an ICE,
   /// and reports the appropriate diagnostics. Returns false on success.
   /// Can optionally return the value of the expression.
   ExprResult VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
-                                             const PartialDiagnostic &Diag,
-                                             bool AllowFold,
-                                             const PartialDiagnostic &FoldDiag);
+                                             VerifyICEDiagnoser &Diagnoser,
+                                             bool AllowFold = true);
   ExprResult VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
-                                             const PartialDiagnostic &Diag,
-                                             bool AllowFold = true) {
-    return VerifyIntegerConstantExpression(E, Result, Diag, AllowFold,
-                                           PDiag(0));
-  }
-  ExprResult VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result = 0);
+                                             unsigned DiagID,
+                                             bool AllowFold = true);
+  ExprResult VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result=0);
 
   /// VerifyBitField - verifies that a bit field expression is an ICE and has
   /// the correct width, and that the field type is valid.

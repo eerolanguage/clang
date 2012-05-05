@@ -14,6 +14,7 @@
 #include "clang/Sema/SemaInternal.h"
 #include "TargetAttributesSema.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/CXXInheritance.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DeclObjC.h"
@@ -298,6 +299,16 @@ static const RecordType *getRecordType(QualType QT) {
   return 0;
 }
 
+
+bool checkBaseClassIsLockableCallback(const CXXBaseSpecifier *Specifier,
+                                      CXXBasePath &Path, void *UserData) {
+  const RecordType *RT = Specifier->getType()->getAs<RecordType>();
+  if (RT->getDecl()->getAttr<LockableAttr>())
+    return true;
+  return false;
+}
+
+
 /// \brief Thread Safety Analysis: Checks that the passed in RecordType
 /// resolves to a lockable object.
 static void checkForLockableRecord(Sema &S, Decl *D, const AttributeList &Attr,
@@ -320,12 +331,20 @@ static void checkForLockableRecord(Sema &S, Decl *D, const AttributeList &Attr,
   if (threadSafetyCheckIsSmartPointer(S, RT))
     return;
 
-  // Warn if the type is not lockable.
-  if (!RT->getDecl()->getAttr<LockableAttr>()) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_argument_not_lockable)
-      << Attr.getName() << Ty.getAsString();
+  // Check if the type is lockable.
+  RecordDecl *RD = RT->getDecl();
+  if (RD->getAttr<LockableAttr>())
     return;
+
+  // Else check if any base classes are lockable.
+  if (CXXRecordDecl *CRD = dyn_cast<CXXRecordDecl>(RD)) {
+    CXXBasePaths BPaths(false, false);
+    if (CRD->lookupInBases(checkBaseClassIsLockableCallback, 0, BPaths))
+      return;
   }
+
+  S.Diag(Attr.getLoc(), diag::warn_thread_attribute_argument_not_lockable)
+    << Attr.getName() << Ty.getAsString();
 }
 
 /// \brief Thread Safety Analysis: Checks that all attribute arguments, starting
@@ -2690,10 +2709,10 @@ void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E) {
   SourceLocation AttrLoc = AttrRange.getBegin();
   // FIXME: Cache the number on the Attr object?
   llvm::APSInt Alignment(32);
-  ExprResult ICE =
-    VerifyIntegerConstantExpression(E, &Alignment,
-      PDiag(diag::err_attribute_argument_not_int) << "aligned",
-      /*AllowFold*/ false);
+  ExprResult ICE
+    = VerifyIntegerConstantExpression(E, &Alignment,
+        diag::err_aligned_attribute_argument_not_int,
+        /*AllowFold*/ false);
   if (ICE.isInvalid())
     return;
   if (!llvm::isPowerOf2_64(Alignment.getZExtValue())) {

@@ -1816,6 +1816,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (!A->getOption().matches(options::OPT_g0)) {
       CmdArgs.push_back("-g");
     }
+  if (Args.hasArg(options::OPT_gline_tables_only))
+    CmdArgs.push_back("-gline-tables-only");
 
   Args.AddAllArgs(CmdArgs, options::OPT_ffunction_sections);
   Args.AddAllArgs(CmdArgs, options::OPT_fdata_sections);
@@ -2016,11 +2018,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (Arg *A = Args.getLastArg(options::OPT_Wlarge_by_value_copy_EQ,
                                options::OPT_Wlarge_by_value_copy_def)) {
-    CmdArgs.push_back("-Wlarge-by-value-copy");
-    if (A->getNumValues())
-      CmdArgs.push_back(A->getValue(Args));
-    else
-      CmdArgs.push_back("64"); // default value for -Wlarge-by-value-copy.
+    if (A->getNumValues()) {
+      StringRef bytes = A->getValue(Args);
+      CmdArgs.push_back(Args.MakeArgString("-Wlarge-by-value-copy=" + bytes));
+    } else
+      CmdArgs.push_back("-Wlarge-by-value-copy=64"); // default value
   }
 
   if (Args.hasArg(options::OPT__relocatable_pch))
@@ -4034,9 +4036,6 @@ void darwin::Link::AddLinkArgs(Compilation &C,
   } else if (const Arg *A = Args.getLastArg(options::OPT_isysroot)) {
     CmdArgs.push_back("-syslibroot");
     CmdArgs.push_back(A->getValue(Args));
-  } else if (getDarwinToolChain().isTargetIPhoneOS()) {
-    CmdArgs.push_back("-syslibroot");
-    CmdArgs.push_back("/Developer/SDKs/Extra");
   }
 
   Args.AddLastArg(CmdArgs, options::OPT_twolevel__namespace);

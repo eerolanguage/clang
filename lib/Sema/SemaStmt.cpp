@@ -536,16 +536,56 @@ Sema::ActOnStartOfSwitchStmt(SourceLocation SwitchLoc, Expr *Cond,
   if (!Cond)
     return StmtError();
 
+  class SwitchConvertDiagnoser : public ICEConvertDiagnoser {
+    Expr *Cond;
+    
+  public:
+    SwitchConvertDiagnoser(Expr *Cond)
+      : ICEConvertDiagnoser(false, true), Cond(Cond) { }
+    
+    virtual DiagnosticBuilder diagnoseNotInt(Sema &S, SourceLocation Loc,
+                                             QualType T) {
+      return S.Diag(Loc, diag::err_typecheck_statement_requires_integer) << T;
+    }
+    
+    virtual DiagnosticBuilder diagnoseIncomplete(Sema &S, SourceLocation Loc,
+                                                 QualType T) {
+      return S.Diag(Loc, diag::err_switch_incomplete_class_type)
+               << T << Cond->getSourceRange();
+    }
+    
+    virtual DiagnosticBuilder diagnoseExplicitConv(Sema &S, SourceLocation Loc,
+                                                   QualType T,
+                                                   QualType ConvTy) {
+      return S.Diag(Loc, diag::err_switch_explicit_conversion) << T << ConvTy;
+    }
+    
+    virtual DiagnosticBuilder noteExplicitConv(Sema &S, CXXConversionDecl *Conv,
+                                               QualType ConvTy) {
+      return S.Diag(Conv->getLocation(), diag::note_switch_conversion)
+        << ConvTy->isEnumeralType() << ConvTy;
+    }
+    
+    virtual DiagnosticBuilder diagnoseAmbiguous(Sema &S, SourceLocation Loc,
+                                                QualType T) {
+      return S.Diag(Loc, diag::err_switch_multiple_conversions) << T;
+    }
+    
+    virtual DiagnosticBuilder noteAmbiguous(Sema &S, CXXConversionDecl *Conv,
+                                            QualType ConvTy) {
+      return S.Diag(Conv->getLocation(), diag::note_switch_conversion)
+      << ConvTy->isEnumeralType() << ConvTy;
+    }
+    
+    virtual DiagnosticBuilder diagnoseConversion(Sema &S, SourceLocation Loc,
+                                                 QualType T,
+                                                 QualType ConvTy) {
+      return DiagnosticBuilder::getEmpty();
+    }
+  } SwitchDiagnoser(Cond);
+
   CondResult
-    = ConvertToIntegralOrEnumerationType(SwitchLoc, Cond,
-                          PDiag(diag::err_typecheck_statement_requires_integer),
-                                   PDiag(diag::err_switch_incomplete_class_type)
-                                     << Cond->getSourceRange(),
-                                   PDiag(diag::err_switch_explicit_conversion),
-                                         PDiag(diag::note_switch_conversion),
-                                   PDiag(diag::err_switch_multiple_conversions),
-                                         PDiag(diag::note_switch_conversion),
-                                         PDiag(0),
+    = ConvertToIntegralOrEnumerationType(SwitchLoc, Cond, SwitchDiagnoser,
                                          /*AllowScopedEnumerations*/ true);
   if (CondResult.isInvalid()) return StmtError();
   Cond = CondResult.take();
@@ -1365,9 +1405,9 @@ Sema::ActOnObjCForCollectionOperand(SourceLocation forLoc, Expr *collection) {
   if (iface && 
       RequireCompleteType(forLoc, QualType(objectType, 0),
                           getLangOpts().ObjCAutoRefCount
-                            ? PDiag(diag::err_arc_collection_forward)
-                                << collection->getSourceRange()
-                          : PDiag(0))) {
+                            ? diag::err_arc_collection_forward
+                            : 0,
+                          collection)) {
     // Otherwise, if we have any useful type information, check that
     // the type declares the appropriate method.
   } else if (iface || !objectType->qual_empty()) {
@@ -1674,7 +1714,7 @@ Sema::BuildCXXForRangeStmt(SourceLocation ForLoc, SourceLocation ColonLoc,
     QualType RangeType = Range->getType();
 
     if (RequireCompleteType(RangeLoc, RangeType,
-                            PDiag(diag::err_for_range_incomplete_type)))
+                            diag::err_for_range_incomplete_type))
       return StmtError();
 
     // Build auto __begin = begin-expr, __end = end-expr.

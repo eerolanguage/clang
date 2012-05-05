@@ -1657,7 +1657,7 @@ bool Sema::IsIntegralPromotion(Expr *From, QualType FromType, QualType ToType) {
 
     // We have already pre-calculated the promotion type, so this is trivial.
     if (ToType->isIntegerType() &&
-        !RequireCompleteType(From->getLocStart(), FromType, PDiag()))
+        !RequireCompleteType(From->getLocStart(), FromType, 0))
       return Context.hasSameUnqualifiedType(ToType,
                                 FromEnumType->getDecl()->getPromotionType());
   }
@@ -1987,7 +1987,7 @@ bool Sema::IsPointerConversion(Expr *From, QualType FromType, QualType ToType,
   if (getLangOpts().CPlusPlus &&
       FromPointeeType->isRecordType() && ToPointeeType->isRecordType() &&
       !Context.hasSameUnqualifiedType(FromPointeeType, ToPointeeType) &&
-      !RequireCompleteType(From->getLocStart(), FromPointeeType, PDiag()) &&
+      !RequireCompleteType(From->getLocStart(), FromPointeeType, 0) &&
       IsDerivedFrom(FromPointeeType, ToPointeeType)) {
     ConvertedType = BuildSimilarlyQualifiedPointerType(FromTypePtr,
                                                        ToPointeeType,
@@ -2616,7 +2616,7 @@ bool Sema::IsMemberPointerConversion(Expr *From, QualType FromType,
   QualType ToClass(ToTypePtr->getClass(), 0);
 
   if (!Context.hasSameUnqualifiedType(FromClass, ToClass) &&
-      !RequireCompleteType(From->getLocStart(), ToClass, PDiag()) &&
+      !RequireCompleteType(From->getLocStart(), ToClass, 0) &&
       IsDerivedFrom(ToClass, FromClass)) {
     ConvertedType = Context.getMemberPointerType(FromTypePtr->getPointeeType(),
                                                  ToClass.getTypePtr());
@@ -2923,7 +2923,7 @@ IsUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
          S.IsDerivedFrom(From->getType(), ToType)))
       ConstructorsOnly = true;
 
-    S.RequireCompleteType(From->getLocStart(), ToType, S.PDiag());
+    S.RequireCompleteType(From->getLocStart(), ToType, 0);
     // RequireCompleteType may have returned true due to some invalid decl
     // during template instantiation, but ToType may be complete enough now
     // to try to recover.
@@ -3001,8 +3001,7 @@ IsUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
 
   // Enumerate conversion functions, if we're allowed to.
   if (ConstructorsOnly || isa<InitListExpr>(From)) {
-  } else if (S.RequireCompleteType(From->getLocStart(), From->getType(),
-                                   S.PDiag(0) << From->getSourceRange())) {
+  } else if (S.RequireCompleteType(From->getLocStart(), From->getType(), 0)) {
     // No conversion functions from incomplete types.
   } else if (const RecordType *FromRecordType
                                    = From->getType()->getAs<RecordType>()) {
@@ -3848,7 +3847,7 @@ Sema::CompareReferenceRelationship(SourceLocation Loc,
   ObjCLifetimeConversion = false;
   if (UnqualT1 == UnqualT2) {
     // Nothing to do.
-  } else if (!RequireCompleteType(Loc, OrigT2, PDiag()) &&
+  } else if (!RequireCompleteType(Loc, OrigT2, 0) &&
            IsDerivedFrom(UnqualT2, UnqualT1))
     DerivedToBase = true;
   else if (UnqualT1->isObjCObjectOrInterfaceType() &&
@@ -4313,7 +4312,7 @@ TryListConversion(Sema &S, InitListExpr *From, QualType ToType,
 
   // We need a complete type for what follows. Incomplete types can never be
   // initialized from init lists.
-  if (S.RequireCompleteType(From->getLocStart(), ToType, S.PDiag()))
+  if (S.RequireCompleteType(From->getLocStart(), ToType, 0))
     return Result;
 
   // C++11 [over.ics.list]p2:
@@ -5026,13 +5025,7 @@ static bool isIntegralOrEnumerationType(QualType T, bool AllowScopedEnum) {
 /// successful.
 ExprResult
 Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
-                                         const PartialDiagnostic &NotIntDiag,
-                                       const PartialDiagnostic &IncompleteDiag,
-                                     const PartialDiagnostic &ExplicitConvDiag,
-                                     const PartialDiagnostic &ExplicitConvNote,
-                                         const PartialDiagnostic &AmbigDiag,
-                                         const PartialDiagnostic &AmbigNote,
-                                         const PartialDiagnostic &ConvDiag,
+                                         ICEConvertDiagnoser &Diagnoser,
                                          bool AllowScopedEnumerations) {
   // We can't perform any more checking for type-dependent expressions.
   if (From->isTypeDependent())
@@ -5056,13 +5049,25 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
   // expression of integral or enumeration type.
   const RecordType *RecordTy = T->getAs<RecordType>();
   if (!RecordTy || !getLangOpts().CPlusPlus) {
-    if (NotIntDiag.getDiagID())
-      Diag(Loc, NotIntDiag) << T << From->getSourceRange();
+    if (!Diagnoser.Suppress)
+      Diagnoser.diagnoseNotInt(*this, Loc, T) << From->getSourceRange();
     return Owned(From);
   }
 
   // We must have a complete class type.
-  if (RequireCompleteType(Loc, T, IncompleteDiag))
+  struct TypeDiagnoserPartialDiag : TypeDiagnoser {
+    ICEConvertDiagnoser &Diagnoser;
+    Expr *From;
+    
+    TypeDiagnoserPartialDiag(ICEConvertDiagnoser &Diagnoser, Expr *From)
+      : TypeDiagnoser(Diagnoser.Suppress), Diagnoser(Diagnoser), From(From) {}
+    
+    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+      Diagnoser.diagnoseIncomplete(S, Loc, T) << From->getSourceRange();
+    }
+  } IncompleteDiagnoser(Diagnoser, From);
+
+  if (RequireCompleteType(Loc, T, IncompleteDiagnoser))
     return Owned(From);
 
   // Look for a conversion to an integral or enumeration type.
@@ -5092,7 +5097,7 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
 
   switch (ViableConversions.size()) {
   case 0:
-    if (ExplicitConversions.size() == 1 && ExplicitConvDiag.getDiagID()) {
+    if (ExplicitConversions.size() == 1 && !Diagnoser.Suppress) {
       DeclAccessPair Found = ExplicitConversions[0];
       CXXConversionDecl *Conversion
         = cast<CXXConversionDecl>(Found->getUnderlyingDecl());
@@ -5104,14 +5109,12 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
       std::string TypeStr;
       ConvTy.getAsStringInternal(TypeStr, getPrintingPolicy());
 
-      Diag(Loc, ExplicitConvDiag)
-        << T << ConvTy
+      Diagnoser.diagnoseExplicitConv(*this, Loc, T, ConvTy)
         << FixItHint::CreateInsertion(From->getLocStart(),
                                       "static_cast<" + TypeStr + ">(")
         << FixItHint::CreateInsertion(PP.getLocForEndOfToken(From->getLocEnd()),
                                       ")");
-      Diag(Conversion->getLocation(), ExplicitConvNote)
-        << ConvTy->isEnumeralType() << ConvTy;
+      Diagnoser.noteExplicitConv(*this, Conversion, ConvTy);
 
       // If we aren't in a SFINAE context, build a call to the
       // explicit conversion function.
@@ -5142,12 +5145,12 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
       = cast<CXXConversionDecl>(Found->getUnderlyingDecl());
     QualType ConvTy
       = Conversion->getConversionType().getNonReferenceType();
-    if (ConvDiag.getDiagID()) {
+    if (!Diagnoser.SuppressConversion) {
       if (isSFINAEContext())
         return ExprError();
 
-      Diag(Loc, ConvDiag)
-        << T << ConvTy->isEnumeralType() << ConvTy << From->getSourceRange();
+      Diagnoser.diagnoseConversion(*this, Loc, T, ConvTy)
+        << From->getSourceRange();
     }
 
     ExprResult Result = BuildCXXMemberCallExpr(From, Found, Conversion,
@@ -5163,24 +5166,24 @@ Sema::ConvertToIntegralOrEnumerationType(SourceLocation Loc, Expr *From,
   }
 
   default:
-    if (!AmbigDiag.getDiagID())
-      return Owned(From);
+    if (Diagnoser.Suppress)
+      return ExprError();
 
-    Diag(Loc, AmbigDiag)
-      << T << From->getSourceRange();
+    Diagnoser.diagnoseAmbiguous(*this, Loc, T) << From->getSourceRange();
     for (unsigned I = 0, N = ViableConversions.size(); I != N; ++I) {
       CXXConversionDecl *Conv
         = cast<CXXConversionDecl>(ViableConversions[I]->getUnderlyingDecl());
       QualType ConvTy = Conv->getConversionType().getNonReferenceType();
-      Diag(Conv->getLocation(), AmbigNote)
-        << ConvTy->isEnumeralType() << ConvTy;
+      Diagnoser.noteAmbiguous(*this, Conv, ConvTy);
     }
     return Owned(From);
   }
 
   if (!isIntegralOrEnumerationType(From->getType(), AllowScopedEnumerations) &&
-      NotIntDiag.getDiagID())
-    Diag(Loc, NotIntDiag) << From->getType() << From->getSourceRange();
+      !Diagnoser.Suppress) {
+    Diagnoser.diagnoseNotInt(*this, Loc, From->getType())
+      << From->getSourceRange();
+  }
 
   return DefaultLvalueConversion(From);
 }
@@ -5906,7 +5909,7 @@ void Sema::AddMemberOperatorCandidates(OverloadedOperatorKind Op,
   //        empty.
   if (const RecordType *T1Rec = T1->getAs<RecordType>()) {
     // Complete the type if it can be completed. Otherwise, we're done.
-    if (RequireCompleteType(OpLoc, T1, PDiag()))
+    if (RequireCompleteType(OpLoc, T1, 0))
       return;
 
     LookupResult Operators(*this, OpName, OpLoc, LookupOrdinaryName);
@@ -10610,8 +10613,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   DeclarationName OpName = Context.DeclarationNames.getCXXOperatorName(OO_Call);
 
   if (RequireCompleteType(LParenLoc, Object.get()->getType(),
-                          PDiag(diag::err_incomplete_object_call)
-                          << Object.get()->getSourceRange()))
+                          diag::err_incomplete_object_call, Object.get()))
     return true;
 
   LookupResult R(*this, OpName, LParenLoc, LookupOrdinaryName);
@@ -10899,8 +10901,7 @@ Sema::BuildOverloadedArrowExpr(Scope *S, Expr *Base, SourceLocation OpLoc) {
   const RecordType *BaseRecord = Base->getType()->getAs<RecordType>();
 
   if (RequireCompleteType(Loc, Base->getType(),
-                          PDiag(diag::err_typecheck_incomplete_tag)
-                            << Base->getSourceRange()))
+                          diag::err_typecheck_incomplete_tag, Base))
     return ExprError();
 
   LookupResult R(*this, OpName, OpLoc, LookupOrdinaryName);
