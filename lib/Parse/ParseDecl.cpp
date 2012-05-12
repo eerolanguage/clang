@@ -1439,13 +1439,25 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
   bool TypeContainsAuto =
     D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_auto;
 
+  const bool isTokenColonEqual = getLangOpts().Eero && !PP.isInSystemHeader() &&
+                                 TypeContainsAuto && Tok.is(tok::colonequal);
+
   // Parse declarator '=' initializer.
   // If a '==' or '+=' is found, suggest a fixit to '='.
-  if (isTokenEqualOrEqualTypo() ||
-      (TypeContainsAuto &&
-       Tok.is(tok::colonequal) &&
-       getLangOpts().Eero && !PP.isInSystemHeader())) {
+  if (isTokenEqualOrEqualTypo() || isTokenColonEqual) {
     ConsumeToken();
+
+    // For Eero, look for type-inferred assignment to nil or Nil
+    QualType nilOrNilType;    
+    if (isTokenColonEqual) {
+      SourceLocation loc = Tok.getLocation();
+      if (Actions.findMacroSpelling(loc, "nil")) {
+        nilOrNilType = Actions.Context.getObjCIdType();
+      } else if (Actions.findMacroSpelling(loc, "Nil")) {
+        nilOrNilType = Actions.Context.getObjCClassType();
+      }
+    }
+
     if (Tok.is(tok::kw_delete)) {
       if (D.isFunctionDeclarator())
         Diag(ConsumeToken(), diag::err_default_delete_in_multiple_declaration)
@@ -1480,9 +1492,13 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
       if (Init.isInvalid()) {
         SkipUntil(tok::comma, true, true);
         Actions.ActOnInitializerError(ThisDecl);
-      } else
+      } else {
+        if (!nilOrNilType.isNull()) { // Eero type inference with nil or Nil
+          Init.get()->setType(nilOrNilType);
+        }
         Actions.AddInitializerToDecl(ThisDecl, Init.take(),
                                      /*DirectInit=*/false, TypeContainsAuto);
+      }
     }
   } else if (Tok.is(tok::l_paren)) {
     // Parse C++ direct initializer: '(' expression-list ')'
