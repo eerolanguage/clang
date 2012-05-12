@@ -3154,6 +3154,9 @@ LexNextToken:
     } else if (LangOpts.CPlusPlus && Char == ':') {
       Kind = tok::coloncolon;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+    } else if (getLangOpts().Eero && Char == '=') { // ':=' used for these
+      Kind = tok::colonequal;
+      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
     } else {
       Kind = tok::colon;
     }

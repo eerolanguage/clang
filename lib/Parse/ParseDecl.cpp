@@ -1441,7 +1441,10 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
 
   // Parse declarator '=' initializer.
   // If a '==' or '+=' is found, suggest a fixit to '='.
-  if (isTokenEqualOrEqualTypo()) {
+  if (isTokenEqualOrEqualTypo() ||
+      (TypeContainsAuto &&
+       Tok.is(tok::colonequal) &&
+       getLangOpts().Eero && !PP.isInSystemHeader())) {
     ConsumeToken();
     if (Tok.is(tok::kw_delete)) {
       if (D.isFunctionDeclarator())
@@ -2130,6 +2133,13 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       // typedef-name
     case tok::kw_decltype:
     case tok::identifier: {
+      // Check for Eero ':=' local type infererence
+      if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+          Tok.is(tok::identifier) && NextToken().is(tok::colonequal)) {
+        isInvalid = DS.SetTypeSpecType(DeclSpec::TST_auto, Loc, PrevSpec,
+                                       DiagID);
+        goto DoneWithDeclSpec;
+      }
       // In C++, check to see if this is a scope specifier like foo::bar::, if
       // so handle it as such.  This is important for ctor parsing.
       if (getLangOpts().CPlusPlus) {
@@ -3362,6 +3372,9 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
     if (getLangOpts().ObjC1 && NextToken().is(tok::period))
       return false;
     if (TryAltiVecVectorToken())
+      return true;
+    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+        NextToken().is(tok::colonequal))
       return true;
     // Fall through.
   case tok::kw_decltype: // decltype(T())::type

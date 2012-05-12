@@ -891,7 +891,8 @@ void DeclSpec::Finish(DiagnosticsEngine &D, Preprocessor &PP) {
   }
   // Diagnose if we've recovered from an ill-formed 'auto' storage class
   // specifier in a pre-C++0x dialect of C++.
-  if (!PP.getLangOpts().CPlusPlus0x && TypeSpecType == TST_auto)
+  if (!PP.getLangOpts().CPlusPlus0x && TypeSpecType == TST_auto &&
+      !PP.getLangOpts().Eero)
     Diag(D, TSTLoc, diag::ext_auto_type_specifier);
   if (PP.getLangOpts().CPlusPlus && !PP.getLangOpts().CPlusPlus0x &&
       StorageClassSpec == SCS_auto)

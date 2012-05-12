@@ -4265,7 +4265,8 @@ void Sema::CheckShadow(Scope *S, VarDecl *D, const LookupResult& R) {
   // Return if warning is ignored.
   if (Diags.getDiagnosticLevel(diag::warn_decl_shadow, R.getNameLoc()) ==
         DiagnosticsEngine::Ignored)
-    return;
+    if (!getLangOpts().Eero || PP.isInSystemHeader())
+      return;
 
   // Don't diagnose declarations at file scope.
   if (D->hasGlobalStorage())
@@ -4331,7 +4332,10 @@ void Sema::CheckShadow(Scope *S, VarDecl *D, const LookupResult& R) {
   DeclarationName Name = R.getLookupName();
 
   // Emit warning and note.
-  Diag(R.getNameLoc(), diag::warn_decl_shadow) << Name << Kind << OldDC;
+  if (!getLangOpts().Eero || PP.isInSystemHeader())
+    Diag(R.getNameLoc(), diag::warn_decl_shadow) << Name << Kind << OldDC;
+  else // an error for Eero
+    Diag(R.getNameLoc(), diag::err_decl_shadow) << Name << Kind << OldDC;
   Diag(ShadowedDecl->getLocation(), diag::note_previous_declaration);
 }
 
@@ -4339,7 +4343,8 @@ void Sema::CheckShadow(Scope *S, VarDecl *D, const LookupResult& R) {
 void Sema::CheckShadow(Scope *S, VarDecl *D) {
   if (Diags.getDiagnosticLevel(diag::warn_decl_shadow, D->getLocation()) ==
         DiagnosticsEngine::Ignored)
-    return;
+    if (!getLangOpts().Eero || PP.isInSystemHeader())
+      return;
 
   LookupResult R(*this, D->getDeclName(), D->getLocation(),
                  Sema::LookupOrdinaryName, Sema::ForRedeclaration);
@@ -4492,6 +4497,25 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
     MergeVarDecl(NewVD, Previous);
     return true;
   }
+
+  // Do some extra error checking for Eero
+  if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+    ObjCMethodDecl *CurMethod = getCurMethodDecl();
+    if (CurMethod) {
+      IdentifierInfo *II = NewVD->getIdentifier();
+      SourceLocation Loc = NewVD->getLocation();
+      if (ObjCInterfaceDecl *IFace = CurMethod->getClassInterface()) {
+        ObjCInterfaceDecl *ClassDeclared;
+        if (ObjCIvarDecl *IV = IFace->lookupInstanceVariable(II, ClassDeclared)) {
+          if (IV->getAccessControl() != ObjCIvarDecl::Private ||
+              declaresSameEntity(IFace, ClassDeclared)) {
+            Diag(Loc, diag::err_ivar_use_hidden) << IV->getDeclName();
+          }
+        }
+      }
+    }
+  }
+
   return false;
 }
 

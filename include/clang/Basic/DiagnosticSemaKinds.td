@@ -207,6 +207,14 @@ def warn_decl_shadow :
           "field of %2}1">,
   InGroup<Shadow>, DefaultIgnore;
 
+// Eero prohibits shadowing altogether
+def err_decl_shadow :
+  Error<"declaration shadows a %select{"
+          "local variable|"
+          "variable in %2|"
+          "static data member of %2|"
+          "field of %2}1">;
+
 // C++ using declarations
 def err_using_requires_qualname : Error<
   "using declaration requires a qualified name">;
@@ -5437,6 +5445,9 @@ def err_invalid_protocol_qualifiers : Error<
 def warn_ivar_use_hidden : Warning<
   "local declaration of %0 hides instance variable">,
    InGroup<DiagGroup<"shadow-ivar">>;
+// Eero prohibits shadowing altogether
+def err_ivar_use_hidden : Error<
+  "local declaration of %0 hides instance variable">;
 def error_ivar_use_in_class_method : Error<
   "instance variable %0 accessed in class method">;
 def error_implicit_ivar_access : Error<

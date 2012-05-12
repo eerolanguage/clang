@@ -195,6 +195,7 @@ PUNCTUATOR(coloncolon,          "::")
 PUNCTUATOR(at,                  "@")
 
 // Eero support
+PUNCTUATOR(colonequal,          ":=")
 PUNCTUATOR(equalgreater,        "=>")
 
 // CUDA support.

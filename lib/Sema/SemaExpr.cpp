@@ -1873,8 +1873,13 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
       ObjCInterfaceDecl *ClassDeclared;
       if (ObjCIvarDecl *IV = IFace->lookupInstanceVariable(II, ClassDeclared)) {
         if (IV->getAccessControl() != ObjCIvarDecl::Private ||
-            declaresSameEntity(IFace, ClassDeclared))
-          Diag(Loc, diag::warn_ivar_use_hidden) << IV->getDeclName();
+            declaresSameEntity(IFace, ClassDeclared)) {
+          if (!getLangOpts().Eero || PP.isInSystemHeader()) {
+            Diag(Loc, diag::warn_ivar_use_hidden) << IV->getDeclName();
+          } else {
+            Diag(Loc, diag::err_ivar_use_hidden) << IV->getDeclName();
+          }
+        }
       }
     }
   } else if (Lookup.isSingleResult() &&
