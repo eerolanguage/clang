@@ -1750,7 +1750,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   Opts.GNUMode = Std.isGNUMode();
   Opts.GNUInline = !Std.isC99();
   Opts.HexFloats = Std.hasHexFloats();
-  Opts.ImplicitInt = Std.hasImplicitInt();
+  Opts.ImplicitInt = Std.hasImplicitInt() && !Opts.Eero;
 
   // OpenCL has some additional defaults.
   if (LangStd == LangStandard::lang_opencl) {

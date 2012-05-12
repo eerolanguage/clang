@@ -4413,7 +4413,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 /// Note that identifier-lists are only allowed for normal declarators, not for
 /// abstract-declarators.
 bool Parser::isFunctionDeclaratorIdentifierList() {
-  return !getLangOpts().CPlusPlus
+  return !getLangOpts().CPlusPlus && (!getLangOpts().Eero || PP.isInSystemHeader())
          && Tok.is(tok::identifier)
          && !TryAltiVecVectorToken()
          // K&R identifier lists can't have typedefs as identifiers, per C99

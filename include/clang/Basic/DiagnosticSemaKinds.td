@@ -5421,6 +5421,8 @@ def err_decimal_unsupported : Error<
   "GNU decimal type extension not supported">;
 def err_missing_type_specifier : Error<
   "C++ requires a type specifier for all declarations">;
+def err_eero_missing_type_specifier : Error<
+  "Eero requires a type specifier for declarations here">;
 def err_objc_array_of_interfaces : Error<
   "array of interface %0 is invalid (probably should be an array of pointers)">;
 def ext_c99_array_usage : Extension<
