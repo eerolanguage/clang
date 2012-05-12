@@ -59,6 +59,7 @@ static prec::Level getBinOpPrecedence(tok::TokenKind Kind,
   default:                        return prec::Unknown;
   case tok::comma:                return prec::Comma;
   case tok::equal:
+  case tok::colonequal:
   case tok::starequal:
   case tok::slashequal:
   case tok::percentequal:
