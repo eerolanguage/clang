@@ -28,6 +28,7 @@
 #include "clang/Basic/PartialDiagnostic.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 
@@ -541,6 +542,7 @@ static MakeDeductionFailureInfo(ASTContext &Context,
                                 TemplateDeductionInfo &Info) {
   OverloadCandidate::DeductionFailureInfo Result;
   Result.Result = static_cast<unsigned>(TDK);
+  Result.HasDiagnostic = false;
   Result.Data = 0;
   switch (TDK) {
   case Sema::TDK_Success:
@@ -567,6 +569,12 @@ static MakeDeductionFailureInfo(ASTContext &Context,
 
   case Sema::TDK_SubstitutionFailure:
     Result.Data = Info.take();
+    if (Info.hasSFINAEDiagnostic()) {
+      PartialDiagnosticAt *Diag = new (Result.Diagnostic) PartialDiagnosticAt(
+          SourceLocation(), PartialDiagnostic::NullDiagnostic());
+      Info.takeSFINAEDiagnostic(*Diag);
+      Result.HasDiagnostic = true;
+    }
     break;
 
   case Sema::TDK_NonDeducedMismatch:
@@ -594,8 +602,12 @@ void OverloadCandidate::DeductionFailureInfo::Destroy() {
     break;
 
   case Sema::TDK_SubstitutionFailure:
-    // FIXME: Destroy the template arugment list?
+    // FIXME: Destroy the template argument list?
     Data = 0;
+    if (PartialDiagnosticAt *Diag = getSFINAEDiagnostic()) {
+      Diag->~PartialDiagnosticAt();
+      HasDiagnostic = false;
+    }
     break;
 
   // Unhandled
@@ -603,6 +615,13 @@ void OverloadCandidate::DeductionFailureInfo::Destroy() {
   case Sema::TDK_FailedOverloadResolution:
     break;
   }
+}
+
+PartialDiagnosticAt *
+OverloadCandidate::DeductionFailureInfo::getSFINAEDiagnostic() {
+  if (HasDiagnostic)
+    return static_cast<PartialDiagnosticAt*>(static_cast<void*>(Diagnostic));
+  return 0;
 }
 
 TemplateParameter
@@ -8130,9 +8149,14 @@ void DiagnoseArityMismatch(Sema &S, OverloadCandidate *Cand,
   std::string Description;
   OverloadCandidateKind FnKind = ClassifyOverloadCandidate(S, Fn, Description);
 
-  S.Diag(Fn->getLocation(), diag::note_ovl_candidate_arity)
-    << (unsigned) FnKind << (Fn->getDescribedFunctionTemplate() != 0) << mode
-    << modeCount << NumFormalArgs;
+  if (modeCount == 1 && Fn->getParamDecl(0)->getDeclName())
+    S.Diag(Fn->getLocation(), diag::note_ovl_candidate_arity_one)
+      << (unsigned) FnKind << (Fn->getDescribedFunctionTemplate() != 0) << mode
+      << Fn->getParamDecl(0) << NumFormalArgs;
+  else
+    S.Diag(Fn->getLocation(), diag::note_ovl_candidate_arity)
+      << (unsigned) FnKind << (Fn->getDescribedFunctionTemplate() != 0) << mode
+      << modeCount << NumFormalArgs;
   MaybeEmitInheritedConstructorNote(S, Fn);
 }
 
@@ -8235,14 +8259,39 @@ void DiagnoseBadDeduction(Sema &S, OverloadCandidate *Cand,
     return;
 
   case Sema::TDK_SubstitutionFailure: {
-    std::string ArgString;
-    if (TemplateArgumentList *Args
-                            = Cand->DeductionFailure.getTemplateArgumentList())
-      ArgString = S.getTemplateArgumentBindingsText(
-                    Fn->getDescribedFunctionTemplate()->getTemplateParameters(),
-                                                    *Args);
+    // Format the template argument list into the argument string.
+    llvm::SmallString<128> TemplateArgString;
+    if (TemplateArgumentList *Args =
+          Cand->DeductionFailure.getTemplateArgumentList()) {
+      TemplateArgString = " ";
+      TemplateArgString += S.getTemplateArgumentBindingsText(
+          Fn->getDescribedFunctionTemplate()->getTemplateParameters(), *Args);
+    }
+
+    // If this candidate was disabled by enable_if, say so.
+    PartialDiagnosticAt *PDiag = Cand->DeductionFailure.getSFINAEDiagnostic();
+    if (PDiag && PDiag->second.getDiagID() ==
+          diag::err_typename_nested_not_found_enable_if) {
+      // FIXME: Use the source range of the condition, and the fully-qualified
+      //        name of the enable_if template. These are both present in PDiag.
+      S.Diag(PDiag->first, diag::note_ovl_candidate_disabled_by_enable_if)
+        << "'enable_if'" << TemplateArgString;
+      return;
+    }
+
+    // Format the SFINAE diagnostic into the argument string.
+    // FIXME: Add a general mechanism to include a PartialDiagnostic *'s
+    //        formatted message in another diagnostic.
+    llvm::SmallString<128> SFINAEArgString;
+    SourceRange R;
+    if (PDiag) {
+      SFINAEArgString = ": ";
+      R = SourceRange(PDiag->first, PDiag->first);
+      PDiag->second.EmitToString(S.getDiagnostics(), SFINAEArgString);
+    }
+
     S.Diag(Fn->getLocation(), diag::note_ovl_candidate_substitution_failure)
-      << ArgString;
+      << TemplateArgString << SFINAEArgString << R;
     MaybeEmitInheritedConstructorNote(S, Fn);
     return;
   }

@@ -648,6 +648,10 @@ public:
     return getPersistentSummary(Summ);
   }
 
+  const RetainSummary *getDoNothingSummary() {
+    return getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
+  }
+  
   const RetainSummary *getDefaultSummary() {
     return getPersistentSummary(RetEffect::MakeNoRet(),
                                 DoNothing, MayEscape);
@@ -997,6 +1001,8 @@ RetainSummaryManager::getSummary(const FunctionDecl *FD,
       // libdispatch finalizers.
       ScratchArgs = AF.add(ScratchArgs, 1, StopTracking);
       S = getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
+    } else if (FName.startswith("NSLog")) {
+      S = getDoNothingSummary();
     } else if (FName.startswith("NS") &&
                 (FName.find("Insert") != StringRef::npos)) {
       // Whitelist NSXXInsertXX, for example NSMapInsertIfAbsent, since they can
@@ -1005,10 +1011,8 @@ RetainSummaryManager::getSummary(const FunctionDecl *FD,
       ScratchArgs = AF.add(ScratchArgs, 2, StopTracking);
       S = getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
     } else if (CME && CME->hasNonZeroCallbackArg()) {
-      // Allow objects to escape throug callbacks. radar://10973977
-      for (unsigned I = 0; I < CME->getNumArgs(); ++I)
-        ScratchArgs = AF.add(ScratchArgs, I, StopTracking);
-      S = getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
+      // Allow objects to escape through callbacks. radar://10973977
+      S = getPersistentStopSummary();
     }
 
     // Did we get a summary?
@@ -1863,6 +1867,15 @@ static inline bool contains(const SmallVectorImpl<ArgEffect>& V,
   return false;
 }
 
+static bool isNumericLiteralExpression(const Expr *E) {
+  // FIXME: This set of cases was copied from SemaExprObjC.
+  return isa<IntegerLiteral>(E) || 
+         isa<CharacterLiteral>(E) ||
+         isa<FloatingLiteral>(E) ||
+         isa<ObjCBoolLiteralExpr>(E) ||
+         isa<CXXBoolLiteralExpr>(E);
+}
+
 static bool isPropertyAccess(const Stmt *S, ParentMap &PM) {
   unsigned maxDepth = 4;
   while (S && maxDepth) {
@@ -1911,6 +1924,24 @@ PathDiagnosticPiece *CFRefReportVisitor::VisitNode(const ExplodedNode *N,
     }
     else if (isa<ObjCDictionaryLiteral>(S)) {
       os << "NSDictionary literal is an object with a +0 retain count";
+    }
+    else if (const ObjCBoxedExpr *BL = dyn_cast<ObjCBoxedExpr>(S)) {
+      if (isNumericLiteralExpression(BL->getSubExpr()))
+        os << "NSNumber literal is an object with a +0 retain count";
+      else {
+        const ObjCInterfaceDecl *BoxClass = 0;
+        if (const ObjCMethodDecl *Method = BL->getBoxingMethod())
+          BoxClass = Method->getClassInterface();
+
+        // We should always be able to find the boxing class interface,
+        // but consider this future-proofing.
+        if (BoxClass)
+          os << *BoxClass << " b";
+        else
+          os << "B";
+
+        os << "oxed expression produces an object with a +0 retain count";
+      }
     }
     else {      
       if (const CallExpr *CE = dyn_cast<CallExpr>(S)) {
@@ -2320,6 +2351,7 @@ class RetainCountChecker
                     check::PostStmt<CXXConstructExpr>,
                     check::PostStmt<ObjCArrayLiteral>,
                     check::PostStmt<ObjCDictionaryLiteral>,
+                    check::PostStmt<ObjCBoxedExpr>,
                     check::PostObjCMessage,
                     check::PreStmt<ReturnStmt>,
                     check::RegionChanges,
@@ -2466,6 +2498,8 @@ public:
   void checkPostStmt(const CXXConstructExpr *CE, CheckerContext &C) const;
   void checkPostStmt(const ObjCArrayLiteral *AL, CheckerContext &C) const;
   void checkPostStmt(const ObjCDictionaryLiteral *DL, CheckerContext &C) const;
+  void checkPostStmt(const ObjCBoxedExpr *BE, CheckerContext &C) const;
+
   void checkPostObjCMessage(const ObjCMessage &Msg, CheckerContext &C) const;
                       
   void checkSummary(const RetainSummary &Summ, const CallOrObjCMessage &Call,
@@ -2715,6 +2749,21 @@ void RetainCountChecker::checkPostStmt(const ObjCDictionaryLiteral *DL,
                                        CheckerContext &C) const {
   // Apply the 'MayEscape' to all keys and values.
   processObjCLiterals(C, DL);
+}
+
+void RetainCountChecker::checkPostStmt(const ObjCBoxedExpr *Ex,
+                                       CheckerContext &C) const {
+  const ExplodedNode *Pred = C.getPredecessor();  
+  const LocationContext *LCtx = Pred->getLocationContext();
+  ProgramStateRef State = Pred->getState();
+
+  if (SymbolRef Sym = State->getSVal(Ex, LCtx).getAsSymbol()) {
+    QualType ResultTy = Ex->getType();
+    State = State->set<RefBindings>(Sym, RefVal::makeNotOwned(RetEffect::ObjC,
+                                                              ResultTy));
+  }
+
+  C.addTransition(State);
 }
 
 void RetainCountChecker::checkPostObjCMessage(const ObjCMessage &Msg, 

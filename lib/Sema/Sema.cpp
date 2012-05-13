@@ -18,6 +18,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/Support/CrashRecoveryContext.h"
 #include "clang/Sema/CXXFieldCollector.h"
 #include "clang/Sema/TemplateDeduction.h"
 #include "clang/Sema/ExternalSemaSource.h"
@@ -98,7 +99,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
     ObjCShouldCallSuperDealloc(false),
     ObjCShouldCallSuperFinalize(false),
     TUKind(TUKind),
-    NumSFINAEErrors(0), InFunctionDeclarator(0), SuppressAccessChecking(false), 
+    NumSFINAEErrors(0), InFunctionDeclarator(0),
     AccessCheckingSFINAE(false), InNonInstantiationSFINAEContext(false),
     NonInstantiationEntries(0), ArgumentPackSubstitutionIndex(-1),
     CurrentInstantiationScope(0), TyposCorrected(0),
@@ -200,7 +201,6 @@ Sema::~Sema() {
         = dyn_cast_or_null<ExternalSemaSource>(Context.getExternalSource()))
     ExternalSema->ForgetSema();
 }
-
 
 /// makeUnavailableInSystemHeader - There is an error in the current
 /// context.  If we're still in a system header, and we can plausibly
@@ -426,6 +426,9 @@ void Sema::LoadExternalWeakUndeclaredIdentifiers() {
 /// translation unit when EOF is reached and all but the top-level scope is
 /// popped.
 void Sema::ActOnEndOfTranslationUnit() {
+  assert(DelayedDiagnostics.getCurrentPool() == NULL
+         && "reached end of translation unit with a pool attached?");
+
   // Only complete translation units define vtables and perform implicit
   // instantiations.
   if (TUKind == TU_Complete) {
@@ -695,6 +698,15 @@ void Sema::EmitCurrentDiagnostic(unsigned DiagID) {
       // Count this failure so that we know that template argument deduction
       // has failed.
       ++NumSFINAEErrors;
+
+      // Make a copy of this suppressed diagnostic and store it with the
+      // template-deduction information.
+      if (*Info && !(*Info)->hasSFINAEDiagnostic()) {
+        Diagnostic DiagInfo(&Diags);
+        (*Info)->addSFINAEDiagnostic(DiagInfo.getLocation(),
+                       PartialDiagnostic(DiagInfo, Context.getDiagAllocator()));
+      }
+
       Diags.setLastDiagnosticIgnored();
       Diags.Clear();
       return;
@@ -711,6 +723,15 @@ void Sema::EmitCurrentDiagnostic(unsigned DiagID) {
 
       // Suppress this diagnostic.
       ++NumSFINAEErrors;
+
+      // Make a copy of this suppressed diagnostic and store it with the
+      // template-deduction information.
+      if (*Info && !(*Info)->hasSFINAEDiagnostic()) {
+        Diagnostic DiagInfo(&Diags);
+        (*Info)->addSFINAEDiagnostic(DiagInfo.getLocation(),
+                       PartialDiagnostic(DiagInfo, Context.getDiagAllocator()));
+      }
+
       Diags.setLastDiagnosticIgnored();
       Diags.Clear();
 
@@ -727,13 +748,13 @@ void Sema::EmitCurrentDiagnostic(unsigned DiagID) {
     case DiagnosticIDs::SFINAE_Suppress:
       // Make a copy of this suppressed diagnostic and store it with the
       // template-deduction information;
-      Diagnostic DiagInfo(&Diags);
-        
-      if (*Info)
+      if (*Info) {
+        Diagnostic DiagInfo(&Diags);
         (*Info)->addSuppressedDiagnostic(DiagInfo.getLocation(),
-                        PartialDiagnostic(DiagInfo,Context.getDiagAllocator()));
-        
-      // Suppress this diagnostic.        
+                       PartialDiagnostic(DiagInfo, Context.getDiagAllocator()));
+      }
+
+      // Suppress this diagnostic.
       Diags.setLastDiagnosticIgnored();
       Diags.Clear();
       return;

@@ -9,14 +9,14 @@
 
 #include "IndexingContext.h"
 
-#include "clang/AST/RecursiveASTVisitor.h"
+#include "RecursiveASTVisitor.h"
 
 using namespace clang;
 using namespace cxindex;
 
 namespace {
 
-class BodyIndexer : public RecursiveASTVisitor<BodyIndexer> {
+class BodyIndexer : public cxindex::RecursiveASTVisitor<BodyIndexer> {
   IndexingContext &IndexCtx;
   const NamedDecl *Parent;
   const DeclContext *ParentDC;
@@ -115,6 +115,12 @@ public:
     IndexCtx.handleReference(E->getConstructor(), E->getLocation(),
                              Parent, ParentDC, E);
     return true;
+  }
+
+  bool TraverseCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+    if (E->getOperatorLoc().isInvalid())
+      return true; // implicit.
+    return base::TraverseCXXOperatorCallExpr(E);
   }
 
   bool VisitDeclStmt(DeclStmt *S) {

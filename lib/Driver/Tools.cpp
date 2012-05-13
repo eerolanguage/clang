@@ -958,7 +958,7 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
       // FIXME: We should also incorporate the detected target features for use
       // with -native.
       std::string CPU = llvm::sys::getHostCPUName();
-      if (!CPU.empty())
+      if (!CPU.empty() && CPU != "generic")
         CPUName = Args.MakeArgString(CPU);
     } else
       CPUName = A->getValue(Args);
@@ -1088,7 +1088,7 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
   CmdArgs.push_back("-fno-signed-char");
   CmdArgs.push_back("-nobuiltininc");
 
-  if (Args.hasArg(options::OPT_mqdsp6_compat))  
+  if (Args.hasArg(options::OPT_mqdsp6_compat))
     CmdArgs.push_back("-mqdsp6-compat");
 
   if (Arg *A = Args.getLastArg(options::OPT_G,
@@ -1100,6 +1100,12 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
     A->claim();
   }
 
+  if (!Args.hasArg(options::OPT_fno_short_enums))
+    CmdArgs.push_back("-fshort-enums");
+  if (Args.getLastArg(options::OPT_mieee_rnd_near)) {
+    CmdArgs.push_back ("-mllvm");
+    CmdArgs.push_back ("-enable-hexagon-ieee-rnd-near");
+  }
   CmdArgs.push_back ("-mllvm");
   CmdArgs.push_back ("-machine-sink-split=0");
 }
@@ -2023,6 +2029,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString("-Wlarge-by-value-copy=" + bytes));
     } else
       CmdArgs.push_back("-Wlarge-by-value-copy=64"); // default value
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_fbounds_checking,
+                               options::OPT_fbounds_checking_EQ)) {
+    if (A->getNumValues()) {
+      StringRef val = A->getValue(Args);
+      CmdArgs.push_back(Args.MakeArgString("-fbounds-checking=" + val));
+    } else
+      CmdArgs.push_back("-fbounds-checking=1");
   }
 
   if (Args.hasArg(options::OPT__relocatable_pch))

@@ -7,3 +7,4 @@
 
 // CHECK: __OBJC_RW_DLLIMPORT struct objc_class *objc_getClass(const char *);
 // CHECK: __OBJC_RW_DLLIMPORT struct objc_class *objc_getMetaClass(const char *);
+

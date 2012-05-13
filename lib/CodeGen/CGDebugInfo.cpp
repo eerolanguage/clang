@@ -1457,7 +1457,6 @@ llvm::DIType CGDebugInfo::CreateType(const ArrayType *Ty,
   uint64_t Size;
   uint64_t Align;
 
-
   // FIXME: make getTypeAlign() aware of VLAs and incomplete array types
   if (const VariableArrayType *VAT = dyn_cast<VariableArrayType>(Ty)) {
     Size = 0;
@@ -2290,8 +2289,25 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, unsigned Tag,
         DBuilder.insertDeclare(Storage, D, Builder.GetInsertBlock());
       Call->setDebugLoc(llvm::DebugLoc::get(Line, Column, Scope));
       return;
-    } 
+    } else if (isa<VariableArrayType>(VD->getType())) {
+      // These are "complex" variables in that they need an op_deref.
       // Create the descriptor for the variable.
+      llvm::Value *Addr = llvm::ConstantInt::get(CGM.Int64Ty,
+                                                 llvm::DIBuilder::OpDeref);
+      llvm::DIVariable D =
+        DBuilder.createComplexVariable(Tag,
+                                       llvm::DIDescriptor(Scope),
+                                       Name, Unit, Line, Ty,
+                                       Addr, ArgNo);
+
+      // Insert an llvm.dbg.declare into the current block.
+      llvm::Instruction *Call =
+        DBuilder.insertDeclare(Storage, D, Builder.GetInsertBlock());
+      Call->setDebugLoc(llvm::DebugLoc::get(Line, Column, Scope));
+      return;
+    }
+    
+    // Create the descriptor for the variable.
     llvm::DIVariable D =
       DBuilder.createLocalVariable(Tag, llvm::DIDescriptor(Scope), 
                                    Name, Unit, Line, Ty, 

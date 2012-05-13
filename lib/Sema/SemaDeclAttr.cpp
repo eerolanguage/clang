@@ -300,8 +300,8 @@ static const RecordType *getRecordType(QualType QT) {
 }
 
 
-bool checkBaseClassIsLockableCallback(const CXXBaseSpecifier *Specifier,
-                                      CXXBasePath &Path, void *UserData) {
+static bool checkBaseClassIsLockableCallback(const CXXBaseSpecifier *Specifier,
+                                             CXXBasePath &Path, void *Unused) {
   const RecordType *RT = Specifier->getType()->getAs<RecordType>();
   if (RT->getDecl()->getAttr<LockableAttr>())
     return true;
@@ -1294,6 +1294,46 @@ static void handleAliasAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                                          Str->getString()));
 }
 
+static void handleColdAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  // Check the attribute arguments.
+  if (!checkAttributeNumArgs(S, Attr, 0))
+    return;
+
+  if (!isa<FunctionDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunction;
+    return;
+  }
+
+  if (D->hasAttr<HotAttr>()) {
+    S.Diag(Attr.getLoc(), diag::err_attributes_are_not_compatible)
+      << Attr.getName() << "hot";
+    return;
+  }
+
+  D->addAttr(::new (S.Context) ColdAttr(Attr.getRange(), S.Context));
+}
+
+static void handleHotAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  // Check the attribute arguments.
+  if (!checkAttributeNumArgs(S, Attr, 0))
+    return;
+
+  if (!isa<FunctionDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunction;
+    return;
+  }
+
+  if (D->hasAttr<ColdAttr>()) {
+    S.Diag(Attr.getLoc(), diag::err_attributes_are_not_compatible)
+      << Attr.getName() << "cold";
+    return;
+  }
+
+  D->addAttr(::new (S.Context) HotAttr(Attr.getRange(), S.Context));
+}
+
 static void handleNakedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // Check the attribute arguments.
   if (!checkAttributeNumArgs(S, Attr, 0))
@@ -1690,11 +1730,11 @@ static void handleObjCRequiresPropertyDefsAttr(Sema &S, Decl *D,
                                  Attr.getRange(), S.Context));
 }
 
-bool checkAvailabilityAttr(Sema &S, SourceRange Range,
-                           IdentifierInfo *Platform,
-                           VersionTuple Introduced,
-                           VersionTuple Deprecated,
-                           VersionTuple Obsoleted) {
+static bool checkAvailabilityAttr(Sema &S, SourceRange Range,
+                                  IdentifierInfo *Platform,
+                                  VersionTuple Introduced,
+                                  VersionTuple Deprecated,
+                                  VersionTuple Obsoleted) {
   StringRef PlatformName
     = AvailabilityAttr::getPrettyPlatformName(Platform->getName());
   if (PlatformName.empty())
@@ -1729,76 +1769,101 @@ bool checkAvailabilityAttr(Sema &S, SourceRange Range,
   return false;
 }
 
-static void mergeAvailabilityAttr(Sema &S, Decl *D, SourceRange Range,
-                                  IdentifierInfo *Platform,
-                                  VersionTuple Introduced,
-                                  VersionTuple Deprecated,
-                                  VersionTuple Obsoleted,
-                                  bool IsUnavailable,
-                                  StringRef Message) {
-  VersionTuple MergedIntroduced;
-  VersionTuple MergedDeprecated;
-  VersionTuple MergedObsoleted;
+bool Sema::mergeAvailabilityAttr(Decl *D, SourceRange Range,
+                                 bool Inherited,
+                                 IdentifierInfo *Platform,
+                                 VersionTuple Introduced,
+                                 VersionTuple Deprecated,
+                                 VersionTuple Obsoleted,
+                                 bool IsUnavailable,
+                                 StringRef Message) {
+  VersionTuple MergedIntroduced = Introduced;
+  VersionTuple MergedDeprecated = Deprecated;
+  VersionTuple MergedObsoleted = Obsoleted;
   bool FoundAny = false;
 
-  for (specific_attr_iterator<AvailabilityAttr>
-         i = D->specific_attr_begin<AvailabilityAttr>(),
-         e = D->specific_attr_end<AvailabilityAttr>();
-       i != e ; ++i) {
-    const AvailabilityAttr *OldAA = *i;
-    IdentifierInfo *OldPlatform = OldAA->getPlatform();
-    if (OldPlatform != Platform)
-      continue;
-    FoundAny = true;
-    VersionTuple OldIntroduced = OldAA->getIntroduced();
-    VersionTuple OldDeprecated = OldAA->getDeprecated();
-    VersionTuple OldObsoleted = OldAA->getObsoleted();
-    bool OldIsUnavailable = OldAA->getUnavailable();
-    StringRef OldMessage = OldAA->getMessage();
+  if (D->hasAttrs()) {
+    AttrVec &Attrs = D->getAttrs();
+    for (unsigned i = 0, e = Attrs.size(); i != e;) {
+      const AvailabilityAttr *OldAA = dyn_cast<AvailabilityAttr>(Attrs[i]);
+      if (!OldAA) {
+        ++i;
+        continue;
+      }
 
-    if ((!OldIntroduced.empty() && !Introduced.empty() &&
-         OldIntroduced != Introduced) ||
-        (!OldDeprecated.empty() && !Deprecated.empty() &&
-         OldDeprecated != Deprecated) ||
-        (!OldObsoleted.empty() && !Obsoleted.empty() &&
-         OldObsoleted != Obsoleted) ||
-        (OldIsUnavailable != IsUnavailable) ||
-        (OldMessage != Message)) {
-      S.Diag(Range.getBegin(), diag::warn_mismatched_availability);
-      S.Diag(OldAA->getLocation(), diag::note_previous_attribute);
-      return;
+      IdentifierInfo *OldPlatform = OldAA->getPlatform();
+      if (OldPlatform != Platform) {
+        ++i;
+        continue;
+      }
+
+      FoundAny = true;
+      VersionTuple OldIntroduced = OldAA->getIntroduced();
+      VersionTuple OldDeprecated = OldAA->getDeprecated();
+      VersionTuple OldObsoleted = OldAA->getObsoleted();
+      bool OldIsUnavailable = OldAA->getUnavailable();
+      StringRef OldMessage = OldAA->getMessage();
+
+      if ((!OldIntroduced.empty() && !Introduced.empty() &&
+           OldIntroduced != Introduced) ||
+          (!OldDeprecated.empty() && !Deprecated.empty() &&
+           OldDeprecated != Deprecated) ||
+          (!OldObsoleted.empty() && !Obsoleted.empty() &&
+           OldObsoleted != Obsoleted) ||
+          (OldIsUnavailable != IsUnavailable) ||
+          (OldMessage != Message)) {
+        Diag(OldAA->getLocation(), diag::warn_mismatched_availability);
+        Diag(Range.getBegin(), diag::note_previous_attribute);
+        Attrs.erase(Attrs.begin() + i);
+        --e;
+        continue;
+      }
+
+      VersionTuple MergedIntroduced2 = MergedIntroduced;
+      VersionTuple MergedDeprecated2 = MergedDeprecated;
+      VersionTuple MergedObsoleted2 = MergedObsoleted;
+
+      if (MergedIntroduced2.empty())
+        MergedIntroduced2 = OldIntroduced;
+      if (MergedDeprecated2.empty())
+        MergedDeprecated2 = OldDeprecated;
+      if (MergedObsoleted2.empty())
+        MergedObsoleted2 = OldObsoleted;
+
+      if (checkAvailabilityAttr(*this, OldAA->getRange(), Platform,
+                                MergedIntroduced2, MergedDeprecated2,
+                                MergedObsoleted2)) {
+        Attrs.erase(Attrs.begin() + i);
+        --e;
+        continue;
+      }
+
+      MergedIntroduced = MergedIntroduced2;
+      MergedDeprecated = MergedDeprecated2;
+      MergedObsoleted = MergedObsoleted2;
+      ++i;
     }
-    if (MergedIntroduced.empty())
-      MergedIntroduced = OldIntroduced;
-    if (MergedDeprecated.empty())
-      MergedDeprecated = OldDeprecated;
-    if (MergedObsoleted.empty())
-      MergedObsoleted = OldObsoleted;
   }
 
   if (FoundAny &&
       MergedIntroduced == Introduced &&
       MergedDeprecated == Deprecated &&
       MergedObsoleted == Obsoleted)
-    return;
+    return false;
 
-  if (MergedIntroduced.empty())
-    MergedIntroduced = Introduced;
-  if (MergedDeprecated.empty())
-    MergedDeprecated = Deprecated;
-  if (MergedObsoleted.empty())
-    MergedObsoleted = Obsoleted;
-
-  if (!checkAvailabilityAttr(S, Range, Platform, MergedIntroduced,
+  if (!checkAvailabilityAttr(*this, Range, Platform, MergedIntroduced,
                              MergedDeprecated, MergedObsoleted)) {
-    D->addAttr(::new (S.Context) AvailabilityAttr(Range, S.Context,
-                                                  Platform,
-                                                  Introduced,
-                                                  Deprecated,
-                                                  Obsoleted,
-                                                  IsUnavailable,
-                                                  Message));
+    AvailabilityAttr *Attr =
+      ::new (Context) AvailabilityAttr(Range, Context, Platform,
+                                       Introduced, Deprecated,
+                                       Obsoleted, IsUnavailable, Message);
+
+    if (Inherited)
+      Attr->setInherited(true);
+    D->addAttr(Attr);
+    return true;
   }
+  return false;
 }
 
 static void handleAvailabilityAttr(Sema &S, Decl *D,
@@ -1820,13 +1885,36 @@ static void handleAvailabilityAttr(Sema &S, Decl *D,
   if (SE)
     Str = SE->getString();
 
-  mergeAvailabilityAttr(S, D, Attr.getRange(),
-                        Platform,
-                        Introduced.Version,
-                        Deprecated.Version,
-                        Obsoleted.Version,
-                        IsUnavailable,
-                        Str);
+  S.mergeAvailabilityAttr(D, Attr.getRange(),
+                          false, Platform,
+                          Introduced.Version,
+                          Deprecated.Version,
+                          Obsoleted.Version,
+                          IsUnavailable,
+                          Str);
+}
+
+bool Sema::mergeVisibilityAttr(Decl *D, SourceRange Range,
+                               bool Inherited,
+                               VisibilityAttr::VisibilityType Vis) {
+  if (isa<TypedefNameDecl>(D)) {
+    Diag(Range.getBegin(), diag::warn_attribute_ignored) << "visibility";
+    return false;
+  }
+  VisibilityAttr *ExistingAttr = D->getAttr<VisibilityAttr>();
+  if (ExistingAttr) {
+    VisibilityAttr::VisibilityType ExistingVis = ExistingAttr->getVisibility();
+    if (ExistingVis == Vis)
+      return false;
+    Diag(ExistingAttr->getLocation(), diag::err_mismatched_visibility);
+    Diag(Range.getBegin(), diag::note_previous_attribute);
+    D->dropAttr<VisibilityAttr>();
+  }
+  VisibilityAttr *Attr = ::new (Context) VisibilityAttr(Range, Context, Vis);
+  if (Inherited)
+    Attr->setInherited(true);
+  D->addAttr(Attr);
+  return true;
 }
 
 static void handleVisibilityAttr(Sema &S, Decl *D, const AttributeList &Attr) {
@@ -1867,25 +1955,7 @@ static void handleVisibilityAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  // Find the last Decl that has an attribute.
-  VisibilityAttr *PrevAttr;
-  assert(D->redecls_begin() == D);
-  for (Decl::redecl_iterator I = D->redecls_begin(), E = D->redecls_end();
-       I != E; ++I) {
-    PrevAttr = I->getAttr<VisibilityAttr>() ;
-    if (PrevAttr)
-      break;
-  }
-
-  if (PrevAttr) {
-    VisibilityAttr::VisibilityType PrevVisibility = PrevAttr->getVisibility();
-    if (PrevVisibility != type) {
-      S.Diag(Attr.getLoc(), diag::err_mismatched_visibilit);
-      S.Diag(PrevAttr->getLocation(), diag::note_previous_attribute);
-      return;
-    }
-  }
-  D->addAttr(::new (S.Context) VisibilityAttr(Attr.getRange(), S.Context, type));
+  S.mergeVisibilityAttr(D, Attr.getRange(), false, type);
 }
 
 static void handleObjCMethodFamilyAttr(Sema &S, Decl *decl,
@@ -2505,6 +2575,31 @@ static void handleInitPriorityAttr(Sema &S, Decl *D,
                                                 prioritynum));
 }
 
+bool Sema::mergeFormatAttr(Decl *D, SourceRange Range, bool Inherited,
+                           StringRef Format, int FormatIdx, int FirstArg) {
+  // Check whether we already have an equivalent format attribute.
+  for (specific_attr_iterator<FormatAttr>
+         i = D->specific_attr_begin<FormatAttr>(),
+         e = D->specific_attr_end<FormatAttr>();
+       i != e ; ++i) {
+    FormatAttr *f = *i;
+    if (f->getType() == Format &&
+        f->getFormatIdx() == FormatIdx &&
+        f->getFirstArg() == FirstArg) {
+      // If we don't have a valid location for this attribute, adopt the
+      // location.
+      if (f->getLocation().isInvalid())
+        f->setRange(Range);
+      return false;
+    }
+  }
+
+  FormatAttr *Attr = ::new (Context) FormatAttr(Range, Context, Format,
+                                               FormatIdx, FirstArg);
+  D->addAttr(Attr);
+  return true;
+}
+
 /// Handle __attribute__((format(type,idx,firstarg))) attributes based on
 /// http://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html
 static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
@@ -2640,26 +2735,8 @@ static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  // Check whether we already have an equivalent format attribute.
-  for (specific_attr_iterator<FormatAttr>
-         i = D->specific_attr_begin<FormatAttr>(),
-         e = D->specific_attr_end<FormatAttr>();
-       i != e ; ++i) {
-    FormatAttr *f = *i;
-    if (f->getType() == Format &&
-        f->getFormatIdx() == (int)Idx.getZExtValue() &&
-        f->getFirstArg() == (int)FirstArg.getZExtValue()) {
-      // If we don't have a valid location for this attribute, adopt the
-      // location.
-      if (f->getLocation().isInvalid())
-        f->setRange(Attr.getRange());
-      return;
-    }
-  }
-  
-  D->addAttr(::new (S.Context) FormatAttr(Attr.getRange(), S.Context, Format,
-                                          Idx.getZExtValue(),
-                                          FirstArg.getZExtValue()));
+  S.mergeFormatAttr(D, Attr.getRange(), false, Format, Idx.getZExtValue(),
+                    FirstArg.getZExtValue());
 }
 
 static void handleTransparentUnionAttr(Sema &S, Decl *D,
@@ -3788,6 +3865,8 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_ownership_takes:
   case AttributeList::AT_ownership_holds:
       handleOwnershipAttr     (S, D, Attr); break;
+  case AttributeList::AT_cold:        handleColdAttr        (S, D, Attr); break;
+  case AttributeList::AT_hot:         handleHotAttr         (S, D, Attr); break;
   case AttributeList::AT_naked:       handleNakedAttr       (S, D, Attr); break;
   case AttributeList::AT_noreturn:    handleNoReturnAttr    (S, D, Attr); break;
   case AttributeList::AT_nothrow:     handleNothrowAttr     (S, D, Attr); break;
@@ -4198,57 +4277,29 @@ static void handleDelayedForbiddenType(Sema &S, DelayedDiagnostic &diag,
   diag.Triggered = true;
 }
 
-// This duplicates a vector push_back but hides the need to know the
-// size of the type.
-void Sema::DelayedDiagnostics::add(const DelayedDiagnostic &diag) {
-  assert(StackSize <= StackCapacity);
+void Sema::PopParsingDeclaration(ParsingDeclState state, Decl *decl) {
+  assert(DelayedDiagnostics.getCurrentPool());
+  DelayedDiagnosticPool &poppedPool = *DelayedDiagnostics.getCurrentPool();
+  DelayedDiagnostics.popWithoutEmitting(state);
 
-  // Grow the stack if necessary.
-  if (StackSize == StackCapacity) {
-    unsigned newCapacity = 2 * StackCapacity + 2;
-    char *newBuffer = new char[newCapacity * sizeof(DelayedDiagnostic)];
-    const char *oldBuffer = (const char*) Stack;
+  // When delaying diagnostics to run in the context of a parsed
+  // declaration, we only want to actually emit anything if parsing
+  // succeeds.
+  if (!decl) return;
 
-    if (StackCapacity)
-      memcpy(newBuffer, oldBuffer, StackCapacity * sizeof(DelayedDiagnostic));
-    
-    delete[] oldBuffer;
-    Stack = reinterpret_cast<sema::DelayedDiagnostic*>(newBuffer);
-    StackCapacity = newCapacity;
-  }
-
-  assert(StackSize < StackCapacity);
-  new (&Stack[StackSize++]) DelayedDiagnostic(diag);
-}
-
-void Sema::DelayedDiagnostics::popParsingDecl(Sema &S, ParsingDeclState state,
-                                              Decl *decl) {
-  DelayedDiagnostics &DD = S.DelayedDiagnostics;
-
-  // Check the invariants.
-  assert(DD.StackSize >= state.SavedStackSize);
-  assert(state.SavedStackSize >= DD.ActiveStackBase);
-  assert(DD.ParsingDepth > 0);
-
-  // Drop the parsing depth.
-  DD.ParsingDepth--;
-
-  // If there are no active diagnostics, we're done.
-  if (DD.StackSize == DD.ActiveStackBase)
-    return;
-
-  // We only want to actually emit delayed diagnostics when we
-  // successfully parsed a decl.
-  if (decl) {
-    // We emit all the active diagnostics, not just those starting
-    // from the saved state.  The idea is this:  we get one push for a
-    // decl spec and another for each declarator;  in a decl group like:
-    //   deprecated_typedef foo, *bar, baz();
-    // only the declarator pops will be passed decls.  This is correct;
-    // we really do need to consider delayed diagnostics from the decl spec
-    // for each of the different declarations.
-    for (unsigned i = DD.ActiveStackBase, e = DD.StackSize; i != e; ++i) {
-      DelayedDiagnostic &diag = DD.Stack[i];
+  // We emit all the active diagnostics in this pool or any of its
+  // parents.  In general, we'll get one pool for the decl spec
+  // and a child pool for each declarator; in a decl group like:
+  //   deprecated_typedef foo, *bar, baz();
+  // only the declarator pops will be passed decls.  This is correct;
+  // we really do need to consider delayed diagnostics from the decl spec
+  // for each of the different declarations.
+  const DelayedDiagnosticPool *pool = &poppedPool;
+  do {
+    for (DelayedDiagnosticPool::pool_iterator
+           i = pool->pool_begin(), e = pool->pool_end(); i != e; ++i) {
+      // This const_cast is a bit lame.  Really, Triggered should be mutable.
+      DelayedDiagnostic &diag = const_cast<DelayedDiagnostic&>(*i);
       if (diag.Triggered)
         continue;
 
@@ -4256,25 +4307,28 @@ void Sema::DelayedDiagnostics::popParsingDecl(Sema &S, ParsingDeclState state,
       case DelayedDiagnostic::Deprecation:
         // Don't bother giving deprecation diagnostics if the decl is invalid.
         if (!decl->isInvalidDecl())
-          S.HandleDelayedDeprecationCheck(diag, decl);
+          HandleDelayedDeprecationCheck(diag, decl);
         break;
 
       case DelayedDiagnostic::Access:
-        S.HandleDelayedAccessCheck(diag, decl);
+        HandleDelayedAccessCheck(diag, decl);
         break;
 
       case DelayedDiagnostic::ForbiddenType:
-        handleDelayedForbiddenType(S, diag, decl);
+        handleDelayedForbiddenType(*this, diag, decl);
         break;
       }
     }
-  }
+  } while ((pool = pool->getParent()));
+}
 
-  // Destroy all the delayed diagnostics we're about to pop off.
-  for (unsigned i = state.SavedStackSize, e = DD.StackSize; i != e; ++i)
-    DD.Stack[i].Destroy();
-
-  DD.StackSize = state.SavedStackSize;
+/// Given a set of delayed diagnostics, re-emit them as if they had
+/// been delayed in the current context instead of in the given pool.
+/// Essentially, this just moves them to the current pool.
+void Sema::redelayDiagnostics(DelayedDiagnosticPool &pool) {
+  DelayedDiagnosticPool *curPool = DelayedDiagnostics.getCurrentPool();
+  assert(curPool && "re-emitting in undelayed context not supported");
+  curPool->steal(pool);
 }
 
 static bool isDeclDeprecated(Decl *D) {

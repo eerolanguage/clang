@@ -1434,7 +1434,7 @@ void Sema::DefaultSynthesizeProperties(Scope *S, ObjCImplDecl* IMPDecl,
                             SourceLocation()));
     if (PIDecl) {
       Diag(Prop->getLocation(), diag::warn_missing_explicit_synthesis);
-      Diag(IMPDecl->getLocation(), diag::not_while_in_implementation);
+      Diag(IMPDecl->getLocation(), diag::note_while_in_implementation);
     }
   }
 }
@@ -1782,6 +1782,18 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
     AddInstanceMethodToGlobalPool(GetterMethod);
   if (SetterMethod)
     AddInstanceMethodToGlobalPool(SetterMethod);
+
+  ObjCInterfaceDecl *CurrentClass = dyn_cast<ObjCInterfaceDecl>(CD);
+  if (!CurrentClass) {
+    if (ObjCCategoryDecl *Cat = dyn_cast<ObjCCategoryDecl>(CD))
+      CurrentClass = Cat->getClassInterface();
+    else if (ObjCImplDecl *Impl = dyn_cast<ObjCImplDecl>(CD))
+      CurrentClass = Impl->getClassInterface();
+  }
+  if (GetterMethod)
+    CheckObjCMethodOverrides(GetterMethod, CurrentClass, Sema::RTC_Unknown);
+  if (SetterMethod)
+    CheckObjCMethodOverrides(SetterMethod, CurrentClass, Sema::RTC_Unknown);
 }
 
 void Sema::CheckObjCPropertyAttributes(Decl *PDecl,

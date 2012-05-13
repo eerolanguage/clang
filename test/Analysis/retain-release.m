@@ -142,9 +142,13 @@ NSFastEnumerationState;
 @end
 @class NSString, NSDictionary;
 @interface NSValue : NSObject <NSCopying, NSCoding>  - (void)getValue:(void *)value;
-@end  @interface NSNumber : NSValue  - (char)charValue;
+@end
+@interface NSNumber : NSValue
+- (char)charValue;
 - (id)initWithInt:(int)value;
-@end   @class NSString;
++ (NSNumber *)numberWithInt:(int)value;
+@end
+@class NSString;
 @interface NSArray : NSObject <NSCopying, NSMutableCopying, NSCoding, NSFastEnumeration>
 - (NSUInteger)count;
 - (id)initWithObjects:(const id [])objects count:(NSUInteger)cnt;
@@ -222,8 +226,10 @@ typedef struct CGLayer *CGLayerRef;
 @end @protocol NSValidatedUserInterfaceItem - (SEL)action;
 @end   @protocol NSUserInterfaceValidations - (BOOL)validateUserInterfaceItem:(id <NSValidatedUserInterfaceItem>)anItem;
 @end  @class NSDate, NSDictionary, NSError, NSException, NSNotification;
+@class NSTextField, NSPanel, NSArray, NSWindow, NSImage, NSButton, NSError;
 @interface NSApplication : NSResponder <NSUserInterfaceValidations> {
 }
+- (void)beginSheet:(NSWindow *)sheet modalForWindow:(NSWindow *)docWindow modalDelegate:(id)modalDelegate didEndSelector:(SEL)didEndSelector contextInfo:(void *)contextInfo;
 @end   enum {
 NSTerminateCancel = 0,         NSTerminateNow = 1,         NSTerminateLater = 2 };
 typedef NSUInteger NSApplicationTerminateReply;
@@ -231,7 +237,7 @@ typedef NSUInteger NSApplicationTerminateReply;
 @end  @class NSAttributedString, NSEvent, NSFont, NSFormatter, NSImage, NSMenu, NSText, NSView, NSTextView;
 @interface NSCell : NSObject <NSCopying, NSCoding> {
 }
-@end @class NSTextField, NSPanel, NSArray, NSWindow, NSImage, NSButton, NSError;
+@end 
 typedef struct {
 }
 CVTimeStamp;
@@ -1712,6 +1718,32 @@ int IOClose(void *context);
 }
 @end
 
+// Object escapes through a selector callback: radar://11398514
+extern id NSApp;
+@interface MySheetController
+- (id<SInS>)inputS;
+- (void)showDoSomethingSheetAction:(id)action;
+- (void)sheetDidEnd:(NSWindow *)sheet returnCode:(int)returnCode contextInfo:(void *)contextInfo;
+@end
+
+@implementation MySheetController
+- (id<SInS>)inputS {
+    return 0;
+}
+- (void)showDoSomethingSheetAction:(id)action {
+  id<SInS> inputS = [[self inputS] retain]; 
+  [NSApp beginSheet:0
+         modalForWindow:0
+         modalDelegate:0
+         didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:)
+         contextInfo:(void *)inputS]; // no - warning
+}
+- (void)sheetDidEnd:(NSWindow *)sheet returnCode:(int)returnCode contextInfo:(void *)contextInfo {
+   
+      id contextObject = (id)contextInfo;
+      [contextObject release];
+}
+@end
 //===----------------------------------------------------------------------===//
 // Test returning allocated memory in a struct.
 // 
@@ -1784,3 +1816,30 @@ void test_objc_arrays() {
     }
 }
 
+void test_objc_integer_literals() {
+  id value = [@1 retain]; // expected-warning {{leak}}
+  [value description];
+}
+
+void test_objc_boxed_expressions(int x, const char *y) {
+  id value = [@(x) retain]; // expected-warning {{leak}}
+  [value description];
+
+  value = [@(y) retain]; // expected-warning {{leak}}
+  [value description];
+}
+
+// Test NSLog doesn't escape tracked objects.
+void rdar11400885(int y)
+{
+  @autoreleasepool {
+    NSString *printString;
+    if(y > 2)
+      printString = [[NSString alloc] init];
+    else
+      printString = [[NSString alloc] init];
+    NSLog(@"Once %@", printString);
+    [printString release];
+    NSLog(@"Again: %@", printString); // expected-warning {{Reference-counted object is used after it is released}}
+  }
+}

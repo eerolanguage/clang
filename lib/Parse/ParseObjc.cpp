@@ -951,6 +951,7 @@ ParsedType Parser::ParseObjCTypeName(ObjCDeclSpec &DS,
     DeclSpec declSpec(AttrFactory);
     declSpec.setObjCQualifiers(&DS);
     ParseSpecifierQualifierList(declSpec);
+    declSpec.SetRangeEnd(Tok.getLocation().getLocWithOffset(-1));
     Declarator declarator(declSpec, context);
     ParseDeclarator(declarator);
 
@@ -1065,8 +1066,8 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                                   tok::TokenKind mType,
                                   tok::ObjCKeywordKind MethodImplKind,
                                   bool MethodDefinition) {
-  ParsingDeclRAIIObject PD(*this);
-  
+  ParsingDeclRAIIObject PD(*this, ParsingDeclRAIIObject::NoParent);
+
   const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
 
   if (Tok.is(tok::code_completion)) {
@@ -2855,7 +2856,10 @@ Parser::ParseObjCBoxedExpr(SourceLocation AtLoc) {
   ExprResult ValueExpr(ParseAssignmentExpression());
   if (T.consumeClose())
     return ExprError();
-  
+
+  if (ValueExpr.isInvalid())
+    return ExprError();
+
   // Wrap the sub-expression in a parenthesized expression, to distinguish
   // a boxed expression from a literal.
   SourceLocation LPLoc = T.getOpenLocation(), RPLoc = T.getCloseLocation();

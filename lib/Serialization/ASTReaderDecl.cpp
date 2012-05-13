@@ -642,6 +642,7 @@ void ASTDeclReader::VisitObjCMethodDecl(ObjCMethodDecl *MD) {
   MD->setVariadic(Record[Idx++]);
   MD->setSynthesized(Record[Idx++]);
   MD->setDefined(Record[Idx++]);
+  MD->IsOverriding = Record[Idx++];
 
   MD->IsRedeclaration = Record[Idx++];
   MD->HasRedeclaration = Record[Idx++];
@@ -1090,6 +1091,7 @@ void ASTDeclReader::ReadCXXDefinitionData(
   Data.HasPublicFields = Record[Idx++];
   Data.HasMutableFields = Record[Idx++];
   Data.HasOnlyCMembers = Record[Idx++];
+  Data.HasInClassInitializer = Record[Idx++];
   Data.HasTrivialDefaultConstructor = Record[Idx++];
   Data.HasConstexprNonCopyMoveConstructor = Record[Idx++];
   Data.DefaultedDefaultConstructorIsConstexpr = Record[Idx++];

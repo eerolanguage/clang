@@ -1569,10 +1569,16 @@ bool Sema::SemaCheckStringLiteral(const Expr *E, Expr **Args,
       }
 
       if (isConstant) {
-        if (const Expr *Init = VD->getAnyInitializer())
+        if (const Expr *Init = VD->getAnyInitializer()) {
+          // Look through initializers like const char c[] = { "foo" }
+          if (const InitListExpr *InitList = dyn_cast<InitListExpr>(Init)) {
+            if (InitList->isStringLiteralInit())
+              Init = InitList->getInit(0)->IgnoreParenImpCasts();
+          }
           return SemaCheckStringLiteral(Init, Args, NumArgs,
                                         HasVAListArg, format_idx, firstDataArg,
                                         Type, /*inFunctionCall*/false);
+        }
       }
 
       // For vprintf* functions (i.e., HasVAListArg==true), we add a
@@ -4590,12 +4596,20 @@ static bool IsTailPaddedMemberArray(Sema &S, llvm::APInt Size,
   // substitution to form C89 tail-padded arrays.
 
   TypeSourceInfo *TInfo = FD->getTypeSourceInfo();
-  if (TInfo) {
-    ConstantArrayTypeLoc TL =
-      cast<ConstantArrayTypeLoc>(TInfo->getTypeLoc());
-    const Expr *SizeExpr = dyn_cast<IntegerLiteral>(TL.getSizeExpr());
+  while (TInfo) {
+    TypeLoc TL = TInfo->getTypeLoc();
+    // Look through typedefs.
+    const TypedefTypeLoc *TTL = dyn_cast<TypedefTypeLoc>(&TL);
+    if (TTL) {
+      const TypedefNameDecl *TDL = TTL->getTypedefNameDecl();
+      TInfo = TDL->getTypeSourceInfo();
+      continue;
+    }
+    ConstantArrayTypeLoc CTL = cast<ConstantArrayTypeLoc>(TL);
+    const Expr *SizeExpr = dyn_cast<IntegerLiteral>(CTL.getSizeExpr());
     if (!SizeExpr || SizeExpr->getExprLoc().isMacroID())
       return false;
+    break;
   }
 
   const RecordDecl *RD = dyn_cast<RecordDecl>(FD->getDeclContext());

@@ -1,7 +1,7 @@
 # This file provides common utility functions for the test suite.
 
 from clang.cindex import Cursor
-from clang.cindex import Index
+from clang.cindex import TranslationUnit
 
 def get_tu(source, lang='c', all_warnings=False):
     """Obtain a translation unit from source and language.
@@ -27,10 +27,8 @@ def get_tu(source, lang='c', all_warnings=False):
     if all_warnings:
         args += ['-Wall', '-Wextra']
 
-    index = Index.create()
-    tu = index.parse(name, args=args, unsaved_files=[(name, source)])
-    assert tu is not None
-    return tu
+    return TranslationUnit.from_source(name, args, unsaved_files=[(name,
+                                       source)])
 
 def get_cursor(source, spelling):
     """Obtain a cursor from a source object.
@@ -58,9 +56,38 @@ def get_cursor(source, spelling):
             return result
 
     return None
+ 
+def get_cursors(source, spelling):
+    """Obtain all cursors from a source object with a specific spelling.
 
+    This provides a convenient search mechanism to find all cursors with specific
+    spelling within a source. The first argument can be either a
+    TranslationUnit or Cursor instance.
+
+    If no cursors are found, an empty list is returned.
+    """
+    cursors = []
+    children = []
+    if isinstance(source, Cursor):
+        children = source.get_children()
+    else:
+        # Assume TU
+        children = source.cursor.get_children()
+
+    for cursor in children:
+        if cursor.spelling == spelling:
+            cursors.append(cursor)
+
+        # Recurse into children.
+        cursors.extend(get_cursors(cursor, spelling))
+
+    return cursors
+
+    
+    
 
 __all__ = [
     'get_cursor',
+    'get_cursors',
     'get_tu',
 ]

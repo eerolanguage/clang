@@ -456,7 +456,7 @@ def err_class_extension_after_impl : Error<
   "cannot declare class extension for %0 after class implementation">;
 def note_implementation_declared : Note<
   "class implementation is declared here">;
-def not_while_in_implementation : Note<
+def note_while_in_implementation : Note<
   "detected while default synthesizing properties in class implementation">;
 def note_class_declared : Note<
   "class is declared here">;
@@ -1553,12 +1553,8 @@ def err_undeclared_nsarray : Error<
 def err_undeclared_nsdictionary : Error<
   "NSDictionary must be available to use Objective-C dictionary "
   "literals">;
-def err_undeclared_arraywithobjects : Error<
-  "declaration of %0 is missing in NSArray class">;
-def err_undeclared_dictwithobjects : Error<
-  "declaration of %0 is missing in NSDictionary class">;
-def err_undeclared_nsnumber_method : Error<
-  "declaration of %0 is missing in NSNumber class">;
+def err_undeclared_boxing_method : Error<
+  "declaration of %0 is missing in %1 class">;
 def err_objc_literal_method_sig : Error<
   "literal construction method %0 has incompatible signature">;
 def note_objc_literal_method_param : Note<
@@ -1839,7 +1835,7 @@ def warn_attribute_unknown_visibility : Warning<"unknown visibility '%0'">;
 def warn_attribute_protected_visibility :
   Warning<"target does not support 'protected' visibility; using 'default'">,
   InGroup<DiagGroup<"unsupported-visibility">>;
-def err_mismatched_visibilit: Error<"visibility does not match previous declaration">;
+def err_mismatched_visibility: Error<"visibility does not match previous declaration">;
 def note_previous_attribute : Note<"previous attribute is here">;
 def err_unknown_machine_mode : Error<"unknown machine mode %0">;
 def err_unsupported_machine_mode : Error<"unsupported machine mode %0">;
@@ -2031,7 +2027,9 @@ def note_ovl_candidate_underqualified : Note<
     "candidate template ignored: can't deduce a type for %0 which would "
     "make %2 equal %1">;
 def note_ovl_candidate_substitution_failure : Note<
-    "candidate template ignored: substitution failure %0">;
+    "candidate template ignored: substitution failure%0%1">;
+def note_ovl_candidate_disabled_by_enable_if : Note<
+    "candidate template ignored: disabled by %0%1">;
     
 // Note that we don't treat templates differently for this diagnostic.
 def note_ovl_candidate_arity : Note<"candidate "
@@ -2044,6 +2042,17 @@ def note_ovl_candidate_arity : Note<"candidate "
     "constructor (inherited)}0 %select{|template }1"
     "not viable: requires%select{ at least| at most|}2 %3 argument%s3, but %4 "
     "%plural{1:was|:were}4 provided">;
+
+def note_ovl_candidate_arity_one : Note<"candidate "
+    "%select{function|function|constructor|function|function|constructor|"
+    "constructor (the implicit default constructor)|"
+    "constructor (the implicit copy constructor)|"
+    "constructor (the implicit move constructor)|"
+    "function (the implicit copy assignment operator)|"
+    "function (the implicit move assignment operator)|"
+    "constructor (inherited)}0 %select{|template }1"
+    "not viable: requires%select{ at least| at most|}2 argument %3, but "
+    "%plural{0:none|:%4}4 were provided">;
 
 def note_ovl_candidate_deleted : Note<
     "candidate %select{function|function|constructor|"
@@ -2740,6 +2749,9 @@ def note_explicit_instantiation_definition_here : Note<
   
 // C++ typename-specifiers
 def err_typename_nested_not_found : Error<"no type named %0 in %1">;
+def err_typename_nested_not_found_enable_if : Error<
+  "no type named 'type' in %0; 'enable_if' cannot be used to disable "
+  "this declaration">;
 def err_typename_nested_not_type : Error<
     "typename specifier refers to non-type member %0 in %1">;
 def note_typename_refers_here : Note<
@@ -4565,10 +4577,18 @@ def err_typecheck_call_too_few_args : Error<
   "too few %select{|||execution configuration }0arguments to "
   "%select{function|block|method|kernel function}0 call, "
   "expected %1, have %2">;
+def err_typecheck_call_too_few_args_one : Error<
+  "too few %select{|||execution configuration }0arguments to "
+  "%select{function|block|method|kernel function}0 call, "
+  "argument %1 was not specified">;
 def err_typecheck_call_too_few_args_at_least : Error<
   "too few %select{|||execution configuration }0arguments to "
   "%select{function|block|method|kernel function}0 call, "
   "expected at least %1, have %2">;
+def err_typecheck_call_too_few_args_at_least_one : Error<
+  "too few %select{|||execution configuration }0arguments to "
+  "%select{function|block|method|kernel function}0 call, "
+  "at least argument %1 must be specified">;
 def err_typecheck_call_too_many_args : Error<
   "too many %select{|||execution configuration }0arguments to "
   "%select{function|block|method|kernel function}0 call, "
