@@ -265,8 +265,8 @@ namespace {
                                        Expr *LHS, Expr *RHS);
    Expr *rebuildAndCaptureObject(Expr *syntacticBase);
    
-   bool findAtIndexGetter();
-   bool findAtIndexSetter();
+   bool findAtIndexGetter(bool useCompatibilityMethods = false);
+   bool findAtIndexSetter(bool useCompatibilityMethods = false);
   
    ExprResult buildGet();
    ExprResult buildSet(Expr *op, SourceLocation, bool);
@@ -937,7 +937,7 @@ Sema::ObjCSubscriptKind
   return OS_Error;
 }
 
-bool ObjCSubscriptOpBuilder::findAtIndexGetter() {
+bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
   if (AtIndexGetter)
     return true;
   
@@ -963,18 +963,29 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter() {
       << BaseExpr->getType() << arrayRef;
     return false;
   }
+  const char* methodName = 0;
   if (!arrayRef) {
     // dictionary subscripting.
     // - (id)objectForKeyedSubscript:(id)key;
+    if (!useCompatibilityMethods) {
+      methodName = "objectForKeyedSubscript";
+    } else {
+      methodName = "objectForKey";
+    }
     IdentifierInfo *KeyIdents[] = {
-      &S.Context.Idents.get("objectForKeyedSubscript")  
+      &S.Context.Idents.get(methodName)  
     };
     AtIndexGetterSelector = S.Context.Selectors.getSelector(1, KeyIdents);
   }
   else {
     // - (id)objectAtIndexedSubscript:(size_t)index;
+    if (!useCompatibilityMethods) {
+      methodName = "objectAtIndexedSubscript";
+    } else {
+      methodName = "objectAtIndex";
+    }
     IdentifierInfo *KeyIdents[] = {
-      &S.Context.Idents.get("objectAtIndexedSubscript")  
+      &S.Context.Idents.get(methodName)  
     };
   
     AtIndexGetterSelector = S.Context.Selectors.getSelector(1, KeyIdents);
@@ -1012,6 +1023,9 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter() {
 
   if (!AtIndexGetter) {
     if (!receiverIdType) {
+      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods) {
+        return findAtIndexGetter(true);
+      }
       S.Diag(BaseExpr->getExprLoc(), diag::err_objc_subscript_method_not_found)
       << BaseExpr->getType() << 0 << arrayRef;
       return false;
@@ -1040,11 +1054,13 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter() {
       S.Diag(AtIndexGetter->getLocation(), diag::note_method_declared_at) <<
         AtIndexGetter->getDeclName();
     }
+  } else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods) {
+    return findAtIndexGetter(true);
   }
   return true;
 }
 
-bool ObjCSubscriptOpBuilder::findAtIndexSetter() {
+bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useCompatibilityMethods) {
   if (AtIndexSetter)
     return true;
   
@@ -1072,20 +1088,32 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter() {
     return false;
   }
   
+  const char* const methodName = "setObject";
+  const char* subscriptSelectorName = 0;  
   if (!arrayRef) {
     // dictionary subscripting.
     // - (void)setObject:(id)object forKeyedSubscript:(id)key;
+    if (!useCompatibilityMethods) {
+      subscriptSelectorName = "forKeyedSubscript";
+    } else {
+      subscriptSelectorName = "forKey";
+    }
     IdentifierInfo *KeyIdents[] = {
-      &S.Context.Idents.get("setObject"),
-      &S.Context.Idents.get("forKeyedSubscript")
+      &S.Context.Idents.get(methodName),
+      &S.Context.Idents.get(subscriptSelectorName)
     };
     AtIndexSetterSelector = S.Context.Selectors.getSelector(2, KeyIdents);
   }
   else {
     // - (void)setObject:(id)object atIndexedSubscript:(NSInteger)index;
+    if (!useCompatibilityMethods) {
+      subscriptSelectorName = "atIndexedSubscript";
+    } else {
+      subscriptSelectorName = "atIndex";
+    }
     IdentifierInfo *KeyIdents[] = {
-      &S.Context.Idents.get("setObject"),
-      &S.Context.Idents.get("atIndexedSubscript")
+      &S.Context.Idents.get(methodName),
+      &S.Context.Idents.get(subscriptSelectorName)
     };
     AtIndexSetterSelector = S.Context.Selectors.getSelector(2, KeyIdents);
   }
@@ -1134,6 +1162,9 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter() {
   
   if (!AtIndexSetter) {
     if (!receiverIdType) {
+      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods) {
+        return findAtIndexSetter(true);
+      }
       S.Diag(BaseExpr->getExprLoc(), 
              diag::err_objc_subscript_method_not_found)
       << BaseExpr->getType() << 1 << arrayRef;
@@ -1179,6 +1210,8 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter() {
         err = true;
       }
     }
+  else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods)
+    return findAtIndexSetter(true);
 
   return !err;
 }
