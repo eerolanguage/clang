@@ -7845,6 +7845,7 @@ static inline BinaryOperatorKind ConvertTokenKindToBinaryOpcode(
   case tok::ampamp:               Opc = BO_LAnd; break;
   case tok::pipepipe:             Opc = BO_LOr; break;
   case tok::equal:                Opc = BO_Assign; break;
+  case tok::colonequal:           Opc = BO_Assign; break;
   case tok::starequal:            Opc = BO_MulAssign; break;
   case tok::slashequal:           Opc = BO_DivAssign; break;
   case tok::percentequal:         Opc = BO_RemAssign; break;
@@ -8239,11 +8240,19 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
   // Emit warnings for tricky precedence issues, e.g. "bitfield & 0x4 == 0"
   DiagnoseBinOpPrecedence(*this, Opc, TokLoc, LHSExpr, RHSExpr);
 
-  // Eero support for objc object binary operators
-  if (getLangOpts().Eero && !PP.isInSystemHeader() &&
-      LHSExpr->getType()->isObjCObjectPointerType() && 
-      RHSExpr->getType()->isObjCObjectPointerType()) {
-    return ActOnObjectBinOp(S, TokLoc, Kind, Opc, LHSExpr, RHSExpr);
+  if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+    // Look for improper use of ':='
+    if (Kind == tok::colonequal) {
+      SourceLocation loc = LHSExpr->getLocStart();
+      SmallVector<char, 64> buffer;
+      StringRef variableName = getPreprocessor().getSpelling(loc, buffer);
+      Diag(TokLoc, diag::err_redefinition) << variableName;
+    }
+    // Eero support for objc object binary operators
+    if (LHSExpr->getType()->isObjCObjectPointerType() && 
+        RHSExpr->getType()->isObjCObjectPointerType()) {
+      return ActOnObjectBinOp(S, TokLoc, Kind, Opc, LHSExpr, RHSExpr);
+    }
   }
 
   return BuildBinOp(S, TokLoc, Opc, LHSExpr, RHSExpr);
