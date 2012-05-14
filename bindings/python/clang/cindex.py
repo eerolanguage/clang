@@ -1024,6 +1024,28 @@ class Cursor(Structure):
         return self._type
 
     @property
+    def canonical(self):
+        """Return the canonical Cursor corresponding to this Cursor.
+
+        The canonical cursor is the cursor which is representative for the
+        underlying entity. For example, if you have multiple forward
+        declarations for the same class, the canonical cursor for the forward
+        declarations will be identical.
+        """
+        if not hasattr(self, '_canonical'):
+            self._canonical = Cursor_canonical(self)
+
+        return self._canonical
+
+    @property
+    def result_type(self):
+        """Retrieve the Type of the result for this Cursor."""
+        if not hasattr(self, '_result_type'):
+            self._result_type = Type_get_result(self.type)
+
+        return self._result_type
+
+    @property
     def underlying_typedef_type(self):
         """Return the underlying type of a typedef declaration.
 
@@ -2141,6 +2163,11 @@ Cursor_ref = lib.clang_getCursorReferenced
 Cursor_ref.argtypes = [Cursor]
 Cursor_ref.restype = Cursor
 Cursor_ref.errcheck = Cursor.from_result
+
+Cursor_canonical = lib.clang_getCanonicalCursor
+Cursor_canonical.argtypes = [Cursor]
+Cursor_canonical.restype = Cursor
+Cursor_canonical.errcheck = Cursor.from_result
 
 Cursor_type = lib.clang_getCursorType
 Cursor_type.argtypes = [Cursor]
