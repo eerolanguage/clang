@@ -19,6 +19,7 @@
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
+#include "clang/AST/ASTConsumer.h"
 using namespace clang;
 
 
@@ -1149,6 +1150,14 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
 
   // For Eero: used to track generated names (for making them unique)
   llvm::StringSet<> GeneratedNames;
+
+  // For Eero: support for optional method parameters
+  bool isOptional = false;
+  llvm::SmallVector<bool, 12> IsParamOptionalFlags;
+  llvm::SmallVector<UnqualifiedId, 12> ArgIds;
+  llvm::SmallVector<ExprResult, 12> DefaultExprs;
+  BalancedDelimiterTracker T(*this, tok::l_square);
+  T.setOptional();
   
   while (1) {
     ParsedAttributes paramAttrs(AttrFactory);
@@ -1189,15 +1198,19 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       return 0;
     }
 
-    // Eero supports default argument variable names
-    if (isEero && (Tok.isAtStartOfLine() || Tok.is(tok::comma))) {
+    // Eero supports default argument-variable names
+    if (isEero && (Tok.isAtStartOfLine() || 
+                   Tok.is(tok::comma) ||  
+                   (isOptional && Tok.is(tok::r_square)) ||
+                   (MethodDefinition && Tok.is(tok::equal) && 
+                    (ArgInfos.size() > 0)))) { // can't be first param
       std::string generatedName;
       // derive arg var name from selector piece
       if (SelIdent)
         generatedName = NameFromCamelCase(SelIdent->getName());
       else
         generatedName = "_";
-      if (!CurParsedObjCImpl) {
+      if (!MethodDefinition) {
         // make the name unique to avoid compiler warnings:
         // name, name__1, name__2, ..., name__0 
         if (GeneratedNames.count(generatedName)) {
@@ -1235,10 +1248,50 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     allParamAttrs.takeAllFrom(paramAttrs.getPool());
 
     if (isEero) {
+      if (MethodDefinition) {
+        if (isOptional || Tok.is(tok::equal)) { // default values for opt params
+          if (Tok.is(tok::equal)) {
+            if (ArgInfos.size() > 1) { // can't be first parameter
+              isOptional = true;
+              ConsumeToken(); // "="
+              DefaultExprs.push_back(ParseAssignmentExpression());
+            } else {
+              Diag(Tok, diag::err_not_allowed) << "'='";
+            }
+          } else {
+            Diag(Tok, diag::err_expected_equal_after) << ArgInfo.Name;
+            DefaultExprs.push_back(ExprError());
+          }
+        }
+        UnqualifiedId ArgName;
+        ArgName.setIdentifier(ArgInfo.Name, ArgInfo.NameLoc);
+        ArgIds.push_back(ArgName);
+      }
+      if (isOptional) {
+        T.consumeClose(); // ']'
+        IsParamOptionalFlags.push_back(true);
+        isOptional = false; // reset for next param
+      } else {
+        IsParamOptionalFlags.push_back(false);
+      }      
       if (!Tok.isAtStartOfLine() && Tok.is(tok::comma)) {
-        if (NextToken().isNot(tok::ellipsis) && 
-            NextToken().isNot(tok::kw_return)) {
-          ConsumeToken(); // eat the comma
+        if (NextToken().isNot(tok::kw_return) && 
+            NextToken().isNot(tok::ellipsis)) {
+          ConsumeToken(); // eat the comma          
+          // Check if the next param is optional
+          if (Tok.is(tok::l_square)) {
+            if (NextToken().isNot(tok::kw_return) && 
+                NextToken().isNot(tok::ellipsis)) {
+              isOptional = true;
+              T.consumeOpen();
+            } else {
+              ConsumeAnyToken(); // the '['
+              Diag(Tok, diag::err_expected_selector_for_method)
+                << SourceRange(mLoc, Tok.getLocation());
+              SkipUntil(tok::r_square, true);
+              return 0;
+            }
+          }
         }
       } else {
         break;
@@ -1316,8 +1369,161 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                                         methodAttrs.getList(),
                                         MethodImplKind, isVariadic, MethodDefinition);
   
+  if (isEero) {
+    ParseOptionalMethodDecl(mLoc, mType, DSRet, ReturnType, methodAttrs,
+                            MethodImplKind, MethodDefinition, isVariadic,
+                            Sel, CParamInfo, IsParamOptionalFlags,
+                            KeyIdents, ArgInfos, KeyLocs, ArgIds, DefaultExprs);
+  }
+
   PD.complete(Result);
   return Result;
+}
+
+// Eero support for optional method parameters
+//
+void 
+Parser::ParseOptionalMethodDecl(SourceLocation mLoc,
+                                tok::TokenKind mType,
+                                ObjCDeclSpec DSRet,
+                                ParsedType ReturnType,
+                                ParsedAttributes &attrs,
+                                tok::ObjCKeywordKind MethodImplKind,
+                                bool MethodDefinition,
+                                bool isVariadic,
+                                Selector Sel,
+                                SmallVector<DeclaratorChunk::ParamInfo, 8> &CParamInfo,
+                                llvm::SmallVector<bool, 12> &IsParamOptionalFlags,
+                                SmallVector<IdentifierInfo *, 12> &KeyIdents,
+                                SmallVector<Sema::ObjCArgInfo, 12> &ArgInfos,
+                                SmallVector<SourceLocation, 12> &KeyLocs,
+                                llvm::SmallVector<UnqualifiedId, 12> &ArgIds,
+                                llvm::SmallVector<ExprResult, 12> &DefaultExprs) {
+
+  unsigned OptionalParamsCount = 0;
+  for (unsigned i = 0; i < IsParamOptionalFlags.size(); i++) {
+    if (IsParamOptionalFlags[i]) {
+      OptionalParamsCount++;
+    }
+  }
+
+  // List to be consumed during looping
+  llvm::SmallVector<bool, 12> ParamOptionalFlags(IsParamOptionalFlags);
+
+  while (OptionalParamsCount) {
+    // Start with 1 since first parameter cannot be optional
+    for (unsigned i = 1; i < ArgInfos.size(); i++) {
+      if (ParamOptionalFlags[i]) {  // if an optional parameter
+        ParsingDeclRAIIObject OptPD(*this, ParsingDeclRAIIObject::NoParent);
+        ParseScope OptPrototypeScope(this,
+                                  Scope::FunctionPrototypeScope|Scope::DeclScope);
+        OptionalParamsCount--;
+        ParamOptionalFlags.erase(ParamOptionalFlags.begin() + i);
+        KeyIdents.erase(KeyIdents.begin() + i);
+        ArgInfos.erase(ArgInfos.begin() + i);
+        KeyLocs.erase(KeyLocs.begin() + i);
+             
+        Selector PartialSel = PP.getSelectorTable().getSelector(KeyIdents.size(),
+                                                   &KeyIdents[0]);
+
+        Decl *OptDecl = Actions.ActOnMethodDeclaration(
+                                      getCurScope(), mLoc, Tok.getLocation(),
+                                      mType, DSRet, ReturnType, 
+                                      KeyLocs, PartialSel, &ArgInfos[0], 
+                                      CParamInfo.data(), CParamInfo.size(),
+                                      attrs.getList(),
+                                      MethodImplKind, isVariadic, MethodDefinition);
+        OptPrototypeScope.Exit();
+        OptPD.complete(OptDecl);
+        
+        if (MethodDefinition) { // generate methods for optional/default parameters
+          ParseMethodDefaultParams(mLoc, OptDecl, Sel, ReturnType,
+                                   IsParamOptionalFlags, ArgIds, DefaultExprs);
+        }        
+      }
+    }
+  }
+}
+
+// Eero support for method default parameters
+//
+void
+Parser::ParseMethodDefaultParams(SourceLocation mLoc, 
+                                 Decl *OptDecl,
+                                 Selector Sel,
+                                 ParsedType ReturnType,
+                                 llvm::SmallVector<bool, 12> &IsParamOptionalFlags,
+                                 llvm::SmallVector<UnqualifiedId, 12> &ArgIds,
+                                 llvm::SmallVector<ExprResult, 12> &DefaultExprs) {
+  // "self" identifier, for generated method body message
+  UnqualifiedId SelfName;
+  IdentifierInfo &SelfII = PP.getIdentifierTable().get("self"); 
+  SelfName.setIdentifier(&SelfII, SourceLocation());
+
+  // Enter a scope for the method body.
+  ParseScope BodyScope(this,
+                       Scope::ObjCMethodScope|Scope::FnScope|Scope::DeclScope);
+  CXXScopeSpec EmptyScopeSpec;
+
+  // Tell the actions module that we have entered a method definition with the
+  // specified Declarator for the method.
+  Actions.ActOnStartOfObjCMethodDef(getCurScope(), OptDecl);
+
+  // Build list of argument expressions for generated method body,
+  // which will be a message sent to self.
+  //
+  ExprVector ArgExprs(Actions);
+  bool doneReplacingThisPass = false; // just one replacement per pass
+  for (unsigned i = 0, j = 0; i < ArgIds.size(); i++) {
+    if (!doneReplacingThisPass && 
+        IsParamOptionalFlags[i] && 
+        ArgIds[i].isValid()) {
+      ArgIds[i].clear(); // "consume" the default parameter name
+      doneReplacingThisPass = true;
+    }
+    if (ArgIds[i].isValid()) { // use the parameter variable name
+      ArgExprs.push_back(
+          Actions.ActOnIdExpression(getCurScope(), 
+                                    EmptyScopeSpec, SourceLocation(),
+                                    ArgIds[i], false, false, 0).take());
+    } else { // use the parameter default expression
+      ExprResult DefaultExpr = DefaultExprs[j++];
+      if (!DefaultExpr.isInvalid())
+        ArgExprs.push_back(DefaultExpr.get());               
+    }
+  }
+
+  ExprResult SelfExpr = 
+      Actions.ActOnIdExpression(getCurScope(), 
+                                EmptyScopeSpec, SourceLocation(),
+                                SelfName, false, false, 0);
+  ExprResult MessageExpr = 
+      Actions.ActOnInstanceMessage(getCurScope(), 
+                                   SelfExpr.get(), 
+                                   Sel,
+                                   mLoc, mLoc, mLoc,
+                                   MultiExprArg(Actions, 
+                                                ArgExprs.take(), 
+                                                ArgExprs.size()));
+  StmtResult FnBody;
+  if (MessageExpr.isInvalid())
+    FnBody = StmtError();
+  else if (Actions.GetTypeFromParser(ReturnType)->isVoidType())
+    FnBody = StmtResult(MessageExpr.take());
+  else
+    FnBody = Actions.ActOnReturnStmt(mLoc, MessageExpr.take());
+
+  // If the function body could not built, make a bogus compoundstmt.
+  if (FnBody.isInvalid())
+      FnBody = Actions.ActOnCompoundStmt(mLoc, mLoc,
+                                         MultiStmtArg(Actions), false);
+  // Leave the function body scope.
+  BodyScope.Exit();
+
+  Actions.ActOnFinishFunctionBody(OptDecl, FnBody.take());
+
+  DeclGroupPtrTy DGroup = Actions.ConvertDeclToDeclGroup(OptDecl);
+  Actions.getASTConsumer().HandleTopLevelDecl(DGroup.get());
 }
 
 ///   objc-protocol-refs:

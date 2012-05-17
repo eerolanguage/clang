@@ -1213,6 +1213,36 @@ private:
 
   Decl *ParseObjCMethodDefinition();
 
+  // Eero: for optional method parameters
+  //
+  void ParseOptionalMethodDecl(SourceLocation mLoc,
+                               tok::TokenKind mType,
+                               ObjCDeclSpec DSRet,
+                               ParsedType ReturnType,
+                               ParsedAttributes &attrs,
+                               tok::ObjCKeywordKind MethodImplKind,
+                               bool MethodDefinition,
+                               bool isVariadic,
+                               Selector Sel,
+                               SmallVector<DeclaratorChunk::ParamInfo, 8> &CParamInfo,
+                               llvm::SmallVector<bool, 12> &IsParamOptionalFlags,
+                               SmallVector<IdentifierInfo *, 12> &KeyIdents,
+                               SmallVector<Sema::ObjCArgInfo, 12> &ArgInfos,
+                               SmallVector<SourceLocation, 12> &KeyLocs,
+                               llvm::SmallVector<UnqualifiedId, 12> &ArgIds,
+                               llvm::SmallVector<ExprResult, 12> &DefaultExprs);
+  
+  // Eero support for method default parameters
+  //
+  void ParseMethodDefaultParams(SourceLocation mLoc, 
+                                Decl *OptDecl,
+                                Selector Sel,
+                                ParsedType ReturnType,
+                                llvm::SmallVector<bool, 12> &IsParamOptionalFlags,
+                                llvm::SmallVector<UnqualifiedId, 12> &ArgIds,
+                                llvm::SmallVector<ExprResult, 12> &DefaultExprs);
+
+
   //===--------------------------------------------------------------------===//
   // C99 6.5: Expressions.
 
