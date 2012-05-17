@@ -1637,9 +1637,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
 
     // Check for extraneous top-level semicolon.
     if (Tok.is(tok::semi)) {
-      Diag(Tok, diag::ext_extra_ivar_semi)
-        << FixItHint::CreateRemoval(Tok.getLocation());
-      ConsumeToken();
+      ConsumeExtraSemi(InstanceVariableList);
       continue;
     }
 
@@ -3207,12 +3205,13 @@ Parser::ParseObjCProtocolExpression(SourceLocation AtLoc) {
     return ExprError(Diag(Tok, diag::err_expected_ident));
 
   IdentifierInfo *protocolId = Tok.getIdentifierInfo();
-  ConsumeToken();
+  SourceLocation ProtoIdLoc = ConsumeToken();
 
   T.consumeClose();
 
   return Owned(Actions.ParseObjCProtocolExpression(protocolId, AtLoc, ProtoLoc,
                                                    T.getOpenLocation(),
+                                                   ProtoIdLoc,
                                                    T.getCloseLocation()));
 }
 

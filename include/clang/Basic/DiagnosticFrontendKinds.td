@@ -48,8 +48,6 @@ def err_fe_unable_to_interface_with_target : Error<
     "unable to interface with target machine">;
 def err_fe_unable_to_open_output : Error<
     "unable to open output file '%0': '%1'">;
-def err_fe_unable_to_rename_temp : Error<
-    "unable to rename temporary '%0' to output file '%1': '%2'">;
 def err_fe_unable_to_open_logfile : Error<
     "unable to open logfile file '%0': '%1'">;
 def err_fe_pth_file_has_no_source_header : Error<
@@ -94,13 +92,13 @@ def warn_unknown_warning_option : Warning<
     InGroup<DiagGroup<"unknown-warning-option"> >;
 def warn_unknown_negative_warning_option : Warning<
     "unknown warning option '%0'?">,
-    InGroup<DiagGroup<"unknown-warning-option"> >, DefaultIgnore;
+    InGroup<DiagGroup<"unknown-warning-option"> >;
 def warn_unknown_warning_option_suggest : Warning<
     "unknown warning option '%0'; did you mean '%1'?">,
     InGroup<DiagGroup<"unknown-warning-option"> >;
 def warn_unknown_negative_warning_option_suggest : Warning<
     "unknown warning option '%0'; did you mean '%1'?">,
-    InGroup<DiagGroup<"unknown-warning-option"> >, DefaultIgnore;
+    InGroup<DiagGroup<"unknown-warning-option"> >;
 def warn_unknown_warning_specifier : Warning<
     "unknown %0 warning specifier: '%1'">,
     InGroup<DiagGroup<"unknown-warning-option"> >;

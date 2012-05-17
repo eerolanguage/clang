@@ -22,6 +22,7 @@
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
+#include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/EvaluatedExprVisitor.h"
@@ -2422,8 +2423,8 @@ CheckPrintfHandler::HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier
         S.PDiag(diag::warn_printf_conversion_argument_type_mismatch)
           << ATR.getRepresentativeTypeName(S.Context) << Ex->getType()
           << Ex->getSourceRange(),
-        getLocationOfByte(CS.getStart()),
-        /*IsStringLocation*/true,
+        Ex->getLocStart(),
+        /*IsStringLocation*/false,
         getSpecifierRange(startSpecifier, specifierLen),
         FixItHint::CreateReplacement(
           getSpecifierRange(startSpecifier, specifierLen),
@@ -2435,8 +2436,8 @@ CheckPrintfHandler::HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier
           << ATR.getRepresentativeTypeName(S.Context) << Ex->getType()
           << getSpecifierRange(startSpecifier, specifierLen)
           << Ex->getSourceRange(),
-        getLocationOfByte(CS.getStart()),
-        true,
+        Ex->getLocStart(),
+        /*IsStringLocation*/false,
         getSpecifierRange(startSpecifier, specifierLen));
     }
   }
@@ -2590,8 +2591,8 @@ bool CheckScanfHandler::HandleScanfSpecifier(
         S.PDiag(diag::warn_printf_conversion_argument_type_mismatch)
           << ATR.getRepresentativeTypeName(S.Context) << Ex->getType()
           << Ex->getSourceRange(),
-        getLocationOfByte(CS.getStart()),
-        /*IsStringLocation*/true,
+        Ex->getLocStart(),
+        /*IsStringLocation*/false,
         getSpecifierRange(startSpecifier, specifierLen),
         FixItHint::CreateReplacement(
           getSpecifierRange(startSpecifier, specifierLen),
@@ -2601,8 +2602,8 @@ bool CheckScanfHandler::HandleScanfSpecifier(
         S.PDiag(diag::warn_printf_conversion_argument_type_mismatch)
           << ATR.getRepresentativeTypeName(S.Context) << Ex->getType()
           << Ex->getSourceRange(),
-        getLocationOfByte(CS.getStart()),
-        /*IsStringLocation*/true,
+        Ex->getLocStart(),
+        /*IsStringLocation*/false,
         getSpecifierRange(startSpecifier, specifierLen));
     }
   }
@@ -4081,8 +4082,17 @@ void DiagnoseFloatingLiteralImpCast(Sema &S, FloatingLiteral *FL, QualType T,
       == llvm::APFloat::opOK && isExact)
     return;
 
+  SmallString<16> PrettySourceValue;
+  Value.toString(PrettySourceValue);
+  SmallString<16> PrettyTargetValue;
+  if (T->isSpecificBuiltinType(BuiltinType::Bool))
+    PrettyTargetValue = IntegerValue == 0 ? "false" : "true";
+  else
+    IntegerValue.toString(PrettyTargetValue);
+
   S.Diag(FL->getExprLoc(), diag::warn_impcast_literal_float_to_integer)
-    << FL->getType() << T << FL->getSourceRange() << SourceRange(CContext);
+    << FL->getType() << T.getUnqualifiedType() << PrettySourceValue
+    << PrettyTargetValue << FL->getSourceRange() << SourceRange(CContext);
 }
 
 std::string PrettyPrintInRange(const llvm::APSInt &Value, IntRange Range) {
@@ -4149,7 +4159,6 @@ void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
         }
       }
     }
-    return; // Other casts to bool are not checked.
   }
 
   // Strip vector types.
@@ -4213,7 +4222,7 @@ void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
     }
 
     // If the target is integral, always warn.    
-    if ((TargetBT && TargetBT->isInteger())) {
+    if (TargetBT && TargetBT->isInteger()) {
       if (S.SourceMgr.isInSystemMacro(CC))
         return;
       
@@ -4241,11 +4250,17 @@ void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
     SourceLocation Loc = E->getSourceRange().getBegin();
     if (Loc.isMacroID())
       Loc = S.SourceMgr.getImmediateExpansionRange(Loc).first;
-    S.Diag(Loc, diag::warn_impcast_null_pointer_to_integer)
-        << T << clang::SourceRange(CC)
-        << FixItHint::CreateReplacement(Loc, S.getFixItZeroLiteralForType(T));
+    if (!Loc.isMacroID() || CC.isMacroID())
+      S.Diag(Loc, diag::warn_impcast_null_pointer_to_integer)
+          << T << clang::SourceRange(CC)
+          << FixItHint::CreateReplacement(Loc, S.getFixItZeroLiteralForType(T));
     return;
   }
+
+  // TODO: remove this early return once the false positives for constant->bool
+  // in templates, macros, etc, are reduced or removed.
+  if (Target->isSpecificBuiltinType(BuiltinType::Bool))
+    return;
 
   IntRange SourceRange = GetExprRange(S.Context, E);
   IntRange TargetRange = IntRange::forTargetOfCanonicalType(S.Context, Target);
@@ -4331,14 +4346,15 @@ void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
   return;
 }
 
-void CheckConditionalOperator(Sema &S, ConditionalOperator *E, QualType T);
+void CheckConditionalOperator(Sema &S, ConditionalOperator *E,
+                              SourceLocation CC, QualType T);
 
 void CheckConditionalOperand(Sema &S, Expr *E, QualType T,
                              SourceLocation CC, bool &ICContext) {
   E = E->IgnoreParenImpCasts();
 
   if (isa<ConditionalOperator>(E))
-    return CheckConditionalOperator(S, cast<ConditionalOperator>(E), T);
+    return CheckConditionalOperator(S, cast<ConditionalOperator>(E), CC, T);
 
   AnalyzeImplicitConversions(S, E, CC);
   if (E->getType() != T)
@@ -4346,9 +4362,8 @@ void CheckConditionalOperand(Sema &S, Expr *E, QualType T,
   return;
 }
 
-void CheckConditionalOperator(Sema &S, ConditionalOperator *E, QualType T) {
-  SourceLocation CC = E->getQuestionLoc();
-
+void CheckConditionalOperator(Sema &S, ConditionalOperator *E,
+                              SourceLocation CC, QualType T) {
   AnalyzeImplicitConversions(S, E->getCond(), CC);
 
   bool Suspicious = false;
@@ -4390,7 +4405,7 @@ void AnalyzeImplicitConversions(Sema &S, Expr *OrigE, SourceLocation CC) {
   // were being fed directly into the output.
   if (isa<ConditionalOperator>(E)) {
     ConditionalOperator *CO = cast<ConditionalOperator>(E);
-    CheckConditionalOperator(S, CO, T);
+    CheckConditionalOperator(S, CO, CC, T);
     return;
   }
 

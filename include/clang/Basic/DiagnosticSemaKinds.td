@@ -693,6 +693,8 @@ def err_incomplete_synthesized_property : Error<
 
 def error_property_ivar_type : Error<
   "type of property %0 (%1) does not match type of ivar %2 (%3)">;
+def error_property_accessor_type : Error<
+  "type of property %0 (%1) does not match type of accessor %2 (%3)">;
 def error_ivar_in_superclass_use : Error<
   "property %0 attempting to use ivar %1 declared in super class %2">;
 def error_weak_property : Error<
@@ -1548,6 +1550,8 @@ def err_undeclared_nsstring : Error<
   "cannot box a string value because NSString has not been declared">;
 def err_objc_illegal_boxed_expression_type : Error<
   "illegal type %0 used in a boxed expression">;
+def err_objc_incomplete_boxed_expression_type : Error<
+  "incomplete type %0 used in a boxed expression">;
 def err_undeclared_nsarray : Error<
   "NSArray must be available to use Objective-C array literals">;
 def err_undeclared_nsdictionary : Error<
@@ -1789,8 +1793,7 @@ def warn_impcast_bitfield_precision_constant : Warning<
   "implicit truncation from %2 to bitfield changes value from %0 to %1">,
   InGroup<ConstantConversion>;
 def warn_impcast_literal_float_to_integer : Warning<
-  "implicit conversion turns literal floating-point number into integer: "
-  "%0 to %1">,
+  "implicit conversion from %0 to %1 changes value from %2 to %3">,
   InGroup<LiteralConversion>;
 def warn_impcast_string_literal_to_bool : Warning<
   "implicit conversion turns string literal into bool: %0 to %1">,
@@ -2054,9 +2057,9 @@ def note_ovl_candidate_arity_one : Note<"candidate "
     "constructor (the implicit move constructor)|"
     "function (the implicit copy assignment operator)|"
     "function (the implicit move assignment operator)|"
-    "constructor (inherited)}0 %select{|template }1"
-    "not viable: requires%select{ at least| at most|}2 argument %3, but "
-    "%plural{0:none|:%4}4 were provided">;
+    "constructor (inherited)}0 %select{|template }1not viable: "
+    "%select{requires at least|allows at most single|requires single}2 "
+    "argument %3, but %plural{0:no|:%4}4 arguments were provided">;
 
 def note_ovl_candidate_deleted : Note<
     "candidate %select{function|function|constructor|"
@@ -3032,6 +3035,9 @@ def err_redefinition_of_enumerator : Error<"redefinition of enumerator %0">;
 def err_duplicate_member : Error<"duplicate member %0">;
 def err_misplaced_ivar : Error<
   "ivars may not be placed in %select{categories|class extension}0">;
+def warn_ivars_in_interface : Warning<
+  "declaration of ivars in the interface is deprecated">,
+  InGroup<DiagGroup<"interface-ivars">>, DefaultIgnore;
 def ext_enum_value_not_int : Extension<
   "ISO C restricts enumerator values to range of 'int' (%0 is too "
   "%select{small|large}1)">;
@@ -4584,7 +4590,7 @@ def err_typecheck_call_too_few_args : Error<
 def err_typecheck_call_too_few_args_one : Error<
   "too few %select{|||execution configuration }0arguments to "
   "%select{function|block|method|kernel function}0 call, "
-  "argument %1 was not specified">;
+  "single argument %1 was not specified">;
 def err_typecheck_call_too_few_args_at_least : Error<
   "too few %select{|||execution configuration }0arguments to "
   "%select{function|block|method|kernel function}0 call, "
@@ -4597,10 +4603,18 @@ def err_typecheck_call_too_many_args : Error<
   "too many %select{|||execution configuration }0arguments to "
   "%select{function|block|method|kernel function}0 call, "
   "expected %1, have %2">;
+def err_typecheck_call_too_many_args_one : Error<
+  "too many %select{|||execution configuration }0arguments to "
+  "%select{function|block|method|kernel function}0 call, "
+  "expected single argument %1, have %2 arguments">;
 def err_typecheck_call_too_many_args_at_most : Error<
   "too many %select{|||execution configuration }0arguments to "
   "%select{function|block|method|kernel function}0 call, "
   "expected at most %1, have %2">;
+def err_typecheck_call_too_many_args_at_most_one : Error<
+  "too many %select{|||execution configuration }0arguments to "
+  "%select{function|block|method|kernel function}0 call, "
+  "expected at most single argument %1, have %2 arguments">;
 def note_callee_decl : Note<
   "%0 declared here">;
 def note_defined_here : Note<"%0 defined here">;
@@ -4996,60 +5010,33 @@ def warn_cxx98_compat_explicit_conversion_functions : Warning<
   InGroup<CXX98Compat>, DefaultIgnore;
 
 // C++11 defaulted functions
-def err_defaulted_default_ctor_params : Error<
-  "an explicitly-defaulted default constructor must have no parameters">;
-def err_defaulted_copy_ctor_params : Error<
-  "an explicitly-defaulted copy constructor must have exactly one parameter">;
-def err_defaulted_copy_ctor_volatile_param : Error<
-  "the parameter for an explicitly-defaulted copy constructor may not be "
-  "volatile">;
-def err_defaulted_copy_ctor_const_param : Error<
-  "the parameter for this explicitly-defaulted copy constructor is const, but "
-  "a member or base requires it to be non-const">;
-def err_defaulted_copy_assign_params : Error<
-  "an explicitly-defaulted copy assignment operator must have exactly one "
-  "parameter">;
-def err_defaulted_copy_assign_return_type : Error<
-  "an explicitly-defaulted copy assignment operator must return an unqualified "
-  "lvalue reference to its class type">;
+def err_defaulted_special_member_params : Error<
+  "an explicitly-defaulted %select{|copy |move }0constructor cannot "
+  "have default arguments">;
+def err_defaulted_special_member_return_type : Error<
+  "explicitly-defaulted %select{copy|move}0 assignment operator must "
+  "return %1">;
+def err_defaulted_special_member_quals : Error<
+  "an explicitly-defaulted %select{copy|move}0 assignment operator may not "
+  "have 'const', 'constexpr' or 'volatile' qualifiers">;
+def err_defaulted_special_member_volatile_param : Error<
+  "the parameter for an explicitly-defaulted %select{<<ERROR>>|"
+  "copy constructor|move constructor|copy assignment operator|"
+  "move assignment operator|<<ERROR>>}0 may not be volatile">;
+def err_defaulted_special_member_move_const_param : Error<
+  "the parameter for an explicitly-defaulted move "
+  "%select{constructor|assignment operator}0 may not be const">;
+def err_defaulted_special_member_copy_const_param : Error<
+  "the parameter for this explicitly-defaulted copy "
+  "%select{constructor|assignment operator}0 is const, but a member or base "
+  "requires it to be non-const">;
+def err_defaulted_special_member_copy_non_const_param : Error<
+  "explicitly-defaulted copy %select{constructor|assignment operator}0 with "
+  "a non-const parameter must be defaulted outside the class, unless a base or "
+  "member requires the parameter to be non-const">;
 def err_defaulted_copy_assign_not_ref : Error<
   "the parameter for an explicitly-defaulted copy assignment operator must be an "
   "lvalue reference type">;
-def err_defaulted_copy_assign_volatile_param : Error<
-  "the parameter for an explicitly-defaulted copy assignment operator may not "
-  "be volatile">;
-def err_defaulted_copy_assign_const_param : Error<
-  "the parameter for this explicitly-defaulted copy assignment operator is "
-  "const, but a member or base requires it to be non-const">;
-def err_defaulted_copy_assign_quals : Error<
-  "an explicitly-defaulted copy assignment operator may not have 'const', "
-  "'constexpr' or 'volatile' qualifiers">;
-def err_defaulted_move_ctor_params : Error<
-  "an explicitly-defaulted move constructor must have exactly one parameter">;
-def err_defaulted_move_ctor_volatile_param : Error<
-  "the parameter for an explicitly-defaulted move constructor may not be "
-  "volatile">;
-def err_defaulted_move_ctor_const_param : Error<
-  "the parameter for an explicitly-defaulted move constructor may not be "
-  "const">;
-def err_defaulted_move_assign_params : Error<
-  "an explicitly-defaulted move assignment operator must have exactly one "
-  "parameter">;
-def err_defaulted_move_assign_return_type : Error<
-  "an explicitly-defaulted move assignment operator must return an unqualified "
-  "lvalue reference to its class type">;
-def err_defaulted_move_assign_not_ref : Error<
-  "the parameter for an explicitly-defaulted move assignment operator must be an "
-  "rvalue reference type">;
-def err_defaulted_move_assign_volatile_param : Error<
-  "the parameter for an explicitly-defaulted move assignment operator may not "
-  "be volatile">;
-def err_defaulted_move_assign_const_param : Error<
-  "the parameter for an explicitly-defaulted move assignment operator may not "
-  "be const">;
-def err_defaulted_move_assign_quals : Error<
-  "an explicitly-defaulted move assignment operator may not have 'const', "
-  "'constexpr' or 'volatile' qualifiers">;
 def err_incorrect_defaulted_exception_spec : Error<
   "exception specification of explicitly defaulted %select{default constructor|"
   "copy constructor|move constructor|copy assignment operator|move assignment "
@@ -5254,6 +5241,8 @@ def warn_case_value_overflow : Warning<
   "overflow converting case value to switch condition type (%0 to %1)">,
   InGroup<DiagGroup<"switch">>;
 def err_duplicate_case : Error<"duplicate case value '%0'">;
+def err_duplicate_case_differing_expr : Error<
+  "duplicate case value: '%0' and '%1' both equal '%2'">;
 def warn_case_empty_range : Warning<"empty case range specified">;
 def warn_missing_case_for_condition :
   Warning<"no case matching constant switch condition '%0'">;

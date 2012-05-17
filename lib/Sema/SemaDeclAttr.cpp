@@ -1642,47 +1642,28 @@ static void handleDestructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                                               priority));
 }
 
-static void handleDeprecatedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+template <typename AttrTy>
+static void handleAttrWithMessage(Sema &S, Decl *D, const AttributeList &Attr,
+                                  const char *Name) {
   unsigned NumArgs = Attr.getNumArgs();
   if (NumArgs > 1) {
     S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 1;
     return;
   }
-  
-  // Handle the case where deprecated attribute has a text message.
+
+  // Handle the case where the attribute has a text message.
   StringRef Str;
   if (NumArgs == 1) {
     StringLiteral *SE = dyn_cast<StringLiteral>(Attr.getArg(0));
     if (!SE) {
       S.Diag(Attr.getArg(0)->getLocStart(), diag::err_attribute_not_string)
-        << "deprecated";
+        << Name;
       return;
     }
     Str = SE->getString();
   }
 
-  D->addAttr(::new (S.Context) DeprecatedAttr(Attr.getRange(), S.Context, Str));
-}
-
-static void handleUnavailableAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  unsigned NumArgs = Attr.getNumArgs();
-  if (NumArgs > 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 1;
-    return;
-  }
-  
-  // Handle the case where unavailable attribute has a text message.
-  StringRef Str;
-  if (NumArgs == 1) {
-    StringLiteral *SE = dyn_cast<StringLiteral>(Attr.getArg(0));
-    if (!SE) {
-      S.Diag(Attr.getArg(0)->getLocStart(), 
-             diag::err_attribute_not_string) << "unavailable";
-      return;
-    }
-    Str = SE->getString();
-  }
-  D->addAttr(::new (S.Context) UnavailableAttr(Attr.getRange(), S.Context, Str));
+  D->addAttr(::new (S.Context) AttrTy(Attr.getRange(), S.Context, Str));
 }
 
 static void handleArcWeakrefUnavailableAttr(Sema &S, Decl *D, 
@@ -2508,26 +2489,19 @@ enum FormatAttrKind {
 /// getFormatAttrKind - Map from format attribute names to supported format
 /// types.
 static FormatAttrKind getFormatAttrKind(StringRef Format) {
-  // Check for formats that get handled specially.
-  if (Format == "NSString")
-    return NSStringFormat;
-  if (Format == "CFString")
-    return CFStringFormat;
-  if (Format == "strftime")
-    return StrftimeFormat;
+  return llvm::StringSwitch<FormatAttrKind>(Format)
+    // Check for formats that get handled specially.
+    .Case("NSString", NSStringFormat)
+    .Case("CFString", CFStringFormat)
+    .Case("strftime", StrftimeFormat)
 
-  // Otherwise, check for supported formats.
-  if (Format == "scanf" || Format == "printf" || Format == "printf0" ||
-      Format == "strfmon" || Format == "cmn_err" || Format == "vcmn_err" ||
-      Format == "zcmn_err" ||
-      Format == "kprintf")  // OpenBSD.
-    return SupportedFormat;
+    // Otherwise, check for supported formats.
+    .Cases("scanf", "printf", "printf0", "strfmon", SupportedFormat)
+    .Cases("cmn_err", "vcmn_err", "zcmn_err", SupportedFormat)
+    .Case("kprintf", SupportedFormat) // OpenBSD.
 
-  if (Format == "gcc_diag" || Format == "gcc_cdiag" ||
-      Format == "gcc_cxxdiag" || Format == "gcc_tdiag")
-    return IgnoredFormat;
-  
-  return InvalidFormat;
+    .Cases("gcc_diag", "gcc_cdiag", "gcc_cxxdiag", "gcc_tdiag", IgnoredFormat)
+    .Default(InvalidFormat);
 }
 
 /// Handle __attribute__((init_priority(priority))) attributes based on
@@ -3849,7 +3823,9 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_common:      handleCommonAttr      (S, D, Attr); break;
   case AttributeList::AT_constant:    handleConstantAttr    (S, D, Attr); break;
   case AttributeList::AT_constructor: handleConstructorAttr (S, D, Attr); break;
-  case AttributeList::AT_deprecated:  handleDeprecatedAttr  (S, D, Attr); break;
+  case AttributeList::AT_deprecated:
+    handleAttrWithMessage<DeprecatedAttr>(S, D, Attr, "deprecated");
+    break;
   case AttributeList::AT_destructor:  handleDestructorAttr  (S, D, Attr); break;
   case AttributeList::AT_ext_vector_type:
     handleExtVectorTypeAttr(S, scope, D, Attr);
@@ -3915,7 +3891,9 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_packed:      handlePackedAttr      (S, D, Attr); break;
   case AttributeList::AT_ms_struct:    handleMsStructAttr    (S, D, Attr); break;
   case AttributeList::AT_section:     handleSectionAttr     (S, D, Attr); break;
-  case AttributeList::AT_unavailable: handleUnavailableAttr (S, D, Attr); break;
+  case AttributeList::AT_unavailable:
+    handleAttrWithMessage<UnavailableAttr>(S, D, Attr, "unavailable");
+    break;
   case AttributeList::AT_objc_arc_weak_reference_unavailable: 
     handleArcWeakrefUnavailableAttr (S, D, Attr); 
     break;

@@ -2410,7 +2410,10 @@ public:
   };
 
   FullExprArg MakeFullExpr(Expr *Arg) {
-    return FullExprArg(ActOnFinishFullExpr(Arg).release());
+    return MakeFullExpr(Arg, Arg ? Arg->getExprLoc() : SourceLocation());
+  }
+  FullExprArg MakeFullExpr(Expr *Arg, SourceLocation CC) {
+    return FullExprArg(ActOnFinishFullExpr(Arg, CC).release());
   }
 
   StmtResult ActOnExprStmt(FullExprArg Expr);
@@ -3358,11 +3361,21 @@ public:
       ComputedEST = EST_Delayed;
     }
 
-    FunctionProtoType::ExtProtoInfo getEPI() const {
-      FunctionProtoType::ExtProtoInfo EPI;
+    /// \brief Have we been unable to compute this exception specification?
+    bool isDelayed() {
+      return ComputedEST == EST_Delayed;
+    }
+
+    /// \brief Overwrite an EPI's exception specification with this
+    /// computed exception specification.
+    void getEPI(FunctionProtoType::ExtProtoInfo &EPI) const {
       EPI.ExceptionSpecType = getExceptionSpecType();
       EPI.NumExceptions = size();
       EPI.Exceptions = data();
+    }
+    FunctionProtoType::ExtProtoInfo getEPI() const {
+      FunctionProtoType::ExtProtoInfo EPI;
+      getEPI(EPI);
       return EPI;
     }
   };
@@ -3837,7 +3850,11 @@ public:
   Stmt *MaybeCreateStmtWithCleanups(Stmt *SubStmt);
   ExprResult MaybeCreateExprWithCleanups(ExprResult SubExpr);
 
-  ExprResult ActOnFinishFullExpr(Expr *Expr);
+  ExprResult ActOnFinishFullExpr(Expr *Expr) {
+    return ActOnFinishFullExpr(Expr, Expr ? Expr->getExprLoc()
+                                          : SourceLocation());
+  }
+  ExprResult ActOnFinishFullExpr(Expr *Expr, SourceLocation CC);
   StmtResult ActOnFinishFullStmt(Stmt *Stmt);
 
   // Marks SS invalid if it represents an incomplete type.
@@ -4138,6 +4155,7 @@ public:
                                          SourceLocation AtLoc,
                                          SourceLocation ProtoLoc,
                                          SourceLocation LParenLoc,
+                                         SourceLocation ProtoIdLoc,
                                          SourceLocation RParenLoc);
 
   //===--------------------------------------------------------------------===//
@@ -4328,12 +4346,7 @@ public:
   Decl *ActOnConversionDeclarator(CXXConversionDecl *Conversion);
 
   void CheckExplicitlyDefaultedMethods(CXXRecordDecl *Record);
-  void CheckExplicitlyDefaultedDefaultConstructor(CXXConstructorDecl *Ctor);
-  void CheckExplicitlyDefaultedCopyConstructor(CXXConstructorDecl *Ctor);
-  void CheckExplicitlyDefaultedCopyAssignment(CXXMethodDecl *Method);
-  void CheckExplicitlyDefaultedMoveConstructor(CXXConstructorDecl *Ctor);
-  void CheckExplicitlyDefaultedMoveAssignment(CXXMethodDecl *Method);
-  void CheckExplicitlyDefaultedDestructor(CXXDestructorDecl *Dtor);
+  void CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD);
 
   //===--------------------------------------------------------------------===//
   // C++ Derived Classes

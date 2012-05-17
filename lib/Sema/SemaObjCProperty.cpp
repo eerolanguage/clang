@@ -664,6 +664,7 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
   }
   ObjCIvarDecl *Ivar = 0;
   bool CompleteTypeErr = false;
+  bool compat = true;
   // Check that we have a valid, previously declared ivar for @synthesize
   if (Synthesize) {
     // @synthesize
@@ -779,8 +780,8 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
     QualType IvarType = Context.getCanonicalType(Ivar->getType());
 
     // Check that type of property and its ivar are type compatible.
-    if (Context.getCanonicalType(PropertyIvarType) != IvarType) {
-      bool compat = false;
+    if (!Context.hasSameType(PropertyIvarType, IvarType)) {
+      compat = false;
       if (isa<ObjCObjectPointerType>(PropertyIvarType) 
           && isa<ObjCObjectPointerType>(IvarType))
         compat = 
@@ -800,19 +801,20 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
         // Note! I deliberately want it to fall thru so, we have a
         // a property implementation and to avoid future warnings.
       }
-
-      // FIXME! Rules for properties are somewhat different that those
-      // for assignments. Use a new routine to consolidate all cases;
-      // specifically for property redeclarations as well as for ivars.
-      QualType lhsType =Context.getCanonicalType(PropertyIvarType).getUnqualifiedType();
-      QualType rhsType =Context.getCanonicalType(IvarType).getUnqualifiedType();
-      if (lhsType != rhsType &&
-          lhsType->isArithmeticType()) {
-        Diag(PropertyDiagLoc, diag::error_property_ivar_type)
-          << property->getDeclName() << PropType
-          << Ivar->getDeclName() << IvarType;
-        Diag(Ivar->getLocation(), diag::note_ivar_decl);
-        // Fall thru - see previous comment
+      else {
+        // FIXME! Rules for properties are somewhat different that those
+        // for assignments. Use a new routine to consolidate all cases;
+        // specifically for property redeclarations as well as for ivars.
+        QualType lhsType =Context.getCanonicalType(PropertyIvarType).getUnqualifiedType();
+        QualType rhsType =Context.getCanonicalType(IvarType).getUnqualifiedType();
+        if (lhsType != rhsType &&
+            lhsType->isArithmeticType()) {
+          Diag(PropertyDiagLoc, diag::error_property_ivar_type)
+            << property->getDeclName() << PropType
+            << Ivar->getDeclName() << IvarType;
+          Diag(Ivar->getLocation(), diag::note_ivar_decl);
+          // Fall thru - see previous comment
+        }
       }
       // __weak is explicit. So it works on Canonical type.
       if ((PropType.isObjCGCWeak() && !IvarType.isObjCGCWeak() &&
@@ -846,7 +848,7 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
                                 : ObjCPropertyImplDecl::Dynamic),
                                Ivar, PropertyIvarLoc);
 
-  if (CompleteTypeErr)
+  if (CompleteTypeErr || !compat)
     PIDecl->setInvalidDecl();
 
   if (ObjCMethodDecl *getterMethod = property->getGetterMethodDecl()) {
@@ -1054,21 +1056,42 @@ Sema::DiagnosePropertyMismatch(ObjCPropertyDecl *Property,
 bool Sema::DiagnosePropertyAccessorMismatch(ObjCPropertyDecl *property,
                                             ObjCMethodDecl *GetterMethod,
                                             SourceLocation Loc) {
-  if (GetterMethod &&
-      !Context.hasSameType(GetterMethod->getResultType().getNonReferenceType(),
-                           property->getType().getNonReferenceType())) {
-    AssignConvertType result = Incompatible;
-    if (property->getType()->isObjCObjectPointerType())
-      result = CheckAssignmentConstraints(Loc, GetterMethod->getResultType(),
-                                          property->getType());
-    if (result != Compatible) {
-      Diag(Loc, diag::warn_accessor_property_type_mismatch)
-      << property->getDeclName()
-      << GetterMethod->getSelector();
-      Diag(GetterMethod->getLocation(), diag::note_declared_at);
-      return true;
+  if (!GetterMethod)
+    return false;
+  QualType GetterType = GetterMethod->getResultType().getNonReferenceType();
+  QualType PropertyIvarType = property->getType().getNonReferenceType();
+  bool compat = Context.hasSameType(PropertyIvarType, GetterType);
+  if (!compat) {
+    if (isa<ObjCObjectPointerType>(PropertyIvarType) && 
+        isa<ObjCObjectPointerType>(GetterType))
+      compat =
+        Context.canAssignObjCInterfaces(
+                                      PropertyIvarType->getAs<ObjCObjectPointerType>(),
+                                      GetterType->getAs<ObjCObjectPointerType>());
+    else if (CheckAssignmentConstraints(Loc, PropertyIvarType, GetterType) 
+              != Compatible) {
+          Diag(Loc, diag::error_property_accessor_type)
+            << property->getDeclName() << PropertyIvarType
+            << GetterMethod->getSelector() << GetterType;
+          Diag(GetterMethod->getLocation(), diag::note_declared_at);
+          return true;
+    } else {
+      compat = true;
+      QualType lhsType =Context.getCanonicalType(PropertyIvarType).getUnqualifiedType();
+      QualType rhsType =Context.getCanonicalType(GetterType).getUnqualifiedType();
+      if (lhsType != rhsType && lhsType->isArithmeticType())
+        compat = false;
     }
   }
+  
+  if (!compat) {
+    Diag(Loc, diag::warn_accessor_property_type_mismatch)
+    << property->getDeclName()
+    << GetterMethod->getSelector();
+    Diag(GetterMethod->getLocation(), diag::note_declared_at);
+    return true;
+  }
+
   return false;
 }
 

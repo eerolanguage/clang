@@ -65,7 +65,7 @@ void test3() {
   int c = ((((NULL)))); // expected-warning {{implicit conversion of NULL constant to 'int'}}
   int d;
   d = ((((NULL)))); // expected-warning {{implicit conversion of NULL constant to 'int'}}
-  bool bl = NULL; // FIXME: this should warn but we currently suppress a bunch of conversion-to-bool warnings including this one
+  bool bl = NULL; // expected-warning {{implicit conversion of NULL constant to 'bool'}}
   char ch = NULL; // expected-warning {{implicit conversion of NULL constant to 'char'}}
   unsigned char uch = NULL; // expected-warning {{implicit conversion of NULL constant to 'unsigned char'}}
   short sh = NULL; // expected-warning {{implicit conversion of NULL constant to 'short'}}
@@ -73,13 +73,22 @@ void test3() {
   // Use FileCheck to ensure we don't get any unnecessary macro-expansion notes 
   // (that don't appear as 'real' notes & can't be seen/tested by -verify)
   // CHECK-NOT: note:
-  // CHECK: note: expanded from macro 'FNULL'
-#define FNULL NULL
-  int a2 = FNULL; // expected-warning {{implicit conversion of NULL constant to 'int'}}
-  // CHECK-NOT: note:
   // CHECK: note: expanded from macro 'FINIT'
 #define FINIT int a3 = NULL;
   FINIT // expected-warning {{implicit conversion of NULL constant to 'int'}}
+
+  // we don't catch the case of #define FOO NULL ... int i = FOO; but that seems a bit narrow anyway
+  // and avoiding that helps us skip these cases:
+#define NULL_COND(cond) ((cond) ? &a : NULL)
+  bool bl2 = NULL_COND(true); // don't warn on NULL conversion through the conditional operator across a macro boundary
+  if (NULL_COND(true))
+    ;
+  while (NULL_COND(true))
+    ;
+  for (; NULL_COND(true); )
+    ;
+  do ;
+  while(NULL_COND(true));
 }
 
 namespace test4 {
@@ -103,4 +112,13 @@ namespace test4 {
     tmpl<int>(); // expected-note 2 {{in instantiation of default function argument expression for 'tmpl<int>' required here}}
     tmpl2<int*>();
   }
+}
+
+namespace test5 {
+  template<int I>
+  void func() {
+    bool b = I;
+  }
+
+  template void func<3>();
 }

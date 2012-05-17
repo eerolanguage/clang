@@ -158,14 +158,12 @@ getLVForTemplateArgumentList(const TemplateArgumentList &TArgs,
   return getLVForTemplateArgumentList(TArgs.data(), TArgs.size(), OnlyTemplate);
 }
 
-static bool shouldConsiderTemplateLV(const FunctionDecl *fn,
-                               const FunctionTemplateSpecializationInfo *spec) {
-  return !(spec->isExplicitSpecialization() &&
-           fn->hasAttr<VisibilityAttr>());
+static bool shouldConsiderTemplateLV(const FunctionDecl *fn) {
+  return !fn->hasAttr<VisibilityAttr>();
 }
 
 static bool shouldConsiderTemplateLV(const ClassTemplateSpecializationDecl *d) {
-  return !(d->isExplicitSpecialization() && d->hasAttr<VisibilityAttr>());
+  return !d->hasAttr<VisibilityAttr>();
 }
 
 static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
@@ -376,7 +374,7 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
     // this is an explicit specialization with a visibility attribute.
     if (FunctionTemplateSpecializationInfo *specInfo
                                = Function->getTemplateSpecializationInfo()) {
-      if (shouldConsiderTemplateLV(Function, specInfo)) {
+      if (shouldConsiderTemplateLV(Function)) {
         LV.merge(getLVForDecl(specInfo->getTemplate(),
                               true));
         const TemplateArgumentList &templateArgs = *specInfo->TemplateArguments;
@@ -407,8 +405,8 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
 
         // The arguments at which the template was instantiated.
         const TemplateArgumentList &TemplateArgs = spec->getTemplateArgs();
-        LV.merge(getLVForTemplateArgumentList(TemplateArgs,
-                                              OnlyTemplate));
+        LV.mergeWithMin(getLVForTemplateArgumentList(TemplateArgs,
+                                                     OnlyTemplate));
       }
     }
 
@@ -527,7 +525,7 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D, bool OnlyTemplate) {
     // the template parameters and arguments.
     if (FunctionTemplateSpecializationInfo *spec
            = MD->getTemplateSpecializationInfo()) {
-      if (shouldConsiderTemplateLV(MD, spec)) {
+      if (shouldConsiderTemplateLV(MD)) {
         LV.mergeWithMin(getLVForTemplateArgumentList(*spec->TemplateArguments,
                                                      OnlyTemplate));
         if (!OnlyTemplate)
@@ -635,9 +633,19 @@ LinkageInfo NamedDecl::getLinkageAndVisibility() const {
 
 llvm::Optional<Visibility> NamedDecl::getExplicitVisibility() const {
   // Use the most recent declaration of a variable.
-  if (const VarDecl *var = dyn_cast<VarDecl>(this))
-    return getVisibilityOf(var->getMostRecentDecl());
+  if (const VarDecl *Var = dyn_cast<VarDecl>(this)) {
+    if (llvm::Optional<Visibility> V =
+        getVisibilityOf(Var->getMostRecentDecl()))
+      return V;
 
+    if (Var->isStaticDataMember()) {
+      VarDecl *InstantiatedFrom = Var->getInstantiatedFromStaticDataMember();
+      if (InstantiatedFrom)
+        return getVisibilityOf(InstantiatedFrom);
+    }
+
+    return llvm::Optional<Visibility>();
+  }
   // Use the most recent declaration of a function, and also handle
   // function template specializations.
   if (const FunctionDecl *fn = dyn_cast<FunctionDecl>(this)) {

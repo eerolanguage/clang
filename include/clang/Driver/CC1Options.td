@@ -147,7 +147,7 @@ def dwarf_debug_flags : Separate<"-dwarf-debug-flags">,
 def fforbid_guard_variables : Flag<"-fforbid-guard-variables">,
   HelpText<"Emit an error if a C++ static local initializer would need a guard variable">;
 def no_implicit_float : Flag<"-no-implicit-float">,
-  HelpText<"Don't generate implicit floating point instructions (x86-only)">;
+  HelpText<"Don't generate implicit floating point instructions">;
 def fdump_vtable_layouts : Flag<"-fdump-vtable-layouts">,
   HelpText<"Dump the layouts of all vtables that will be emitted in a translation unit">;
 def femit_coverage_notes : Flag<"-femit-coverage-notes">,

@@ -3,6 +3,5 @@
 // CHECK: C++ requires
 invalid;
 
-// FIXME: clang-check doesn't like gcc driver on cygming.
-// XFAIL: cygwin,mingw32,win32
-
+// FIXME: JSON doesn't like path separator '\', on Win32 hosts.
+// XFAIL: win32
