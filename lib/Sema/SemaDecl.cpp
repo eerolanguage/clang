@@ -1698,9 +1698,30 @@ bool Sema::mergeDeclAttribute(Decl *D, InheritableAttr *Attr) {
   return false;
 }
 
+static const Decl *getDefinition(Decl *D) {
+  if (TagDecl *TD = dyn_cast<TagDecl>(D))
+    return TD->getDefinition();
+  if (VarDecl *VD = dyn_cast<VarDecl>(D))
+    return VD->getDefinition();
+  if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
+    const FunctionDecl* Def;
+    if (FD->hasBody(Def))
+      return Def;
+  }
+  return NULL;
+}
+
 /// mergeDeclAttributes - Copy attributes from the Old decl to the New one.
 void Sema::mergeDeclAttributes(Decl *New, Decl *Old,
                                bool MergeDeprecation) {
+  // attributes declared post-definition are currently ignored
+  const Decl *Def = getDefinition(Old);
+  if (Def && Def != New && New->hasAttrs()) {
+    Diag(New->getLocation(), diag::warn_attribute_precede_definition);
+    Diag(Def->getLocation(), diag::note_previous_definition);
+    New->dropAttrs();
+  }
+
   if (!Old->hasAttrs())
     return;
 
@@ -2227,10 +2248,11 @@ void Sema::mergeObjCMethodDecls(ObjCMethodDecl *newMethod,
   mergeDeclAttributes(newMethod, oldMethod, mergeDeprecation);
 
   // Merge attributes from the parameters.
-  ObjCMethodDecl::param_const_iterator oi = oldMethod->param_begin();
+  ObjCMethodDecl::param_const_iterator oi = oldMethod->param_begin(),
+                                       oe = oldMethod->param_end();
   for (ObjCMethodDecl::param_iterator
          ni = newMethod->param_begin(), ne = newMethod->param_end();
-       ni != ne; ++ni, ++oi)
+       ni != ne && oi != oe; ++ni, ++oi)
     mergeParamDeclAttributes(*ni, *oi, Context);
 
   CheckObjCMethodOverride(newMethod, oldMethod, true);
@@ -4259,18 +4281,6 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         CheckMemberSpecialization(NewVD, Previous))
       NewVD->setInvalidDecl();
   }
-  
-  // attributes declared post-definition are currently ignored
-  // FIXME: This should be handled in attribute merging, not
-  // here.
-  if (Previous.isSingleResult()) {
-    VarDecl *Def = dyn_cast<VarDecl>(Previous.getFoundDecl());
-    if (Def && (Def = Def->getDefinition()) &&
-        Def != NewVD && D.hasAttributes()) {
-      Diag(NewVD->getLocation(), diag::warn_attribute_precede_definition);
-      Diag(Def->getLocation(), diag::note_previous_definition);
-    }
-  }
 
   // If this is a locally-scoped extern C variable, update the map of
   // such variables.
@@ -5710,17 +5720,6 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       // generate them.
       Diag(NewFD->getLocation(), diag::ext_out_of_line_declaration)
         << D.getCXXScopeSpec().getRange();
-    }
-  }
-
-  // attributes declared post-definition are currently ignored
-  // FIXME: This should happen during attribute merging
-  if (D.isRedeclaration() && Previous.isSingleResult()) {
-    const FunctionDecl *Def;
-    FunctionDecl *PrevFD = dyn_cast<FunctionDecl>(Previous.getFoundDecl());
-    if (PrevFD && PrevFD->isDefined(Def) && D.hasAttributes()) {
-      Diag(NewFD->getLocation(), diag::warn_attribute_precede_definition);
-      Diag(Def->getLocation(), diag::note_previous_definition);
     }
   }
 
