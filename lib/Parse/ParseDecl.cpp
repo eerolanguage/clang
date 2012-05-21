@@ -1443,7 +1443,11 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
     D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_auto;
 
   const bool isTokenColonEqual = getLangOpts().Eero && !PP.isInSystemHeader() &&
-                                 TypeContainsAuto && Tok.is(tok::colonequal);
+                                 Tok.is(tok::colonequal);
+
+  if (isTokenColonEqual && !TypeContainsAuto) {
+    Diag(Tok, diag::err_invalid_token_after_declarator_suggest_equal) << ":=";
+  }
 
   // Parse declarator '=' initializer.
   // If a '==' or '+=' is found, suggest a fixit to '='.

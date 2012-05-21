@@ -579,6 +579,11 @@ Corrected:
       }
     }
     
+    if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+        NextToken.is(tok::colonequal)) {
+      return NameClassification::Unknown();
+    }
+
     // In C, we first see whether there is a tag type by the same name, in 
     // which case it's likely that the user just forget to write "enum", 
     // "struct", or "union".
