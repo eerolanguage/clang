@@ -1422,7 +1422,8 @@ unsigned StringLiteralParser::getOffsetOfStringByte(const Token &Tok,
   const char *SpellingEnd = SpellingPtr+TokLen;
 
   // Skip over the leading quote.
-  assert(SpellingPtr[0] == '"' && "Should be a string literal!");
+  assert((SpellingPtr[0] == '"' ||
+          (Features.Eero && SpellingPtr[0] == '\'')) && "Should be a string literal!");
   ++SpellingPtr;
 
   // Skip over bytes until we find the offset we're looking for.
