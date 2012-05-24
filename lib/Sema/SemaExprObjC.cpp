@@ -3576,3 +3576,61 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
 
   return result;
 }
+
+ExprResult Sema::ActOnRangeBinOp(Scope *S, SourceLocation TokLoc,
+                                 Expr *LHSExpr, Expr *RHSExpr) {
+  // Make sure type NSRange is defined.
+  ParsedType RangeType = 
+      getTypeName(PP.getIdentifierTable().get("NSRange"), TokLoc, S);
+  if (RangeType.get().isNull()) {
+    Diag(TokLoc, diag::err_incomplete_type)
+         << "NSRange" << LHSExpr->getSourceRange() << RHSExpr->getSourceRange();
+    return ExprError();
+  }
+
+  // Make sure LHS and RHS are integer expressions    
+  const QualType ltype = LHSExpr->getType();
+  if (ltype.isNull() || !ltype->isIntegerType()) {
+    Diag(LHSExpr->getLocStart(), diag::err_typecheck_converted_constant_expression) 
+         << ltype.getAsString() << "integer" << LHSExpr->getSourceRange();
+    return ExprError();
+  }
+  const QualType rtype = RHSExpr->getType();
+  if (rtype.isNull() || !rtype->isIntegerType()) {
+    Diag(RHSExpr->getLocStart(), diag::err_typecheck_converted_constant_expression)
+         << rtype.getAsString() << "integer" << RHSExpr->getSourceRange();
+    return ExprError();
+  }
+
+  SourceLocation LLoc = LHSExpr->getLocStart();
+  SourceLocation RLoc = RHSExpr->getLocEnd();
+
+  // If constant expressions, make sure neither left nor right are 
+  // negative. This is actually better checking than what NSMakeRange 
+  // or a compound literal initializer gets us.
+  llvm::APSInt lValue, rValue;
+  if (LHSExpr->isIntegerConstantExpr(lValue, Context) &&
+      lValue.isSigned() && lValue.isNegative())
+    // Report as error, but keep going
+    Diag(LHSExpr->getLocStart(), diag::err_dimension_expr_not_constant_integer)
+        << LHSExpr->getSourceRange();
+  if (RHSExpr->isIntegerConstantExpr(rValue, Context) &&
+      rValue.isSigned() && rValue.isNegative()) {
+    // Report as error, but keep going
+    Diag(RHSExpr->getLocStart(), diag::err_dimension_expr_not_constant_integer)
+        << RHSExpr->getSourceRange();
+  }
+
+  // Compute length from (right - left) + 1
+  ExprResult LengthExpr = ActOnBinOp(S, TokLoc, tok::minus, RHSExpr, LHSExpr);
+  llvm::APInt One(Context.getTypeSize(Context.IntTy), 1);
+  ExprResult OneExpr = IntegerLiteral::Create(Context, One, Context.IntTy, TokLoc);
+  LengthExpr = ActOnBinOp(S, TokLoc, tok::plus, LengthExpr.take(), OneExpr.take());
+
+  // Build (NSRange){ location, length } compound literal expression    
+  Expr* exprList[] = { LHSExpr, LengthExpr.take() };
+  MultiExprArg InitExprs(*this, exprList, 2);
+  ExprResult Result = ActOnInitList(LLoc, InitExprs, RLoc);
+  return ActOnCompoundLiteral(LLoc, RangeType, RLoc, Result.take());
+}
+

@@ -7842,6 +7842,7 @@ static inline BinaryOperatorKind ConvertTokenKindToBinaryOpcode(
   case tok::plus:                 Opc = BO_Add; break;
   case tok::minus:                Opc = BO_Sub; break;
   case tok::lessless:             Opc = BO_Shl; break;
+  case tok::ellipsis:             Opc = BO_Shl; break; // only reached with eero
   case tok::greatergreater:       Opc = BO_Shr; break;
   case tok::lessequal:            Opc = BO_LE; break;
   case tok::less:                 Opc = BO_LT; break;
@@ -8251,6 +8252,10 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
   DiagnoseBinOpPrecedence(*this, Opc, TokLoc, LHSExpr, RHSExpr);
 
   if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+    // NSRange literal
+    if (Kind == tok::ellipsis) {
+      return ActOnRangeBinOp(S, TokLoc, LHSExpr, RHSExpr);
+    }
     // Look for improper use of ':='
     if (Kind == tok::colonequal) {
       SourceLocation loc = LHSExpr->getLocStart();

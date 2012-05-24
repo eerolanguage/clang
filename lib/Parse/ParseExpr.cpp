@@ -34,7 +34,8 @@ using namespace clang;
 /// token.
 static prec::Level getBinOpPrecedence(tok::TokenKind Kind,
                                       bool GreaterThanIsOperator,
-                                      bool CPlusPlus0x) {
+                                      bool CPlusPlus0x,
+                                      bool EllipsisOperatorSupport = false) {
   switch (Kind) {
   case tok::greater:
     // C++ [temp.names]p3:
@@ -81,6 +82,7 @@ static prec::Level getBinOpPrecedence(tok::TokenKind Kind,
   case tok::lessequal:
   case tok::less:
   case tok::greaterequal:         return prec::Relational;
+  case tok::ellipsis:             if (!EllipsisOperatorSupport) return prec::Unknown;
   case tok::lessless:             return prec::Shift;
   case tok::plus:
   case tok::minus:                return prec::Additive;
@@ -226,6 +228,10 @@ ExprResult Parser::ParseAssignmentExpression(TypeCastState isTypeCast) {
   ExprResult LHS = ParseCastExpression(/*isUnaryExpression=*/false,
                                        /*isAddressOfOperand=*/false,
                                        isTypeCast);
+//  if (getLangOpts().Eero && !PP.isInSystemHeader() && Tok.is(tok::ellipsis) &&
+//      !isTypeCast && !LHS.isInvalid()) {
+//    return ParseRangeIfPresent(LHS);
+//  }
   return ParseRHSOfBinaryExpression(move(LHS), prec::Assignment);
 }
 
@@ -267,9 +273,12 @@ ExprResult Parser::ParseConstantExpression(TypeCastState isTypeCast) {
 /// LHS and has a precedence of at least MinPrec.
 ExprResult
 Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+
   prec::Level NextTokPrec = getBinOpPrecedence(Tok.getKind(),
                                                GreaterThanIsOperator,
-                                               getLangOpts().CPlusPlus0x);
+                                               getLangOpts().CPlusPlus0x,
+                                               isEero && (MinPrec <= prec::Assignment));
   SourceLocation ColonLoc;
 
   while (1) {
@@ -382,7 +391,7 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     // operator immediately to the right of the RHS.
     prec::Level ThisPrec = NextTokPrec;
     NextTokPrec = getBinOpPrecedence(Tok.getKind(), GreaterThanIsOperator,
-                                     getLangOpts().CPlusPlus0x);
+                                     getLangOpts().CPlusPlus0x, isEero);
 
     // Assignment and conditional expressions are right-associative.
     bool isRightAssoc = ThisPrec == prec::Conditional ||
@@ -410,7 +419,7 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
         LHS = ExprError();
 
       NextTokPrec = getBinOpPrecedence(Tok.getKind(), GreaterThanIsOperator,
-                                       getLangOpts().CPlusPlus0x);
+                                       getLangOpts().CPlusPlus0x, isEero);
     }
     assert(NextTokPrec <= ThisPrec && "Recursion didn't work!");
 

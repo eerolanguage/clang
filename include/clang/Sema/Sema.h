@@ -3060,6 +3060,10 @@ public:
                               tok::TokenKind Kind, BinaryOperatorKind Opc,
                               Expr *LHSExpr, Expr *RHSExpr);
 
+  // Eero: NSRange literal
+  ExprResult ActOnRangeBinOp(Scope *S, SourceLocation TokLoc,
+                             Expr *LHSExpr, Expr *RHSExpr);
+
   /// ActOnConditionalOp - Parse a ?: operation.  Note that 'LHS' may be null
   /// in the case of a the GNU conditional expr extension.
   ExprResult ActOnConditionalOp(SourceLocation QuestionLoc,
