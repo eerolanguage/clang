@@ -335,6 +335,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     return RValue::get(Builder.CreateCall(F, ArgValue));
   }
   case Builtin::BI__builtin_object_size: {
+    // We rely on constant folding to deal with expressions with side effects.
+    assert(!E->getArg(0)->HasSideEffects(getContext()) &&
+           "should have been constant folded");
+
     // We pass this builtin onto the optimizer so that it can
     // figure out the object size in more complex cases.
     llvm::Type *ResType = ConvertType(E->getType());
@@ -346,12 +350,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     assert(CI);
     uint64_t val = CI->getZExtValue();
     CI = ConstantInt::get(Builder.getInt1Ty(), (val & 0x2) >> 1);    
-    Value *Runtime = Builder.getInt32(0);  // FIXME: use BoundsChecking here?
     
     Value *F = CGM.getIntrinsic(Intrinsic::objectsize, ResType);
-    return RValue::get(Builder.CreateCall3(F,
-                                           EmitScalarExpr(E->getArg(0)),
-                                           CI, Runtime));
+    return RValue::get(Builder.CreateCall2(F, EmitScalarExpr(E->getArg(0)),CI));
   }
   case Builtin::BI__builtin_prefetch: {
     Value *Locality, *RW, *Address = EmitScalarExpr(E->getArg(0));

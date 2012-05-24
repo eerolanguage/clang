@@ -66,6 +66,19 @@ namespace test40 {
   // CHECK-HIDDEN: _ZN6test403fooIiE3barE = weak_odr global
 }
 
+namespace test41 {
+  // Unlike gcc we propagate the information that foo not only is hidden, but
+  // has been explicitly marked as so. This lets us produce a hidden undefined
+  // reference to bar.
+  struct __attribute__((visibility("hidden"))) foo {};
+  extern foo bar;
+  foo *zed() {
+    return &bar;
+  }
+  // CHECK: @_ZN6test413barE = external hidden global
+  // CHECK-HIDDEN: @_ZN6test413barE = external hidden global
+}
+
 // CHECK: @_ZN5Test425VariableInHiddenNamespaceE = hidden global i32 10
 // CHECK: @_ZN5Test71aE = hidden global
 // CHECK: @_ZN5Test71bE = global
@@ -775,4 +788,33 @@ namespace test39 {
 
   // GCC produces a default for this one. Why?
   // CHECK-HIDDEN: define weak_odr hidden void @_ZN6test391AINS_8hidden_tEE1BIS1_E4tempIS1_EEvv
+}
+
+namespace test42 {
+  struct HIDDEN foo {
+  };
+  template <class P>
+  struct bar {
+  };
+  template <>
+  struct HIDDEN bar<foo> {
+    DEFAULT static void zed();
+  };
+  void bar<foo>::zed() {
+  }
+  // CHECK: define hidden void @_ZN6test423barINS_3fooEE3zedEv
+  // CHECK-HIDDEN: define hidden void @_ZN6test423barINS_3fooEE3zedEv
+}
+
+namespace test43 {
+  struct HIDDEN foo {
+  };
+  template <class P>
+  void bar() {
+  }
+  template <>
+  DEFAULT void bar<foo>() {
+  }
+  // CHECK: define hidden void @_ZN6test433barINS_3fooEEEvv
+  // CHECK-HIDDEN: define hidden void @_ZN6test433barINS_3fooEEEvv
 }
