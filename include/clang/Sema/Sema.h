@@ -1767,6 +1767,7 @@ public:
   enum ObjCSubscriptKind {
     OS_Array,
     OS_Dictionary,
+    OS_Range,
     OS_Error
   };
   ObjCSubscriptKind CheckSubscriptingKind(Expr *FromE);

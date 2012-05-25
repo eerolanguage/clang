@@ -265,8 +265,8 @@ namespace {
                                        Expr *LHS, Expr *RHS);
    Expr *rebuildAndCaptureObject(Expr *syntacticBase);
    
-   bool findAtIndexGetter(bool useCompatibilityMethods = false);
-   bool findAtIndexSetter(bool useCompatibilityMethods = false);
+   bool findAtIndexGetter(bool useAlternateMethod = false);
+   bool findAtIndexSetter(bool useAlternateMethod = false);
   
    ExprResult buildGet();
    ExprResult buildSet(Expr *op, SourceLocation, bool);
@@ -866,6 +866,14 @@ Sema::ObjCSubscriptKind
   QualType T = FromE->getType();
   if (T->isIntegralOrEnumerationType())
     return OS_Array;
+
+  if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+    ParsedType RangeType = getTypeName(PP.getIdentifierTable().get("NSRange"), 
+                                       SourceLocation(), 
+                                       getCurScope());
+    if (!RangeType.get().isNull() && T == RangeType.get())
+      return OS_Range;
+  }
   
   // If we don't have a class type in C++, there's no way we can get an
   // expression of integral or enumeration type.
@@ -937,7 +945,7 @@ Sema::ObjCSubscriptKind
   return OS_Error;
 }
 
-bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
+bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useAlternateMethod) {
   if (AtIndexGetter)
     return true;
   
@@ -965,9 +973,15 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
   }
   const char* methodName = 0;
   if (!arrayRef) {
+    if (Res == Sema::OS_Range) {
+      if (!useAlternateMethod) {
+        methodName = "subarrayWithRange";
+      } else {
+        methodName = "substringWithRange";
+      }
     // dictionary subscripting.
     // - (id)objectForKeyedSubscript:(id)key;
-    if (!useCompatibilityMethods) {
+    } else if (!useAlternateMethod) {
       methodName = "objectForKeyedSubscript";
     } else {
       methodName = "objectForKey";
@@ -979,7 +993,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
   }
   else {
     // - (id)objectAtIndexedSubscript:(size_t)index;
-    if (!useCompatibilityMethods) {
+    if (!useAlternateMethod) {
       methodName = "objectAtIndexedSubscript";
     } else {
       methodName = "objectAtIndex";
@@ -996,7 +1010,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
   bool receiverIdType = (BaseT->isObjCIdType() ||
                          BaseT->isObjCQualifiedIdType());
   
-  if (!AtIndexGetter && S.getLangOpts().DebuggerObjCLiteral) {
+  if (!AtIndexGetter && S.getLangOpts().DebuggerObjCLiteral && Res != Sema::OS_Range) {
     AtIndexGetter = ObjCMethodDecl::Create(S.Context, SourceLocation(), 
                            SourceLocation(), AtIndexGetterSelector,
                            S.Context.getObjCIdType() /*ReturnType*/,
@@ -1023,8 +1037,11 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
 
   if (!AtIndexGetter) {
     if (!receiverIdType) {
-      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods) {
+      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod) {
         return findAtIndexGetter(true);
+      }
+      if (Res == Sema::OS_Range) {
+        arrayRef = true; // to change diag message to "array"
       }
       S.Diag(BaseExpr->getExprLoc(), diag::err_objc_subscript_method_not_found)
       << BaseExpr->getType() << 0 << arrayRef;
@@ -1039,7 +1056,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
   if (AtIndexGetter) {
     QualType T = AtIndexGetter->param_begin()[0]->getType();
     if ((arrayRef && !T->isIntegralOrEnumerationType()) ||
-        (!arrayRef && !T->isObjCObjectPointerType())) {
+        (!arrayRef && !T->isObjCObjectPointerType() && Res != Sema::OS_Range)) {
       S.Diag(RefExpr->getKeyExpr()->getExprLoc(), 
              arrayRef ? diag::err_objc_subscript_index_type
                       : diag::err_objc_subscript_key_type) << T;
@@ -1054,13 +1071,13 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useCompatibilityMethods) {
       S.Diag(AtIndexGetter->getLocation(), diag::note_method_declared_at) <<
         AtIndexGetter->getDeclName();
     }
-  } else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods) {
+  } else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod) {
     return findAtIndexGetter(true);
   }
   return true;
 }
 
-bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useCompatibilityMethods) {
+bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useAlternateMethod) {
   if (AtIndexSetter)
     return true;
   
@@ -1093,7 +1110,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useCompatibilityMethods) {
   if (!arrayRef) {
     // dictionary subscripting.
     // - (void)setObject:(id)object forKeyedSubscript:(id)key;
-    if (!useCompatibilityMethods) {
+    if (!useAlternateMethod) {
       subscriptSelectorName = "forKeyedSubscript";
     } else {
       subscriptSelectorName = "forKey";
@@ -1106,7 +1123,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useCompatibilityMethods) {
   }
   else {
     // - (void)setObject:(id)object atIndexedSubscript:(NSInteger)index;
-    if (!useCompatibilityMethods) {
+    if (!useAlternateMethod) {
       subscriptSelectorName = "atIndexedSubscript";
     } else {
       subscriptSelectorName = "atIndex";
@@ -1162,7 +1179,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useCompatibilityMethods) {
   
   if (!AtIndexSetter) {
     if (!receiverIdType) {
-      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods) {
+      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod) {
         return findAtIndexSetter(true);
       }
       S.Diag(BaseExpr->getExprLoc(), 
@@ -1210,7 +1227,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useCompatibilityMethods) {
         err = true;
       }
     }
-  else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useCompatibilityMethods)
+  else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod)
     return findAtIndexSetter(true);
 
   return !err;
