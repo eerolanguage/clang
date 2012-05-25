@@ -634,6 +634,10 @@ def warn_missing_explicit_synthesis : Warning <
 def warn_property_getter_owning_mismatch : Warning<
   "property declared as returning non-retained objects"
   "; getter returning retained objects">;
+def warn_property_setter_ambiguous_use : Warning<
+  "synthesized properties '%0' and '%1' both claim setter %2 -"
+  " use of this setter may cause unexpected behavior">,
+  InGroup<DiagGroup<"objc-multiple-property-setter-use">>;
 def err_ownin_getter_rule : Error<
   "property's synthesized getter follows Cocoa naming"
   " convention for returning 'owned' objects">;
@@ -1184,6 +1188,9 @@ def warn_uninit_self_reference_in_init : Warning<
 def warn_uninit_var : Warning<
   "variable %0 is uninitialized when used here">,
   InGroup<Uninitialized>, DefaultIgnore;
+def warn_sometimes_uninit_var : Warning<
+  "variable %0 is sometimes uninitialized when used here">,
+  InGroup<UninitializedSometimes>, DefaultIgnore;
 def warn_maybe_uninit_var :
   Warning<"variable %0 may be uninitialized when used here">,
     InGroup<UninitializedMaybe>, DefaultIgnore;
@@ -1192,12 +1199,21 @@ def note_uninit_var_def : Note<
 def warn_uninit_var_captured_by_block : Warning<
   "variable %0 is uninitialized when captured by block">,
   InGroup<Uninitialized>, DefaultIgnore;
+def warn_sometimes_uninit_var_captured_by_block : Warning<
+  "variable %0 is sometimes uninitialized when captured by block">,
+  InGroup<UninitializedSometimes>, DefaultIgnore;
 def warn_maybe_uninit_var_captured_by_block : Warning<
   "variable %0 may be uninitialized when captured by block">,
   InGroup<UninitializedMaybe>, DefaultIgnore;
 def warn_uninit_byref_blockvar_captured_by_block : Warning<
   "block pointer variable %0 is uninitialized when captured by block">,
   InGroup<Uninitialized>, DefaultIgnore;
+def note_sometimes_uninit_var_branch : Note<
+  "uninitialized use occurs whenever "
+  "%select{'%1' condition is %select{true|false}2|"
+  "'%1' loop %select{is entered|exits because its condition is false}2|"
+  "'%1' loop %select{condition is true|exits because its condition is false}2|"
+  "switch %1 is taken}0">;
 def note_block_var_fixit_add_initialization : Note<
   "maybe you meant to use __block %0">;
 def note_var_fixit_add_initialization : Note<
@@ -3048,7 +3064,7 @@ def err_misplaced_ivar : Error<
   "ivars may not be placed in %select{categories|class extension}0">;
 def warn_ivars_in_interface : Warning<
   "declaration of ivars in the interface is deprecated">,
-  InGroup<DiagGroup<"interface-ivars">>, DefaultIgnore;
+  InGroup<DiagGroup<"objc-interface-ivars">>, DefaultIgnore;
 def ext_enum_value_not_int : Extension<
   "ISO C restricts enumerator values to range of 'int' (%0 is too "
   "%select{small|large}1)">;
