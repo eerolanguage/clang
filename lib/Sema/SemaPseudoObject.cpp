@@ -868,10 +868,12 @@ Sema::ObjCSubscriptKind
     return OS_Array;
 
   if (getLangOpts().Eero && !PP.isInSystemHeader()) {
-    ParsedType RangeType = getTypeName(PP.getIdentifierTable().get("NSRange"), 
-                                       SourceLocation(), 
-                                       getCurScope());
-    if (!RangeType.get().isNull() && T == RangeType.get())
+    ParsedType NSRangeType = getTypeName(PP.getIdentifierTable().get("NSRange"), 
+                                         SourceLocation(), 
+                                         getCurScope());
+    if (!NSRangeType.get().isNull() && 
+        Context.getCanonicalType(T.getUnqualifiedType()) == 
+            Context.getCanonicalType(NSRangeType.get()))
       return OS_Range;
   }
   

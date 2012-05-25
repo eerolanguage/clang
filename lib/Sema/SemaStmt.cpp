@@ -1513,6 +1513,117 @@ Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
                                                    ForLoc, RParenLoc));
 }
 
+/// Eero: "for <int> i in <NSRange>" loop
+StmtResult 
+Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
+                          Stmt *First, 
+                          Expr* Second, 
+                          Stmt *Body) {
+
+  if (First == 0 || Second == 0)
+    return StmtError();
+
+  QualType FirstType;
+  bool hasDeclaration;
+  Expr* varExpr = 0;
+
+  if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
+    if (!DS->isSingleDecl())
+      return StmtError(Diag((*DS->decl_begin())->getLocation(),
+                       diag::err_toomany_element_decls));
+
+    hasDeclaration = true;  
+    Decl *D = DS->getSingleDecl();
+    FirstType = cast<ValueDecl>(D)->getType();
+
+    // C99 6.8.5p3: The declaration part of a 'for' statement shall only
+    // declare identifiers for objects having storage class 'auto' or
+    // 'register'.
+
+    VarDecl *VD = cast<VarDecl>(D);
+    if (VD->isLocalVarDecl() && !VD->hasLocalStorage())
+      return StmtError(Diag(VD->getLocation(), diag::err_non_variable_decl_in_for));
+
+    ValueDecl *valDecl = cast<ValueDecl>(D);
+    varExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, SourceLocation()).take();
+
+  } else {
+    varExpr = cast<Expr>(First);
+    if (!varExpr->isTypeDependent() && !varExpr->isLValue())
+      return StmtError(Diag(First->getLocStart(), diag::err_selector_element_not_lvalue)
+                         << First->getSourceRange());
+
+    hasDeclaration = false;
+    FirstType = static_cast<Expr*>(First)->getType();
+  }
+
+  CheckForLoopConditionalStatement(*this, Second, 0, Body);
+
+  DiagnoseUnusedExprResult(First);
+  DiagnoseUnusedExprResult(Body);
+
+  if (isa<NullStmt>(Body))
+    getCurCompoundScope().setHasEmptyLoopBodies();
+
+  if (!FirstType->isIntegerType())
+    Diag(ForLoc, diag::err_selector_element_type) << FirstType << First->getSourceRange();
+
+  // Begin loop at <NSRange>.location
+  CXXScopeSpec SS;
+  UnqualifiedId Name;
+  Name.setIdentifier(&(PP.getIdentifierTable().get("location")), Second->getLocStart());
+  ExprResult beginExpr = ActOnMemberAccessExpr(getCurScope(), 
+                                               Second, 
+                                               Second->getLocStart(), 
+                                               tok::period, 
+                                               SS, SourceLocation(), 
+                                               Name, 0, false);
+
+  // End loop at <NSRange>.location + <NSRange>.length
+  Name.setIdentifier(&(PP.getIdentifierTable().get("length")), Second->getLocStart());
+  ExprResult lengthExpr = ActOnMemberAccessExpr(getCurScope(),
+                                                Second, 
+                                                Second->getLocStart(), 
+                                                tok::period, 
+                                                SS, SourceLocation(),
+                                                Name, 0, false);
+
+  ExprResult endExpr =  CreateBuiltinBinOp(First->getLocStart(),
+                                           BO_Add,
+                                           beginExpr.get(),
+                                           lengthExpr.take());
+
+  ExprResult assignExpr = CreateBuiltinBinOp(First->getLocStart(),
+                                             BO_Assign,
+                                             varExpr,
+                                             beginExpr.take());
+  Stmt* initStmt; 
+  if (hasDeclaration) {
+    Stmt* statements[2] = { First, assignExpr.take() };
+    initStmt = new (Context) CompoundStmt(Context,
+                                          statements,
+                                          2,
+                                          SourceLocation(),
+                                          SourceLocation());
+  } else {
+    initStmt = assignExpr.take();
+  }
+
+  ExprResult condExpr = CreateBuiltinBinOp(SourceLocation(),
+                                           BO_LT,
+                                           varExpr,
+                                           endExpr.take() );
+
+  ExprResult incrExpr = CreateBuiltinUnaryOp(SourceLocation(),
+                                             UO_PostInc,
+                                             varExpr );
+
+  return Owned(new (Context) ForStmt(Context, initStmt, 
+                                     condExpr.take(), 0, 
+                                     incrExpr.take(), Body, ForLoc, 
+                                     First->getLocStart(), Second->getLocEnd()));
+}
+
 namespace {
 
 enum BeginEndFunction {
