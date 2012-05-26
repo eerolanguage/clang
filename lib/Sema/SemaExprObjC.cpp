@@ -81,6 +81,22 @@ ExprResult Sema::BuildObjCStringLiteral(SourceLocation AtLoc, StringLiteral *S){
   if (CheckObjCString(S))
     return true;
 
+  // Eero: make empty string literals mutable, but only when in local scope
+  if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+      S->getLength() == 0 && getCurScope() != TUScope) {
+    IdentifierInfo *NSIdent = &Context.Idents.get("NSMutableString");
+    NamedDecl *IF = LookupSingleName(TUScope, NSIdent, AtLoc, LookupOrdinaryName);
+    if (ObjCInterfaceDecl *StrIF = dyn_cast_or_null<ObjCInterfaceDecl>(IF)) {
+      QualType Ty = Context.getObjCInterfaceType(StrIF);
+      IdentifierInfo &II = PP.getIdentifierTable().get("new");      
+      Selector Sel = PP.getSelectorTable().getNullarySelector(&II);
+      TypeSourceInfo *receiverTypeInfo = Context.getTrivialTypeSourceInfo(Ty);      
+      return BuildClassMessage(receiverTypeInfo, Ty, 
+                               /*SuperLoc=*/SourceLocation(), Sel, /*Method=*/0,
+                               AtLoc, AtLoc, AtLoc, MultiExprArg());
+    }
+  }
+
   // Initialize the constant string interface lazily. This assumes
   // the NSString interface is seen in this translation unit. Note: We
   // don't use NSConstantString, since the runtime team considers this
@@ -605,10 +621,19 @@ ExprResult Sema::BuildObjCSubscriptExpression(SourceLocation RB, Expr *BaseExpr,
 }
 
 ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
+
+  NSArrayDecl = 0; // TODO: disables ALL NSArray class search caching. Fix?
+  NSAPI::NSClassIdKindKind arrayClassId;
+  if (!getLangOpts().Eero || PP.isInSystemHeader() || Elements.size() > 0) {
+    arrayClassId = NSAPI::ClassId_NSArray;
+  } else { // make empty array literals mutable
+    arrayClassId = NSAPI::ClassId_NSMutableArray;
+  }
+
   // Look up the NSArray class, if we haven't done so already.
   if (!NSArrayDecl) {
     NamedDecl *IF = LookupSingleName(TUScope,
-                                 NSAPIObj->getNSClassId(NSAPI::ClassId_NSArray),
+                                 NSAPIObj->getNSClassId(arrayClassId),
                                  SR.getBegin(),
                                  LookupOrdinaryName);
     NSArrayDecl = dyn_cast_or_null<ObjCInterfaceDecl>(IF);
@@ -616,7 +641,7 @@ ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
       NSArrayDecl =  ObjCInterfaceDecl::Create (Context,
                             Context.getTranslationUnitDecl(),
                             SourceLocation(),
-                            NSAPIObj->getNSClassId(NSAPI::ClassId_NSArray),
+                            NSAPIObj->getNSClassId(arrayClassId),
                             0, SourceLocation());
 
     if (!NSArrayDecl) {
@@ -726,17 +751,26 @@ ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
 ExprResult Sema::BuildObjCDictionaryLiteral(SourceRange SR, 
                                             ObjCDictionaryElement *Elements,
                                             unsigned NumElements) {
+
+  NSDictionaryDecl = 0; // TODO: disables ALL NSDictionary class search caching. Fix?
+  NSAPI::NSClassIdKindKind dictionaryClassId;
+  if (!getLangOpts().Eero || PP.isInSystemHeader() || NumElements > 0) {
+    dictionaryClassId = NSAPI::ClassId_NSDictionary;
+  } else { // make empty dictionary literals mutable
+    dictionaryClassId = NSAPI::ClassId_NSMutableDictionary;
+  }
+
   // Look up the NSDictionary class, if we haven't done so already.
   if (!NSDictionaryDecl) {
     NamedDecl *IF = LookupSingleName(TUScope,
-                            NSAPIObj->getNSClassId(NSAPI::ClassId_NSDictionary),
+                            NSAPIObj->getNSClassId(dictionaryClassId),
                             SR.getBegin(), LookupOrdinaryName);
     NSDictionaryDecl = dyn_cast_or_null<ObjCInterfaceDecl>(IF);
     if (!NSDictionaryDecl && getLangOpts().DebuggerObjCLiteral)
       NSDictionaryDecl =  ObjCInterfaceDecl::Create (Context,
                             Context.getTranslationUnitDecl(),
                             SourceLocation(),
-                            NSAPIObj->getNSClassId(NSAPI::ClassId_NSDictionary),
+                            NSAPIObj->getNSClassId(dictionaryClassId),
                             0, SourceLocation());
 
     if (!NSDictionaryDecl) {
