@@ -1247,6 +1247,10 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     return ExprError();
   }
   case tok::l_square:
+    if (isEero) {
+      Res = ParsePostfixExpressionSuffix(ParseObjCArrayLiteral(Tok.getLocation()));
+      break;
+    }
     if (getLangOpts().CPlusPlus0x) {
       if (getLangOpts().ObjC1) {
         // C++11 lambda expressions and Objective-C message sends both start with a
@@ -1262,8 +1266,14 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       Res = ParseLambdaExpression();
       break;
     }
-    if (getLangOpts().ObjC1 && !isEero) {
+    if (getLangOpts().ObjC1) {
       Res = ParseObjCMessageExpression();
+      break;
+    }
+    // FALL THROUGH.
+  case tok::l_brace:
+    if (isEero) {
+      Res = ParsePostfixExpressionSuffix(ParseObjCDictionaryLiteral(Tok.getLocation()));
       break;
     }
     // FALL THROUGH.

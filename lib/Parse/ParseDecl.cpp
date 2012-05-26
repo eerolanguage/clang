@@ -1438,21 +1438,21 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
   bool TypeContainsAuto =
     D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_auto;
 
-  const bool isTokenColonEqual = getLangOpts().Eero && !PP.isInSystemHeader() &&
-                                 Tok.is(tok::colonequal);
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isColonEqual = isEero && Tok.is(tok::colonequal);
 
-  if (isTokenColonEqual && !TypeContainsAuto) {
+  if (isColonEqual && !TypeContainsAuto) {
     Diag(Tok, diag::err_invalid_token_after_declarator_suggest_equal) << ":=";
   }
 
   // Parse declarator '=' initializer.
   // If a '==' or '+=' is found, suggest a fixit to '='.
-  if (isTokenEqualOrEqualTypo() || isTokenColonEqual) {
+  if (isTokenEqualOrEqualTypo() || isColonEqual) {
     ConsumeToken();
 
     // For Eero, look for type-inferred assignment to nil or Nil
     QualType nilOrNilType;    
-    if (isTokenColonEqual) {
+    if (isColonEqual) {
       SourceLocation loc = Tok.getLocation();
       if (Actions.findMacroSpelling(loc, "nil")) {
         nilOrNilType = Actions.Context.getObjCIdType();
@@ -1485,7 +1485,24 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
         return 0;
       }
       
-      ExprResult Init(ParseInitializer());
+      bool isDictionaryLiteral = false;
+      if (Tok.is(tok::l_brace) && isEero) {
+        if (isColonEqual) {
+          isDictionaryLiteral = true;
+        } else {
+          TypeSourceInfo *TInfo = Actions.GetTypeForDeclarator(D, getCurScope());
+          if (TInfo && TInfo->getType()->isObjCObjectPointerType()) {
+            isDictionaryLiteral = true;
+          }
+        }
+      }
+      
+      ExprResult Init;
+      if (!isDictionaryLiteral) {
+        Init = ParseInitializer();
+      } else {
+        Init = ParseAssignmentExpression();
+      }
 
       if (getLangOpts().CPlusPlus && D.getCXXScopeSpec().isSet()) {
         Actions.ActOnCXXExitDeclInitializer(getCurScope(), ThisDecl);
