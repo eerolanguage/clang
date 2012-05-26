@@ -1171,9 +1171,9 @@ void Sema::MarkUnusedFileScopedDecl(const DeclaratorDecl *D) {
       return; // First should already be in the vector.
   }
 
-   if (ShouldWarnIfUnusedFileScopedDecl(D))
-     UnusedFileScopedDecls.push_back(D);
- }
+  if (ShouldWarnIfUnusedFileScopedDecl(D))
+    UnusedFileScopedDecls.push_back(D);
+}
 
 static bool ShouldDiagnoseUnusedDecl(const NamedDecl *D) {
   if (D->isInvalidDecl())
