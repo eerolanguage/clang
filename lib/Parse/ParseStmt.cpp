@@ -102,6 +102,7 @@ Parser::ParseStatementOrDeclarationAfterAttributes(StmtVector &Stmts,
           ParsedAttributesWithRange &Attrs) {
   const char *SemiError = 0;
   StmtResult Res;
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
 
   // Cases in this switch statement should fall through if the parser expects
   // the token to end in a semicolon (in which case SemiError should be set),
@@ -130,8 +131,15 @@ Retry:
 
   case tok::identifier: {
     Token Next = NextToken();
-    if (Next.is(tok::colon) &&  // C99 6.8.1: labeled-statement
-        (!getLangOpts().Eero || PP.isInSystemHeader())) { // no labels in Eero
+
+    if (isEero) { // look for message sends (including unnamed selector case)
+      if ((Next.is(tok::identifier) && GetLookAheadToken(2).is(tok::colon)) ||
+          Next.is(tok::colon)) {
+        return ParseExprStatement();
+      }
+    }
+
+    if (Next.is(tok::colon)) { // C99 6.8.1: labeled-statement
       // identifier ':' statement
       return ParseLabeledStatement(Attrs);
     }
@@ -233,8 +241,7 @@ Retry:
 
   default: {
     // check for Eero "using prefix XX"
-    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
-        (Kind == tok::kw_using) &&
+    if (isEero && (Kind == tok::kw_using) &&
         GetLookAheadToken(1).is(tok::identifier) &&
         GetLookAheadToken(2).is(tok::identifier)) {
       const IdentifierInfo *II = NextToken().getIdentifierInfo();
@@ -265,7 +272,7 @@ Retry:
   }
 
   case tok::kw_throw:
-    if (getLangOpts().Eero)
+    if (isEero)
       return ParseObjCThrowStmt(Tok.getLocation());
     else
       ParseExprStatement();
@@ -305,7 +312,7 @@ Retry:
 
   case tok::kw_goto:                // C99 6.8.6.1: goto-statement
     // goto is still a keyword, but it can't be used in Eero
-    if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+    if (isEero) {
       Diag(Tok, diag::err_not_allowed) << "'goto'";
       ConsumeToken(); // the goto 
       ConsumeToken(); // the label
@@ -338,7 +345,7 @@ Retry:
   }
 
   case tok::kw_try:                 // C++ 15: try-block
-   if (!getLangOpts().Eero)
+   if (!isEero)
     return ParseCXXTryBlock();
    else
     return ParseObjCTryStmt(Tok.getLocation());
