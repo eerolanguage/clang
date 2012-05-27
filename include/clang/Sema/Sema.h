@@ -2198,7 +2198,7 @@ public:
   bool isPropertyReadonly(ObjCPropertyDecl *PropertyDecl,
                           ObjCInterfaceDecl *IDecl);
 
-  typedef llvm::DenseSet<Selector, llvm::DenseMapInfo<Selector> > SelectorSet;
+  typedef llvm::SmallPtrSet<Selector, 8> SelectorSet;
   typedef llvm::DenseMap<Selector, ObjCMethodDecl*> ProtocolsMethodsMap;
 
   /// CheckProtocolMethodDefs - This routine checks unimplemented
@@ -3064,6 +3064,9 @@ public:
   ExprResult ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
                               tok::TokenKind Kind, BinaryOperatorKind Opc,
                               Expr *LHSExpr, Expr *RHSExpr);
+
+  Selector SelectorForObjectBuiltinBinOp(tok::TokenKind Kind, 
+                                         QualType ClassType);
 
   // Eero: NSRange literal
   ExprResult ActOnRangeBinOp(Scope *S, SourceLocation TokLoc,

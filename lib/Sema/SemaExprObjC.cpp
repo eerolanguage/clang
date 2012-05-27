@@ -3591,7 +3591,6 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
                                   tok::TokenKind Kind, BinaryOperatorKind Opc,
                                   Expr *LHSExpr, Expr *RHSExpr) {
   ExprResult result = ExprError();  
-
   bool invert;
   std::string SelName = ConvertTokenKindToBinarySelectorName(Kind, invert);
 
@@ -3599,12 +3598,18 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
     IdentifierInfo &II = PP.getIdentifierTable().get(SelName);      
     Selector Sel = PP.getSelectorTable().getUnarySelector(&II);
     if (!Sel.isNull()) {
+      QualType LHSClassType = LHSExpr->getType()->getPointeeType();
+      // if method not defined for class of this object, check for builtin
+      if (!LookupMethodInObjectType(Sel, LHSClassType, true)) {
+        Selector builtinSel = SelectorForObjectBuiltinBinOp(Kind, LHSClassType);
+        if (!builtinSel.isNull()) {
+          Sel = builtinSel;
+        }
+      }
       result = ActOnInstanceMessage(S,
                                     LHSExpr, 
                                     Sel,
-                                    TokLoc,
-                                    TokLoc,
-                                    TokLoc,
+                                    TokLoc, TokLoc, TokLoc,
                                     MultiExprArg(*this, &RHSExpr, 1));
       if (invert) {
         result = ActOnUnaryOp(S, TokLoc, tok::exclaim, result.take());
@@ -3613,6 +3618,32 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
   }
 
   return result;
+}
+
+Selector Sema::SelectorForObjectBuiltinBinOp(tok::TokenKind Kind, 
+                                             QualType ClassType) {
+  Selector selector;
+  std::string SelName;
+  switch (Kind) {
+    case tok::plus:
+      SelName = "stringByAppendingString";
+      break;
+    case tok::lessless:
+      SelName = "appendString";
+      break;
+    default:
+      break;
+  }
+
+  if (!SelName.empty()) {  
+    IdentifierInfo &II = PP.getIdentifierTable().get(SelName);      
+    Selector Sel = PP.getSelectorTable().getUnarySelector(&II);
+    if (LookupMethodInObjectType(Sel, ClassType, true)) {
+      selector = Sel;
+    }
+  }
+
+  return selector;
 }
 
 ExprResult Sema::ActOnRangeBinOp(Scope *S, SourceLocation TokLoc,
