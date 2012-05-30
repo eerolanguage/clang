@@ -1529,22 +1529,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // This comes from the default translation the driver + cc1
   // would do to enable flag_pic.
-  //
-  // FIXME: Centralize this code.
-  Arg *LastPICArg = 0;
-  for (ArgList::const_iterator I = Args.begin(), E = Args.end(); I != E; ++I) {
-    if ((*I)->getOption().matches(options::OPT_fPIC) ||
-        (*I)->getOption().matches(options::OPT_fno_PIC) ||
-        (*I)->getOption().matches(options::OPT_fpic) ||
-        (*I)->getOption().matches(options::OPT_fno_pic) ||
-        (*I)->getOption().matches(options::OPT_fPIE) ||
-        (*I)->getOption().matches(options::OPT_fno_PIE) ||
-        (*I)->getOption().matches(options::OPT_fpie) ||
-        (*I)->getOption().matches(options::OPT_fno_pie)) {
-      LastPICArg = *I;
-      (*I)->claim();
-    }
-  }
+
+  Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
+                                    options::OPT_fpic, options::OPT_fno_pic,
+                                    options::OPT_fPIE, options::OPT_fno_PIE,
+                                    options::OPT_fpie, options::OPT_fno_pie);
   bool PICDisabled = false;
   bool PICEnabled = false;
   bool PICForPIE = false;
@@ -1839,15 +1828,22 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                       D.CCLogDiagnosticsFilename : "-");
   }
 
-  // Special case debug options to only pass -g to clang. This is
-  // wrong.
+  // Use the last option from "-g" group. "-gline-tables-only" is
+  // preserved, all other debug options are substituted with "-g".
+  // FIXME: We should eventually do the following:
+  //   1) collapse gdb and dwarf variations to -g (as we do now);
+  //   2) support things like -gtoggle;
+  //   3) ignore flag options like -gstrict-dwarf or -grecord-gcc-switches;
+  //   4) produce a driver error on unsupported formats
+  //      (-gstabs, -gcoff, -gvms etc.)
   Args.ClaimAllArgs(options::OPT_g_Group);
-  if (Arg *A = Args.getLastArg(options::OPT_g_Group))
-    if (!A->getOption().matches(options::OPT_g0)) {
+  if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
+    if (A->getOption().matches(options::OPT_gline_tables_only)) {
+      CmdArgs.push_back("-gline-tables-only");
+    } else if (!A->getOption().matches(options::OPT_g0)) {
       CmdArgs.push_back("-g");
     }
-  if (Args.hasArg(options::OPT_gline_tables_only))
-    CmdArgs.push_back("-gline-tables-only");
+  }
 
   Args.AddAllArgs(CmdArgs, options::OPT_ffunction_sections);
   Args.AddAllArgs(CmdArgs, options::OPT_fdata_sections);
@@ -5142,6 +5138,18 @@ void linuxtools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-EB");
     else
       CmdArgs.push_back("-EL");
+
+    Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
+                                      options::OPT_fpic, options::OPT_fno_pic,
+                                      options::OPT_fPIE, options::OPT_fno_PIE,
+                                      options::OPT_fpie, options::OPT_fno_pie);
+    if (LastPICArg &&
+        (LastPICArg->getOption().matches(options::OPT_fPIC) ||
+         LastPICArg->getOption().matches(options::OPT_fpic) ||
+         LastPICArg->getOption().matches(options::OPT_fPIE) ||
+         LastPICArg->getOption().matches(options::OPT_fpie))) {
+      CmdArgs.push_back("-KPIC");
+    }
   }
 
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,

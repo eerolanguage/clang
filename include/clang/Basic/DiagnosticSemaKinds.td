@@ -20,6 +20,10 @@ def warn_variables_not_in_loop_body : Warning<
   "used in loop condition not modified in loop body">,
   InGroup<DiagGroup<"loop-analysis">>, DefaultIgnore;
 
+def warn_identical_enum_values : Warning<
+  "all elements of %select{anonymous enum|%1}0 are initialized with literals "
+  "to value %2">, InGroup<DiagGroup<"unique-enum">>;
+
 // Constant expressions
 def err_expr_not_ice : Error<
   "expression is not an %select{integer|integral}0 constant expression">;
@@ -339,7 +343,7 @@ def warn_dyn_class_memaccess : Warning<
 def note_bad_memaccess_silence : Note<
   "explicitly cast the pointer to silence this warning">;
 def warn_sizeof_pointer_expr_memaccess : Warning<
-  "argument to 'sizeof' in %0 call is the same expression as the "
+  "argument to 'sizeof' in '%0' call is the same expression as the "
   "%select{destination|source}1; did you mean to "
   "%select{dereference it|remove the addressof|provide an explicit length}2?">,
   InGroup<DiagGroup<"sizeof-pointer-memaccess">>;

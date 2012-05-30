@@ -308,19 +308,21 @@ void MicrosoftCXXNameMangler::mangleNumber(const llvm::APSInt &Value) {
     mangleNumber(llvm::APSInt(Value.abs()));
     return;
   }
-  if (Value.uge(1) && Value.ule(10))
-    (Value-llvm::APSInt(llvm::APInt(Value.getBitWidth(), 1, Value.isSigned()))).print(Out,
-                                                                                   false);
-  else {
+  llvm::APSInt Temp(Value);
+  if (Value.uge(1) && Value.ule(10)) {
+    --Temp;
+    Temp.print(Out, false);
+  } else {
     // We have to build up the encoding in reverse order, so it will come
     // out right when we write it out.
     char Encoding[64];
     char *EndPtr = Encoding+sizeof(Encoding);
     char *CurPtr = EndPtr;
-    llvm::APSInt Fifteen(Value.getBitWidth(), 15);
+    llvm::APSInt NibbleMask(Value.getBitWidth(), Value.isUnsigned());
+    NibbleMask = 0xf;
     for (int i = 0, e = Value.getActiveBits() / 4; i != e; ++i) {
-      *--CurPtr = 'A' + Value.And(Fifteen).lshr(i*4).getLimitedValue(15);
-      Fifteen = Fifteen.shl(4);
+      *--CurPtr = 'A' + Temp.And(NibbleMask).getLimitedValue(0xf);
+      Temp = Temp.lshr(4);
     };
     Out.write(CurPtr, EndPtr-CurPtr);
     Out << '@';

@@ -1371,7 +1371,8 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
   // unqualified lookup.  This is useful when (for example) the
   // original lookup would not have found something because it was a
   // dependent name.
-  DeclContext *DC = SS.isEmpty() ? CurContext : 0;
+  DeclContext *DC = (SS.isEmpty() && !CallsUndergoingInstantiation.empty())
+    ? CurContext : 0;
   while (DC) {
     if (isa<CXXRecordDecl>(DC)) {
       LookupQualifiedName(R, DC);
@@ -3799,20 +3800,19 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   // Make the call expr early, before semantic checks.  This guarantees cleanup
   // of arguments and function on error.
   CallExpr *TheCall;
-  if (Config) {
+  if (Config)
     TheCall = new (Context) CUDAKernelCallExpr(Context, Fn,
                                                cast<CallExpr>(Config),
                                                Args, NumArgs,
                                                Context.BoolTy,
                                                VK_RValue,
                                                RParenLoc);
-  } else {
+  else
     TheCall = new (Context) CallExpr(Context, Fn,
                                      Args, NumArgs,
                                      Context.BoolTy,
                                      VK_RValue,
                                      RParenLoc);
-  }
 
   unsigned BuiltinID = (FDecl ? FDecl->getBuiltinID() : 0);
 
