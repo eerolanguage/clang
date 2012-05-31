@@ -1241,7 +1241,8 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
 /// Eero namespace-like prefix support
 bool Sema::LookupNameWithPrefixes(LookupResult &R, Scope *S) {
   bool found = false;
-  if (R.getLookupKind() == Sema::LookupOrdinaryName) {
+  if (R.getLookupKind() == Sema::LookupOrdinaryName ||
+      R.getLookupKind() == LookupObjCProtocolName) {
     const DeclarationName Name = R.getLookupName();
     const std::string& name = Name.getAsString();
 

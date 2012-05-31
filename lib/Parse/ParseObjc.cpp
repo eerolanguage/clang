@@ -3197,12 +3197,14 @@ Parser::ParseObjCEncodeExpression(SourceLocation AtLoc) {
 ///       @protocol ( protocol-name )
 ExprResult
 Parser::ParseObjCProtocolExpression(SourceLocation AtLoc) {
-  SourceLocation ProtoLoc = ConsumeToken();
+  const bool isNotLiteral = !getLangOpts().Eero || Tok.isNot(tok::less);
+  SourceLocation ProtoLoc = isNotLiteral ?  ConsumeToken() : Tok.getLocation();
 
-  if (Tok.isNot(tok::l_paren))
+  if (Tok.isNot(tok::l_paren) && isNotLiteral)
     return ExprError(Diag(Tok, diag::err_expected_lparen_after) << "@protocol");
 
-  BalancedDelimiterTracker T(*this, tok::l_paren);
+  const tok::TokenKind LDelimiterKind = isNotLiteral ? tok::l_paren : tok::less;
+  BalancedDelimiterTracker T(*this, LDelimiterKind);
   T.consumeOpen();
 
   if (Tok.isNot(tok::identifier))
@@ -3222,15 +3224,19 @@ Parser::ParseObjCProtocolExpression(SourceLocation AtLoc) {
 ///     objc-selector-expression
 ///       @selector '(' objc-keyword-selector ')'
 ExprResult Parser::ParseObjCSelectorExpression(SourceLocation AtLoc) {
-  SourceLocation SelectorLoc = ConsumeToken();
+  const bool isNotLiteral = !getLangOpts().Eero || Tok.isNot(tok::pipe);
+  SourceLocation SelectorLoc = isNotLiteral ? ConsumeToken() : Tok.getLocation();
 
-  if (Tok.isNot(tok::l_paren))
+  if (Tok.isNot(tok::l_paren) && isNotLiteral)
     return ExprError(Diag(Tok, diag::err_expected_lparen_after) << "@selector");
 
   SmallVector<IdentifierInfo *, 12> KeyIdents;
   SourceLocation sLoc;
+
+  const tok::TokenKind LDelimiterKind = isNotLiteral ? tok::l_paren : tok::pipe;
+  const tok::TokenKind RDelimiterKind = isNotLiteral ? tok::r_paren : tok::pipe;
   
-  BalancedDelimiterTracker T(*this, tok::l_paren);
+  BalancedDelimiterTracker T(*this, LDelimiterKind);
   T.consumeOpen();
 
   if (Tok.is(tok::code_completion)) {
@@ -3247,7 +3253,7 @@ ExprResult Parser::ParseObjCSelectorExpression(SourceLocation AtLoc) {
 
   KeyIdents.push_back(SelIdent);
   unsigned nColons = 0;
-  if (Tok.isNot(tok::r_paren)) {
+  if (Tok.isNot(RDelimiterKind)) {
     while (1) {
       if (Tok.is(tok::coloncolon)) { // Handle :: in C++.
         ++nColons;
@@ -3257,7 +3263,7 @@ ExprResult Parser::ParseObjCSelectorExpression(SourceLocation AtLoc) {
 
       ++nColons;
       ConsumeToken(); // Eat the ':' or '::'.
-      if (Tok.is(tok::r_paren))
+      if (Tok.is(RDelimiterKind))
         break;
       
       if (Tok.is(tok::code_completion)) {

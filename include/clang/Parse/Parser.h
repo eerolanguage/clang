@@ -451,10 +451,13 @@ private:
     bool optional; // for Eero optional delimiters
 
     unsigned short &getDepth() {
+      static unsigned short FixedCountOfOne = 1;
       switch (Kind) {
       case tok::l_brace: return P.BraceCount;
       case tok::l_square: return P.BracketCount;
       case tok::l_paren: return P.ParenCount;
+      case tok::pipe: return FixedCountOfOne;
+      case tok::less: return FixedCountOfOne;
       default: llvm_unreachable("Wrong token kind");
       }
     }
@@ -481,6 +484,16 @@ private:
       case tok::l_square:
         Close = tok::r_square; 
         Consumer = &Parser::ConsumeBracket;
+        break;
+
+      case tok::pipe:
+        Close = tok::pipe; 
+        Consumer = &Parser::ConsumeToken;
+        break;
+
+      case tok::less:
+        Close = tok::greater; 
+        Consumer = &Parser::ConsumeToken;
         break;
       }      
     }

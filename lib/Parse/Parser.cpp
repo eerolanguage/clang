@@ -1832,6 +1832,8 @@ bool Parser::BalancedDelimiterTracker::diagnoseMissingClose() {
   case tok::r_paren : LHSName = "("; DID = diag::err_expected_rparen; break;
   case tok::r_brace : LHSName = "{"; DID = diag::err_expected_rbrace; break;
   case tok::r_square: LHSName = "["; DID = diag::err_expected_rsquare; break;
+  case tok::pipe    : LHSName = "|"; DID = diag::err_expected_pipe; break;
+  case tok::greater : LHSName = "<"; DID = diag::err_expected_greater; break;
   }
   P.Diag(P.Tok, DID);
   P.Diag(LOpen, diag::note_matching) << LHSName;

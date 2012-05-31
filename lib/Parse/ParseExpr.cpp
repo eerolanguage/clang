@@ -1271,13 +1271,24 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       break;
     }
     // FALL THROUGH.
+  default:
+    NotCastExpr = true;
+    return ExprError();
+
   case tok::l_brace:
     if (isEero) {
       Res = ParsePostfixExpressionSuffix(ParseObjCDictionaryLiteral(Tok.getLocation()));
       break;
     }
+  case tok::pipe:
+    if (isEero) {
+      return ParseObjCSelectorExpression(Tok.getLocation());
+    }
+  case tok::less:
+    if (isEero) {
+      return ParseObjCProtocolExpression(Tok.getLocation());
+    }
     // FALL THROUGH.
-  default:
     NotCastExpr = true;
     return ExprError();
   }
