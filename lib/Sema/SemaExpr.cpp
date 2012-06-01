@@ -5425,6 +5425,7 @@ Sema::CheckAssignmentConstraints(SourceLocation Loc,
 Sema::AssignConvertType
 Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
                                  CastKind &Kind) {
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
   QualType RHSType = RHS.get()->getType();
   QualType OrigLHSType = LHSType;
 
@@ -5512,7 +5513,7 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
 
   // Arithmetic conversions.
   if (LHSType->isArithmeticType() && RHSType->isArithmeticType() &&
-      !(getLangOpts().CPlusPlus && LHSType->isEnumeralType())) {
+      !((getLangOpts().CPlusPlus || isEero) && LHSType->isEnumeralType())) {
     Kind = PrepareScalarCast(RHS, LHSType);
     return Compatible;
   }
@@ -6530,12 +6531,28 @@ static void checkEnumComparison(Sema &S, SourceLocation Loc, ExprResult &LHS,
   QualType LHSStrippedType = LHS.get()->IgnoreParenImpCasts()->getType();
   QualType RHSStrippedType = RHS.get()->IgnoreParenImpCasts()->getType();
 
+  const bool isEero = S.getLangOpts().Eero && !S.PP.isInSystemHeader();
+  if (isEero && (LHSStrippedType->isEnumeralType() != 
+                 RHSStrippedType->isEnumeralType())) {
+    S.Diag(Loc, diag::err_typecheck_cond_incompatible_operands)
+        << LHSStrippedType << RHSStrippedType
+        << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
+    return;
+  }
+
   const EnumType *LHSEnumType = LHSStrippedType->getAs<EnumType>();
   if (!LHSEnumType)
     return;
   const EnumType *RHSEnumType = RHSStrippedType->getAs<EnumType>();
   if (!RHSEnumType)
     return;
+
+  if (isEero && !S.Context.hasSameUnqualifiedType(LHSStrippedType, RHSStrippedType)) {
+    S.Diag(Loc, diag::err_typecheck_cond_incompatible_operands)
+        << LHSStrippedType << RHSStrippedType
+        << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
+    return;
+  }
 
   // Ignore anonymous enums.
   if (!LHSEnumType->getDecl()->getIdentifier())
