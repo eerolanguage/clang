@@ -690,6 +690,8 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
 
   bool CaseListIsErroneous = false;
 
+  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+
   for (SwitchCase *SC = SS->getSwitchCaseList(); SC && !HasDependentValue;
        SC = SC->getNextSwitchCase()) {
 
@@ -714,6 +716,12 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
       if (Lo->isTypeDependent() || Lo->isValueDependent()) {
         HasDependentValue = true;
         break;
+      }
+
+      if (isEero && CondTypeBeforePromotion->isEnumeralType()) {
+        ExprResult LHS(Lo);
+        ExprResult RHS(CondExpr);
+        CheckCompareOperands(LHS, RHS, Lo->getLocStart(), BO_EQ, false);
       }
 
       llvm::APSInt LoVal;
@@ -864,6 +872,12 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
                                            diag::warn_case_value_overflow);
 
         CR->setRHS(Hi);
+
+        if (isEero && CondTypeBeforePromotion->isEnumeralType()) {
+          ExprResult LHS(Hi);
+          ExprResult RHS(CondExpr);
+          CheckCompareOperands(LHS, RHS, Hi->getLocStart(), BO_EQ, false);
+        }
 
         // If the low value is bigger than the high value, the case is empty.
         if (LoVal > HiVal) {
