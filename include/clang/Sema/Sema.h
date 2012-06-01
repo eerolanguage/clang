@@ -2116,6 +2116,7 @@ public:
   LiteralOperatorLookupResult LookupLiteralOperator(Scope *S, LookupResult &R,
                                                     ArrayRef<QualType> ArgTys,
                                                     bool AllowRawAndTemplate);
+  bool isKnownName(StringRef name);
 
   void ArgumentDependentLookup(DeclarationName Name, bool Operator,
                                SourceLocation Loc,
