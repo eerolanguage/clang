@@ -1119,6 +1119,9 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       SourceLocation retLoc = ConsumeToken(); // eat the 'return' keyword
       if (!Tok.isAtStartOfLine()) {
         ReturnType = ParseObjCTypeName(DSRet, Declarator::ObjCResultContext, 0);
+        if (!MethodDefinition && Tok.is(tok::equal) && !Tok.isAtStartOfLine()) {
+          Diag(Tok, diag::err_not_allowed) << "'='";
+        }
       } else {
         Diag(PP.getLocForEndOfToken(retLoc), diag::err_expected_type);
       }
@@ -1346,6 +1349,9 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     SourceLocation retLoc = ConsumeToken(); // eat the 'return' keyword
     if (!Tok.isAtStartOfLine()) {
       ReturnType = ParseObjCTypeName(DSRet, Declarator::ObjCResultContext, 0);
+      if (!MethodDefinition && Tok.is(tok::equal) && !Tok.isAtStartOfLine()) {
+        Diag(Tok, diag::err_not_allowed) << "'='";
+      }
     } else {
       Diag(PP.getLocForEndOfToken(retLoc), diag::err_expected_type);
     }
@@ -2344,6 +2350,15 @@ Decl *Parser::ParseObjCMethodDefinition() {
     // Tell the actions module that we have entered a method definition with the
     // specified Declarator for the method.
     Actions.ActOnStartOfObjCMethodDef(getCurScope(), MDecl);
+
+    SourceLocation ReturnLoc;
+    ExprResult DefaultReturnExpr(ExprError());
+    if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+        Tok.is(tok::equal) && !Tok.isAtStartOfLine()) {
+      ReturnLoc = PrevTokLocation;
+      ConsumeToken(); // '='
+      DefaultReturnExpr = ParseAssignmentExpression();
+    }
       
     if (PP.isCodeCompletionEnabled()) {
       if (trySkippingFunctionBody()) {
@@ -2352,11 +2367,29 @@ Decl *Parser::ParseObjCMethodDefinition() {
       }
     }
       
-    StmtResult FnBody(ParseCompoundStatementBody());  
+    StmtResult FnBody(StmtError());  
+    // Body is optional if default return value was specified
+    if (DefaultReturnExpr.isInvalid() ||
+        !IsValidIndentation(Column(Tok.getLocation()))) {      
+      FnBody = ParseCompoundStatementBody();
+    } else {
+      indentationPositions.pop_back();
+    }
+
     // If the function body could not be parsed, make a bogus compoundstmt.
     if (FnBody.isInvalid())
       FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyStartLoc,
                                          MultiStmtArg(Actions), false);
+
+    if (!DefaultReturnExpr.isInvalid()) {
+      StmtResult DefaultReturnStmt = 
+          Actions.ActOnReturnStmt(ReturnLoc, DefaultReturnExpr.take());
+      StmtVector Stmts(Actions);
+      Stmts.push_back(FnBody.release());
+      Stmts.push_back(DefaultReturnStmt.release());
+      FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyStartLoc, 
+                                         move_arg(Stmts), false);
+    }
       
     // Leave the function body scope.
     BodyScope.Exit();
