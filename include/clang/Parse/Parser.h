@@ -449,6 +449,7 @@ private:
     SourceLocation (Parser::*Consumer)();
     SourceLocation LOpen, LClose;
     bool optional; // for Eero optional delimiters
+    bool ignored;  // for Eero ignored delimiters
 
     unsigned short &getDepth() {
       static unsigned short FixedCountOfOne = 1;
@@ -469,7 +470,7 @@ private:
     
   public:
     BalancedDelimiterTracker(Parser& p, tok::TokenKind k)
-        : P(p), Kind(k), optional(false) {
+        : P(p), Kind(k), optional(false), ignored(false) {
       switch (Kind) {
       default: llvm_unreachable("Unexpected balanced token");
       case tok::l_brace:
@@ -499,13 +500,17 @@ private:
     }
 
     void setOptional() { optional = true; } // for Eero optional delimiters
+    void setIgnored()  { ignored = true; }  // for Eero ignored delimiters
     bool isOptional()  { return optional; } //
+    bool isIgnored()   { return ignored; } //
 
     SourceLocation getOpenLocation() const { return LOpen; }
     SourceLocation getCloseLocation() const { return LClose; }
     SourceRange getRange() const { return SourceRange(LOpen, LClose); }
 
     bool consumeOpen() {
+      if (ignored) 
+        return false;
       if (!P.Tok.is(Kind))
         return true;
 
@@ -523,7 +528,7 @@ private:
                           const char *Msg = "",
                           tok::TokenKind SkipToTok = tok::unknown);
     bool consumeClose() {
-      if (optional) 
+      if (optional || ignored) 
         return false;
       if (P.Tok.is(Close)) {
         LClose = (P.*Consumer)();

@@ -1006,7 +1006,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
                                        bool ConvertToBoolean) {
   BalancedDelimiterTracker T(*this, tok::l_paren);
   if (getLangOpts().Eero && !PP.isInSystemHeader()) 
-    T.setOptional();
+    T.setIgnored();
   T.consumeOpen();
 
   if (getLangOpts().CPlusPlus)
@@ -1025,7 +1025,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
   // recover by skipping ahead to a semi and bailing out.  If condexp is
   // semantically invalid but we have well formed code, keep going.
   if (ExprResult.isInvalid() && !DeclResult && Tok.isNot(tok::r_paren)) {
-    if (getLangOpts().OptionalSemicolons && T.isOptional())
+    if (getLangOpts().OptionalSemicolons && T.isIgnored())
       return true; // just bail out right here
     SkipUntil(tok::semi);
     // Skipping may have stopped if it found the containing ')'.  If so, we can
