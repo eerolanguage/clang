@@ -793,15 +793,13 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       break;
     }
 
-    SourceLocation LLoc;
-
     // Look for potential Eero 'super <identifier>' or '<class> <identifier>' 
     // message sends.
     bool isPotentialEeroSend = false;
-    if (isEero &&
-        ((ParenCount > 0 || BracketCount > 0) || !Tok.isAtStartOfLine())) {
+    if (isEero && 
+        ((!InMessageExpression && !Tok.isAtStartOfLine()) ||
+         (ParenCount > 0 || BracketCount > 0 || BraceCount > 1))) {
       isPotentialEeroSend = true;
-      LLoc = ILoc;
     }
 
     // In an Objective-C method, if we have "super" followed by an identifier,
@@ -809,13 +807,21 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     // that identifier, this is probably a message send with a missing open
     // bracket. Treat it as such. 
     if (getLangOpts().ObjC1 && &II == Ident_super && !InMessageExpression &&
-        (!isEero || isPotentialEeroSend) &&
+        !isEero &&
         getCurScope()->isInObjcMethodScope() &&
         ((Tok.is(tok::identifier) &&
-         (isPotentialEeroSend || 
-          NextToken().is(tok::colon) || NextToken().is(tok::r_square))) ||
+         (NextToken().is(tok::colon) || NextToken().is(tok::r_square))) ||
          Tok.is(tok::code_completion))) {
-      Res = ParseObjCMessageExpressionBody(LLoc, ILoc, ParsedType(), 
+      Res = ParseObjCMessageExpressionBody(SourceLocation(), ILoc, ParsedType(), 
+                                           0);
+      break;
+    }
+
+    // Look for Eero 'super <identifier>' message send
+    if (isPotentialEeroSend && &II == Ident_super &&
+        getCurScope()->isInObjcMethodScope() && 
+        (Tok.is(tok::identifier) || Tok.is(tok::code_completion))) {
+      Res = ParseObjCMessageExpressionBody(ILoc, ILoc, ParsedType(), 
                                            0);
       break;
     }
@@ -826,8 +832,8 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     // appropriately. Also take this path if we're performing code
     // completion after an Objective-C class name.
     if (getLangOpts().ObjC1 && 
-        (!isEero || isPotentialEeroSend) &&
         ((Tok.is(tok::identifier) && !InMessageExpression) || 
+         (Tok.is(tok::identifier) && isPotentialEeroSend) ||
          Tok.is(tok::code_completion))) {
       const Token& Next = NextToken();
       if (Tok.is(tok::code_completion) || 
@@ -848,6 +854,8 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
                                                   DeclaratorInfo);
             if (Ty.isInvalid())
               break;
+
+            SourceLocation LLoc = isPotentialEeroSend ? ILoc : SourceLocation();
             
             Res = ParseObjCMessageExpressionBody(LLoc, 
                                                  SourceLocation(), 
@@ -1338,29 +1346,26 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       return ExprError();
         
     case tok::identifier:
-    {
-      bool isPotentialEeroSend = false;
-      SourceLocation LLoc;
-
-      // Look for potential Eero '<expression> <identifier>' message send
-      if (isEero && !LHS.isInvalid() &&
-          ((ParenCount > 0 || BracketCount > 0) || !Tok.isAtStartOfLine())) {
-        isPotentialEeroSend = true;
-        LLoc = LHS.get()->getLocStart();
+      // Look for Eero '<expression> <identifier>' message send
+      if (isEero && !LHS.isInvalid()) {
+        if ((!InMessageExpression && !Tok.isAtStartOfLine()) ||
+            (ParenCount > 0 || BracketCount > 0 || BraceCount > 1)) {
+          LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(), 
+                                               SourceLocation(),
+                                               ParsedType(), LHS.get());
+          break;
+        }
       }
-
       // If we see identifier: after an expression, and we're not already in a
       // message send, then this is probably a message send with a missing
       // opening bracket '['.
       if (getLangOpts().ObjC1 && !InMessageExpression && 
-          (!isEero || isPotentialEeroSend) &&
-          (isPotentialEeroSend || 
-           NextToken().is(tok::colon) || NextToken().is(tok::r_square))) {
-        LHS = ParseObjCMessageExpressionBody(LLoc, SourceLocation(),
+          !isEero &&
+          (NextToken().is(tok::colon) || NextToken().is(tok::r_square))) {
+        LHS = ParseObjCMessageExpressionBody(SourceLocation(), SourceLocation(),
                                              ParsedType(), LHS.get());
         break;
       }
-    }
         
       // Fall through; this isn't a message send.
                 
@@ -2519,6 +2524,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
       Tok.is(tok::pipe) &&
       Tok.getLength() == 0) { // only if inserted
     ConsumeToken(); // eat the "|"
+    ParenCount++; // a r_paren was inserted earlier
     if (Tok.is(tok::kw_return)) {
       Stmt = Actions.ActOnReturnStmt(ConsumeToken(), // the "return"
                                      ParseAssignmentExpression().take());
