@@ -798,7 +798,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     bool isPotentialEeroSend = false;
     if (isEero && 
         ((!InMessageExpression && !Tok.isAtStartOfLine()) ||
-         (ParenCount > 0 || BracketCount > 0 || BraceCount > 1))) {
+         (ParenCount > 0 || BracketCount > 0))) {
       isPotentialEeroSend = true;
     }
 
@@ -1349,7 +1349,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       // Look for Eero '<expression> <identifier>' message send
       if (isEero && !LHS.isInvalid()) {
         if ((!InMessageExpression && !Tok.isAtStartOfLine()) ||
-            (ParenCount > 0 || BracketCount > 0 || BraceCount > 1)) {
+            (ParenCount > 0 || BracketCount > 0)) {
           LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(), 
                                                SourceLocation(),
                                                ParsedType(), LHS.get());
