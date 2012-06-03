@@ -3562,9 +3562,10 @@ ExprResult Sema::ActOnObjectToCStringTypeCast(Scope *S,
 // Eero supports limited operator overloading for ObjC objects
 
 static inline std::string ConvertTokenKindToBinarySelectorName(
-  tok::TokenKind Kind, bool& invert) {
+  tok::TokenKind Kind, bool& invert, bool& assign) {
   std::string SelectorName;
   invert = false;
+  assign = false;
   switch (Kind) {
     case tok::equalequal:     SelectorName = "isEqual"; break;
     case tok::exclaimequal:   SelectorName = "isEqual"; invert = true; break;
@@ -3579,6 +3580,11 @@ static inline std::string ConvertTokenKindToBinarySelectorName(
     case tok::greaterequal:   SelectorName = "isLess"; invert = true; break;
     case tok::lessless:       SelectorName = "shiftLeft"; break;
     case tok::greatergreater: SelectorName = "shiftRight"; break;
+    case tok::plusequal:      SelectorName = "plus"; assign = true; break;
+    case tok::minusequal:     SelectorName = "minus"; assign = true; break;
+    case tok::starequal:      SelectorName = "multipliedBy"; assign = true; break;
+    case tok::slashequal:     SelectorName = "dividedBy"; assign = true; break;
+    case tok::percentequal:   SelectorName = "modulo"; assign = true; break;
     default:; // do nothing, leaving SelectorName empty
   }
   return SelectorName;
@@ -3589,7 +3595,9 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
                                   Expr *LHSExpr, Expr *RHSExpr) {
   ExprResult result = ExprError();  
   bool invert;
-  std::string SelName = ConvertTokenKindToBinarySelectorName(Kind, invert);
+  bool assign;
+  std::string SelName = 
+      ConvertTokenKindToBinarySelectorName(Kind, invert, assign);
 
   if (!SelName.empty()) {
     IdentifierInfo &II = PP.getIdentifierTable().get(SelName);      
@@ -3609,7 +3617,10 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
                                     TokLoc, TokLoc, TokLoc,
                                     MultiExprArg(*this, &RHSExpr, 1));
       if (invert) {
-        result = ActOnUnaryOp(S, TokLoc, tok::exclaim, result.take());
+        result = CreateBuiltinUnaryOp(TokLoc, UO_LNot, result.take());
+      }
+      if (assign) {
+        result = CreateBuiltinBinOp(TokLoc, BO_Assign, LHSExpr, result.take());
       }
     }
   }
@@ -3623,6 +3634,7 @@ Selector Sema::SelectorForObjectBuiltinBinOp(tok::TokenKind Kind,
   std::string SelName;
   switch (Kind) {
     case tok::plus:
+    case tok::plusequal:
       SelName = "stringByAppendingString";
       break;
     case tok::lessless:
