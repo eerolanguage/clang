@@ -552,7 +552,11 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       ParseStructDeclaration(DS, Callback);
       } while (getLangOpts().Eero && !PP.isInSystemHeader() &&
                Tok.isAtStartOfLine() && 
-               (isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier)));
+               (isKnownToBeTypeSpecifier(Tok) || 
+                (Tok.is(tok::identifier) &&                  
+                 NextToken().isNot(tok::colon) &&   // check for instance method - 
+                 NextToken().isNot(tok::comma) &&   // (minus is optional)
+                 !NextToken().isAtStartOfLine()))); //
 
       ExpectAndConsume(tok::semi, diag::err_expected_semi_decl_list);
       break;
