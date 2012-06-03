@@ -791,6 +791,16 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
   dont_know:
     if (getLangOpts().Eero && !PP.isInSystemHeader() &&
         CurParsedObjCImpl) { // in an objc implementation
+
+      // Check for instance method (minus is optional)
+      if (Tok.is(tok::identifier) && 
+          (NextToken().isAtStartOfLine() || 
+           NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
+        InsertToken(tok::minus);
+        SingleDecl = ParseObjCMethodDefinition();
+        break;
+      }
+
       Diag(Tok, diag::err_not_allowed) << "external declaration or definition";
       // Flush everything from here to the end of the implementation, or
       // to the end of the file (to be safe).

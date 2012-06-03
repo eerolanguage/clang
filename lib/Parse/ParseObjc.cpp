@@ -405,6 +405,13 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
   SourceRange AtEnd;
     
   while (1) {
+    // Check for instance method (minus is optional)
+    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+        Tok.is(tok::identifier) && 
+        (NextToken().isAtStartOfLine() || 
+         NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
+      InsertToken(tok::minus);
+    }
     // If this is a method prototype, parse it.
     if (Tok.is(tok::minus) || Tok.is(tok::plus)) {
       Decl *methodPrototype =
@@ -1651,6 +1658,10 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
       if (isVisibilitySpecifier(Tok, NextToken())) {
         if (Tok.isNot(tok::at)) // handle keyword versions without '@'
           InsertToken(tok::at);
+      } else if (Tok.is(tok::identifier) && 
+                (NextToken().isAtStartOfLine() || 
+                 NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
+        break; // exit loop, this is an instance method (minus is optional)
       } else if (Tok.isNot(tok::identifier) && !isKnownToBeTypeSpecifier(Tok)) {
         break; // exit loop, since braces are optional
       }
