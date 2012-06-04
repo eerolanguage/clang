@@ -8283,7 +8283,11 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
     // Eero support for objc object binary operators
     if (LHSExpr->getType()->isObjCObjectPointerType() && 
         RHSExpr->getType()->isObjCObjectPointerType()) {
-      return ActOnObjectBinOp(S, TokLoc, Kind, Opc, LHSExpr, RHSExpr);
+      ExprResult ObjectBinOpExpr = ActOnObjectBinOp(S, TokLoc, Kind, Opc, 
+                                                    LHSExpr, RHSExpr);
+      if (!ObjectBinOpExpr.isInvalid()) {
+        return ObjectBinOpExpr;
+      }
     }
   }
 
