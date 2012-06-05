@@ -7326,6 +7326,7 @@ static bool CheckForModifiableLvalue(Expr *E, SourceLocation Loc, Sema &S) {
 
     break;
   case Expr::MLV_ArrayType:
+  case Expr::MLV_ArrayTemporary:
     Diag = diag::err_typecheck_array_not_modifiable_lvalue;
     NeedType = true;
     break;
@@ -8140,7 +8141,7 @@ static void DiagnoseBitwisePrecedence(Sema &Self, BinaryOperatorKind Opc,
     << DiagRange << BinOp::getOpcodeStr(Opc) << OpStr;
   SuggestParentheses(Self, OpLoc,
     Self.PDiag(diag::note_precedence_bitwise_silence) << OpStr,
-    RHSExpr->getSourceRange());
+    (isLeftComp ? LHSExpr : RHSExpr)->getSourceRange());
   SuggestParentheses(Self, OpLoc,
     Self.PDiag(diag::note_precedence_bitwise_first) << BinOp::getOpcodeStr(Opc),
     ParensRange);
