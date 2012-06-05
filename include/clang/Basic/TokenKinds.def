@@ -483,6 +483,7 @@ KEYWORD(required                     , KEYEERO)
 KEYWORD(optional                     , KEYEERO)
 KEYWORD(synthesize                   , KEYEERO)
 KEYWORD(dynamic                      , KEYEERO)
+KEYWORD(import                       , KEYEERO) // for future @import support
 
 // Alternate spelling for various tokens.  There are GCC extensions in all
 // languages, but should not be disabled in strict conformance mode.
