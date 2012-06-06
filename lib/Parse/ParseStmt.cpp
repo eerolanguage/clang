@@ -1811,7 +1811,9 @@ StmtResult Parser::ParseReturnStatement() {
 
   ExprResult R;
   if (Tok.isNot(tok::semi) && 
-      !(getLangOpts().OptionalSemicolons && Tok.isAtStartOfLine())) {
+      (!getLangOpts().OptionalSemicolons || PP.isInSystemHeader() ||
+        !Tok.isAtStartOfLine()) && 
+      Tok.isNot(tok::eof)) {
     if (Tok.is(tok::code_completion)) {
       Actions.CodeCompleteReturn(getCurScope());
       cutOffParsing();
@@ -1825,7 +1827,8 @@ StmtResult Parser::ParseReturnStatement() {
              diag::warn_cxx98_compat_generalized_initializer_lists :
              diag::ext_generalized_initializer_lists)
           << R.get()->getSourceRange();
-    } else
+    } else //if (!getLangOpts().OptionalSemicolons || !PP.isInSystemHeader() &&
+           //    Tok.isNot(tok::eof)))
         R = ParseExpression();
     if (R.isInvalid()) {  // Skip to the semicolon, but don't consume it.
       SkipUntil(tok::semi, false, true);
@@ -2182,7 +2185,7 @@ Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
   StmtResult FnBody(ParseCompoundStatementBody());
 
   // Check and balance indentations after parsing function body
-  if (!indentationPositions.empty()) {
+  if (!indentationPositions.empty() && Tok.isNot(tok::eof)) {
     if (!IsValidIndentation(Column(Tok.getLocation())))
       Diag(Tok, diag::err_ambiguous_indentation);
     indentationPositions.pop_back();
