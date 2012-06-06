@@ -156,7 +156,7 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
 
   if (getLangOpts().OptionalSemicolons && 
       (ExpectedTok == tok::semi) && !PP.isInSystemHeader()) {
-    if (Tok.isAtStartOfLine()) { // optional here if line break present
+    if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
       return false;
     } else {
       Diag(Tok, diag::err_expected) << "newline";
@@ -201,7 +201,7 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
   }
 
   if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader()) {
-    if (Tok.isAtStartOfLine()) { // optional here if line break present
+    if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
       return false;
     } else {
       Diag(Tok, diag::err_expected) << "newline";

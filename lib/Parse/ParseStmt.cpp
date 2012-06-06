@@ -2181,6 +2181,13 @@ Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
   // list and put it into a CompoundStmt for safe keeping.
   StmtResult FnBody(ParseCompoundStatementBody());
 
+  // Check and balance indentations after parsing function body
+  if (!indentationPositions.empty()) {
+    if (!IsValidIndentation(Column(Tok.getLocation())))
+      Diag(Tok, diag::err_ambiguous_indentation);
+    indentationPositions.pop_back();
+  }
+
   // If the function body could not be parsed, make a bogus compoundstmt.
   if (FnBody.isInvalid()) {
     Sema::CompoundScopeRAII CompoundScope(Actions);

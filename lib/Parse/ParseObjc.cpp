@@ -2385,9 +2385,15 @@ Decl *Parser::ParseObjCMethodDefinition() {
     StmtResult FnBody(StmtError());  
     // Body is optional if default return value was specified
     if (DefaultReturnExpr.isInvalid() ||
-        !IsValidIndentation(Column(Tok.getLocation()))) {      
+        (!indentationPositions.empty() && 
+         Column(Tok.getLocation()) > indentationPositions.back())) {
       FnBody = ParseCompoundStatementBody();
-    } else {
+    }
+
+    // Check and balance indentations after parsing method body
+    if (!indentationPositions.empty()) {
+      if (!IsValidIndentation(Column(Tok.getLocation())))
+        Diag(Tok, diag::err_ambiguous_indentation);
       indentationPositions.pop_back();
     }
 
