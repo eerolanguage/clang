@@ -37,6 +37,7 @@
 #include "clang/Analysis/DomainSpecific/CocoaConventions.h"
 #include "clang/Sema/SemaDiagnostic.h"
 #include "clang/AST/ParentMap.h"
+#include "clang/Lex/Lexer.h"
 #include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/SmallString.h"
 
@@ -50,13 +51,15 @@ class UnbridgedCastRewriter : public RecursiveASTVisitor<UnbridgedCastRewriter>{
   MigrationPass &Pass;
   IdentifierInfo *SelfII;
   OwningPtr<ParentMap> StmtMap;
+  Decl *ParentD;
 
 public:
-  UnbridgedCastRewriter(MigrationPass &pass) : Pass(pass) {
+  UnbridgedCastRewriter(MigrationPass &pass) : Pass(pass), ParentD(0) {
     SelfII = &Pass.Ctx.Idents.get("self");
   }
 
-  void transformBody(Stmt *body) {
+  void transformBody(Stmt *body, Decl *ParentD) {
+    this->ParentD = ParentD;
     StmtMap.reset(new ParentMap(body));
     TraverseStmt(body);
   }
@@ -155,6 +158,21 @@ private:
         }
       }
     }
+
+    // If returning an ivar or a member of an ivar from a +0 method, use
+    // a __bridge cast.
+    Expr *base = inner->IgnoreParenImpCasts();
+    while (isa<MemberExpr>(base))
+      base = cast<MemberExpr>(base)->getBase()->IgnoreParenImpCasts();
+    if (isa<ObjCIvarRefExpr>(base) &&
+        isa<ReturnStmt>(StmtMap->getParentIgnoreParenCasts(E))) {
+      if (ObjCMethodDecl *method = dyn_cast_or_null<ObjCMethodDecl>(ParentD)) {
+        if (!method->hasAttr<NSReturnsRetainedAttr>()) {
+          castToObjCObject(E, /*retained=*/false);
+          return;
+        }
+      }
+    }
   }
 
   void castToObjCObject(CastExpr *E, bool retained) {
@@ -212,20 +230,26 @@ private:
       }
     } else {
       assert(Kind == OBC_BridgeTransfer || Kind == OBC_BridgeRetained);
-      StringRef cfBridging;
-      if (Kind == OBC_BridgeTransfer)
-        cfBridging = "CFBridgingRelease";
-      else
-        cfBridging = "CFBridgingRetain";
+      SmallString<32> BridgeCall;
 
       Expr *WrapE = E->getSubExpr();
-      SourceLocation insertLoc = WrapE->getLocStart();
+      SourceLocation InsertLoc = WrapE->getLocStart();
+
+      SourceManager &SM = Pass.Ctx.getSourceManager();
+      char PrevChar = *SM.getCharacterData(InsertLoc.getLocWithOffset(-1));
+      if (Lexer::isIdentifierBodyChar(PrevChar, Pass.Ctx.getLangOpts()))
+        BridgeCall += ' ';
+
+      if (Kind == OBC_BridgeTransfer)
+        BridgeCall += "CFBridgingRelease";
+      else
+        BridgeCall += "CFBridgingRetain";
+
       if (isa<ParenExpr>(WrapE)) {
-        TA.insert(insertLoc, cfBridging);
+        TA.insert(InsertLoc, BridgeCall);
       } else {
-        std::string withParens = cfBridging;
-        withParens += '(';
-        TA.insert(insertLoc, withParens);
+        BridgeCall += '(';
+        TA.insert(InsertLoc, BridgeCall);
         TA.insertAfterToken(WrapE->getLocEnd(), ")");
       }
     }

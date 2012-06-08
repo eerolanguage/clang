@@ -128,14 +128,13 @@ bool CallAndMessageChecker::PreVisitProcessArg(CheckerContext &C,
     public:
       SmallVector<const FieldDecl *, 10> FieldChain;
     private:
-      ASTContext &C;
       StoreManager &StoreMgr;
       MemRegionManager &MrMgr;
       Store store;
     public:
-      FindUninitializedField(ASTContext &c, StoreManager &storeMgr,
+      FindUninitializedField(StoreManager &storeMgr,
                              MemRegionManager &mrMgr, Store s)
-      : C(c), StoreMgr(storeMgr), MrMgr(mrMgr), store(s) {}
+      : StoreMgr(storeMgr), MrMgr(mrMgr), store(s) {}
 
       bool Find(const TypedValueRegion *R) {
         QualType T = R->getValueType();
@@ -144,8 +143,8 @@ bool CallAndMessageChecker::PreVisitProcessArg(CheckerContext &C,
           assert(RD && "Referred record has no definition");
           for (RecordDecl::field_iterator I =
                RD->field_begin(), E = RD->field_end(); I!=E; ++I) {
-            const FieldRegion *FR = MrMgr.getFieldRegion(&*I, R);
-            FieldChain.push_back(&*I);
+            const FieldRegion *FR = MrMgr.getFieldRegion(*I, R);
+            FieldChain.push_back(*I);
             T = I->getType();
             if (T->getAsStructureType()) {
               if (Find(FR))
@@ -165,8 +164,7 @@ bool CallAndMessageChecker::PreVisitProcessArg(CheckerContext &C,
     };
 
     const LazyCompoundValData *D = LV->getCVData();
-    FindUninitializedField F(C.getASTContext(),
-                             C.getState()->getStateManager().getStoreManager(),
+    FindUninitializedField F(C.getState()->getStateManager().getStoreManager(),
                              C.getSValBuilder().getRegionManager(),
                              D->getStore());
 

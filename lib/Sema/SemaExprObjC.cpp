@@ -2854,14 +2854,23 @@ static void addFixitForObjCARCConversion(Sema &S,
       castedE = CCE->getSubExpr();
     castedE = castedE->IgnoreImpCasts();
     SourceRange range = castedE->getSourceRange();
+
+    SmallString<32> BridgeCall;
+
+    SourceManager &SM = S.getSourceManager();
+    char PrevChar = *SM.getCharacterData(range.getBegin().getLocWithOffset(-1));
+    if (Lexer::isIdentifierBodyChar(PrevChar, S.getLangOpts()))
+      BridgeCall += ' ';
+
+    BridgeCall += CFBridgeName;
+
     if (isa<ParenExpr>(castedE)) {
       DiagB.AddFixItHint(FixItHint::CreateInsertion(range.getBegin(),
-                         CFBridgeName));
+                         BridgeCall));
     } else {
-      std::string namePlusParen = CFBridgeName;
-      namePlusParen += "(";
+      BridgeCall += '(';
       DiagB.AddFixItHint(FixItHint::CreateInsertion(range.getBegin(),
-                                                    namePlusParen));
+                                                    BridgeCall));
       DiagB.AddFixItHint(FixItHint::CreateInsertion(
                                        S.PP.getLocForEndOfToken(range.getEnd()),
                                        ")"));
@@ -2943,7 +2952,8 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
                                    castType, castExpr, "__bridge ", 0);
     }
     {
-      DiagnosticBuilder DiagB = S.Diag(noteLoc, diag::note_arc_bridge_transfer)
+      DiagnosticBuilder DiagB = S.Diag(br ? castExpr->getExprLoc() : noteLoc,
+                                       diag::note_arc_bridge_transfer)
         << castExprType << br;
       addFixitForObjCARCConversion(S, DiagB, CCK, afterLParen,
                                    castType, castExpr, "__bridge_transfer ",
@@ -2971,7 +2981,8 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
                                    castType, castExpr, "__bridge ", 0);
     }
     {
-      DiagnosticBuilder DiagB = S.Diag(noteLoc, diag::note_arc_bridge_retained)
+      DiagnosticBuilder DiagB = S.Diag(br ? castExpr->getExprLoc() : noteLoc,
+                                       diag::note_arc_bridge_retained)
         << castType << br;
       addFixitForObjCARCConversion(S, DiagB, CCK, afterLParen,
                                    castType, castExpr, "__bridge_retained ",

@@ -86,6 +86,7 @@ Preprocessor::Preprocessor(DiagnosticsEngine &diags, LangOptions &opts,
   
   // Macro expansion is enabled.
   DisableMacroExpansion = false;
+  MacroExpansionInDirectivesOverride = false;
   InMacroArgs = false;
   InMacroArgPreExpansion = false;
   NumCachedTokenLexers = 0;
@@ -425,7 +426,7 @@ void Preprocessor::EnterMainSourceFile() {
   llvm::MemoryBuffer *SB =
     llvm::MemoryBuffer::getMemBufferCopy(Predefines, "<built-in>");
   assert(SB && "Cannot create predefined source buffer");
-  FileID FID = SourceMgr.createFileIDForMemBuffer(SB);
+  FileID FID = SourceMgr.createPredefinesFileIDForMemBuffer(SB);
   assert(!FID.isInvalid() && "Could not create FileID for predefines?");
 
   // Start parsing the predefines.

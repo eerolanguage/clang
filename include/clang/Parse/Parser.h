@@ -28,6 +28,7 @@
 namespace clang {
   class PragmaHandler;
   class Scope;
+  class BalancedDelimiterTracker;
   class DeclGroupRef;
   class DiagnosticBuilder;
   class Parser;
@@ -83,6 +84,7 @@ class Parser : public CodeCompletionHandler {
   friend class InMessageExpressionRAIIObject;
   friend class PoisonSEHIdentifiersRAIIObject;
   friend class ParenBraceBracketBalancer;
+  friend class BalancedDelimiterTracker;
 
   Preprocessor &PP;
 
@@ -97,7 +99,7 @@ class Parser : public CodeCompletionHandler {
   SourceLocation PrevTokLocation;
 
   unsigned short ParenCount, BracketCount, BraceCount;
-
+  
   /// Actions - These are the callbacks we invoke as we parse various constructs
   /// in the file.
   Sema &Actions;
@@ -441,105 +443,6 @@ private:
     return PP.LookAhead(0);
   }
 
-  /// \brief RAII class that helps handle the parsing of an open/close delimiter
-  /// pair, such as braces { ... } or parentheses ( ... ).
-  class BalancedDelimiterTracker {
-    Parser& P;
-    tok::TokenKind Kind, Close;
-    SourceLocation (Parser::*Consumer)();
-    SourceLocation LOpen, LClose;
-    bool optional; // for Eero optional delimiters
-    bool ignored;  // for Eero ignored delimiters
-
-    unsigned short &getDepth() {
-      static unsigned short FixedCountOfOne = 1;
-      switch (Kind) {
-      case tok::l_brace: return P.BraceCount;
-      case tok::l_square: return P.BracketCount;
-      case tok::l_paren: return P.ParenCount;
-      case tok::pipe: return FixedCountOfOne;
-      case tok::less: return FixedCountOfOne;
-      default: llvm_unreachable("Wrong token kind");
-      }
-    }
-    
-    enum { MaxDepth = 256 };
-    
-    bool diagnoseOverflow();
-    bool diagnoseMissingClose();
-    
-  public:
-    BalancedDelimiterTracker(Parser& p, tok::TokenKind k)
-        : P(p), Kind(k), optional(false), ignored(false) {
-      switch (Kind) {
-      default: llvm_unreachable("Unexpected balanced token");
-      case tok::l_brace:
-        Close = tok::r_brace; 
-        Consumer = &Parser::ConsumeBrace;
-        break;
-      case tok::l_paren:
-        Close = tok::r_paren; 
-        Consumer = &Parser::ConsumeParen;
-        break;
-        
-      case tok::l_square:
-        Close = tok::r_square; 
-        Consumer = &Parser::ConsumeBracket;
-        break;
-
-      case tok::pipe:
-        Close = tok::pipe; 
-        Consumer = &Parser::ConsumeToken;
-        break;
-
-      case tok::less:
-        Close = tok::greater; 
-        Consumer = &Parser::ConsumeToken;
-        break;
-      }      
-    }
-
-    void setOptional() { optional = true; } // for Eero optional delimiters
-    void setIgnored()  { ignored = true; }  // for Eero ignored delimiters
-    bool isOptional()  { return optional; } //
-    bool isIgnored()   { return ignored; } //
-
-    SourceLocation getOpenLocation() const { return LOpen; }
-    SourceLocation getCloseLocation() const { return LClose; }
-    SourceRange getRange() const { return SourceRange(LOpen, LClose); }
-
-    bool consumeOpen() {
-      if (ignored) 
-        return false;
-      if (!P.Tok.is(Kind))
-        return true;
-
-      optional = false; // the closing delim is no longer optional
-      
-      if (getDepth() < MaxDepth) {
-        LOpen = (P.*Consumer)();
-        return false;
-      }
-      
-      return diagnoseOverflow();
-    }
-    
-    bool expectAndConsume(unsigned DiagID,
-                          const char *Msg = "",
-                          tok::TokenKind SkipToTok = tok::unknown);
-    bool consumeClose() {
-      if (optional || ignored) 
-        return false;
-      if (P.Tok.is(Close)) {
-        LClose = (P.*Consumer)();
-        return false;
-      } 
-
-      return diagnoseMissingClose();
-    }
-    void skipToEnd();
-  };
-
   /// getTypeAnnotation - Read a parsed type out of an annotation token.
   static ParsedType getTypeAnnotation(Token &Tok) {
     return ParsedType::getFromOpaquePtr(Tok.getAnnotationValue());
@@ -774,6 +677,9 @@ private:
 public:
   DiagnosticBuilder Diag(SourceLocation Loc, unsigned DiagID);
   DiagnosticBuilder Diag(const Token &Tok, unsigned DiagID);
+  DiagnosticBuilder Diag(unsigned DiagID) {
+    return Diag(Tok, DiagID);
+  }
 
 private:
   void SuggestParentheses(SourceLocation Loc, unsigned DK,

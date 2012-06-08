@@ -832,7 +832,7 @@ void CFGBuilder::addImplicitDtorsForDestructor(const CXXDestructorDecl *DD) {
     if (const CXXRecordDecl *CD = QT->getAsCXXRecordDecl())
       if (!CD->hasTrivialDestructor()) {
         autoCreateBlock();
-        appendMemberDtor(Block, &*FI);
+        appendMemberDtor(Block, *FI);
       }
   }
 }
@@ -3200,8 +3200,8 @@ CFGImplicitDtor::getDestructorDecl(ASTContext &astContext) const {
 }
 
 bool CFGImplicitDtor::isNoReturn(ASTContext &astContext) const {
-  if (const CXXDestructorDecl *cdecl = getDestructorDecl(astContext)) {
-    QualType ty = cdecl->getType();
+  if (const CXXDestructorDecl *decl = getDestructorDecl(astContext)) {
+    QualType ty = decl->getType();
     return cast<FunctionType>(ty)->getNoReturnAttr();
   }
   return false;
