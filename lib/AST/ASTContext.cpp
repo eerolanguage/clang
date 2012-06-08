@@ -3336,8 +3336,7 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
                               Arg.getNumTemplateExpansions());
 
     case TemplateArgument::Integral:
-      return TemplateArgument(*Arg.getAsIntegral(),
-                              getCanonicalType(Arg.getIntegralType()));
+      return TemplateArgument(Arg, getCanonicalType(Arg.getIntegralType()));
 
     case TemplateArgument::Type:
       return TemplateArgument(getCanonicalType(Arg.getAsType()));
@@ -6413,6 +6412,19 @@ static QualType DecodeTypeFromStr(const char *&Str, const ASTContext &Context,
     Type = Context.getVectorType(ElementType, NumElements,
                                  VectorType::GenericVector);
     break;
+  }
+  case 'E': {
+    char *End;
+    
+    unsigned NumElements = strtoul(Str, &End, 10);
+    assert(End != Str && "Missing vector size");
+    
+    Str = End;
+    
+    QualType ElementType = DecodeTypeFromStr(Str, Context, Error, RequiresICE,
+                                             false);
+    Type = Context.getExtVectorType(ElementType, NumElements);
+    break;    
   }
   case 'X': {
     QualType ElementType = DecodeTypeFromStr(Str, Context, Error, RequiresICE,

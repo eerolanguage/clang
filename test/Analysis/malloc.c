@@ -1,5 +1,7 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,experimental.deadcode.UnreachableCode,experimental.core.CastSize,unix.Malloc -analyzer-store=region -verify %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,experimental.deadcode.UnreachableCode,experimental.core.CastSize,unix.Malloc,debug.ExprInspection -analyzer-store=region -verify %s
 #include "system-header-simulator.h"
+
+void clang_analyzer_eval(int);
 
 typedef __typeof(sizeof(int)) size_t;
 void *malloc(size_t);
@@ -839,10 +841,8 @@ int fPtr(unsigned cond, int x) {
   return (cond ? mySub : myAdd)(x, x);
 }
 
-// ----------------------------------------------------------------------------
-// Below are the known false positives.
+// Test anti-aliasing.
 
-// TODO: There should be no warning here. This one might be difficult to get rid of.
 void dependsOnValueOfPtr(int *g, unsigned f) {
   int *p;
 
@@ -855,8 +855,63 @@ void dependsOnValueOfPtr(int *g, unsigned f) {
   if (p != g)
     free(p);
   else
-    return; // expected-warning{{Memory is never released; potential leak}}
+    return; // no warning
   return;
+}
+
+int CMPRegionHeapToStack() {
+  int x = 0;
+  int *x1 = malloc(8);
+  int *x2 = &x;
+  clang_analyzer_eval(x1 == x2); // expected-warning{{FALSE}}
+  free(x1);
+  return x;
+}
+
+int CMPRegionHeapToHeap2() {
+  int x = 0;
+  int *x1 = malloc(8);
+  int *x2 = malloc(8);
+  int *x4 = x1;
+  int *x5 = x2;
+  clang_analyzer_eval(x4 == x5); // expected-warning{{FALSE}}
+  free(x1);
+  free(x2);
+  return x;
+}
+
+int CMPRegionHeapToHeap() {
+  int x = 0;
+  int *x1 = malloc(8);
+  int *x4 = x1;
+  if (x1 == x4) {
+    free(x1);
+    return 5/x; // expected-warning{{Division by zero}}
+  }
+  return x;// expected-warning{{This statement is never executed}}
+}
+
+int HeapAssignment() {
+  int m = 0;
+  int *x = malloc(4);
+  int *y = x;
+  *x = 5;
+  clang_analyzer_eval(*x != *y); // expected-warning{{FALSE}}
+  free(x);
+  return 0;
+}
+
+int *retPtr();
+int *retPtrMightAlias(int *x);
+int cmpHeapAllocationToUnknown() {
+  int zero = 0;
+  int *yBefore = retPtr();
+  int *m = malloc(8);
+  int *yAfter = retPtrMightAlias(m);
+  clang_analyzer_eval(yBefore == m); // expected-warning{{FALSE}}
+  clang_analyzer_eval(yAfter == m); // expected-warning{{FALSE}}
+  free(m);
+  return 0;
 }
 
 // ----------------------------------------------------------------------------

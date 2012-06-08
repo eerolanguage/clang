@@ -2044,7 +2044,7 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S) {
             << New << getSpecialMember(OldMethod);
           return true;
         }
-      } else if (OldMethod->isExplicitlyDefaulted()) {
+      } else if (OldMethod->isExplicitlyDefaulted() && !isFriend) {
         Diag(NewMethod->getLocation(),
              diag::err_definition_of_explicitly_defaulted_member)
           << getSpecialMember(OldMethod);
@@ -4657,22 +4657,39 @@ namespace {
 // Also only accept corrections that have the same parent decl.
 class DifferentNameValidatorCCC : public CorrectionCandidateCallback {
  public:
-  DifferentNameValidatorCCC(CXXRecordDecl *Parent)
-      : ExpectedParent(Parent ? Parent->getCanonicalDecl() : 0) {}
+  DifferentNameValidatorCCC(ASTContext &Context, FunctionDecl *TypoFD,
+                            CXXRecordDecl *Parent)
+      : Context(Context), OriginalFD(TypoFD),
+        ExpectedParent(Parent ? Parent->getCanonicalDecl() : 0) {}
 
   virtual bool ValidateCandidate(const TypoCorrection &candidate) {
     if (candidate.getEditDistance() == 0)
       return false;
 
-    if (CXXMethodDecl *MD = candidate.getCorrectionDeclAs<CXXMethodDecl>()) {
-      CXXRecordDecl *Parent = MD->getParent();
-      return Parent && Parent->getCanonicalDecl() == ExpectedParent;
+    llvm::SmallVector<unsigned, 1> MismatchedParams;
+    for (TypoCorrection::const_decl_iterator CDecl = candidate.begin(),
+                                          CDeclEnd = candidate.end();
+         CDecl != CDeclEnd; ++CDecl) {
+      FunctionDecl *FD = dyn_cast<FunctionDecl>(*CDecl);
+
+      if (FD && !FD->hasBody() &&
+          hasSimilarParameters(Context, FD, OriginalFD, MismatchedParams)) {
+        if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(FD)) {
+          CXXRecordDecl *Parent = MD->getParent();
+          if (Parent && Parent->getCanonicalDecl() == ExpectedParent)
+            return true;
+        } else if (!ExpectedParent) {
+          return true;
+        }
+      }
     }
 
-    return !ExpectedParent;
+    return false;
   }
 
  private:
+  ASTContext &Context;
+  FunctionDecl *OriginalFD;
   CXXRecordDecl *ExpectedParent;
 };
 
@@ -4708,7 +4725,8 @@ static NamedDecl* DiagnoseInvalidRedeclaration(
   assert(!Prev.isAmbiguous() &&
          "Cannot have an ambiguity in previous-declaration lookup");
   CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(NewFD);
-  DifferentNameValidatorCCC Validator(MD ? MD->getParent() : 0);
+  DifferentNameValidatorCCC Validator(SemaRef.Context, NewFD,
+                                      MD ? MD->getParent() : 0);
   if (!Prev.empty()) {
     for (LookupResult::iterator Func = Prev.begin(), FuncEnd = Prev.end();
          Func != FuncEnd; ++Func) {
@@ -4738,8 +4756,8 @@ static NamedDecl* DiagnoseInvalidRedeclaration(
                                     CDeclEnd = Correction.end();
          CDecl != CDeclEnd; ++CDecl) {
       FunctionDecl *FD = dyn_cast<FunctionDecl>(*CDecl);
-      if (FD && hasSimilarParameters(SemaRef.Context, FD, NewFD,
-                                     MismatchedParams)) {
+      if (FD && !FD->hasBody() &&
+          hasSimilarParameters(SemaRef.Context, FD, NewFD, MismatchedParams)) {
         Previous.addDecl(FD);
       }
     }
@@ -4777,15 +4795,19 @@ static NamedDecl* DiagnoseInvalidRedeclaration(
     }
   }
 
-  if (Correction)
-    SemaRef.Diag(NewFD->getLocation(), DiagMsg)
+  if (Correction) {
+    SourceRange FixItLoc(NewFD->getLocation());
+    CXXScopeSpec &SS = ExtraArgs.D.getCXXScopeSpec();
+    if (Correction.getCorrectionSpecifier() && SS.isValid())
+      FixItLoc.setBegin(SS.getBeginLoc());
+    SemaRef.Diag(NewFD->getLocStart(), DiagMsg)
         << Name << NewDC << Correction.getQuoted(SemaRef.getLangOpts())
         << FixItHint::CreateReplacement(
-            NewFD->getLocation(),
-            Correction.getAsString(SemaRef.getLangOpts()));
-  else
+            FixItLoc, Correction.getAsString(SemaRef.getLangOpts()));
+  } else {
     SemaRef.Diag(NewFD->getLocation(), DiagMsg)
         << Name << NewDC << NewFD->getLocation();
+  }
 
   bool NewFDisConst = false;
   if (CXXMethodDecl *NewMD = dyn_cast<CXXMethodDecl>(NewFD))
