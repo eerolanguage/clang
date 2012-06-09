@@ -1477,6 +1477,10 @@ def warn_cxx98_compat_unicode_type : Warning<
 // Objective-C++
 def err_objc_decls_may_only_appear_in_global_scope : Error<
   "Objective-C declarations may only appear in global scope">;
+def warn_auto_var_is_id : Warning<
+  "'auto' deduced as 'id' in declaration of %0">,
+  InGroup<DiagGroup<"auto-var-id">>;
+
 // Attributes
 def err_nsobject_attribute : Error<
   "__attribute ((NSObject)) is for pointer types only">;
@@ -1601,6 +1605,10 @@ def err_invalid_collection_element : Error<
 def err_box_literal_collection : Error<
   "%select{string|character|boolean|numeric}0 literal must be prefixed by '@' "
   "in a collection">;
+def err_objc_literal_comparison : Error<
+  "direct comparison of %select{a string literal|an array literal|"
+  "a dictionary literal|a numeric literal|a boxed expression|}0 is not "
+  "allowed%select{|; use -isEqual: instead}1">;
 
 let CategoryName = "Cocoa API Issue" in {
 def warn_objc_redundant_literal_use : Warning<

@@ -1222,7 +1222,6 @@ public:
   class DeclMatcher : public EvaluatedExprVisitor<DeclMatcher> {
     llvm::SmallPtrSet<VarDecl*, 8> &Decls;
     bool FoundDecl;
-    //bool EvalDecl;
 
 public:
   typedef EvaluatedExprVisitor<DeclMatcher> Inherited;
