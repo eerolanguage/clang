@@ -133,6 +133,7 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
 
   case Stmt::SwitchStmtClass:   EmitSwitchStmt(cast<SwitchStmt>(*S));     break;
   case Stmt::AsmStmtClass:      EmitAsmStmt(cast<AsmStmt>(*S));           break;
+  case Stmt::MSAsmStmtClass:    EmitMSAsmStmt(cast<MSAsmStmt>(*S));       break;
 
   case Stmt::ObjCAtTryStmtClass:
     EmitObjCAtTryStmt(cast<ObjCAtTryStmt>(*S));
@@ -1680,4 +1681,9 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
 
     EmitStoreThroughLValue(RValue::get(Tmp), ResultRegDests[i]);
   }
+}
+
+void CodeGenFunction::EmitMSAsmStmt(const MSAsmStmt &S) {
+  // Analyze the asm string to decompose it into its pieces.
+  llvm::report_fatal_error("MS-style asm codegen isn't yet supported.");
 }

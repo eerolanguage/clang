@@ -1016,7 +1016,7 @@ private:
                QualType T, TypeSourceInfo *TInfo, AccessControl ac, Expr *BW,
                bool synthesized)
     : FieldDecl(ObjCIvar, DC, StartLoc, IdLoc, Id, T, TInfo, BW,
-                /*Mutable=*/false, /*HasInit=*/false),
+                /*Mutable=*/false, /*HasInit=*/ICIS_NoInit),
       NextIvar(0), DeclAccess(ac), Synthesized(synthesized) {}
 
 public:
@@ -1074,7 +1074,7 @@ class ObjCAtDefsFieldDecl : public FieldDecl {
                       QualType T, Expr *BW)
     : FieldDecl(ObjCAtDefsField, DC, StartLoc, IdLoc, Id, T,
                 /*TInfo=*/0, // FIXME: Do ObjCAtDefs have declarators ?
-                BW, /*Mutable=*/false, /*HasInit=*/false) {}
+                BW, /*Mutable=*/false, /*HasInit=*/ICIS_NoInit) {}
 
 public:
   static ObjCAtDefsFieldDecl *Create(ASTContext &C, DeclContext *DC,
@@ -1981,6 +1981,17 @@ public:
                            SourceLocation IvarLoc) {
     PropertyIvarDecl = Ivar;
     this->IvarLoc = IvarLoc;
+  }
+
+  /// \brief For \@synthesize, returns true if an ivar name was explicitly
+  /// specified.
+  ///
+  /// \code
+  /// \@synthesize int a = b; // true
+  /// \@synthesize int a; // false
+  /// \endcode
+  bool isIvarNameSpecified() const {
+    return IvarLoc.isValid() && IvarLoc != getLocation();
   }
 
   Expr *getGetterCXXConstructor() const {

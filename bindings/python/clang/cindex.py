@@ -169,6 +169,16 @@ class SourceLocation(Structure):
         """
         return SourceLocation_getLocation(tu, file, line, column)
 
+    @staticmethod
+    def from_offset(tu, file, offset):
+        """Retrieve a SourceLocation from a given character offset.
+
+        tu -- TranslationUnit file belongs to
+        file -- File instance to obtain offset from
+        offset -- Integer character offset within file
+        """
+        return SourceLocation_getLocationForOffset(tu, file, offset)
+
     @property
     def file(self):
         """Get the file represented by this source location."""
@@ -948,6 +958,12 @@ class Cursor(Structure):
         definition of that entity.
         """
         return Cursor_is_def(self)
+
+    def is_static_method(self):
+        """Returns True if the cursor refers to a C++ member function or member
+        function template that is declared 'static'.
+        """
+        return Cursor_is_static_method(self)
 
     def get_definition(self):
         """
@@ -2104,6 +2120,10 @@ SourceLocation_equalLocations = lib.clang_equalLocations
 SourceLocation_equalLocations.argtypes = [SourceLocation, SourceLocation]
 SourceLocation_equalLocations.restype = bool
 
+SourceLocation_getLocationForOffset = lib.clang_getLocationForOffset
+SourceLocation_getLocationForOffset.argtypes = [TranslationUnit, File, c_uint]
+SourceLocation_getLocationForOffset.restype = SourceLocation
+
 # Source Range Functions
 SourceRange_getRange = lib.clang_getRange
 SourceRange_getRange.argtypes = [SourceLocation, SourceLocation]
@@ -2175,6 +2195,10 @@ Cursor_usr.errcheck = _CXString.from_result
 Cursor_is_def = lib.clang_isCursorDefinition
 Cursor_is_def.argtypes = [Cursor]
 Cursor_is_def.restype = bool
+
+Cursor_is_static_method = lib.clang_CXXMethod_isStatic
+Cursor_is_static_method.argtypes = [Cursor]
+Cursor_is_static_method.restype = bool
 
 Cursor_def = lib.clang_getCursorDefinition
 Cursor_def.argtypes = [Cursor]

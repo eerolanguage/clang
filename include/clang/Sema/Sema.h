@@ -1427,13 +1427,15 @@ public:
                    Declarator &D, Expr *BitfieldWidth);
 
   FieldDecl *HandleField(Scope *S, RecordDecl *TagD, SourceLocation DeclStart,
-                         Declarator &D, Expr *BitfieldWidth, bool HasInit,
+                         Declarator &D, Expr *BitfieldWidth,
+                         InClassInitStyle InitStyle,
                          AccessSpecifier AS);
 
   FieldDecl *CheckFieldDecl(DeclarationName Name, QualType T,
                             TypeSourceInfo *TInfo,
                             RecordDecl *Record, SourceLocation Loc,
-                            bool Mutable, Expr *BitfieldWidth, bool HasInit,
+                            bool Mutable, Expr *BitfieldWidth,
+                            InClassInitStyle InitStyle,
                             SourceLocation TSSL,
                             AccessSpecifier AS, NamedDecl *PrevDecl,
                             Declarator *D = 0);
@@ -2544,6 +2546,9 @@ public:
                           SourceLocation RParenLoc,
                           bool MSAsm = false);
 
+  StmtResult ActOnMSAsmStmt(SourceLocation AsmLoc,
+                            std::string &AsmString,
+                            SourceLocation EndLoc);
 
   VarDecl *BuildObjCExceptionDecl(TypeSourceInfo *TInfo, QualType ExceptionType,
                                   SourceLocation StartLoc,
@@ -4205,7 +4210,7 @@ public:
                                  Declarator &D,
                                  MultiTemplateParamsArg TemplateParameterLists,
                                  Expr *BitfieldWidth, const VirtSpecifiers &VS,
-                                 bool HasDeferredInit);
+                                 InClassInitStyle InitStyle);
   void ActOnCXXInClassMemberInitializer(Decl *VarDecl, SourceLocation EqualLoc,
                                         Expr *Init);
 

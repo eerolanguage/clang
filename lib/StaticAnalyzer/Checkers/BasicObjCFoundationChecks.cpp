@@ -27,8 +27,10 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprObjC.h"
+#include "clang/AST/StmtObjC.h"
 #include "clang/AST/ASTContext.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringMap.h"
 
 using namespace clang;
 using namespace ento;
@@ -50,15 +52,34 @@ static const char* GetReceiverNameType(const ObjCMessage &msg) {
   return 0;
 }
 
-static bool isReceiverClassOrSuperclass(const ObjCInterfaceDecl *ID,
-                                        StringRef ClassName) {
-  if (ID->getIdentifier()->getName() == ClassName)
-    return true;
+enum FoundationClass {
+  FC_None,
+  FC_NSArray,
+  FC_NSDictionary,
+  FC_NSEnumerator,
+  FC_NSOrderedSet,
+  FC_NSSet,
+  FC_NSString
+};
 
-  if (const ObjCInterfaceDecl *Super = ID->getSuperClass())
-    return isReceiverClassOrSuperclass(Super, ClassName);
+static FoundationClass findKnownClass(const ObjCInterfaceDecl *ID) {
+  static llvm::StringMap<FoundationClass> Classes;
+  if (Classes.empty()) {
+    Classes["NSArray"] = FC_NSArray;
+    Classes["NSDictionary"] = FC_NSDictionary;
+    Classes["NSEnumerator"] = FC_NSEnumerator;
+    Classes["NSOrderedSet"] = FC_NSOrderedSet;
+    Classes["NSSet"] = FC_NSSet;
+    Classes["NSString"] = FC_NSString;
+  }
 
-  return false;
+  // FIXME: Should we cache this at all?
+  FoundationClass result = Classes.lookup(ID->getIdentifier()->getName());
+  if (result == FC_None)
+    if (const ObjCInterfaceDecl *Super = ID->getSuperClass())
+      return findKnownClass(Super);
+
+  return result;
 }
 
 static inline bool isNil(SVal X) {
@@ -106,7 +127,7 @@ void NilArgChecker::checkPreObjCMessage(ObjCMessage msg,
   if (!ID)
     return;
   
-  if (isReceiverClassOrSuperclass(ID, "NSString")) {
+  if (findKnownClass(ID) == FC_NSString) {
     Selector S = msg.getSelector();
     
     if (S.isUnarySelector())
@@ -517,50 +538,32 @@ VariadicMethodTypeChecker::isVariadicMessage(const ObjCMessage &msg) const {
     // gains that this analysis gives.
     const ObjCInterfaceDecl *Class = MD->getClassInterface();
 
-    // -[NSArray initWithObjects:]
-    if (isReceiverClassOrSuperclass(Class, "NSArray") &&
-        S == initWithObjectsS)
-      return true;
-
-    // -[NSDictionary initWithObjectsAndKeys:]
-    if (isReceiverClassOrSuperclass(Class, "NSDictionary") &&
-        S == initWithObjectsAndKeysS)
-      return true;
-
-    // -[NSSet initWithObjects:]
-    if (isReceiverClassOrSuperclass(Class, "NSSet") &&
-        S == initWithObjectsS)
-      return true;
-
-    // -[NSOrderedSet initWithObjects:]
-    if (isReceiverClassOrSuperclass(Class, "NSOrderedSet") &&
-        S == initWithObjectsS)
-      return true;
+    switch (findKnownClass(Class)) {
+    case FC_NSArray:
+    case FC_NSOrderedSet:
+    case FC_NSSet:
+      return S == initWithObjectsS;
+    case FC_NSDictionary:
+      return S == initWithObjectsAndKeysS;
+    default:
+      return false;
+    }
   } else {
     const ObjCInterfaceDecl *Class = msg.getReceiverInterface();
 
-    // -[NSArray arrayWithObjects:]
-    if (isReceiverClassOrSuperclass(Class, "NSArray") &&
-        S == arrayWithObjectsS)
-      return true;
-
-    // -[NSDictionary dictionaryWithObjectsAndKeys:]
-    if (isReceiverClassOrSuperclass(Class, "NSDictionary") &&
-        S == dictionaryWithObjectsAndKeysS)
-      return true;
-
-    // -[NSSet setWithObjects:]
-    if (isReceiverClassOrSuperclass(Class, "NSSet") &&
-        S == setWithObjectsS)
-      return true;
-
-    // -[NSOrderedSet orderedSetWithObjects:]
-    if (isReceiverClassOrSuperclass(Class, "NSOrderedSet") &&
-        S == orderedSetWithObjectsS)
-      return true;
+    switch (findKnownClass(Class)) {
+      case FC_NSArray:
+        return S == arrayWithObjectsS;
+      case FC_NSOrderedSet:
+        return S == orderedSetWithObjectsS;
+      case FC_NSSet:
+        return S == setWithObjectsS;
+      case FC_NSDictionary:
+        return S == dictionaryWithObjectsAndKeysS;
+      default:
+        return false;
+    }
   }
-
-  return false;
 }
 
 void VariadicMethodTypeChecker::checkPreObjCMessage(ObjCMessage msg,
@@ -648,6 +651,75 @@ void VariadicMethodTypeChecker::checkPreObjCMessage(ObjCMessage msg,
 }
 
 //===----------------------------------------------------------------------===//
+// Improves the modeling of loops over Cocoa collections.
+//===----------------------------------------------------------------------===//
+
+namespace {
+class ObjCLoopChecker
+  : public Checker<check::PostStmt<ObjCForCollectionStmt> > {
+  
+public:
+  void checkPostStmt(const ObjCForCollectionStmt *FCS, CheckerContext &C) const;
+};
+}
+
+static bool isKnownNonNilCollectionType(QualType T) {
+  const ObjCObjectPointerType *PT = T->getAs<ObjCObjectPointerType>();
+  if (!PT)
+    return false;
+  
+  const ObjCInterfaceDecl *ID = PT->getInterfaceDecl();
+  if (!ID)
+    return false;
+
+  switch (findKnownClass(ID)) {
+  case FC_NSArray:
+  case FC_NSDictionary:
+  case FC_NSEnumerator:
+  case FC_NSOrderedSet:
+  case FC_NSSet:
+    return true;
+  default:
+    return false;
+  }
+}
+
+void ObjCLoopChecker::checkPostStmt(const ObjCForCollectionStmt *FCS,
+                                    CheckerContext &C) const {
+  ProgramStateRef State = C.getState();
+  
+  // Check if this is the branch for the end of the loop.
+  SVal CollectionSentinel = State->getSVal(FCS, C.getLocationContext());
+  if (CollectionSentinel.isZeroConstant())
+    return;
+  
+  // See if the collection is one where we /know/ the elements are non-nil.
+  const Expr *Collection = FCS->getCollection();
+  if (!isKnownNonNilCollectionType(Collection->getType()))
+    return;
+  
+  // FIXME: Copied from ExprEngineObjC.
+  const Stmt *Element = FCS->getElement();
+  SVal ElementVar;
+  if (const DeclStmt *DS = dyn_cast<DeclStmt>(Element)) {
+    const VarDecl *ElemDecl = cast<VarDecl>(DS->getSingleDecl());
+    assert(ElemDecl->getInit() == 0);
+    ElementVar = State->getLValue(ElemDecl, C.getLocationContext());
+  } else {
+    ElementVar = State->getSVal(Element, C.getLocationContext());
+  }
+
+  if (!isa<Loc>(ElementVar))
+    return;
+
+  // Go ahead and assume the value is non-nil.
+  SVal Val = State->getSVal(cast<Loc>(ElementVar));
+  State = State->assume(cast<DefinedOrUnknownSVal>(Val), true);
+  C.addTransition(State);
+}
+
+
+//===----------------------------------------------------------------------===//
 // Check registration.
 //===----------------------------------------------------------------------===//
 
@@ -669,4 +741,8 @@ void ento::registerClassReleaseChecker(CheckerManager &mgr) {
 
 void ento::registerVariadicMethodTypeChecker(CheckerManager &mgr) {
   mgr.registerChecker<VariadicMethodTypeChecker>();
+}
+
+void ento::registerObjCLoopChecker(CheckerManager &mgr) {
+  mgr.registerChecker<ObjCLoopChecker>();
 }
