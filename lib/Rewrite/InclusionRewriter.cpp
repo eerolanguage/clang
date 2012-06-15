@@ -225,11 +225,11 @@ void InclusionRewriter::CommentOutDirective(Lexer &DirectiveLex,
   do {
     DirectiveLex.LexFromRawLexer(DirectiveToken);
   } while (!DirectiveToken.is(tok::eod) && DirectiveToken.isNot(tok::eof));
-  OS << "#if 0 /* expanded by -rewrite-includes */" << EOL;
+  OS << "#if 0 /* expanded by -frewrite-includes */" << EOL;
   OutputContentUpTo(FromFile, NextToWrite,
     SM.getFileOffset(DirectiveToken.getLocation()) + DirectiveToken.getLength(),
     EOL, Line);
-  OS << "#endif /* expanded by -rewrite-includes */" << EOL;
+  OS << "#endif /* expanded by -frewrite-includes */" << EOL;
 }
 
 /// Find the next identifier in the pragma directive specified by \p RawToken.
@@ -250,7 +250,8 @@ bool InclusionRewriter::Process(FileID FileId,
 {
   bool Invalid;
   const MemoryBuffer &FromFile = *SM.getBuffer(FileId, &Invalid);
-  assert(!Invalid && "Invalid FileID while trying to rewrite includes");
+  if (Invalid) // invalid inclusion
+    return true;
   const char *FileName = FromFile.getBufferIdentifier();
   Lexer RawLex(FileId, &FromFile, PP.getSourceManager(), PP.getLangOpts());
   RawLex.SetCommentRetentionState(false);
@@ -334,7 +335,7 @@ bool InclusionRewriter::Process(FileID FileId,
   return true;
 }
 
-/// InclusionRewriterInInput - Implement -rewrite-includes mode.
+/// InclusionRewriterInInput - Implement -frewrite-includes mode.
 void clang::RewriteIncludesInInput(Preprocessor &PP, raw_ostream *OS,
                                    const PreprocessorOutputOptions &Opts) {
   SourceManager &SM = PP.getSourceManager();

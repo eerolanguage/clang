@@ -16,6 +16,7 @@
 
 #include "clang/Lex/DirectoryLookup.h"
 #include "clang/Lex/ModuleMap.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Allocator.h"
@@ -31,12 +32,12 @@ class FileManager;
 class IdentifierInfo;
 
 /// HeaderFileInfo - The preprocessor keeps track of this information for each
-/// file that is #included.
+/// file that is \#included.
 struct HeaderFileInfo {
-  /// isImport - True if this is a #import'd or #pragma once file.
+  /// isImport - True if this is a \#import'd or \#pragma once file.
   unsigned isImport : 1;
 
-  /// isPragmaOnce - True if this is  #pragma once file.
+  /// isPragmaOnce - True if this is  \#pragma once file.
   unsigned isPragmaOnce : 1;
 
   /// DirInfo - Keep track of whether this is a system header, and if so,
@@ -144,6 +145,12 @@ class HeaderSearch {
   unsigned SystemDirIdx;
   bool NoCurDirSearch;
 
+  /// #include prefixes for which the 'system header' property is overridden.
+  /// For a #include "x" or #include <x> directive, the last string in this
+  /// list which is a prefix of 'x' determines whether the file is treated as
+  /// a system header.
+  std::vector<std::pair<std::string, bool> > SystemHeaderPrefixes;
+
   /// \brief The path to the module cache.
   std::string ModuleCachePath;
   
@@ -233,6 +240,11 @@ public:
     if (!isAngled)
       AngledDirIdx++;
     SystemDirIdx++;
+  }
+
+  /// SetSystemHeaderPrefixes - Set the list of system header prefixes.
+  void SetSystemHeaderPrefixes(ArrayRef<std::pair<std::string, bool> > P) {
+    SystemHeaderPrefixes.assign(P.begin(), P.end());
   }
 
   /// HasIncludeAliasMap - Checks whether the map exists or not
@@ -379,17 +391,17 @@ public:
 
   /// SetFileControllingMacro - Mark the specified file as having a controlling
   /// macro.  This is used by the multiple-include optimization to eliminate
-  /// no-op #includes.
+  /// no-op \#includes.
   void SetFileControllingMacro(const FileEntry *File,
                                const IdentifierInfo *ControllingMacro) {
     getFileInfo(File).ControllingMacro = ControllingMacro;
   }
 
   /// \brief Determine whether this file is intended to be safe from
-  /// multiple inclusions, e.g., it has #pragma once or a controlling
+  /// multiple inclusions, e.g., it has \#pragma once or a controlling
   /// macro.
   ///
-  /// This routine does not consider the effect of #import 
+  /// This routine does not consider the effect of \#import
   bool isFileMultipleIncludeGuarded(const FileEntry *File);
 
   /// CreateHeaderMap - This method returns a HeaderMap for the specified

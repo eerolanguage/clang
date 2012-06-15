@@ -115,6 +115,8 @@ class A {
   Trivial user_constructor_;
   NonTrivialConstructor non_trivial_constructor_;
   NonTrivialDestructor non_trivial_destructor_;
+
+  int attr_  __attribute__((unused));
 };
 
 class EverythingUsed {
@@ -139,6 +141,13 @@ class EverythingUsed {
   int as_array_index_;
   int by_initializer_;
 };
+
+namespace templates {
+class B {
+  template <typename T> void f(T t);
+  int a;
+};
+}  // namespace templates
 
 namespace mutual_friends {
 // Undefined methods make mutual friends undefined.
