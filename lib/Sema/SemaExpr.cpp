@@ -182,6 +182,38 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
   // Warn if this is used but marked unused.
   if (D->hasAttr<UnusedAttr>())
     Diag(Loc, diag::warn_used_but_marked_unused) << D->getDeclName();
+
+  // Warn if we're in an extern inline function referring to a decl
+  // with internal linkage. (C99 6.7.4p3)
+  // FIXME: This is not explicitly forbidden in C++, but it's not clear
+  // what the correct behavior is. We should probably still have a warning.
+  // (However, in C++ const variables have internal linkage by default, while
+  // functions still have external linkage by default, so this warning becomes
+  // very noisy.)
+  if (!getLangOpts().CPlusPlus) {
+    if (FunctionDecl *Current = getCurFunctionDecl()) {
+      if (Current->isInlined() && Current->getLinkage() > InternalLinkage) {
+        if (D->getLinkage() == InternalLinkage) {
+          Diag(Loc, diag::warn_internal_in_extern_inline)
+            << !isa<FunctionDecl>(D) << D << isa<CXXMethodDecl>(Current);
+
+          // If the user didn't explicitly specify a storage class,
+          // suggest adding "static" to fix the problem.
+          const FunctionDecl *FirstDecl = Current->getCanonicalDecl();
+          if (FirstDecl->getStorageClassAsWritten() == SC_None) {
+            SourceLocation DeclBegin = FirstDecl->getSourceRange().getBegin();
+            Diag(DeclBegin, diag::note_convert_inline_to_static)
+              << Current << FixItHint::CreateInsertion(DeclBegin, "static ");
+          }
+
+          Diag(D->getCanonicalDecl()->getLocation(),
+               diag::note_internal_decl_declared_here)
+          << D;
+        }
+      }
+    }
+  }
+
   return false;
 }
 
@@ -943,6 +975,10 @@ QualType Sema::UsualArithmeticConversions(ExprResult &LHS, ExprResult &RHS,
   QualType RHSType =
     Context.getCanonicalType(RHS.get()->getType()).getUnqualifiedType();
 
+  // For conversion purposes, we ignore any atomic qualifier on the LHS.
+  if (const AtomicType *AtomicLHS = LHSType->getAs<AtomicType>())
+    LHSType = AtomicLHS->getValueType();
+
   // If both types are identical, no conversion is needed.
   if (LHSType == RHSType)
     return LHSType;
@@ -950,7 +986,7 @@ QualType Sema::UsualArithmeticConversions(ExprResult &LHS, ExprResult &RHS,
   // If either side is a non-arithmetic type (e.g. a pointer), we are done.
   // The caller can deal with this (e.g. pointer + int).
   if (!LHSType->isArithmeticType() || !RHSType->isArithmeticType())
-    return LHSType;
+    return QualType();
 
   // Apply unary and bitfield promotions to the LHS's type.
   QualType LHSUnpromotedType = LHSType;
@@ -4088,11 +4124,6 @@ CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
   // pointers.  Everything else should be possible.
 
   QualType SrcTy = Src.get()->getType();
-  if (const AtomicType *SrcAtomicTy = SrcTy->getAs<AtomicType>())
-    SrcTy = SrcAtomicTy->getValueType();
-  if (const AtomicType *DestAtomicTy = DestTy->getAs<AtomicType>())
-    DestTy = DestAtomicTy->getValueType();
-
   if (Context.hasSameUnqualifiedType(SrcTy, DestTy))
     return CK_NoOp;
 
@@ -5441,20 +5472,18 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
     return Compatible;
   }
 
+  // If we have an atomic type, try a non-atomic assignment, then just add an
+  // atomic qualification step.
   if (const AtomicType *AtomicTy = dyn_cast<AtomicType>(LHSType)) {
-    if (AtomicTy->getValueType() == RHSType) {
-      Kind = CK_NonAtomicToAtomic;
-      return Compatible;
-    }
+    Sema::AssignConvertType result =
+      CheckAssignmentConstraints(AtomicTy->getValueType(), RHS, Kind);
+    if (result != Compatible)
+      return result;
+    if (Kind != CK_NoOp)
+      RHS = ImpCastExprToType(RHS.take(), AtomicTy->getValueType(), Kind);
+    Kind = CK_NonAtomicToAtomic;
+    return Compatible;
   }
-
-  if (const AtomicType *AtomicTy = dyn_cast<AtomicType>(RHSType)) {
-    if (AtomicTy->getValueType() == LHSType) {
-      Kind = CK_AtomicToNonAtomic;
-      return Compatible;
-    }
-  }
-
 
   // If the left-hand side is a reference type, then we are in a
   // (rare!) case where we've allowed the use of references in C,
@@ -5995,14 +6024,8 @@ QualType Sema::CheckMultiplyDivideOperands(ExprResult &LHS, ExprResult &RHS,
     return QualType();
 
 
-  if (!LHS.get()->getType()->isArithmeticType() ||
-      !RHS.get()->getType()->isArithmeticType()) {
-    if (IsCompAssign &&
-        LHS.get()->getType()->isAtomicType() &&
-        RHS.get()->getType()->isArithmeticType())
-      return compType;
+  if (compType.isNull() || !compType->isArithmeticType())
     return InvalidOperands(Loc, LHS, RHS);
-  }
 
   // Check for division by zero.
   if (IsDiv &&
@@ -6030,8 +6053,7 @@ QualType Sema::CheckRemainderOperands(
   if (LHS.isInvalid() || RHS.isInvalid())
     return QualType();
 
-  if (!LHS.get()->getType()->isIntegerType() ||
-      !RHS.get()->getType()->isIntegerType())
+  if (compType.isNull() || !compType->isIntegerType())
     return InvalidOperands(Loc, LHS, RHS);
 
   // Check for remainder by zero.
@@ -6267,15 +6289,8 @@ QualType Sema::CheckAdditionOperands( // C99 6.5.6
     diagnoseStringPlusInt(*this, Loc, LHS.get(), RHS.get());
 
   // handle the common case first (both operands are arithmetic).
-  if (LHS.get()->getType()->isArithmeticType() &&
-      RHS.get()->getType()->isArithmeticType()) {
+  if (!compType.isNull() && compType->isArithmeticType()) {
     if (CompLHSTy) *CompLHSTy = compType;
-    return compType;
-  }
-
-  if (LHS.get()->getType()->isAtomicType() &&
-      RHS.get()->getType()->isArithmeticType()) {
-    *CompLHSTy = LHS.get()->getType();
     return compType;
   }
 
@@ -6333,15 +6348,8 @@ QualType Sema::CheckSubtractionOperands(ExprResult &LHS, ExprResult &RHS,
   // Enforce type constraints: C99 6.5.6p3.
 
   // Handle the common case first (both operands are arithmetic).
-  if (LHS.get()->getType()->isArithmeticType() &&
-      RHS.get()->getType()->isArithmeticType()) {
+  if (!compType.isNull() && compType->isArithmeticType()) {
     if (CompLHSTy) *CompLHSTy = compType;
-    return compType;
-  }
-
-  if (LHS.get()->getType()->isAtomicType() &&
-      RHS.get()->getType()->isArithmeticType()) {
-    *CompLHSTy = LHS.get()->getType();
     return compType;
   }
 
@@ -7262,8 +7270,7 @@ inline QualType Sema::CheckBitwiseOperands(
   LHS = LHSResult.take();
   RHS = RHSResult.take();
 
-  if (LHS.get()->getType()->isIntegralOrUnscopedEnumerationType() &&
-      RHS.get()->getType()->isIntegralOrUnscopedEnumerationType())
+  if (!compType.isNull() && compType->isIntegralOrUnscopedEnumerationType())
     return compType;
   return InvalidOperands(Loc, LHS, RHS);
 }
@@ -9157,7 +9164,8 @@ void Sema::ActOnBlockStart(SourceLocation CaretLoc, Scope *CurScope) {
   PushExpressionEvaluationContext(PotentiallyEvaluated);  
 }
 
-void Sema::ActOnBlockArguments(Declarator &ParamInfo, Scope *CurScope) {
+void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
+                               Scope *CurScope) {
   assert(ParamInfo.getIdentifier()==0 && "block-id should have no identifier!");
   assert(ParamInfo.getContext() == Declarator::BlockLiteralContext);
   BlockScopeInfo *CurBlock = getCurBlock();
@@ -9165,6 +9173,18 @@ void Sema::ActOnBlockArguments(Declarator &ParamInfo, Scope *CurScope) {
   TypeSourceInfo *Sig = GetTypeForDeclarator(ParamInfo, CurScope);
   QualType T = Sig->getType();
 
+  // FIXME: We should allow unexpanded parameter packs here, but that would,
+  // in turn, make the block expression contain unexpanded parameter packs.
+  if (DiagnoseUnexpandedParameterPack(CaretLoc, Sig, UPPC_Block)) {
+    // Drop the parameters.
+    FunctionProtoType::ExtProtoInfo EPI;
+    EPI.HasTrailingReturn = false;
+    EPI.TypeQuals |= DeclSpec::TQ_const;
+    T = Context.getFunctionType(Context.DependentTy, /*Args=*/0, /*NumArgs=*/0,
+                                EPI);
+    Sig = Context.getTrivialTypeSourceInfo(T);
+  }
+  
   // GetTypeForDeclarator always produces a function type for a block
   // literal signature.  Furthermore, it is always a FunctionProtoType
   // unless the function was written with a typedef.

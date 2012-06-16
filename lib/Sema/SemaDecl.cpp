@@ -80,6 +80,42 @@ class TypeNameValidatorCCC : public CorrectionCandidateCallback {
 
 }
 
+/// \brief Determine whether the token kind starts a simple-type-specifier.
+bool Sema::isSimpleTypeSpecifier(tok::TokenKind Kind) const {
+  switch (Kind) {
+  // FIXME: Take into account the current language when deciding whether a
+  // token kind is a valid type specifier
+  case tok::kw_short:
+  case tok::kw_long:
+  case tok::kw___int64:
+  case tok::kw___int128:
+  case tok::kw_signed:
+  case tok::kw_unsigned:
+  case tok::kw_void:
+  case tok::kw_char:
+  case tok::kw_int:
+  case tok::kw_half:
+  case tok::kw_float:
+  case tok::kw_double:
+  case tok::kw_wchar_t:
+  case tok::kw_bool:
+  case tok::kw___underlying_type:
+    return true;
+
+  case tok::annot_typename:
+  case tok::kw_char16_t:
+  case tok::kw_char32_t:
+  case tok::kw_typeof:
+  case tok::kw_decltype:
+    return getLangOpts().CPlusPlus;
+
+  default:
+    break;
+  }
+
+  return false;
+}
+
 /// \brief If the identifier refers to a type name within this scope,
 /// return the declaration of that type.
 ///
@@ -359,7 +395,7 @@ bool Sema::isMicrosoftMissingTypename(const CXXScopeSpec *SS, Scope *S) {
   return CurContext->isFunctionOrMethod() || S->isFunctionPrototypeScope();
 }
 
-bool Sema::DiagnoseUnknownTypeName(const IdentifierInfo &II, 
+bool Sema::DiagnoseUnknownTypeName(IdentifierInfo *&II,
                                    SourceLocation IILoc,
                                    Scope *S,
                                    CXXScopeSpec *SS,
@@ -370,7 +406,7 @@ bool Sema::DiagnoseUnknownTypeName(const IdentifierInfo &II,
   // There may have been a typo in the name of the type. Look up typo
   // results, in case we have something that we can suggest.
   TypeNameValidatorCCC Validator(false);
-  if (TypoCorrection Corrected = CorrectTypo(DeclarationNameInfo(&II, IILoc),
+  if (TypoCorrection Corrected = CorrectTypo(DeclarationNameInfo(II, IILoc),
                                              LookupOrdinaryName, S, SS,
                                              Validator)) {
     std::string CorrectedStr(Corrected.getAsString(getLangOpts()));
@@ -378,19 +414,23 @@ bool Sema::DiagnoseUnknownTypeName(const IdentifierInfo &II,
 
     if (Corrected.isKeyword()) {
       // We corrected to a keyword.
-      // FIXME: Actually recover with the keyword we suggest, and emit a fix-it.
+      IdentifierInfo *NewII = Corrected.getCorrectionAsIdentifierInfo();
+      if (!isSimpleTypeSpecifier(NewII->getTokenID()))
+        CorrectedQuotedStr = "the keyword " + CorrectedQuotedStr;
       Diag(IILoc, diag::err_unknown_typename_suggest)
-        << &II << CorrectedQuotedStr;
+        << II << CorrectedQuotedStr
+        << FixItHint::CreateReplacement(SourceRange(IILoc), CorrectedStr);
+      II = NewII;
     } else {
       NamedDecl *Result = Corrected.getCorrectionDecl();
       // We found a similarly-named type or interface; suggest that.
       if (!SS || !SS->isSet())
         Diag(IILoc, diag::err_unknown_typename_suggest)
-          << &II << CorrectedQuotedStr
+          << II << CorrectedQuotedStr
           << FixItHint::CreateReplacement(SourceRange(IILoc), CorrectedStr);
       else if (DeclContext *DC = computeDeclContext(*SS, false))
         Diag(IILoc, diag::err_unknown_nested_typename_suggest)
-          << &II << DC << CorrectedQuotedStr << SS->getRange()
+          << II << DC << CorrectedQuotedStr << SS->getRange()
           << FixItHint::CreateReplacement(SourceRange(IILoc), CorrectedStr);
       else
         llvm_unreachable("could not have corrected a typo here");
@@ -409,7 +449,7 @@ bool Sema::DiagnoseUnknownTypeName(const IdentifierInfo &II,
   if (getLangOpts().CPlusPlus) {
     // See if II is a class template that the user forgot to pass arguments to.
     UnqualifiedId Name;
-    Name.setIdentifier(&II, IILoc);
+    Name.setIdentifier(II, IILoc);
     CXXScopeSpec EmptySS;
     TemplateTy TemplateResult;
     bool MemberOfUnknownSpecialization;
@@ -430,21 +470,21 @@ bool Sema::DiagnoseUnknownTypeName(const IdentifierInfo &II,
   // (struct, union, enum) from Parser::ParseImplicitInt here, instead?
   
   if (!SS || (!SS->isSet() && !SS->isInvalid()))
-    Diag(IILoc, diag::err_unknown_typename) << &II;
+    Diag(IILoc, diag::err_unknown_typename) << II;
   else if (DeclContext *DC = computeDeclContext(*SS, false))
     Diag(IILoc, diag::err_typename_nested_not_found) 
-      << &II << DC << SS->getRange();
+      << II << DC << SS->getRange();
   else if (isDependentScopeSpecifier(*SS)) {
     unsigned DiagID = diag::err_typename_missing;
     if (getLangOpts().MicrosoftMode && isMicrosoftMissingTypename(SS, S))
       DiagID = diag::warn_typename_missing;
 
     Diag(SS->getRange().getBegin(), DiagID)
-      << (NestedNameSpecifier *)SS->getScopeRep() << II.getName()
+      << (NestedNameSpecifier *)SS->getScopeRep() << II->getName()
       << SourceRange(SS->getRange().getBegin(), IILoc)
       << FixItHint::CreateInsertion(SS->getRange().getBegin(), "typename ");
-    SuggestedType = ActOnTypenameType(S, SourceLocation(), *SS, II, IILoc)
-                                                                         .get();
+    SuggestedType = ActOnTypenameType(S, SourceLocation(),
+                                      *SS, *II, IILoc).get();
   } else {
     assert(SS && SS->isInvalid() && 
            "Invalid scope specifier has already been diagnosed");
@@ -3895,8 +3935,6 @@ Sema::ActOnTypedefNameDecl(Scope *S, DeclContext *DC, TypedefNameDecl *NewTD,
         Context.setsigjmp_bufDecl(NewTD);
       else if (II->isStr("ucontext_t"))
         Context.setucontext_tDecl(NewTD);
-      else if (II->isStr("__builtin_va_list"))
-        Context.setBuiltinVaListType(Context.getTypedefType(NewTD));
     }
 
   return NewTD;
@@ -7650,8 +7688,6 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
   } else if (ObjCMethodDecl *MD = dyn_cast_or_null<ObjCMethodDecl>(dcl)) {
     assert(MD == getCurMethodDecl() && "Method parsing confused");
     MD->setBody(Body);
-    if (Body)
-      MD->setEndLoc(Body->getLocEnd());
     if (!MD->isInvalidDecl()) {
       DiagnoseUnusedParameters(MD->param_begin(), MD->param_end());
       DiagnoseSizeOfParametersAndReturnValue(MD->param_begin(), MD->param_end(),

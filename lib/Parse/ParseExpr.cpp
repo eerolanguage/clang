@@ -185,8 +185,8 @@ ExprResult Parser::ParseExpression(TypeCastState isTypeCast) {
 
 /// This routine is called when the '@' is seen and consumed.
 /// Current token is an Identifier and is not a 'try'. This
-/// routine is necessary to disambiguate @try-statement from,
-/// for example, @encode-expression.
+/// routine is necessary to disambiguate \@try-statement from,
+/// for example, \@encode-expression.
 ///
 ExprResult
 Parser::ParseExpressionWithLeadingAt(SourceLocation AtLoc) {
@@ -552,9 +552,9 @@ class CastExpressionIdValidator : public CorrectionCandidateCallback {
 /// [GNU]   '__builtin_types_compatible_p' '(' type-name ',' type-name ')'
 /// [GNU]   '__null'
 /// [OBJC]  '[' objc-message-expr ']'
-/// [OBJC]  '@selector' '(' objc-selector-arg ')'
-/// [OBJC]  '@protocol' '(' identifier ')'
-/// [OBJC]  '@encode' '(' type-name ')'
+/// [OBJC]  '\@selector' '(' objc-selector-arg ')'
+/// [OBJC]  '\@protocol' '(' identifier ')'
+/// [OBJC]  '\@encode' '(' type-name ')'
 /// [OBJC]  objc-string-literal
 /// [C++]   simple-type-specifier '(' expression-list[opt] ')'      [C++ 5.2.3]
 /// [C++11] simple-type-specifier braced-init-list                  [C++11 5.2.3]
@@ -2403,7 +2403,7 @@ bool Parser::ParseExpressionList(SmallVectorImpl<Expr*> &Exprs,
 /// [clang] block-id:
 /// [clang]   specifier-qualifier-list block-declarator
 ///
-void Parser::ParseBlockId() {
+void Parser::ParseBlockId(SourceLocation CaretLoc) {
   if (Tok.is(tok::code_completion)) {
     Actions.CodeCompleteOrdinaryName(getCurScope(), Sema::PCC_Type);
     return cutOffParsing();
@@ -2423,7 +2423,7 @@ void Parser::ParseBlockId() {
   MaybeParseGNUAttributes(DeclaratorInfo);
 
   // Inform sema that we are starting a block.
-  Actions.ActOnBlockArguments(DeclaratorInfo, getCurScope());
+  Actions.ActOnBlockArguments(CaretLoc, DeclaratorInfo, getCurScope());
 }
 
 /// ParseBlockLiteralExpression - Parse a block literal, which roughly looks
@@ -2480,9 +2480,9 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     MaybeParseGNUAttributes(ParamInfo);
 
     // Inform sema that we are starting a block.
-    Actions.ActOnBlockArguments(ParamInfo, getCurScope());
+    Actions.ActOnBlockArguments(CaretLoc, ParamInfo, getCurScope());
   } else if (!Tok.is(tok::l_brace)) {
-    ParseBlockId();
+    ParseBlockId(CaretLoc);
   } else {
     // Otherwise, pretend we saw (void).
     ParsedAttributes attrs(AttrFactory);
@@ -2503,7 +2503,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     MaybeParseGNUAttributes(ParamInfo);
 
     // Inform sema that we are starting a block.
-    Actions.ActOnBlockArguments(ParamInfo, getCurScope());
+    Actions.ActOnBlockArguments(CaretLoc, ParamInfo, getCurScope());
   }
 
 

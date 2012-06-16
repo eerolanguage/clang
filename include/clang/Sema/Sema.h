@@ -719,7 +719,7 @@ public:
   /// of selectors are "overloaded").
   GlobalMethodPool MethodPool;
 
-  /// Method selectors used in a @selector expression. Used for implementation
+  /// Method selectors used in a \@selector expression. Used for implementation
   /// of -Wselector.
   llvm::DenseMap<Selector, SourceLocation> ReferencedSelectors;
 
@@ -1112,6 +1112,8 @@ public:
 
   void DiagnoseUseOfUnimplementedSelectors();
 
+  bool isSimpleTypeSpecifier(tok::TokenKind Kind) const;
+
   ParsedType getTypeName(IdentifierInfo &II, SourceLocation NameLoc,
                          Scope *S, CXXScopeSpec *SS = 0,
                          bool isClassName = false,
@@ -1122,7 +1124,7 @@ public:
                          IdentifierInfo **CorrectedII = 0);
   TypeSpecifierType isTagName(IdentifierInfo &II, Scope *S);
   bool isMicrosoftMissingTypename(const CXXScopeSpec *SS, Scope *S);
-  bool DiagnoseUnknownTypeName(const IdentifierInfo &II,
+  bool DiagnoseUnknownTypeName(IdentifierInfo *&II,
                                SourceLocation IILoc,
                                Scope *S,
                                CXXScopeSpec *SS,
@@ -2228,7 +2230,7 @@ public:
                                 SourceLocation Loc);
 
   /// ImplMethodsVsClassMethods - This is main routine to warn if any method
-  /// remains unimplemented in the class or category @implementation.
+  /// remains unimplemented in the class or category \@implementation.
   void ImplMethodsVsClassMethods(Scope *S, ObjCImplDecl* IMPDecl,
                                  ObjCContainerDecl* IDecl,
                                  bool IncompleteImpl = false);
@@ -2240,7 +2242,7 @@ public:
                                        const SelectorSet &InsMap);
 
   /// DefaultSynthesizeProperties - This routine default synthesizes all
-  /// properties which must be synthesized in class's @implementation.
+  /// properties which must be synthesized in the class's \@implementation.
   void DefaultSynthesizeProperties (Scope *S, ObjCImplDecl* IMPDecl,
                                     ObjCInterfaceDecl *IDecl);
   void DefaultSynthesizeProperties(Scope *S, Decl *D);
@@ -2257,8 +2259,8 @@ public:
   ObjCPropertyDecl *LookupPropertyDecl(const ObjCContainerDecl *CDecl,
                                        IdentifierInfo *II);
 
-  /// Called by ActOnProperty to handle @property declarations in
-  ////  class extensions.
+  /// Called by ActOnProperty to handle \@property declarations in
+  /// class extensions.
   Decl *HandlePropertyInClassExtension(Scope *S,
                                        SourceLocation AtLoc,
                                        SourceLocation LParenLoc,
@@ -2274,7 +2276,7 @@ public:
                                        tok::ObjCKeywordKind MethodImplKind);
 
   /// Called by ActOnProperty and HandlePropertyInClassExtension to
-  ///  handle creating the ObjcPropertyDecl for a category or @interface.
+  /// handle creating the ObjcPropertyDecl for a category or \@interface.
   ObjCPropertyDecl *CreatePropertyDecl(Scope *S,
                                        ObjCContainerDecl *CDecl,
                                        SourceLocation AtLoc,
@@ -2757,10 +2759,10 @@ public:
   /// \brief Conditionally issue a diagnostic based on the current
   /// evaluation context.
   ///
-  /// \param stmt - If stmt is non-null, delay reporting the diagnostic until
-  ///  the function body is parsed, and then do a basic reachability analysis to
-  ///  determine if the statement is reachable.  If it is unreachable, the
-  ///  diagnostic will not be emitted.
+  /// \param Statement If Statement is non-null, delay reporting the
+  /// diagnostic until the function body is parsed, and then do a basic
+  /// reachability analysis to determine if the statement is reachable.
+  /// If it is unreachable, the diagnostic will not be emitted.
   bool DiagRuntimeBehavior(SourceLocation Loc, const Stmt *Statement,
                            const PartialDiagnostic &PD);
 
@@ -3182,7 +3184,8 @@ public:
 
   /// ActOnBlockArguments - This callback allows processing of block arguments.
   /// If there are no arguments, this is still invoked.
-  void ActOnBlockArguments(Declarator &ParamInfo, Scope *CurScope);
+  void ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
+                           Scope *CurScope);
 
   /// ActOnBlockError - If there is an error parsing a block, this callback
   /// is invoked to pop the information about the block from the action impl.
@@ -3643,8 +3646,6 @@ public:
 
   /// \brief Try to retrieve the type of the 'this' pointer.
   ///
-  /// \param Capture If true, capture 'this' in this context.
-  ///
   /// \returns The type of 'this', if possible. Otherwise, returns a NULL type.
   QualType getCurrentThisType();
 
@@ -3976,7 +3977,7 @@ public:
   /// including this new type).
   ///
   /// \param TemplateKWLoc the location of the 'template' keyword, if any.
-  /// \param TemplateName The template name.
+  /// \param TemplateName the template name.
   /// \param TemplateNameLoc The location of the template name.
   /// \param LAngleLoc The location of the opening angle bracket  ('<').
   /// \param TemplateArgs The template arguments.
@@ -3991,7 +3992,7 @@ public:
   bool ActOnCXXNestedNameSpecifier(Scope *S,
                                    CXXScopeSpec &SS,
                                    SourceLocation TemplateKWLoc,
-                                   TemplateTy Template,
+                                   TemplateTy TemplateName,
                                    SourceLocation TemplateNameLoc,
                                    SourceLocation LAngleLoc,
                                    ASTTemplateArgsPtr TemplateArgs,
@@ -4138,11 +4139,11 @@ public:
                                   bool Value);
   ExprResult BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements);
   
-  // BuildObjCBoxedExpr - builds an ObjCBoxedExpr AST node for the
-  // '@' prefixed parenthesized expression. The type of the expression will
-  // either be "NSNumber *" or "NSString *" depending on the type of
-  // ValueType, which is allowed to be a built-in numeric type or
-  // "char *" or "const char *".
+  /// BuildObjCBoxedExpr - builds an ObjCBoxedExpr AST node for the
+  /// '@' prefixed parenthesized expression. The type of the expression will
+  /// either be "NSNumber *" or "NSString *" depending on the type of
+  /// ValueType, which is allowed to be a built-in numeric type or
+  /// "char *" or "const char *".
   ExprResult BuildObjCBoxedExpr(SourceRange SR, Expr *ValueExpr);
   
   ExprResult BuildObjCSubscriptExpression(SourceLocation RB, Expr *BaseExpr,
@@ -4150,7 +4151,7 @@ public:
                                           ObjCMethodDecl *getterMethod,
                                           ObjCMethodDecl *setterMethod);
     
-  ExprResult BuildObjCDictionaryLiteral(SourceRange SR,                                         
+  ExprResult BuildObjCDictionaryLiteral(SourceRange SR,
                                         ObjCDictionaryElement *Elements,
                                         unsigned NumElements);
  
@@ -4167,14 +4168,14 @@ public:
                                        ParsedType Ty,
                                        SourceLocation RParenLoc);
 
-  // ParseObjCSelectorExpression - Build selector expression for @selector
+  /// ParseObjCSelectorExpression - Build selector expression for \@selector
   ExprResult ParseObjCSelectorExpression(Selector Sel,
                                          SourceLocation AtLoc,
                                          SourceLocation SelLoc,
                                          SourceLocation LParenLoc,
                                          SourceLocation RParenLoc);
 
-  // ParseObjCProtocolExpression - Build protocol expression for @protocol
+  /// ParseObjCProtocolExpression - Build protocol expression for \@protocol
   ExprResult ParseObjCProtocolExpression(IdentifierInfo * ProtocolName,
                                          SourceLocation AtLoc,
                                          SourceLocation ProtoLoc,
@@ -4934,7 +4935,7 @@ public:
   ActOnTypenameType(Scope *S, SourceLocation TypenameLoc,
                     const CXXScopeSpec &SS,
                     SourceLocation TemplateLoc,
-                    TemplateTy Template,
+                    TemplateTy TemplateName,
                     SourceLocation TemplateNameLoc,
                     SourceLocation LAngleLoc,
                     ASTTemplateArgsPtr TemplateArgs,
@@ -5026,7 +5027,13 @@ public:
     UPPC_IfExists,
 
     /// \brief Microsoft __if_not_exists.
-    UPPC_IfNotExists
+    UPPC_IfNotExists,
+    
+    /// \brief Lambda expression.
+    UPPC_Lambda,
+    
+    /// \brief Block expression,
+    UPPC_Block
 };
 
   /// \brief Diagnose unexpanded parameter packs.
@@ -5217,9 +5224,6 @@ public:
   ///
   /// \param Unexpanded The set of unexpanded parameter packs within the
   /// pattern.
-  ///
-  /// \param NumUnexpanded The number of unexpanded parameter packs in
-  /// \p Unexpanded.
   ///
   /// \param ShouldExpand Will be set to \c true if the transformer should
   /// expand the corresponding pack expansions into separate arguments. When

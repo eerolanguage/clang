@@ -1338,8 +1338,6 @@ private:
   // C++ 5.2.3: Explicit type conversion (functional notation)
   ExprResult ParseCXXTypeConstructExpression(const DeclSpec &DS);
 
-  bool isCXXSimpleTypeSpecifier() const;
-
   /// ParseCXXSimpleTypeSpecifier - [C++ 7.1.5.2] Simple type specifiers.
   /// This should only be called when the current token is known to be part of
   /// simple-type-specifier.
@@ -1770,7 +1768,7 @@ private:
                              = Declarator::TypeNameContext,
                            AccessSpecifier AS = AS_none,
                            Decl **OwnedType = 0);
-  void ParseBlockId();
+  void ParseBlockId(SourceLocation CaretLoc);
 
   // Check for the start of a C++11 attribute-specifier-seq in a context where
   // an attribute is not allowed.

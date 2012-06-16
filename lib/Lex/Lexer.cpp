@@ -1091,20 +1091,21 @@ static inline bool isIdentifierBody(unsigned char c) {
 }
 
 /// isHorizontalWhitespace - Return true if this character is horizontal
-/// whitespace: ' ', '\t', '\f', '\v'.  Note that this returns false for '\0'.
+/// whitespace: ' ', '\\t', '\\f', '\\v'.  Note that this returns false for
+/// '\\0'.
 static inline bool isHorizontalWhitespace(unsigned char c) {
   return (CharInfo[c] & CHAR_HORZ_WS) ? true : false;
 }
 
 /// isVerticalWhitespace - Return true if this character is vertical
-/// whitespace: '\n', '\r'.  Note that this returns false for '\0'.
+/// whitespace: '\\n', '\\r'.  Note that this returns false for '\\0'.
 static inline bool isVerticalWhitespace(unsigned char c) {
   return (CharInfo[c] & CHAR_VERT_WS) ? true : false;
 }
 
 /// isWhitespace - Return true if this character is horizontal or vertical
-/// whitespace: ' ', '\t', '\f', '\v', '\n', '\r'.  Note that this returns false
-/// for '\0'.
+/// whitespace: ' ', '\\t', '\\f', '\\v', '\\n', '\\r'.  Note that this returns
+/// false for '\\0'.
 static inline bool isWhitespace(unsigned char c) {
   return (CharInfo[c] & (CHAR_HORZ_WS|CHAR_VERT_WS)) ? true : false;
 }
@@ -1569,8 +1570,20 @@ void Lexer::LexNumericConstant(Token &Result, const char *CurPtr) {
   }
 
   // If we have a hex FP constant, continue.
-  if ((C == '-' || C == '+') && (PrevCh == 'P' || PrevCh == 'p'))
-    return LexNumericConstant(Result, ConsumeChar(CurPtr, Size, Result));
+  if ((C == '-' || C == '+') && (PrevCh == 'P' || PrevCh == 'p')) {
+    // Outside C99, we accept hexadecimal floating point numbers as a
+    // not-quite-conforming extension. Only do so if this looks like it's
+    // actually meant to be a hexfloat, and not if it has a ud-suffix.
+    bool IsHexFloat = true;
+    if (!LangOpts.C99) {
+      if (!isHexaLiteral(BufferPtr, LangOpts))
+        IsHexFloat = false;
+      else if (std::find(BufferPtr, CurPtr, '_') != CurPtr)
+        IsHexFloat = false;
+    }
+    if (IsHexFloat)
+      return LexNumericConstant(Result, ConsumeChar(CurPtr, Size, Result));
+  }
 
   // Update the location of token as well as BufferPtr.
   const char *TokStart = BufferPtr;
@@ -2392,7 +2405,7 @@ bool Lexer::LexEndOfFile(Token &Result, const char *CurPtr) {
   BufferPtr = CurPtr;
 
   // Finally, let the preprocessor handle this.
-  return PP->HandleEndOfFile(Result);
+  return PP->HandleEndOfFile(Result, isPragmaLexer());
 }
 
 /// isNextPPTokenLParen - Return 1 if the next unexpanded token lexed from

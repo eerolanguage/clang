@@ -745,7 +745,7 @@ Decl *Sema::ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
 }
 
 /// ActOnTemplateTemplateParameter - Called when a C++ template template
-/// parameter (e.g. T in template <template <typename> class T> class array)
+/// parameter (e.g. T in template <template \<typename> class T> class array)
 /// has been parsed. S is the current scope.
 Decl *Sema::ActOnTemplateTemplateParameter(Scope* S,
                                            SourceLocation TmpLoc,
@@ -5790,14 +5790,17 @@ Sema::CheckSpecializationInstantiationRedecl(SourceLocation NewLoc,
 }
 
 /// \brief Perform semantic analysis for the given dependent function
-/// template specialization.  The only possible way to get a dependent
-/// function template specialization is with a friend declaration,
-/// like so:
+/// template specialization.
 ///
-///   template <class T> void foo(T);
-///   template <class T> class A {
+/// The only possible way to get a dependent function template specialization
+/// is with a friend declaration, like so:
+///
+/// \code
+///   template \<class T> void foo(T);
+///   template \<class T> class A {
 ///     friend void foo<>(T);
 ///   };
+/// \endcode
 ///
 /// There really isn't any useful analysis we can do here, so we
 /// just store the information.

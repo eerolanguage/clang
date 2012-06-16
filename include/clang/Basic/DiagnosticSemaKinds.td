@@ -2867,28 +2867,28 @@ def err_unexpanded_parameter_pack_0 : Error<
   "size|static assertion|fixed underlying type|enumerator value|"
   "using declaration|friend declaration|qualifier|initializer|default argument|"
   "non-type template parameter type|exception type|partial specialization|"
-  "__if_exists name|__if_not_exists name}0 "
+  "__if_exists name|__if_not_exists name|lambda|block}0 "
   "contains an unexpanded parameter pack">;
 def err_unexpanded_parameter_pack_1 : Error<
   "%select{expression|base type|declaration type|data member type|bit-field "
   "size|static assertion|fixed underlying type|enumerator value|"
   "using declaration|friend declaration|qualifier|initializer|default argument|"
   "non-type template parameter type|exception type|partial specialization|"
-  "__if_exists name|__if_not_exists name}0 "
+  "__if_exists name|__if_not_exists name|lambda|block}0 "
   "contains unexpanded parameter pack %1">;
 def err_unexpanded_parameter_pack_2 : Error<
   "%select{expression|base type|declaration type|data member type|bit-field "
   "size|static assertion|fixed underlying type|enumerator value|"
   "using declaration|friend declaration|qualifier|initializer|default argument|"
   "non-type template parameter type|exception type|partial specialization|"
-  "__if_exists name|__if_not_exists name}0 "
+  "__if_exists name|__if_not_exists name|lambda|block}0 "
   "contains unexpanded parameter packs %1 and %2">;
 def err_unexpanded_parameter_pack_3_or_more : Error<
   "%select{expression|base type|declaration type|data member type|bit-field "
   "size|static assertion|fixed underlying type|enumerator value|"
   "using declaration|friend declaration|qualifier|initializer|default argument|"
   "non-type template parameter type|exception type|partial specialization|"
-  "__if_exists name|__if_not_exists name}0 "
+  "__if_exists name|__if_not_exists name|lambda|block}0 "
   "contains unexpanded parameter packs %1, %2, ...">;
 
 def err_pack_expansion_without_parameter_packs : Error<
@@ -3005,6 +3005,15 @@ def warn_undefined_internal : Warning<
   "%select{function|variable}0 %q1 has internal linkage but is not defined">,
   DiagGroup<"undefined-internal">;
 def note_used_here : Note<"used here">;
+
+def warn_internal_in_extern_inline : ExtWarn<
+  "%select{function|variable}0 %1 has internal linkage but is used in an "
+  "inline %select{function|method}2 with external linkage">,
+  InGroup<DiagGroup<"internal-linkage-in-inline"> >;
+def note_internal_decl_declared_here : Note<
+  "%0 declared here">;
+def note_convert_inline_to_static : Note<
+  "use 'static' to give inline function %0 internal linkage">;
 
 def warn_redefinition_of_typedef : ExtWarn<
   "redefinition of typedef %0 is a C11 feature">,
@@ -5319,9 +5328,9 @@ def warn_missing_cases : Warning<
 def warn_unannotated_fallthrough : Warning<
   "unannotated fall-through between switch labels">,
   InGroup<ImplicitFallthrough>, DefaultIgnore;
-def warn_unannotated_fallthrough_per_method : Warning<
-  "unannotated fall-through between switch labels in partly annotated method">,
-  InGroup<ImplicitFallthroughPerMethod>, DefaultIgnore;
+def warn_unannotated_fallthrough_per_function : Warning<
+  "unannotated fall-through between switch labels in partly-annotated "
+  "function">, InGroup<ImplicitFallthroughPerFunction>, DefaultIgnore;
 def note_insert_fallthrough_fixit : Note<
   "insert '[[clang::fallthrough]];' to silence this warning">;
 def note_insert_break_fixit : Note<

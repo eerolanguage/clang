@@ -171,7 +171,7 @@ private:
   unsigned NumParams;
 
   /// List of attributes for this method declaration.
-  SourceLocation EndLoc; // the location of the ';' or '}'.
+  SourceLocation DeclEndLoc; // the location of the ';' or '{'.
 
   // The following are only used for method definitions, null otherwise.
   // FIXME: space savings opportunity, consider a sub-class.
@@ -242,7 +242,7 @@ private:
     SelLocsKind(SelLoc_StandardNoSpace), IsOverriding(0),
     MethodDeclType(T), ResultTInfo(ResultTInfo),
     ParamsAndSelLocs(0), NumParams(0),
-    EndLoc(endLoc), Body(0), SelfDecl(0), CmdDecl(0) {
+    DeclEndLoc(endLoc), Body(0), SelfDecl(0), CmdDecl(0) {
     setImplicit(isImplicitlyDeclared);
   }
 
@@ -290,12 +290,16 @@ public:
   bool isRedeclaration() const { return IsRedeclaration; }
   void setAsRedeclaration(const ObjCMethodDecl *PrevMethod);
 
+  /// \brief Returns the location where the declarator ends. It will be
+  /// the location of ';' for a method declaration and the location of '{'
+  /// for a method definition.
+  SourceLocation getDeclaratorEndLoc() const { return DeclEndLoc; }
+
   // Location information, modeled after the Stmt API.
   SourceLocation getLocStart() const LLVM_READONLY { return getLocation(); }
-  SourceLocation getLocEnd() const LLVM_READONLY { return EndLoc; }
-  void setEndLoc(SourceLocation Loc) { EndLoc = Loc; }
+  SourceLocation getLocEnd() const LLVM_READONLY;
   virtual SourceRange getSourceRange() const LLVM_READONLY {
-    return SourceRange(getLocation(), EndLoc);
+    return SourceRange(getLocation(), getLocEnd());
   }
 
   SourceLocation getSelectorStartLoc() const {
@@ -310,7 +314,7 @@ public:
                                    getSelLocsKind() == SelLoc_StandardWithSpace,
                       llvm::makeArrayRef(const_cast<ParmVarDecl**>(getParams()),
                                          NumParams),
-                                   EndLoc);
+                                   DeclEndLoc);
     return getStoredSelLocs()[Index];
   }
 
@@ -547,21 +551,25 @@ public:
   }
 };
 
-/// ObjCInterfaceDecl - Represents an ObjC class declaration. For example:
+/// \brief Represents an ObjC class declaration.
 ///
+/// For example:
+///
+/// \code
 ///   // MostPrimitive declares no super class (not particularly useful).
 ///   \@interface MostPrimitive
 ///     // no instance variables or methods.
 ///   \@end
 ///
 ///   // NSResponder inherits from NSObject & implements NSCoding (a protocol).
-///   \@interface NSResponder : NSObject <NSCoding>
+///   \@interface NSResponder : NSObject \<NSCoding>
 ///   { // instance variables are represented by ObjCIvarDecl.
 ///     id nextResponder; // nextResponder instance variable.
 ///   }
 ///   - (NSResponder *)nextResponder; // return a pointer to NSResponder.
 ///   - (void)mouseMoved:(NSEvent *)theEvent; // return void, takes a pointer
 ///   \@end                                    // to an NSEvent.
+/// \endcode
 ///
 ///   Unlike C/C++, forward class declarations are accomplished with \@class.
 ///   Unlike C/C++, \@class allows for a list of classes to be forward declared.
@@ -1065,8 +1073,7 @@ private:
 };
 
 
-/// ObjCAtDefsFieldDecl - Represents a field declaration created by an
-/// \@defs(...).
+/// \brief Represents a field declaration created by an \@defs(...).
 class ObjCAtDefsFieldDecl : public FieldDecl {
   virtual void anchor();
   ObjCAtDefsFieldDecl(DeclContext *DC, SourceLocation StartLoc,
@@ -1090,29 +1097,35 @@ public:
   static bool classofKind(Kind K) { return K == ObjCAtDefsField; }
 };
 
-/// ObjCProtocolDecl - Represents a protocol declaration. ObjC protocols
-/// declare a pure abstract type (i.e no instance variables are permitted).
-/// Protocols originally drew inspiration from C++ pure virtual functions (a C++
-/// feature with nice semantics and lousy syntax:-). Here is an example:
+/// \brief Represents an Objective-C protocol declaration.
 ///
+/// Objective-C protocols declare a pure abstract type (i.e., no instance
+/// variables are permitted).  Protocols originally drew inspiration from
+/// C++ pure virtual functions (a C++ feature with nice semantics and lousy
+/// syntax:-). Here is an example:
+///
+/// \code
 /// \@protocol NSDraggingInfo <refproto1, refproto2>
 /// - (NSWindow *)draggingDestinationWindow;
 /// - (NSImage *)draggedImage;
 /// \@end
+/// \endcode
 ///
 /// This says that NSDraggingInfo requires two methods and requires everything
 /// that the two "referenced protocols" 'refproto1' and 'refproto2' require as
 /// well.
 ///
-/// \@interface ImplementsNSDraggingInfo : NSObject <NSDraggingInfo>
+/// \code
+/// \@interface ImplementsNSDraggingInfo : NSObject \<NSDraggingInfo>
 /// \@end
+/// \endcode
 ///
 /// ObjC protocols inspired Java interfaces. Unlike Java, ObjC classes and
 /// protocols are in distinct namespaces. For example, Cocoa defines both
 /// an NSObject protocol and class (which isn't allowed in Java). As a result,
 /// protocols are referenced using angle brackets as follows:
 ///
-/// id <NSDraggingInfo> anyObjectThatImplementsNSDraggingInfo;
+/// id \<NSDraggingInfo> anyObjectThatImplementsNSDraggingInfo;
 ///
 class ObjCProtocolDecl : public ObjCContainerDecl,
                          public Redeclarable<ObjCProtocolDecl> {
@@ -1568,7 +1581,7 @@ class ObjCImplementationDecl : public ObjCImplDecl {
   /// true if class has a .cxx_[construct,destruct] method.
   bool HasCXXStructors : 1;
 
-  /// true of class extension has at least one bitfield ivar.
+  /// true if class extension has at least one bitfield ivar.
   bool HasSynthBitfield : 1;
 
   ObjCImplementationDecl(DeclContext *DC,
@@ -1725,10 +1738,12 @@ public:
 
 };
 
-/// ObjCPropertyDecl - Represents one property declaration in an interface.
-/// For example:
-/// \@property (assign, readwrite) int MyProperty;
+/// \brief Represents one property declaration in an Objective-C interface.
 ///
+/// For example:
+/// \code{.mm}
+/// \@property (assign, readwrite) int MyProperty;
+/// \endcode
 class ObjCPropertyDecl : public NamedDecl {
   virtual void anchor();
 public:
