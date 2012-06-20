@@ -2590,7 +2590,7 @@ ExprResult Parser::ParseNestedFunctionAsBlock(ParsingDeclSpec &DS,
   ParamInfo.AddTypeInfo(FunctionInfo, DS.getAttributes(), DeclaratorLoc);
   
   Actions.ActOnBlockStart(DeclaratorLoc, getCurScope());
-  Actions.ActOnBlockArguments(ParamInfo, getCurScope());  
+  Actions.ActOnBlockArguments(DeclaratorLoc, ParamInfo, getCurScope());  
   
   SourceLocation BodyStartLoc = Tok.getLocation();
   StmtResult Body = ParseCompoundStatementBody(); 
