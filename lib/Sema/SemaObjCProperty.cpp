@@ -761,6 +761,22 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
     }
 
     if (!Ivar) {
+      if (AtLoc.isInvalid()) {
+        // Check when default synthesizing a property that there is 
+        // an ivar matching property name and issue warning; since this
+        // is the most common case of not using an ivar used for backing
+        // property in non-default synthesis case.
+        ObjCInterfaceDecl *ClassDeclared=0;
+        ObjCIvarDecl *originalIvar = 
+          IDecl->lookupInstanceVariable(property->getIdentifier(), 
+                                        ClassDeclared);
+        if (originalIvar) {
+          Diag(PropertyDiagLoc, 
+               diag::warn_autosynthesis_property_ivar_match);
+          Diag(property->getLocation(), diag::note_property_declare);
+          Diag(originalIvar->getLocation(), diag::note_ivar_decl);
+        }
+      }
       // In ARC, give the ivar a lifetime qualifier based on the
       // property attributes.
       if (getLangOpts().ObjCAutoRefCount &&
@@ -817,12 +833,12 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
       IDecl->makeDeclVisibleInContext(Ivar);
       property->setPropertyIvarDecl(Ivar);
 
-      if (!getLangOpts().ObjCNonFragileABI)
+      if (getLangOpts().ObjCRuntime.isFragile())
         Diag(PropertyDiagLoc, diag::error_missing_property_ivar_decl)
             << PropertyId;
       // Note! I deliberately want it to fall thru so, we have a
       // a property implementation and to avoid future warnings.
-    } else if (getLangOpts().ObjCNonFragileABI &&
+    } else if (getLangOpts().ObjCRuntime.isNonFragile() &&
                !declaresSameEntity(ClassDeclared, IDecl)) {
       Diag(PropertyDiagLoc, diag::error_ivar_in_superclass_use)
       << property->getDeclName() << Ivar->getDeclName()
@@ -996,7 +1012,7 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
     }
     IC->addPropertyImplementation(PIDecl);
     if (getLangOpts().ObjCDefaultSynthProperties &&
-        getLangOpts().ObjCNonFragileABI2 &&
+        getLangOpts().ObjCRuntime.isNonFragile() &&
         !IDecl->isObjCRequiresPropertyDefs()) {
       // Diagnose if an ivar was lazily synthesdized due to a previous
       // use and if 1) property is @dynamic or 2) property is synthesized
@@ -1517,7 +1533,7 @@ void Sema::DefaultSynthesizeProperties(Scope *S, ObjCImplDecl* IMPDecl,
 }
 
 void Sema::DefaultSynthesizeProperties(Scope *S, Decl *D) {
-  if (!LangOpts.ObjCDefaultSynthProperties || !LangOpts.ObjCNonFragileABI2)
+  if (!LangOpts.ObjCDefaultSynthProperties || LangOpts.ObjCRuntime.isFragile())
     return;
   ObjCImplementationDecl *IC=dyn_cast_or_null<ObjCImplementationDecl>(D);
   if (!IC)
@@ -1561,7 +1577,7 @@ void Sema::DiagnoseUnimplementedProperties(Scope *S, ObjCImplDecl* IMPDecl,
       << Prop->getDeclName() << Prop->getGetterName();
       Diag(Prop->getLocation(),
            diag::note_property_declare);
-      if (LangOpts.ObjCDefaultSynthProperties && LangOpts.ObjCNonFragileABI2)
+      if (LangOpts.ObjCDefaultSynthProperties && LangOpts.ObjCRuntime.isNonFragile())
         if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(CDecl))
           if (const ObjCInterfaceDecl *RID = ID->isObjCRequiresPropertyDefs())
             Diag(RID->getLocation(), diag::note_suppressed_class_declare);
@@ -1576,7 +1592,7 @@ void Sema::DiagnoseUnimplementedProperties(Scope *S, ObjCImplDecl* IMPDecl,
       << Prop->getDeclName() << Prop->getSetterName();
       Diag(Prop->getLocation(),
            diag::note_property_declare);
-      if (LangOpts.ObjCDefaultSynthProperties && LangOpts.ObjCNonFragileABI2)
+      if (LangOpts.ObjCDefaultSynthProperties && LangOpts.ObjCRuntime.isNonFragile())
         if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(CDecl))
           if (const ObjCInterfaceDecl *RID = ID->isObjCRequiresPropertyDefs())
             Diag(RID->getLocation(), diag::note_suppressed_class_declare);

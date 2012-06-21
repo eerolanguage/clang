@@ -159,7 +159,7 @@ void Parser::ParseGNUAttributes(ParsedAttributes &attrs,
         }
       } else {
         attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc,
-                     0, SourceLocation(), 0, 0);
+                     0, SourceLocation(), 0, 0, AttributeList::AS_GNU);
       }
     }
     if (ExpectAndConsume(tok::r_paren, diag::err_expected_rparen))
@@ -275,67 +275,175 @@ void Parser::ParseGNUAttributeArgs(IdentifierInfo *AttrName,
   if (!ExpectAndConsume(tok::r_paren, diag::err_expected_rparen)) {
     AttributeList *attr =
       Attrs.addNew(AttrName, SourceRange(AttrNameLoc, RParen), 0, AttrNameLoc,
-                   ParmName, ParmLoc, ArgExprs.take(), ArgExprs.size());
-    if (BuiltinType && attr->getKind() == AttributeList::AT_iboutletcollection)
+                   ParmName, ParmLoc, ArgExprs.take(), ArgExprs.size(),
+                   AttributeList::AS_GNU);
+    if (BuiltinType && attr->getKind() == AttributeList::AT_IBOutletCollection)
       Diag(Tok, diag::err_iboutletcollection_builtintype);
   }
 }
 
+/// \brief Parses a single argument for a declspec, including the 
+/// surrounding parens.
+void Parser::ParseMicrosoftDeclSpecWithSingleArg(IdentifierInfo *AttrName, 
+                                                 SourceLocation AttrNameLoc,
+                                                 ParsedAttributes &Attrs)
+{
+  BalancedDelimiterTracker T(*this, tok::l_paren);
+  if (T.expectAndConsume(diag::err_expected_lparen_after, 
+                         AttrName->getNameStart(), tok::r_paren))
+    return;
 
-/// ParseMicrosoftDeclSpec - Parse an __declspec construct
-///
+  ExprResult ArgExpr(ParseConstantExpression());
+  if (ArgExpr.isInvalid()) {
+    T.skipToEnd();
+    return;
+  }
+  Expr *ExprList = ArgExpr.take();
+  Attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc, 0, SourceLocation(), 
+               &ExprList, 1, AttributeList::AS_Declspec);
+
+  T.consumeClose();
+}
+
+/// \brief Determines whether a declspec is a "simple" one requiring no 
+/// arguments.
+bool Parser::IsSimpleMicrosoftDeclSpec(IdentifierInfo *Ident) {
+  return llvm::StringSwitch<bool>(Ident->getName())
+    .Case("dllimport", true)
+    .Case("dllexport", true)
+    .Case("noreturn", true)
+    .Case("nothrow", true)
+    .Case("noinline", true)
+    .Case("naked", true)
+    .Case("appdomain", true)
+    .Case("process", true)
+    .Case("jitintrinsic", true)
+    .Case("noalias", true)
+    .Case("restrict", true)
+    .Case("novtable", true)
+    .Case("selectany", true)
+    .Case("thread", true)
+    .Default(false);
+}
+
+/// \brief Attempts to parse a declspec which is not simple (one that takes 
+/// parameters).  Will return false if we properly handled the declspec, or
+/// true if it is an unknown declspec.
+void Parser::ParseComplexMicrosoftDeclSpec(IdentifierInfo *Ident, 
+                                           SourceLocation Loc,
+                                           ParsedAttributes &Attrs) {
+  // Try to handle the easy case first -- these declspecs all take a single
+  // parameter as their argument.
+  if (llvm::StringSwitch<bool>(Ident->getName())
+      .Case("uuid", true)
+      .Case("align", true)
+      .Case("allocate", true)
+      .Default(false)) {
+    ParseMicrosoftDeclSpecWithSingleArg(Ident, Loc, Attrs);
+  } else if (Ident->getName() == "deprecated") {
+    // The deprecated declspec has an optional single argument, so we will 
+    // check for a l-paren to decide whether we should parse an argument or 
+    // not.
+    if (Tok.getKind() == tok::l_paren)
+      ParseMicrosoftDeclSpecWithSingleArg(Ident, Loc, Attrs);
+    else
+      Attrs.addNew(Ident, Loc, 0, Loc, 0, SourceLocation(), 0, 0, 
+                   AttributeList::AS_Declspec);
+  } else if (Ident->getName() == "property") {
+    // The property declspec is more complex in that it can take one or two
+    // assignment expressions as a parameter, but the lhs of the assignment 
+    // must be named get or put.
+    //
+    // For right now, we will just skip to the closing right paren of the 
+    // property expression.
+    //
+    // FIXME: we should deal with __declspec(property) at some point because it
+    // is used in the platform SDK headers for the Parallel Patterns Library
+    // and ATL.
+    BalancedDelimiterTracker T(*this, tok::l_paren);
+    if (T.expectAndConsume(diag::err_expected_lparen_after, 
+                           Ident->getNameStart(), tok::r_paren))
+      return;
+    T.skipToEnd();
+  } else {
+    // We don't recognize this as a valid declspec, but instead of creating the
+    // attribute and allowing sema to warn about it, we will warn here instead.
+    // This is because some attributes have multiple spellings, but we need to
+    // disallow that for declspecs (such as align vs aligned).  If we made the
+    // attribute, we'd have to split the valid declspec spelling logic into 
+    // both locations.
+    Diag(Loc, diag::warn_ms_declspec_unknown) << Ident;
+
+    // If there's an open paren, we should eat the open and close parens under
+    // the assumption that this unknown declspec has parameters.
+    BalancedDelimiterTracker T(*this, tok::l_paren);
+    if (!T.consumeOpen())
+      T.skipToEnd();
+  }
+}
+
 /// [MS] decl-specifier:
 ///             __declspec ( extended-decl-modifier-seq )
 ///
 /// [MS] extended-decl-modifier-seq:
 ///             extended-decl-modifier[opt]
 ///             extended-decl-modifier extended-decl-modifier-seq
-
-void Parser::ParseMicrosoftDeclSpec(ParsedAttributes &attrs) {
+void Parser::ParseMicrosoftDeclSpec(ParsedAttributes &Attrs) {
   assert(Tok.is(tok::kw___declspec) && "Not a declspec!");
 
   ConsumeToken();
-  if (ExpectAndConsume(tok::l_paren, diag::err_expected_lparen_after,
-                       "declspec")) {
-    SkipUntil(tok::r_paren, true); // skip until ) or ;
+  BalancedDelimiterTracker T(*this, tok::l_paren);
+  if (T.expectAndConsume(diag::err_expected_lparen_after, "__declspec", 
+                         tok::r_paren))
     return;
-  }
 
-  while (Tok.getIdentifierInfo()) {
-    IdentifierInfo *AttrName = Tok.getIdentifierInfo();
-    SourceLocation AttrNameLoc = ConsumeToken();
-    
-    // FIXME: Remove this when we have proper __declspec(property()) support.
-    // Just skip everything inside property().
-    if (AttrName->getName() == "property") {
-      ConsumeParen();
-      SkipUntil(tok::r_paren);
+  // An empty declspec is perfectly legal and should not warn.  Additionally, 
+  // you can specify multiple attributes per declspec.
+  while (Tok.getKind() != tok::r_paren) {
+    // We expect either a well-known identifier or a generic string.  Anything
+    // else is a malformed declspec.
+    bool IsString = Tok.getKind() == tok::string_literal ? true : false;
+    if (!IsString && Tok.getKind() != tok::identifier && 
+        Tok.getKind() != tok::kw_restrict) {
+      Diag(Tok, diag::err_ms_declspec_type);
+      T.skipToEnd();
+      return;
     }
-    if (Tok.is(tok::l_paren)) {
-      ConsumeParen();
-      // FIXME: This doesn't parse __declspec(property(get=get_func_name))
-      // correctly.
-      ExprResult ArgExpr(ParseAssignmentExpression());
-      if (!ArgExpr.isInvalid()) {
-        Expr *ExprList = ArgExpr.take();
-        attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc, 0,
-                     SourceLocation(), &ExprList, 1, true);
+
+    IdentifierInfo *AttrName;
+    SourceLocation AttrNameLoc;
+    if (IsString) {
+      SmallString<8> StrBuffer;
+      bool Invalid = false;
+      StringRef Str = PP.getSpelling(Tok, StrBuffer, &Invalid);
+      if (Invalid) {
+        T.skipToEnd();
+        return;
       }
-      if (ExpectAndConsume(tok::r_paren, diag::err_expected_rparen))
-        SkipUntil(tok::r_paren, false);
+      AttrName = PP.getIdentifierInfo(Str);
+      AttrNameLoc = ConsumeStringToken();
     } else {
-      attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc,
-                   0, SourceLocation(), 0, 0, true);
+      AttrName = Tok.getIdentifierInfo();
+      AttrNameLoc = ConsumeToken();
     }
+  
+    if (IsString || IsSimpleMicrosoftDeclSpec(AttrName))
+      // If we have a generic string, we will allow it because there is no 
+      // documented list of allowable string declspecs, but we know they exist 
+      // (for instance, SAL declspecs in older versions of MSVC).
+      //
+      // Alternatively, if the identifier is a simple one, then it requires no 
+      // arguments and can be turned into an attribute directly.
+      Attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc, 0, SourceLocation(), 
+                   0, 0, AttributeList::AS_Declspec);
+    else
+      ParseComplexMicrosoftDeclSpec(AttrName, AttrNameLoc, Attrs);
   }
-  if (ExpectAndConsume(tok::r_paren, diag::err_expected_rparen))
-    SkipUntil(tok::r_paren, false);
-  return;
+  T.consumeClose();
 }
 
 void Parser::ParseMicrosoftTypeAttributes(ParsedAttributes &attrs) {
   // Treat these like attributes
-  // FIXME: Allow Sema to distinguish between these and real attributes!
   while (Tok.is(tok::kw___fastcall) || Tok.is(tok::kw___stdcall) ||
          Tok.is(tok::kw___thiscall) || Tok.is(tok::kw___cdecl)   ||
          Tok.is(tok::kw___ptr64) || Tok.is(tok::kw___w64) ||
@@ -344,7 +452,7 @@ void Parser::ParseMicrosoftTypeAttributes(ParsedAttributes &attrs) {
     IdentifierInfo *AttrName = Tok.getIdentifierInfo();
     SourceLocation AttrNameLoc = ConsumeToken();
     attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc, 0,
-                 SourceLocation(), 0, 0, true);
+                 SourceLocation(), 0, 0, AttributeList::AS_MSTypespec);
   }
 }
 
@@ -354,7 +462,7 @@ void Parser::ParseBorlandTypeAttributes(ParsedAttributes &attrs) {
     IdentifierInfo *AttrName = Tok.getIdentifierInfo();
     SourceLocation AttrNameLoc = ConsumeToken();
     attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc, 0,
-                 SourceLocation(), 0, 0, true);
+                 SourceLocation(), 0, 0, AttributeList::AS_MSTypespec);
   }
 }
 
@@ -364,7 +472,7 @@ void Parser::ParseOpenCLAttributes(ParsedAttributes &attrs) {
     SourceLocation AttrNameLoc = ConsumeToken();
     attrs.addNew(PP.getIdentifierInfo("opencl_kernel_function"),
                  AttrNameLoc, 0, AttrNameLoc, 0,
-                 SourceLocation(), 0, 0, false);
+                 SourceLocation(), 0, 0, AttributeList::AS_GNU);
   }
 }
 
@@ -700,7 +808,7 @@ void Parser::ParseAvailabilityAttribute(IdentifierInfo &Availability,
                Changes[Deprecated],
                Changes[Obsoleted], 
                UnavailableLoc, MessageExpr.take(),
-               false, false);
+               AttributeList::AS_GNU);
 }
 
 
@@ -905,7 +1013,7 @@ void Parser::ParseThreadSafetyAttribute(IdentifierInfo &AttrName,
   // Match the ')'.
   if (ArgExprsOk && !T.consumeClose()) {
     Attrs.addNew(&AttrName, AttrNameLoc, 0, AttrNameLoc, 0, SourceLocation(),
-                 ArgExprs.take(), ArgExprs.size());
+                 ArgExprs.take(), ArgExprs.size(), AttributeList::AS_GNU);
   }
   if (EndLoc)
     *EndLoc = T.getCloseLocation();
@@ -1935,8 +2043,12 @@ void Parser::ParseAlignmentSpecifier(ParsedAttributes &Attrs,
 
   ExprVector ArgExprs(Actions);
   ArgExprs.push_back(ArgExpr.release());
+  // FIXME: This should not be GNU, but we since the attribute used is
+  //        based on the spelling, and there is no true spelling for
+  //        C++11 attributes, this isn't accepted.
   Attrs.addNew(PP.getIdentifierInfo("aligned"), KWLoc, 0, KWLoc,
-               0, T.getOpenLocation(), ArgExprs.take(), 1, false, true);
+               0, T.getOpenLocation(), ArgExprs.take(), 1,
+               AttributeList::AS_GNU);
 }
 
 /// ParseDeclarationSpecifiers
@@ -2331,9 +2443,16 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       continue;
 
     // Microsoft single token adornments.
-    case tok::kw___forceinline:
-      // FIXME: Add handling here!
-      break;
+    case tok::kw___forceinline: {
+      isInvalid = DS.SetFunctionSpecInline(Loc, PrevSpec, DiagID);
+      IdentifierInfo *AttrName = Tok.getIdentifierInfo();
+      SourceLocation AttrNameLoc = ConsumeToken();
+      // FIXME: This does not work correctly if it is set to be a declspec
+      //        attribute, and a GNU attribute is simply incorrect.
+      DS.getAttributes().addNew(AttrName, AttrNameLoc, 0, AttrNameLoc, 0,
+                                SourceLocation(), 0, 0, AttributeList::AS_GNU);
+      continue;
+    }
 
     case tok::kw___ptr64:
     case tok::kw___ptr32:

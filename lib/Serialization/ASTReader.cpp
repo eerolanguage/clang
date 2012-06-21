@@ -90,6 +90,12 @@ PCHValidator::ReadLanguageOptions(const LangOptions &LangOpts) {
 #define BENIGN_LANGOPT(Name, Bits, Default, Description)
 #define BENIGN_ENUM_LANGOPT(Name, Type, Bits, Default, Description)
 #include "clang/Basic/LangOptions.def"
+
+  if (PPLangOpts.ObjCRuntime != LangOpts.ObjCRuntime) {
+    Reader.Diag(diag::err_pch_langopt_value_mismatch)
+      << "target Objective-C runtime";
+    return true;
+  }
   
   return false;
 }
@@ -1737,6 +1743,17 @@ ASTReader::ReadASTBlock(ModuleFile &F) {
         }
         break;
 
+      case COMMENTS_BLOCK_ID: {
+        llvm::BitstreamCursor C = Stream;
+        if (Stream.SkipBlock() ||
+            ReadBlockAbbrevs(C, COMMENTS_BLOCK_ID)) {
+          Error("malformed comments block in AST file");
+          return Failure;
+        }
+        CommentsCursors.push_back(std::make_pair(C, &F));
+        break;
+      }
+
       default:
         if (!Stream.SkipBlock())
           break;
@@ -2990,7 +3007,7 @@ std::string ASTReader::getOriginalSourceFile(const std::string &ASTFileName,
   OwningPtr<llvm::MemoryBuffer> Buffer;
   Buffer.reset(FileMgr.getBufferForFile(ASTFileName, &ErrStr));
   if (!Buffer) {
-    Diags.Report(diag::err_fe_unable_to_read_pch_file) << ErrStr;
+    Diags.Report(diag::err_fe_unable_to_read_pch_file) << ASTFileName << ErrStr;
     return std::string();
   }
 
@@ -3312,8 +3329,7 @@ ASTReader::ASTReadResult ASTReader::ReadSubmoduleBlock(ModuleFile &F) {
 /// them to the AST listener if one is set.
 ///
 /// \returns true if the listener deems the file unacceptable, false otherwise.
-bool ASTReader::ParseLanguageOptions(
-                             const SmallVectorImpl<uint64_t> &Record) {
+bool ASTReader::ParseLanguageOptions(const RecordData &Record) {
   if (Listener) {
     LangOptions LangOpts;
     unsigned Idx = 0;
@@ -3322,6 +3338,10 @@ bool ASTReader::ParseLanguageOptions(
 #define ENUM_LANGOPT(Name, Type, Bits, Default, Description) \
   LangOpts.set##Name(static_cast<LangOptions::Type>(Record[Idx++]));
 #include "clang/Basic/LangOptions.def"
+
+    ObjCRuntime::Kind runtimeKind = (ObjCRuntime::Kind) Record[Idx++];
+    VersionTuple runtimeVersion = ReadVersionTuple(Record, Idx);
+    LangOpts.ObjCRuntime = ObjCRuntime(runtimeKind, runtimeVersion);
     
     unsigned Length = Record[Idx++];
     LangOpts.CurrentModule.assign(Record.begin() + Idx, 
@@ -6256,6 +6276,61 @@ SwitchCase *ASTReader::getSwitchCaseWithID(unsigned ID) {
 
 void ASTReader::ClearSwitchCaseIDs() {
   CurrSwitchCaseStmts->clear();
+}
+
+void ASTReader::ReadComments() {
+  std::vector<RawComment> Comments;
+  for (SmallVectorImpl<std::pair<llvm::BitstreamCursor,
+                                 serialization::ModuleFile *> >::iterator
+       I = CommentsCursors.begin(),
+       E = CommentsCursors.end();
+       I != E; ++I) {
+    llvm::BitstreamCursor &Cursor = I->first;
+    serialization::ModuleFile &F = *I->second;
+    SavedStreamPosition SavedPosition(Cursor);
+
+    RecordData Record;
+    while (true) {
+      unsigned Code = Cursor.ReadCode();
+      if (Code == llvm::bitc::END_BLOCK)
+        break;
+
+      if (Code == llvm::bitc::ENTER_SUBBLOCK) {
+        // No known subblocks, always skip them.
+        Cursor.ReadSubBlockID();
+        if (Cursor.SkipBlock()) {
+          Error("malformed block record in AST file");
+          return;
+        }
+        continue;
+      }
+
+      if (Code == llvm::bitc::DEFINE_ABBREV) {
+        Cursor.ReadAbbrevRecord();
+        continue;
+      }
+
+      // Read a record.
+      Record.clear();
+      switch ((CommentRecordTypes) Cursor.ReadRecord(Code, Record)) {
+        default:  // Default behavior: ignore.
+          break;
+
+        case COMMENTS_RAW_COMMENT: {
+          unsigned Idx = 0;
+          SourceRange SR = ReadSourceRange(F, Record, Idx);
+          RawComment::CommentKind Kind =
+              (RawComment::CommentKind) Record[Idx++];
+          bool IsTrailingComment = Record[Idx++];
+          bool IsAlmostTrailingComment = Record[Idx++];
+          Comments.push_back(RawComment(SR, Kind, IsTrailingComment,
+                                        IsAlmostTrailingComment));
+          break;
+      }
+      }
+    }
+  }
+  Context.Comments.addCommentsToFront(Comments);
 }
 
 void ASTReader::finishPendingActions() {

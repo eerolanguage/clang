@@ -591,9 +591,6 @@ class SourceManager : public RefCountedBase<SourceManager> {
   /// \brief The file ID for the precompiled preamble there is one.
   FileID PreambleFileID;
 
-  /// \brief The file ID for the preprocessor's predefines.
-  FileID PredefinesFileID;
-
   // Statistics for -print-stats.
   mutable unsigned NumLinearScans, NumBinaryProbes;
 
@@ -638,14 +635,6 @@ public:
     MainFileID = createFileIDForMemBuffer(Buffer);
     return MainFileID;
   }
-  
-  /// \brief Create the FileID for a memory buffer that contains the
-  /// preprocessor's predefines.
-  FileID createPredefinesFileIDForMemBuffer(const llvm::MemoryBuffer *Buffer) {
-    assert(PredefinesFileID.isInvalid() && "PredefinesFileID already set!");
-    PredefinesFileID = createFileIDForMemBuffer(Buffer);
-    return PredefinesFileID;
-  }
 
   //===--------------------------------------------------------------------===//
   // MainFileID creation and querying methods.
@@ -653,9 +642,6 @@ public:
 
   /// getMainFileID - Returns the FileID of the main source file.
   FileID getMainFileID() const { return MainFileID; }
-
-  /// \brief Returns the FileID of the preprocessor predefines buffer.
-  FileID getPredefinesFileID() const { return PredefinesFileID; }
 
   /// createMainFileID - Create the FileID for the main source file.
   FileID createMainFileID(const FileEntry *SourceFile, 
@@ -1138,12 +1124,6 @@ public:
     return getFileID(Loc) == getMainFileID();
   }
 
-  /// isFromPredefines - Returns true if the provided SourceLocation is
-  ///   within the processor's predefines buffer.
-  bool isFromPredefines(SourceLocation Loc) const {
-    return getFileID(Loc) == getPredefinesFileID();
-  }
-
   /// isInSystemHeader - Returns if a SourceLocation is in a system header.
   bool isInSystemHeader(SourceLocation Loc) const {
     return getFileCharacteristic(Loc) != SrcMgr::C_User;
@@ -1264,19 +1244,6 @@ public:
   /// \returns true if LHS source location comes before RHS, false otherwise.
   bool isBeforeInTranslationUnit(SourceLocation LHS, SourceLocation RHS) const;
 
-  /// \brief Comparison function class.
-  class LocBeforeThanCompare : public std::binary_function<SourceLocation,
-                                                         SourceLocation, bool> {
-    SourceManager &SM;
-
-  public:
-    explicit LocBeforeThanCompare(SourceManager &SM) : SM(SM) { }
-
-    bool operator()(SourceLocation LHS, SourceLocation RHS) const {
-      return SM.isBeforeInTranslationUnit(LHS, RHS);
-    }
-  };
-
   /// \brief Determines the order of 2 source locations in the "source location
   /// address space".
   bool isBeforeInSLocAddrSpace(SourceLocation LHS, SourceLocation RHS) const {
@@ -1378,6 +1345,65 @@ public:
     return !isLoadedFileID(FID);
   }
 
+  /// Get a presumed location suitable for displaying in a diagnostic message,
+  /// taking into account macro arguments and expansions.
+  PresumedLoc getPresumedLocForDisplay(SourceLocation Loc) const {
+    // This is a condensed form of the algorithm used by emitCaretDiagnostic to
+    // walk to the top of the macro call stack.
+    while (Loc.isMacroID()) {
+      Loc = skipToMacroArgExpansion(Loc);
+      Loc = getImmediateMacroCallerLoc(Loc);
+    }
+
+    return getPresumedLoc(Loc);
+  }
+
+  /// Look through spelling locations for a macro argument expansion, and if
+  /// found skip to it so that we can trace the argument rather than the macros
+  /// in which that argument is used. If no macro argument expansion is found,
+  /// don't skip anything and return the starting location.
+  SourceLocation skipToMacroArgExpansion(SourceLocation StartLoc) const {
+    for (SourceLocation L = StartLoc; L.isMacroID();
+         L = getImmediateSpellingLoc(L)) {
+      if (isMacroArgExpansion(L))
+        return L;
+    }
+    // Otherwise just return initial location, there's nothing to skip.
+    return StartLoc;
+  }
+
+  /// Gets the location of the immediate macro caller, one level up the stack
+  /// toward the initial macro typed into the source.
+  SourceLocation getImmediateMacroCallerLoc(SourceLocation Loc) const {
+    if (!Loc.isMacroID()) return Loc;
+
+    // When we have the location of (part of) an expanded parameter, its
+    // spelling location points to the argument as typed into the macro call,
+    // and therefore is used to locate the macro caller.
+    if (isMacroArgExpansion(Loc))
+      return getImmediateSpellingLoc(Loc);
+
+    // Otherwise, the caller of the macro is located where this macro is
+    // expanded (while the spelling is part of the macro definition).
+    return getImmediateExpansionRange(Loc).first;
+  }
+
+  /// Gets the location of the immediate macro callee, one level down the stack
+  /// toward the leaf macro.
+  SourceLocation getImmediateMacroCalleeLoc(SourceLocation Loc) const {
+    if (!Loc.isMacroID()) return Loc;
+
+    // When we have the location of (part of) an expanded parameter, its
+    // expansion location points to the unexpanded parameter reference within
+    // the macro definition (or callee).
+    if (isMacroArgExpansion(Loc))
+      return getImmediateExpansionRange(Loc).first;
+
+    // Otherwise, the callee of the macro is located where this location was
+    // spelled inside the macro definition.
+    return getImmediateSpellingLoc(Loc);
+  }
+
 private:
   const llvm::MemoryBuffer *getFakeBufferForRecovery() const;
   const SrcMgr::ContentCache *getFakeContentCacheForRecovery() const;
@@ -1461,6 +1487,35 @@ private:
   friend class ASTWriter;
 };
 
+/// \brief Comparison function object.
+template<typename T>
+class BeforeThanCompare;
+
+/// \brief Compare two source locations.
+template<>
+class BeforeThanCompare<SourceLocation> {
+  SourceManager &SM;
+
+public:
+  explicit BeforeThanCompare(SourceManager &SM) : SM(SM) { }
+
+  bool operator()(SourceLocation LHS, SourceLocation RHS) const {
+    return SM.isBeforeInTranslationUnit(LHS, RHS);
+  }
+};
+
+/// \brief Compare two non-overlapping source ranges.
+template<>
+class BeforeThanCompare<SourceRange> {
+  SourceManager &SM;
+
+public:
+  explicit BeforeThanCompare(SourceManager &SM) : SM(SM) { }
+
+  bool operator()(SourceRange LHS, SourceRange RHS) {
+    return SM.isBeforeInTranslationUnit(LHS.getBegin(), RHS.getBegin());
+  }
+};
 
 }  // end namespace clang
 

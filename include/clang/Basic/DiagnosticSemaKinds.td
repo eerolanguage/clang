@@ -638,6 +638,9 @@ def warn_auto_synthesizing_protocol_property :Warning<
   "auto property synthesis will not synthesize property"
   " declared in a protocol">,
   InGroup<DiagGroup<"objc-protocol-property-synthesis">>;
+def warn_autosynthesis_property_ivar_match :Warning<
+  "auto autosynthesized property has same name as an existing ivar">,
+  InGroup<DiagGroup<"objc-autosynthesis-property-ivar-name-match">>;
 def warn_missing_explicit_synthesis : Warning <
   "auto property synthesis is synthesizing property not explicitly synthesized">,
   InGroup<DiagGroup<"objc-missing-property-synthesis">>, DefaultIgnore;
@@ -1517,8 +1520,6 @@ def err_attribute_argument_outof_range : Error<
 def err_init_priority_object_attr : Error<
   "can only use 'init_priority' attribute on file-scope definitions "
   "of objects of class type">;
-def err_attribute_argument_duplicate: Error<
-  "'%0' attribute parameter %1 is duplicated">;
 def err_attribute_argument_n_not_int : Error<
   "'%0' attribute requires parameter %1 to be an integer constant">;
 def err_attribute_argument_n_not_string : Error<
@@ -1627,11 +1628,16 @@ def warn_mismatched_section : Warning<
 
 def err_attribute_aligned_not_power_of_two : Error<
   "requested alignment is not a power of 2">;
+def err_attribute_aligned_greater_than_8192 : Error<
+  "requested alignment must be 8192 bytes or smaller">;
 def warn_redeclaration_without_attribute_prev_attribute_ignored : Warning<
   "'%0' redeclared without %1 attribute: previous %1 ignored">;
 def warn_attribute_ignored : Warning<"%0 attribute ignored">;
 def warn_unknown_attribute_ignored : Warning<
   "unknown attribute %0 ignored">, InGroup<UnknownAttributes>;
+def warn_unhandled_ms_attribute_ignored : Warning<
+  "__declspec attribute %0 is not supported">, 
+  InGroup<IgnoredAttributes>;
 def warn_attribute_invalid_on_stmt : Warning<
   "attribute %0 cannot be specified on a statement">,
   InGroup<IgnoredAttributes>;
@@ -1745,6 +1751,11 @@ def warn_thread_attribute_decl_not_lockable : Warning<
 def warn_thread_attribute_decl_not_pointer : Warning<
   "'%0' only applies to pointer types; type here is %1">,
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
+def warn_thread_attribute_wrong_decl_type : Warning<
+  "%0 attribute only applies to %select{"
+  "fields and global variables|functions and methods|"
+  "classes and structs}1">,
+  InGroup<ThreadSafetyAttributes>, DefaultIgnore;  
 def err_attribute_argument_out_of_range : Error<
   "%0 attribute parameter %1 is out of bounds: "
   "%plural{0:no parameters to index into|"
@@ -2173,6 +2184,17 @@ def note_ovl_candidate_bad_arc_conv : Note<"candidate "
     "constructor (inherited)}0%1"
     " not viable: cannot implicitly convert argument of type %2 to %3 for "
     "%select{%ordinal5 argument|object argument}4 under ARC">;
+def note_ovl_candidate_bad_lvalue : Note<"candidate "
+    "%select{function|function|constructor|"
+    "function |function |constructor |"
+    "constructor (the implicit default constructor)|"
+    "constructor (the implicit copy constructor)|"
+    "constructor (the implicit move constructor)|"
+    "function (the implicit copy assignment operator)|"
+    "function (the implicit move assignment operator)|"
+    "constructor (inherited)}0%1"
+    " not viable: expects an l-value for "
+    "%select{%ordinal3 argument|object argument}2">;
 def note_ovl_candidate_bad_addrspace : Note<"candidate "
     "%select{function|function|constructor|"
     "function |function |constructor |"
@@ -3008,12 +3030,21 @@ def note_used_here : Note<"used here">;
 
 def warn_internal_in_extern_inline : ExtWarn<
   "%select{function|variable}0 %1 has internal linkage but is used in an "
-  "inline %select{function|method}2 with external linkage">,
+  "inline function with external linkage">,
   InGroup<DiagGroup<"internal-linkage-in-inline"> >;
-def note_internal_decl_declared_here : Note<
-  "%0 declared here">;
+def ext_internal_in_extern_inline : Extension<
+  "%select{function|variable}0 %1 has internal linkage but is used in an "
+  "inline function with external linkage">,
+  InGroup<DiagGroup<"internal-linkage-in-inline"> >;
+def warn_internal_in_extern_inline_cxx : Warning<
+  "%select{function|variable}0 %1 %select{has internal linkage|is in an anonymous"
+  " namespace}2 but is used in an inline %select{function|method}3 with"
+  " external linkage">,
+  InGroup<DiagGroup<"internal-linkage-in-inline"> >;
 def note_convert_inline_to_static : Note<
   "use 'static' to give inline function %0 internal linkage">;
+def note_internal_decl_declared_here : Note<
+  "%0 declared here">;
 
 def warn_redefinition_of_typedef : ExtWarn<
   "redefinition of typedef %0 is a C11 feature">,
@@ -5613,6 +5644,10 @@ def err_filter_expression_integral : Error<
 // OpenCL warnings and errors.
 def err_invalid_astype_of_different_size : Error<
   "invalid reinterpretation: sizes of %0 and %1 must match">;
+def err_static_kernel : Error<
+  "kernel functions cannot be declared static">;
+def err_static_function_scope : Error<
+  "variables in function scope cannot be declared static">;
 
 } // end of sema category
 

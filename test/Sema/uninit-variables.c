@@ -437,3 +437,32 @@ void test54() {
   int c;  // expected-note {{initialize the variable 'c' to silence this warning}}
   ASSIGN(int, c, d);  // expected-warning {{variable 'c' is uninitialized when used here}}
 }
+
+// Taking the address is fine
+struct { struct { void *p; } a; } test55 = { { &test55.a }}; // no-warning
+struct { struct { void *p; } a; } test56 = { { &(test56.a) }}; // no-warning
+
+void uninit_in_loop() {
+  int produce(void);
+  void consume(int);
+  for (int n = 0; n < 100; ++n) {
+    int k; // expected-note {{initialize}}
+    consume(k); // expected-warning {{variable 'k' is uninitialized}}
+    k = produce();
+  }
+}
+
+void uninit_in_loop_goto() {
+  int produce(void);
+  void consume(int);
+  for (int n = 0; n < 100; ++n) {
+    goto skip_decl;
+    int k; // expected-note {{initialize}}
+skip_decl:
+    // FIXME: This should produce the 'is uninitialized' diagnostic, but we
+    // don't have enough information in the CFG to easily tell that the
+    // variable's scope has been left and re-entered.
+    consume(k); // expected-warning {{variable 'k' may be uninitialized}}
+    k = produce();
+  }
+}

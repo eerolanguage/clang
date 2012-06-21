@@ -18,6 +18,8 @@
 #include <string>
 
 namespace clang {
+  class ObjCRuntime;
+
 namespace driver {
   class ArgList;
   class Compilation;
@@ -25,7 +27,6 @@ namespace driver {
   class Driver;
   class InputArgList;
   class JobAction;
-  class ObjCRuntime;
   class Tool;
 
 /// ToolChain - Access to tools for a single platform.
@@ -210,11 +211,11 @@ public:
   virtual std::string ComputeEffectiveClangTriple(const ArgList &Args,
                                  types::ID InputType = types::TY_INVALID) const;
 
-  /// configureObjCRuntime - Configure the known properties of the
-  /// Objective-C runtime for this platform.
+  /// getDefaultObjCRuntime - Return the default Objective-C runtime
+  /// for this platform.
   ///
   /// FIXME: this really belongs on some sort of DeploymentTarget abstraction
-  virtual void configureObjCRuntime(ObjCRuntime &runtime) const;
+  virtual ObjCRuntime getDefaultObjCRuntime(bool isNonFragile) const;
 
   /// hasBlocksRuntime - Given that the user is compiling with
   /// -fblocks, does this tool chain guarantee the existence of a
@@ -229,6 +230,10 @@ public:
   /// include headers from standard system header directories.
   virtual void AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                          ArgStringList &CC1Args) const;
+
+  // addClangTargetOptions - Add options that need to be passed to cc1 for
+  // this target.
+  virtual void addClangTargetOptions(ArgStringList &CC1Args) const;
 
   // GetRuntimeLibType - Determine the runtime library type to use with the
   // given compilation arguments.

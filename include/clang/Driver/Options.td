@@ -418,7 +418,7 @@ def fgnu_keywords : Flag<"-fgnu-keywords">, Group<f_Group>, Flags<[CC1Option]>,
 def fgnu89_inline : Flag<"-fgnu89-inline">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Use the gnu89 inline semantics">;
 def fno_gnu89_inline : Flag<"-fno-gnu89-inline">, Group<f_Group>;
-def fgnu_runtime : Flag<"-fgnu-runtime">, Group<f_Group>, Flags<[CC1Option]>,
+def fgnu_runtime : Flag<"-fgnu-runtime">, Group<f_Group>,
   HelpText<"Generate output compatible with the standard GNU Objective-C runtime">;
 def fheinous_gnu_extensions : Flag<"-fheinous-gnu-extensions">, Flags<[CC1Option]>;
 def filelist : Separate<"-filelist">, Flags<[LinkerInput]>;
@@ -565,6 +565,8 @@ def fno_objc_infer_related_result_type : Flag<
 def fobjc_link_runtime: Flag<"-fobjc-link-runtime">, Group<f_Group>;
 
 // Objective-C ABI options.
+def fobjc_runtime_EQ : Joined<"-fobjc-runtime=">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Specify the target Objective-C runtime kind and version">;
 def fobjc_abi_version_EQ : Joined<"-fobjc-abi-version=">, Group<f_Group>;
 def fobjc_nonfragile_abi_version_EQ : Joined<"-fobjc-nonfragile-abi-version=">, Group<f_Group>;
 def fobjc_nonfragile_abi : Flag<"-fobjc-nonfragile-abi">, Group<f_Group>;
@@ -733,6 +735,7 @@ def m3dnow : Flag<"-m3dnow">, Group<m_x86_Features_Group>;
 def m64 : Flag<"-m64">, Group<m_Group>, Flags<[DriverOption]>;
 def mabi_EQ : Joined<"-mabi=">, Group<m_Group>;
 def march_EQ : Joined<"-march=">, Group<m_Group>;
+def maltivec : Flag<"-maltivec">, Alias<faltivec>;
 def mcmodel_EQ : Joined<"-mcmodel=">, Group<m_Group>;
 def mconstant_cfstrings : Flag<"-mconstant-cfstrings">, Group<clang_ignored_m_Group>;
 def mcpu_EQ : Joined<"-mcpu=">, Group<m_Group>;

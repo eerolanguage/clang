@@ -1081,6 +1081,9 @@ void ASTWriter::WriteLanguageOptions(const LangOptions &LangOpts) {
 #define ENUM_LANGOPT(Name, Type, Bits, Default, Description) \
   Record.push_back(static_cast<unsigned>(LangOpts.get##Name()));
 #include "clang/Basic/LangOptions.def"  
+
+  Record.push_back((unsigned) LangOpts.ObjCRuntime.getKind());
+  AddVersionTuple(LangOpts.ObjCRuntime.getVersion(), Record);
   
   Record.push_back(LangOpts.CurrentModule.size());
   Record.append(LangOpts.CurrentModule.begin(), LangOpts.CurrentModule.end());
@@ -2238,6 +2241,23 @@ void ASTWriter::WriteFileDeclIDsMap() {
   unsigned AbbrevCode = Stream.EmitAbbrev(Abbrev);
   Record.push_back(FILE_SORTED_DECLS);
   Stream.EmitRecordWithBlob(AbbrevCode, Record, data(FileSortedIDs));
+}
+
+void ASTWriter::WriteComments() {
+  Stream.EnterSubblock(COMMENTS_BLOCK_ID, 3);
+  ArrayRef<RawComment> RawComments = Context->Comments.getComments();
+  RecordData Record;
+  for (ArrayRef<RawComment>::iterator I = RawComments.begin(),
+                                      E = RawComments.end();
+       I != E; ++I) {
+    Record.clear();
+    AddSourceRange(I->getSourceRange(), Record);
+    Record.push_back(I->getKind());
+    Record.push_back(I->isTrailingComment());
+    Record.push_back(I->isAlmostTrailingComment());
+    Stream.EmitRecord(COMMENTS_RAW_COMMENT, Record);
+  }
+  Stream.ExitBlock();
 }
 
 //===----------------------------------------------------------------------===//
@@ -3415,6 +3435,7 @@ void ASTWriter::WriteASTCore(Sema &SemaRef, MemorizeStatCalls *StatCalls,
 
   WriteFileDeclIDsMap();
   WriteSourceManagerBlock(Context.getSourceManager(), PP, isysroot);
+  WriteComments();
   
   if (Chain) {
     // Write the mapping information describing our module dependencies and how

@@ -199,6 +199,8 @@ class ASTReader
     public ExternalSLocEntrySource
 {
 public:
+  typedef SmallVector<uint64_t, 64> RecordData;
+
   enum ASTReadResult { Success, Failure, IgnorePCH };
   /// \brief Types of AST files.
   friend class PCHValidator;
@@ -801,7 +803,7 @@ private:
   llvm::BitstreamCursor &SLocCursorForID(int ID);
   SourceLocation getImportLocation(ModuleFile *F);
   ASTReadResult ReadSubmoduleBlock(ModuleFile &F);
-  bool ParseLanguageOptions(const SmallVectorImpl<uint64_t> &Record);
+  bool ParseLanguageOptions(const RecordData &Record);
   
   struct RecordLocation {
     RecordLocation(ModuleFile *M, uint64_t O)
@@ -862,8 +864,6 @@ private:
   ASTReader(const ASTReader&); // do not implement
   ASTReader &operator=(const ASTReader &); // do not implement
 public:
-  typedef SmallVector<uint64_t, 64> RecordData;
-
   /// \brief Load the AST file and validate its contents against the given
   /// Preprocessor.
   ///
@@ -1501,6 +1501,13 @@ public:
   SwitchCase *getSwitchCaseWithID(unsigned ID);
 
   void ClearSwitchCaseIDs();
+
+  /// \brief Cursors for comments blocks.
+  SmallVector<std::pair<llvm::BitstreamCursor,
+                        serialization::ModuleFile *>, 8> CommentsCursors;
+
+  /// \brief Loads comments ranges.
+  void ReadComments();
 };
 
 /// \brief Helper class that saves the current stream position and

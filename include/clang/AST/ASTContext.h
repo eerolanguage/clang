@@ -27,6 +27,7 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/CanonicalType.h"
+#include "clang/Comments/RawCommentList.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
@@ -51,7 +52,6 @@ namespace clang {
   class ASTMutationListener;
   class IdentifierTable;
   class SelectorTable;
-  class SourceManager;
   class TargetInfo;
   class CXXABI;
   // Decls
@@ -417,6 +417,30 @@ public:
   FullSourceLoc getFullLoc(SourceLocation Loc) const {
     return FullSourceLoc(Loc,SourceMgr);
   }
+
+  /// \brief All comments in this translation unit.
+  RawCommentList Comments;
+
+  /// \brief True if comments are already loaded from ExternalASTSource.
+  mutable bool CommentsLoaded;
+
+  /// \brief Mapping from declarations to their comments (stored within
+  /// Comments list), once we have already looked up the comment associated
+  /// with a given declaration.
+  mutable llvm::DenseMap<const Decl *, const RawComment *> DeclComments;
+
+  /// \brief Return the Doxygen-style comment attached to a given declaration,
+  /// without looking into cache.
+  const RawComment *getRawCommentForDeclNoCache(const Decl *D) const;
+
+public:
+  void addComment(const RawComment &RC) {
+    Comments.addComment(RC, *this);
+  }
+
+  /// \brief Return the Doxygen-style comment attached to a given declaration.
+  /// Returns NULL if no comment is attached.
+  const RawComment *getRawCommentForDecl(const Decl *D) const;
 
   /// \brief Retrieve the attributes for the given declaration.
   AttrVec& getDeclAttrs(const Decl *D);
@@ -1473,7 +1497,7 @@ public:
   /// be used to refer to a given template. For most templates, this
   /// expression is just the template declaration itself. For example,
   /// the template std::vector can be referred to via a variety of
-  /// names---std::vector, ::std::vector, vector (if vector is in
+  /// names---std::vector, \::std::vector, vector (if vector is in
   /// scope), etc.---but all of these names map down to the same
   /// TemplateDecl, which is used to form the canonical template name.
   ///
