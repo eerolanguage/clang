@@ -27,7 +27,7 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/CanonicalType.h"
-#include "clang/Comments/RawCommentList.h"
+#include "clang/AST/RawCommentList.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
@@ -435,7 +435,7 @@ public:
 
 public:
   void addComment(const RawComment &RC) {
-    Comments.addComment(RC, *this);
+    Comments.addComment(RC);
   }
 
   /// \brief Return the Doxygen-style comment attached to a given declaration.

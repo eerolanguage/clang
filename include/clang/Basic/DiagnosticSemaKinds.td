@@ -639,7 +639,8 @@ def warn_auto_synthesizing_protocol_property :Warning<
   " declared in a protocol">,
   InGroup<DiagGroup<"objc-protocol-property-synthesis">>;
 def warn_autosynthesis_property_ivar_match :Warning<
-  "auto autosynthesized property has same name as an existing ivar">,
+  "autosynthesized property '%0' will use %select{|synthesized}1 instance variable "
+  "'%2', not existing instance variable '%3'">,
   InGroup<DiagGroup<"objc-autosynthesis-property-ivar-name-match">>;
 def warn_missing_explicit_synthesis : Warning <
   "auto property synthesis is synthesizing property not explicitly synthesized">,
@@ -3029,18 +3030,11 @@ def warn_undefined_internal : Warning<
 def note_used_here : Note<"used here">;
 
 def warn_internal_in_extern_inline : ExtWarn<
-  "%select{function|variable}0 %1 has internal linkage but is used in an "
-  "inline function with external linkage">,
-  InGroup<DiagGroup<"internal-linkage-in-inline"> >;
+  "static %select{function|variable}0 %1 is used in an inline function with "
+  "external linkage">, InGroup<DiagGroup<"static-in-inline"> >;
 def ext_internal_in_extern_inline : Extension<
-  "%select{function|variable}0 %1 has internal linkage but is used in an "
-  "inline function with external linkage">,
-  InGroup<DiagGroup<"internal-linkage-in-inline"> >;
-def warn_internal_in_extern_inline_cxx : Warning<
-  "%select{function|variable}0 %1 %select{has internal linkage|is in an anonymous"
-  " namespace}2 but is used in an inline %select{function|method}3 with"
-  " external linkage">,
-  InGroup<DiagGroup<"internal-linkage-in-inline"> >;
+  "static %select{function|variable}0 %1 is used in an inline function with "
+  "external linkage">, InGroup<DiagGroup<"static-in-inline"> >;
 def note_convert_inline_to_static : Note<
   "use 'static' to give inline function %0 internal linkage">;
 def note_internal_decl_declared_here : Note<
@@ -4741,6 +4735,11 @@ def err_cannot_pass_objc_interface_to_vararg : Error<
   "cannot pass object with interface type %0 by-value through variadic "
   "%select{function|block|method}1">;
 
+def warn_non_pod_vararg_with_format_string : Warning<
+  "cannot pass %select{non-POD|non-trivial}0 object of type %1 to variadic "
+  "function; expected type from format string was %2">,
+  InGroup<DiagGroup<"non-pod-varargs">>, DefaultError;
+
 def warn_cannot_pass_non_pod_arg_to_vararg : Warning<
   "cannot pass object of %select{non-POD|non-trivial}0 type %1 through variadic"
   " %select{function|block|method|constructor}2; call will abort at runtime">,
@@ -4855,6 +4854,9 @@ let CategoryName = "Inline Assembly Issue" in {
     "invalid use of a cast in a inline asm context requiring an l-value: "
     "accepted due to -fheinous-gnu-extensions, but clang may remove support "
     "for this in the future">;
+
+  def warn_unsupported_msasm : ExtWarn<
+    "MS-style inline assembly is not supported">, InGroup<Microsoft>;
 }
 
 let CategoryName = "Semantic Issue" in {
@@ -5221,7 +5223,8 @@ def warn_scanf_scanlist_incomplete : Warning<
   "no closing ']' for '%%[' in scanf format string">,
   InGroup<Format>;
 def note_format_string_defined : Note<"format string is defined here">;
- 
+def note_printf_c_str: Note<"did you mean to call the %0 method?">;
+
 def warn_null_arg : Warning<
   "null passed to a callee which requires a non-null argument">,
   InGroup<NonNull>;
@@ -5686,4 +5689,3 @@ def err_module_private_definition : Error<
 }
 
 } // end of sema component.
-

@@ -7,8 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Comments/RawCommentList.h"
-#include "clang/AST/ASTContext.h"
+#include "clang/AST/RawCommentList.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace clang;
@@ -155,13 +154,15 @@ bool onlyWhitespaceBetweenComments(SourceManager &SM,
 }
 } // unnamed namespace
 
-void RawCommentList::addComment(const RawComment &RC, ASTContext &Context) {
+void RawCommentList::addComment(const RawComment &RC) {
   if (RC.isInvalid())
     return;
 
   assert((Comments.empty() ||
+          Comments.back().getSourceRange().getEnd() ==
+              RC.getSourceRange().getBegin() ||
           SourceMgr.isBeforeInTranslationUnit(
-              Comments[0].getSourceRange().getEnd(),
+              Comments.back().getSourceRange().getEnd(),
               RC.getSourceRange().getBegin())) &&
          "comments are not coming in source order");
 

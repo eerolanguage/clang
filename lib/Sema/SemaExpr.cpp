@@ -143,26 +143,21 @@ static bool hasAnyExplicitStorageClass(const FunctionDecl *D) {
 }
 
 /// \brief Check whether we're in an extern inline function and referring to a
-/// variable or function with internal linkage.
+/// variable or function with internal linkage (C11 6.7.4p3).
 ///
-/// This also applies to anonymous-namespaced objects, which are effectively
-/// internal.
 /// This is only a warning because we used to silently accept this code, but
-/// most likely it will not do what the user intends.
+/// in many cases it will not behave correctly. This is not enabled in C++ mode
+/// because the restriction language is a bit weaker (C++11 [basic.def.odr]p6)
+/// and so while there may still be user mistakes, most of the time we can't
+/// prove that there are errors.
 static void diagnoseUseOfInternalDeclInInlineFunction(Sema &S,
                                                       const NamedDecl *D,
                                                       SourceLocation Loc) {
-  // C11 6.7.4p3: An inline definition of a function with external linkage...
-  //   shall not contain a reference to an identifier with internal linkage.
-  // C++11 [basic.def.odr]p6: ...in each definition of D, corresponding names,
-  //   looked up according to 3.4, shall refer to an entity defined within the
-  //   definition of D, or shall refer to the same entity, after overload
-  //   resolution (13.3) and after matching of partial template specialization
-  //   (14.8.3), except that a name can refer to a const object with internal or
-  //   no linkage if the object has the same literal type in all definitions of
-  //   D, and the object is initialized with a constant expression (5.19), and
-  //   the value (but not the address) of the object is used, and the object has
-  //   the same value in all definitions of D; ...
+  // This is disabled under C++; there are too many ways for this to fire in
+  // contexts where the warning is a false positive, or where it is technically
+  // correct but benign.
+  if (S.getLangOpts().CPlusPlus)
+    return;
 
   // Check if this is an inlined function or method.
   FunctionDecl *Current = S.getCurFunctionDecl();
@@ -174,56 +169,27 @@ static void diagnoseUseOfInternalDeclInInlineFunction(Sema &S,
     return;
   
   // Check if the decl has internal linkage.
-  Linkage UsedLinkage = D->getLinkage();
-  switch (UsedLinkage) {
-  case NoLinkage:
+  if (D->getLinkage() != InternalLinkage)
     return;
-  case InternalLinkage:
-  case UniqueExternalLinkage:
-    break;
-  case ExternalLinkage:
-    return;
-  }
 
-  // Check C++'s exception for const variables. This is in the standard
-  // because in C++ const variables have internal linkage unless
-  // explicitly declared extern.
-  // Note that we don't do any of the cross-TU checks, and this code isn't
-  // even particularly careful about checking if the variable "has the
-  // same value in all definitions" of the inline function. It just does a
-  // sanity check to make sure there is an initializer at all.
-  // FIXME: We should still be checking to see if we're using a constant
-  // as a glvalue anywhere, but we don't have the necessary information to
-  // do that here, and as long as this is a warning and not a hard error
-  // it's not appropriate to change the semantics of the program (i.e.
-  // by having BuildDeclRefExpr use VK_RValue for constants like these).
-  const VarDecl *VD = dyn_cast<VarDecl>(D);
-  if (VD && S.getLangOpts().CPlusPlus)
-    if (VD->getType().isConstant(S.getASTContext()) && VD->getAnyInitializer())
-      return;
+  // Downgrade from ExtWarn to Extension if
+  //  (1) the supposedly external inline function is in the main file,
+  //      and probably won't be included anywhere else.
+  //  (2) the thing we're referencing is a pure function.
+  //  (3) the thing we're referencing is another inline function.
+  // This last can give us false negatives, but it's better than warning on
+  // wrappers for simple C library functions.
+  const FunctionDecl *UsedFn = dyn_cast<FunctionDecl>(D);
+  bool DowngradeWarning = S.getSourceManager().isFromMainFile(Loc);
+  if (!DowngradeWarning && UsedFn)
+    DowngradeWarning = UsedFn->isInlined() || UsedFn->hasAttr<ConstAttr>();
 
-  // Don't warn unless -pedantic is on if the inline function is in the main
-  // source file, and in C++ don't warn at all, since the one-definition rule is
-  // still satisfied. This function will most likely not be inlined into
-  // another translation unit, so it's effectively internal.
-  bool IsInMainFile = S.getSourceManager().isFromMainFile(Loc);
-  if (S.getLangOpts().CPlusPlus) {
-    if (IsInMainFile)
-      return;
-
-    S.Diag(Loc, diag::warn_internal_in_extern_inline_cxx)
-      << (bool)VD << D
-      << (UsedLinkage == UniqueExternalLinkage)
-      << isa<CXXMethodDecl>(Current);
-  } else {
-    S.Diag(Loc, IsInMainFile ? diag::ext_internal_in_extern_inline
-                             : diag::warn_internal_in_extern_inline)
-      << (bool)VD << D;
-  }
+  S.Diag(Loc, DowngradeWarning ? diag::ext_internal_in_extern_inline
+                               : diag::warn_internal_in_extern_inline)
+    << /*IsVar=*/!UsedFn << D;
 
   // Suggest "static" on the inline function, if possible.
-  if (!isa<CXXMethodDecl>(Current) &&
-      !hasAnyExplicitStorageClass(Current)) {
+  if (!hasAnyExplicitStorageClass(Current)) {
     const FunctionDecl *FirstDecl = Current->getCanonicalDecl();
     SourceLocation DeclBegin = FirstDecl->getSourceRange().getBegin();
     S.Diag(DeclBegin, diag::note_convert_inline_to_static)
@@ -632,12 +598,59 @@ ExprResult Sema::DefaultArgumentPromotion(Expr *E) {
   return Owned(E);
 }
 
+/// Determine the degree of POD-ness for an expression.
+/// Incomplete types are considered POD, since this check can be performed
+/// when we're in an unevaluated context.
+Sema::VarArgKind Sema::isValidVarArgType(const QualType &Ty) {
+  if (Ty->isIncompleteType() || Ty.isCXX98PODType(Context))
+    return VAK_Valid;
+  // C++0x [expr.call]p7:
+  //   Passing a potentially-evaluated argument of class type (Clause 9) 
+  //   having a non-trivial copy constructor, a non-trivial move constructor,
+  //   or a non-trivial destructor, with no corresponding parameter, 
+  //   is conditionally-supported with implementation-defined semantics.
+
+  if (getLangOpts().CPlusPlus0x && !Ty->isDependentType())
+    if (CXXRecordDecl *Record = Ty->getAsCXXRecordDecl())
+      if (Record->hasTrivialCopyConstructor() &&
+          Record->hasTrivialMoveConstructor() &&
+          Record->hasTrivialDestructor())
+        return VAK_ValidInCXX11;
+
+  if (getLangOpts().ObjCAutoRefCount && Ty->isObjCLifetimeType())
+    return VAK_Valid;
+  return VAK_Invalid;
+}
+
+bool Sema::variadicArgumentPODCheck(const Expr *E, VariadicCallType CT) {
+  // Don't allow one to pass an Objective-C interface to a vararg.
+  const QualType & Ty = E->getType();
+
+  // Complain about passing non-POD types through varargs.
+  switch (isValidVarArgType(Ty)) {
+  case VAK_Valid:
+    break;
+  case VAK_ValidInCXX11:
+    DiagRuntimeBehavior(E->getLocStart(), 0,
+        PDiag(diag::warn_cxx98_compat_pass_non_pod_arg_to_vararg)
+        << E->getType() << CT);
+    break;
+  case VAK_Invalid:
+    return DiagRuntimeBehavior(E->getLocStart(), 0,
+                   PDiag(diag::warn_cannot_pass_non_pod_arg_to_vararg)
+                   << getLangOpts().CPlusPlus0x << Ty << CT);
+  }
+  // c++ rules are enforced elsewhere.
+  return false;
+}
+
 /// DefaultVariadicArgumentPromotion - Like DefaultArgumentPromotion, but
 /// will warn if the resulting type is not a POD type, and rejects ObjC
 /// interfaces passed by value.
 ExprResult Sema::DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
                                                   FunctionDecl *FDecl) {
-  if (const BuiltinType *PlaceholderTy = E->getType()->getAsPlaceholderType()) {
+  const QualType &Ty = E->getType();
+  if (const BuiltinType *PlaceholderTy = Ty->getAsPlaceholderType()) {
     // Strip the unbridged-cast placeholder expression off, if applicable.
     if (PlaceholderTy->getKind() == BuiltinType::ARCUnbridgedCast &&
         (CT == VariadicMethod ||
@@ -658,77 +671,44 @@ ExprResult Sema::DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
     return ExprError();
   E = ExprRes.take();
 
-  // Don't allow one to pass an Objective-C interface to a vararg.
-  if (E->getType()->isObjCObjectType() &&
+  if (Ty->isObjCObjectType() &&
     DiagRuntimeBehavior(E->getLocStart(), 0,
                         PDiag(diag::err_cannot_pass_objc_interface_to_vararg)
-                          << E->getType() << CT))
+                          << Ty << CT))
     return ExprError();
 
-  // Complain about passing non-POD types through varargs. However, don't
-  // perform this check for incomplete types, which we can get here when we're
-  // in an unevaluated context.
-  if (!E->getType()->isIncompleteType() &&
-      !E->getType().isCXX98PODType(Context)) {
-    // C++0x [expr.call]p7:
-    //   Passing a potentially-evaluated argument of class type (Clause 9) 
-    //   having a non-trivial copy constructor, a non-trivial move constructor,
-    //   or a non-trivial destructor, with no corresponding parameter, 
-    //   is conditionally-supported with implementation-defined semantics.
-    bool TrivialEnough = false;
-    if (getLangOpts().CPlusPlus0x && !E->getType()->isDependentType())  {
-      if (CXXRecordDecl *Record = E->getType()->getAsCXXRecordDecl()) {
-        if (Record->hasTrivialCopyConstructor() &&
-            Record->hasTrivialMoveConstructor() &&
-            Record->hasTrivialDestructor()) {
-          DiagRuntimeBehavior(E->getLocStart(), 0,
-            PDiag(diag::warn_cxx98_compat_pass_non_pod_arg_to_vararg)
-              << E->getType() << CT);
-          TrivialEnough = true;
-        }
-      }
-    }
+  // Diagnostics regarding non-POD argument types are
+  // emitted along with format string checking in Sema::CheckFunctionCall().
+  if (isValidVarArgType(Ty) == VAK_Invalid) {
+    // Turn this into a trap.
+    CXXScopeSpec SS;
+    SourceLocation TemplateKWLoc;
+    UnqualifiedId Name;
+    Name.setIdentifier(PP.getIdentifierInfo("__builtin_trap"),
+                       E->getLocStart());
+    ExprResult TrapFn = ActOnIdExpression(TUScope, SS, TemplateKWLoc,
+                                          Name, true, false);
+    if (TrapFn.isInvalid())
+      return ExprError();
 
-    if (!TrivialEnough &&
-        getLangOpts().ObjCAutoRefCount &&
-        E->getType()->isObjCLifetimeType())
-      TrivialEnough = true;
-      
-    if (TrivialEnough) {
-      // Nothing to diagnose. This is okay.
-    } else if (DiagRuntimeBehavior(E->getLocStart(), 0,
-                          PDiag(diag::warn_cannot_pass_non_pod_arg_to_vararg)
-                            << getLangOpts().CPlusPlus0x << E->getType() 
-                            << CT)) {
-      // Turn this into a trap.
-      CXXScopeSpec SS;
-      SourceLocation TemplateKWLoc;
-      UnqualifiedId Name;
-      Name.setIdentifier(PP.getIdentifierInfo("__builtin_trap"),
-                         E->getLocStart());
-      ExprResult TrapFn = ActOnIdExpression(TUScope, SS, TemplateKWLoc, Name,
-                                            true, false);
-      if (TrapFn.isInvalid())
-        return ExprError();
+    ExprResult Call = ActOnCallExpr(TUScope, TrapFn.get(),
+                                    E->getLocStart(), MultiExprArg(),
+                                    E->getLocEnd());
+    if (Call.isInvalid())
+      return ExprError();
 
-      ExprResult Call = ActOnCallExpr(TUScope, TrapFn.get(), E->getLocStart(),
-                                      MultiExprArg(), E->getLocEnd());
-      if (Call.isInvalid())
-        return ExprError();
-      
-      ExprResult Comma = ActOnBinOp(TUScope, E->getLocStart(), tok::comma,
-                                    Call.get(), E);
-      if (Comma.isInvalid())
-        return ExprError();      
-      E = Comma.get();
-    }
+    ExprResult Comma = ActOnBinOp(TUScope, E->getLocStart(), tok::comma,
+                                  Call.get(), E);
+    if (Comma.isInvalid())
+      return ExprError();
+    return Comma.get();
   }
-  // c++ rules are enforced elsewhere.
+
   if (!getLangOpts().CPlusPlus &&
       RequireCompleteType(E->getExprLoc(), E->getType(),
                           diag::err_call_incomplete_argument))
     return ExprError();
-  
+
   return Owned(E);
 }
 
@@ -1508,14 +1488,14 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
         // Give a code modification hint to insert 'this->'.
         // TODO: fixit for inserting 'Base<T>::' in the other cases.
         // Actually quite difficult!
+        if (getLangOpts().MicrosoftMode)
+          diagnostic = diag::warn_found_via_dependent_bases_lookup;
         if (isInstance) {
           UnresolvedLookupExpr *ULE = cast<UnresolvedLookupExpr>(
               CallsUndergoingInstantiation.back()->getCallee());
           CXXMethodDecl *DepMethod = cast_or_null<CXXMethodDecl>(
               CurMethod->getInstantiatedFromMemberFunction());
           if (DepMethod) {
-            if (getLangOpts().MicrosoftMode)
-              diagnostic = diag::warn_found_via_dependent_bases_lookup;
             Diag(R.getNameLoc(), diagnostic) << Name
               << FixItHint::CreateInsertion(R.getNameLoc(), "this->");
             QualType DepThisType = DepMethod->getThisType(Context);
@@ -1542,8 +1522,6 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
             Diag(R.getNameLoc(), diagnostic) << Name;
           }
         } else {
-          if (getLangOpts().MicrosoftMode)
-            diagnostic = diag::warn_found_via_dependent_bases_lookup;
           Diag(R.getNameLoc(), diagnostic) << Name;
         }
 
@@ -3464,6 +3442,25 @@ ExprResult Sema::BuildCXXDefaultArgExpr(SourceLocation CallLoc,
   return Owned(CXXDefaultArgExpr::Create(Context, CallLoc, Param));
 }
 
+
+Sema::VariadicCallType
+Sema::getVariadicCallType(FunctionDecl *FDecl, const FunctionProtoType *Proto,
+                          Expr *Fn) {
+  if (Proto && Proto->isVariadic()) {
+    if (dyn_cast_or_null<CXXConstructorDecl>(FDecl))
+      return VariadicConstructor;
+    else if (Fn && Fn->getType()->isBlockPointerType())
+      return VariadicBlock;
+    else if (FDecl) {
+      if (CXXMethodDecl *Method = dyn_cast_or_null<CXXMethodDecl>(FDecl))
+        if (Method->isInstance())
+          return VariadicMethod;
+      return VariadicFunction;
+    }
+  }
+  return VariadicDoesNotApply;
+}
+
 /// ConvertArgumentsForCall - Converts the arguments specified in
 /// Args/NumArgs to the parameter types of the function FDecl with
 /// function prototype Proto. Call is the call expression itself, and
@@ -3555,12 +3552,8 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
     }
   }
   SmallVector<Expr *, 8> AllArgs;
-  VariadicCallType CallType =
-    Proto->isVariadic() ? VariadicFunction : VariadicDoesNotApply;
-  if (Fn->getType()->isBlockPointerType())
-    CallType = VariadicBlock; // Block
-  else if (isa<MemberExpr>(Fn))
-    CallType = VariadicMethod;
+  VariadicCallType CallType = getVariadicCallType(FDecl, Proto, Fn);
+  
   Invalid = GatherArgumentsForCall(Call->getLocStart(), FDecl,
                                    Proto, 0, Args, NumArgs, AllArgs, CallType);
   if (Invalid)
@@ -3649,7 +3642,6 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
 
   // If this is a variadic call, handle args passed through "...".
   if (CallType != VariadicDoesNotApply) {
-
     // Assume that extern "C" functions with variadic arguments that
     // return __unknown_anytype aren't *really* variadic.
     if (Proto->getResultType() == Context.UnknownAnyTy &&
@@ -3987,7 +3979,8 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   TheCall->setType(FuncT->getCallResultType(Context));
   TheCall->setValueKind(Expr::getValueKindForType(FuncT->getResultType()));
 
-  if (const FunctionProtoType *Proto = dyn_cast<FunctionProtoType>(FuncT)) {
+  const FunctionProtoType *Proto = dyn_cast<FunctionProtoType>(FuncT);
+  if (Proto) {
     if (ConvertArgumentsForCall(TheCall, Fn, FDecl, Proto, Args, NumArgs,
                                 RParenLoc, IsExecConfig))
       return ExprError();
@@ -3999,8 +3992,7 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
       // on our knowledge of the function definition.
       const FunctionDecl *Def = 0;
       if (FDecl->hasBody(Def) && NumArgs != Def->param_size()) {
-        const FunctionProtoType *Proto 
-          = Def->getType()->getAs<FunctionProtoType>();
+        Proto = Def->getType()->getAs<FunctionProtoType>();
         if (!Proto || !(Proto->isVariadic() && NumArgs >= Def->param_size()))
           Diag(RParenLoc, diag::warn_call_wrong_number_of_arguments)
             << (NumArgs > Def->param_size()) << FDecl << Fn->getSourceRange();
@@ -4058,13 +4050,13 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
 
   // Do special checking on direct calls to functions.
   if (FDecl) {
-    if (CheckFunctionCall(FDecl, TheCall))
+    if (CheckFunctionCall(FDecl, TheCall, Proto))
       return ExprError();
 
     if (BuiltinID)
       return CheckBuiltinFunctionCall(BuiltinID, TheCall);
   } else if (NDecl) {
-    if (CheckBlockCall(NDecl, TheCall))
+    if (CheckBlockCall(NDecl, TheCall, Proto))
       return ExprError();
   }
 
