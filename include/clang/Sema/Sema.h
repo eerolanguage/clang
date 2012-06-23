@@ -2216,8 +2216,6 @@ public:
 
   /// CheckProtocolMethodDefs - This routine checks unimplemented
   /// methods declared in protocol, and those referenced by it.
-  /// \param IDecl - Used for checking for methods which may have been
-  /// inherited.
   void CheckProtocolMethodDefs(SourceLocation ImpLoc,
                                ObjCProtocolDecl *PDecl,
                                bool& IncompleteImpl,
@@ -6076,14 +6074,15 @@ public:
   /// Process the specified property declaration and create decls for the
   /// setters and getters as needed.
   /// \param property The property declaration being processed
-  /// \param DC The semantic container for the property
+  /// \param CD The semantic container for the property
   /// \param redeclaredProperty Declaration for property if redeclared
   ///        in class extension.
   /// \param lexicalDC Container for redeclaredProperty.
   void ProcessPropertyDecl(ObjCPropertyDecl *property,
-                           ObjCContainerDecl *DC,
+                           ObjCContainerDecl *CD,
                            ObjCPropertyDecl *redeclaredProperty = 0,
                            ObjCContainerDecl *lexicalDC = 0);
+
 
   void DiagnosePropertyMismatch(ObjCPropertyDecl *Property,
                                 ObjCPropertyDecl *SuperProperty,

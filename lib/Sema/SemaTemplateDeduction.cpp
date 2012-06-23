@@ -2965,7 +2965,7 @@ DeduceTemplateArgumentByListElement(Sema &S,
 /// \param FunctionTemplate the function template for which we are performing
 /// template argument deduction.
 ///
-/// \param ExplicitTemplateArguments the explicit template arguments provided
+/// \param ExplicitTemplateArgs the explicit template arguments provided
 /// for this call.
 ///
 /// \param Args the function call arguments
@@ -3225,7 +3225,7 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
 /// \param FunctionTemplate the function template for which we are performing
 /// template argument deduction.
 ///
-/// \param ExplicitTemplateArguments the explicitly-specified template
+/// \param ExplicitTemplateArgs the explicitly-specified template
 /// arguments.
 ///
 /// \param ArgFunctionType the function type that will be used as the
@@ -3408,7 +3408,7 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
 /// \param FunctionTemplate the function template for which we are performing
 /// template argument deduction.
 ///
-/// \param ExplicitTemplateArguments the explicitly-specified template
+/// \param ExplicitTemplateArgs the explicitly-specified template
 /// arguments.
 ///
 /// \param Specialization if template argument deduction was successful,
@@ -4455,13 +4455,13 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
   }
 }
 
-/// \brief Mark the template parameters can be deduced by the given
+/// \brief Mark which template parameters can be deduced from a given
 /// template argument list.
 ///
 /// \param TemplateArgs the template argument list from which template
 /// parameters will be deduced.
 ///
-/// \param Deduced a bit vector whose elements will be set to \c true
+/// \param Used a bit vector whose elements will be set to \c true
 /// to indicate when the corresponding template parameter will be
 /// deduced.
 void

@@ -1101,15 +1101,12 @@ static NamedDecl *getVisibleDecl(NamedDecl *D) {
 /// begin. If the lookup criteria permits, name lookup may also search
 /// in the parent scopes.
 ///
-/// @param Name     The name of the entity that we are searching for.
+/// @param [in,out] R Specifies the lookup to perform (e.g., the name to
+/// look up and the lookup kind), and is updated with the results of lookup
+/// including zero or more declarations and possibly additional information
+/// used to diagnose ambiguities.
 ///
-/// @param Loc      If provided, the source location where we're performing
-/// name lookup. At present, this is only used to produce diagnostics when
-/// C library functions (like "malloc") are implicitly declared.
-///
-/// @returns The result of name lookup, which includes zero or more
-/// declarations and possibly additional information used to diagnose
-/// ambiguities.
+/// @returns \c true if lookup succeeded and false otherwise.
 bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
   DeclarationName Name = R.getLookupName();
   if (!Name) return false;
@@ -1675,22 +1672,12 @@ bool Sema::LookupParsedName(LookupResult &R, Scope *S, CXXScopeSpec *SS,
 }
 
 
-/// @brief Produce a diagnostic describing the ambiguity that resulted
+/// \brief Produce a diagnostic describing the ambiguity that resulted
 /// from name lookup.
 ///
-/// @param Result       The ambiguous name lookup result.
+/// \param Result The result of the ambiguous lookup to be diagnosed.
 ///
-/// @param Name         The name of the entity that name lookup was
-/// searching for.
-///
-/// @param NameLoc      The location of the name within the source code.
-///
-/// @param LookupRange  A source range that provides more
-/// source-location information concerning the lookup itself. For
-/// example, this range might highlight a nested-name-specifier that
-/// precedes the name.
-///
-/// @returns true
+/// \returns true
 bool Sema::DiagnoseAmbiguousLookup(LookupResult &Result) {
   assert(Result.isAmbiguous() && "Lookup result must be ambiguous");
 

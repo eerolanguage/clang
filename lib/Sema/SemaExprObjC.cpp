@@ -1974,9 +1974,9 @@ static void checkCocoaAPI(Sema &S, const ObjCMessageExpr *Msg) {
 ///
 /// \param LBracLoc The location of the opening square bracket ']'.
 ///
-/// \param RBrac The location of the closing square bracket ']'.
+/// \param RBracLoc The location of the closing square bracket ']'.
 ///
-/// \param Args The message arguments.
+/// \param ArgsIn The message arguments.
 ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
                                    QualType ReceiverType,
                                    SourceLocation SuperLoc,
@@ -2144,9 +2144,9 @@ ExprResult Sema::BuildInstanceMessageImplicit(Expr *Receiver,
 ///
 /// \param LBracLoc The location of the opening square bracket ']'.
 ///
-/// \param RBrac The location of the closing square bracket ']'.
+/// \param RBracLoc The location of the closing square bracket ']'.
 ///
-/// \param Args The message arguments.
+/// \param ArgsIn The message arguments.
 ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
                                       QualType ReceiverType,
                                       SourceLocation SuperLoc,

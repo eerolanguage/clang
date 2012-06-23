@@ -1477,36 +1477,40 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
         if (getLangOpts().MicrosoftMode)
           diagnostic = diag::warn_found_via_dependent_bases_lookup;
         if (isInstance) {
+          Diag(R.getNameLoc(), diagnostic) << Name
+            << FixItHint::CreateInsertion(R.getNameLoc(), "this->");
           UnresolvedLookupExpr *ULE = cast<UnresolvedLookupExpr>(
               CallsUndergoingInstantiation.back()->getCallee());
-          CXXMethodDecl *DepMethod = cast_or_null<CXXMethodDecl>(
-              CurMethod->getInstantiatedFromMemberFunction());
-          if (DepMethod) {
-            Diag(R.getNameLoc(), diagnostic) << Name
-              << FixItHint::CreateInsertion(R.getNameLoc(), "this->");
-            QualType DepThisType = DepMethod->getThisType(Context);
-            CheckCXXThisCapture(R.getNameLoc());
-            CXXThisExpr *DepThis = new (Context) CXXThisExpr(
-                                       R.getNameLoc(), DepThisType, false);
-            TemplateArgumentListInfo TList;
-            if (ULE->hasExplicitTemplateArgs())
-              ULE->copyTemplateArgumentsInto(TList);
-            
-            CXXScopeSpec SS;
-            SS.Adopt(ULE->getQualifierLoc());
-            CXXDependentScopeMemberExpr *DepExpr =
-                CXXDependentScopeMemberExpr::Create(
-                    Context, DepThis, DepThisType, true, SourceLocation(),
-                    SS.getWithLocInContext(Context),
-                    ULE->getTemplateKeywordLoc(), 0,
-                    R.getLookupNameInfo(),
-                    ULE->hasExplicitTemplateArgs() ? &TList : 0);
-            CallsUndergoingInstantiation.back()->setCallee(DepExpr);
-          } else {
-            // FIXME: we should be able to handle this case too. It is correct
-            // to add this-> here. This is a workaround for PR7947.
-            Diag(R.getNameLoc(), diagnostic) << Name;
-          }
+
+          
+          CXXMethodDecl *DepMethod;
+          if (CurMethod->getTemplatedKind() ==
+              FunctionDecl::TK_FunctionTemplateSpecialization)
+            DepMethod = cast<CXXMethodDecl>(CurMethod->getPrimaryTemplate()->
+                getInstantiatedFromMemberTemplate()->getTemplatedDecl());
+          else
+            DepMethod = cast<CXXMethodDecl>(
+                CurMethod->getInstantiatedFromMemberFunction());
+          assert(DepMethod && "No template pattern found");
+
+          QualType DepThisType = DepMethod->getThisType(Context);
+          CheckCXXThisCapture(R.getNameLoc());
+          CXXThisExpr *DepThis = new (Context) CXXThisExpr(
+                                     R.getNameLoc(), DepThisType, false);
+          TemplateArgumentListInfo TList;
+          if (ULE->hasExplicitTemplateArgs())
+            ULE->copyTemplateArgumentsInto(TList);
+          
+          CXXScopeSpec SS;
+          SS.Adopt(ULE->getQualifierLoc());
+          CXXDependentScopeMemberExpr *DepExpr =
+              CXXDependentScopeMemberExpr::Create(
+                  Context, DepThis, DepThisType, true, SourceLocation(),
+                  SS.getWithLocInContext(Context),
+                  ULE->getTemplateKeywordLoc(), 0,
+                  R.getLookupNameInfo(),
+                  ULE->hasExplicitTemplateArgs() ? &TList : 0);
+          CallsUndergoingInstantiation.back()->setCallee(DepExpr);
         } else {
           Diag(R.getNameLoc(), diagnostic) << Name;
         }
@@ -2464,6 +2468,7 @@ ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
   default: llvm_unreachable("Unknown simple primary expr!");
   case tok::kw___func__: IT = PredefinedExpr::Func; break; // [C99 6.4.2.2]
   case tok::kw___FUNCTION__: IT = PredefinedExpr::Function; break;
+  case tok::kw_L__FUNCTION__: IT = PredefinedExpr::LFunction; break;
   case tok::kw___PRETTY_FUNCTION__: IT = PredefinedExpr::PrettyFunction; break;
   }
 
@@ -2485,7 +2490,10 @@ ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
     unsigned Length = PredefinedExpr::ComputeName(IT, currentDecl).length();
 
     llvm::APInt LengthI(32, Length + 1);
-    ResTy = Context.CharTy.withConst();
+    if (Kind == tok::kw_L__FUNCTION__)
+      ResTy = Context.WCharTy.withConst();
+    else
+      ResTy = Context.CharTy.withConst();
     ResTy = Context.getConstantArrayType(ResTy, LengthI, ArrayType::Normal, 0);
   }
   return Owned(new (Context) PredefinedExpr(Loc, ResTy, IT));

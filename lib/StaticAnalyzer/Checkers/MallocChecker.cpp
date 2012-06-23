@@ -482,7 +482,7 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
 }
 
 static bool isFreeWhenDoneSetToZero(CallOrObjCMessage Call, Selector &S) {
-  for (unsigned i = 1; i < Call.getNumArgs(); ++i)
+  for (unsigned i = 1; i < S.getNumArgs(); ++i)
     if (S.getNameForSlot(i).equals("freeWhenDone"))
       if (Call.getArgSVal(i).isConstant(0))
         return true;
@@ -504,7 +504,9 @@ void MallocChecker::checkPreObjCMessage(const ObjCMessage &Msg,
   // Ex:  [NSData dataWithBytesNoCopy:bytes length:10];
   // Unless 'freeWhenDone' param set to 0.
   // TODO: Check that the memory was allocated with malloc.
-  if (S.getNameForSlot(0) == "dataWithBytesNoCopy" &&
+  if ((S.getNameForSlot(0) == "dataWithBytesNoCopy" ||
+       S.getNameForSlot(0) == "initWithBytesNoCopy" ||
+       S.getNameForSlot(0) == "initWithCharactersNoCopy") &&
       !isFreeWhenDoneSetToZero(Call, S)){
     unsigned int argIdx  = 0;
     C.addTransition(FreeMemAux(C, Call.getArg(argIdx),
@@ -1435,7 +1437,7 @@ bool MallocChecker::doesNotFreeMemory(const CallOrObjCMessage *Call,
     // White list the ObjC functions which do free memory.
     // - Anything containing 'freeWhenDone' param set to 1.
     //   Ex: dataWithBytesNoCopy:length:freeWhenDone.
-    for (unsigned i = 1; i < Call->getNumArgs(); ++i) {
+    for (unsigned i = 1; i < S.getNumArgs(); ++i) {
       if (S.getNameForSlot(i).equals("freeWhenDone")) {
         if (Call->getArgSVal(i).isConstant(1))
           return false;

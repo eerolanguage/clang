@@ -5497,7 +5497,7 @@ def err_selector_element_not_lvalue : Error<
 def err_selector_element_type : Error<
   "selector element type %0 is not a valid object">;
 def err_collection_expr_type : Error<
-  "collection expression type %0 is not a valid object">;
+  "the type %0 is not a pointer to a fast-enumerable object">;
 def warn_collection_expr_type : Warning<
   "collection expression type %0 may not respond to %1">;
 
@@ -5567,6 +5567,8 @@ def warn_missing_method_return_type : Warning<
   InGroup<MissingMethodReturnType>, DefaultIgnore;
 
 // Spell-checking diagnostics
+def err_unknown_type_or_class_name_suggest : Error<
+  "unknown %select{type|class}2 name %0; did you mean %1?">;
 def err_unknown_typename_suggest : Error<
   "unknown type name %0; did you mean %1?">;
 def err_unknown_nested_typename_suggest : Error<
@@ -5681,6 +5683,11 @@ def err_module_private_local_class : Error<
 def err_module_private_definition : Error<
   "definition of %0 must be imported before it is required">;
 }
+
+let CategoryName = "Documentation Issue" in {
+def warn_not_a_doxygen_trailing_member_comment : Warning<
+  "not a Doxygen trailing comment">, InGroup<Doxygen>, DefaultIgnore;
+} // end of documentation issue category
 
 } // end of sema component.
 
