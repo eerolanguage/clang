@@ -1062,10 +1062,13 @@ private:
                                           ParsingDeclSpec *DS = 0);
   bool isDeclarationAfterDeclarator();
   bool isStartOfFunctionDefinition(const ParsingDeclarator &Declarator);
-  DeclGroupPtrTy ParseDeclarationOrFunctionDefinition(ParsedAttributes &attrs,
+  DeclGroupPtrTy ParseDeclarationOrFunctionDefinition(
+                                                  ParsedAttributesWithRange &attrs,
+                                                  ParsingDeclSpec *DS = 0,
                                                   AccessSpecifier AS = AS_none);
-  DeclGroupPtrTy ParseDeclarationOrFunctionDefinition(ParsingDeclSpec &DS,
-                                                  AccessSpecifier AS = AS_none);
+  DeclGroupPtrTy ParseDeclOrFunctionDefInternal(ParsedAttributesWithRange &attrs,
+                                                ParsingDeclSpec &DS,
+                                                AccessSpecifier AS);
 
   Decl *ParseFunctionDefinition(ParsingDeclarator &D,
                  const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo(),
@@ -1555,7 +1558,7 @@ private:
   DeclGroupPtrTy ParseSimpleDeclaration(StmtVector &Stmts,
                                         unsigned Context,
                                         SourceLocation &DeclEnd,
-                                        ParsedAttributes &attrs,
+                                        ParsedAttributesWithRange &attrs,
                                         bool RequireSemi,
                                         ForRangeInit *FRI = 0);
   bool MightBeDeclarator(unsigned Context);
