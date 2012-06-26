@@ -4737,6 +4737,11 @@ def err_cannot_pass_objc_interface_to_vararg : Error<
   "cannot pass object with interface type %0 by-value through variadic "
   "%select{function|block|method}1">;
 
+def warn_non_pod_vararg_with_format_string : Warning<
+  "cannot pass %select{non-POD|non-trivial}0 object of type %1 to variadic "
+  "function; expected type from format string was %2">,
+  InGroup<DiagGroup<"non-pod-varargs">>, DefaultError;
+
 def warn_cannot_pass_non_pod_arg_to_vararg : Warning<
   "cannot pass object of %select{non-POD|non-trivial}0 type %1 through variadic"
   " %select{function|block|method|constructor}2; call will abort at runtime">,
@@ -5220,7 +5225,8 @@ def warn_scanf_scanlist_incomplete : Warning<
   "no closing ']' for '%%[' in scanf format string">,
   InGroup<Format>;
 def note_format_string_defined : Note<"format string is defined here">;
- 
+def note_printf_c_str: Note<"did you mean to call the %0 method?">;
+
 def warn_null_arg : Warning<
   "null passed to a callee which requires a non-null argument">,
   InGroup<NonNull>;
@@ -5692,4 +5698,3 @@ def warn_not_a_doxygen_trailing_member_comment : Warning<
 } // end of documentation issue category
 
 } // end of sema component.
-
