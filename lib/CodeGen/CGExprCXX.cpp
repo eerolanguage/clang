@@ -102,8 +102,7 @@ static bool canDevirtualizeMemberFunctionCalls(ASTContext &Context,
   //   b->f();
   // }
   //
-  const CXXRecordDecl *MostDerivedClassDecl =
-    Base->getMostDerivedClassDeclForType();
+  const CXXRecordDecl *MostDerivedClassDecl = Base->getBestDynamicClassType();
   if (MostDerivedClassDecl->hasAttr<FinalAttr>())
     return true;
 
@@ -173,11 +172,21 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
   }
 
   // Compute the object pointer.
+  const Expr *Base = ME->getBase();
+  bool CanUseVirtualCall = MD->isVirtual() && !ME->hasQualifier();
+  bool Devirtualize = CanUseVirtualCall &&
+    canDevirtualizeMemberFunctionCalls(getContext(), Base, MD);
+
+  const Expr *Inner = Base;
+  if (Devirtualize)
+    Inner = Base->ignoreParenBaseCasts();
+
   llvm::Value *This;
   if (ME->isArrow())
-    This = EmitScalarExpr(ME->getBase());
+    This = EmitScalarExpr(Inner);
   else
-    This = EmitLValue(ME->getBase()).getAddress();
+    This = EmitLValue(Inner).getAddress();
+
 
   if (MD->isTrivial()) {
     if (isa<CXXDestructorDecl>(MD)) return RValue::get(0);
@@ -224,12 +233,8 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
   //
   // We also don't emit a virtual call if the base expression has a record type
   // because then we know what the type is.
-  const Expr *Base = ME->getBase();
-  bool UseVirtualCall = MD->isVirtual() && !ME->hasQualifier()
-                        && !canDevirtualizeMemberFunctionCalls(getContext(),
-                                                               Base, MD);
-  const CXXRecordDecl *MostDerivedClassDecl =
-    Base->getMostDerivedClassDeclForType();
+  bool UseVirtualCall = CanUseVirtualCall && !Devirtualize;
+  const CXXRecordDecl *MostDerivedClassDecl = Inner->getBestDynamicClassType();
 
   llvm::Value *Callee;
   if (const CXXDestructorDecl *Dtor = dyn_cast<CXXDestructorDecl>(MD)) {
@@ -240,7 +245,7 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
           MD->isVirtual() &&
           ME->hasQualifier())
         Callee = BuildAppleKextVirtualCall(MD, ME->getQualifier(), Ty);
-      else if (ME->hasQualifier())
+      else if (!Devirtualize)
         Callee = CGM.GetAddrOfFunction(GlobalDecl(Dtor, Dtor_Complete), Ty);
       else {
         const CXXMethodDecl *DM =
@@ -260,7 +265,7 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
         MD->isVirtual() &&
         ME->hasQualifier())
       Callee = BuildAppleKextVirtualCall(MD, ME->getQualifier(), Ty);
-    else if (ME->hasQualifier())
+    else if (!Devirtualize)
       Callee = CGM.GetAddrOfFunction(MD, Ty);
     else {
       const CXXMethodDecl *DerivedMethod =

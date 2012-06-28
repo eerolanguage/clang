@@ -649,8 +649,7 @@ bool Sema::variadicArgumentPODCheck(const Expr *E, VariadicCallType CT) {
 /// interfaces passed by value.
 ExprResult Sema::DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
                                                   FunctionDecl *FDecl) {
-  const QualType &Ty = E->getType();
-  if (const BuiltinType *PlaceholderTy = Ty->getAsPlaceholderType()) {
+  if (const BuiltinType *PlaceholderTy = E->getType()->getAsPlaceholderType()) {
     // Strip the unbridged-cast placeholder expression off, if applicable.
     if (PlaceholderTy->getKind() == BuiltinType::ARCUnbridgedCast &&
         (CT == VariadicMethod ||
@@ -671,15 +670,15 @@ ExprResult Sema::DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
     return ExprError();
   E = ExprRes.take();
 
-  if (Ty->isObjCObjectType() &&
+  if (E->getType()->isObjCObjectType() &&
     DiagRuntimeBehavior(E->getLocStart(), 0,
                         PDiag(diag::err_cannot_pass_objc_interface_to_vararg)
-                          << Ty << CT))
+                          << E->getType() << CT))
     return ExprError();
 
   // Diagnostics regarding non-POD argument types are
   // emitted along with format string checking in Sema::CheckFunctionCall().
-  if (isValidVarArgType(Ty) == VAK_Invalid) {
+  if (isValidVarArgType(E->getType()) == VAK_Invalid) {
     // Turn this into a trap.
     CXXScopeSpec SS;
     SourceLocation TemplateKWLoc;
@@ -10925,11 +10924,14 @@ static void MarkExprReferenced(Sema &SemaRef, SourceLocation Loc,
   if (!MD)
     return;
   const Expr *Base = ME->getBase();
-  const CXXRecordDecl *MostDerivedClassDecl
-    = Base->getMostDerivedClassDeclForType();
+  if (Base->getType()->isDependentType())
+    return;
+  const CXXRecordDecl *MostDerivedClassDecl = Base->getBestDynamicClassType();
   if (!MostDerivedClassDecl)
     return;
   CXXMethodDecl *DM = MD->getCorrespondingMethodInClass(MostDerivedClassDecl);
+  if (!DM)
+    return;
   SemaRef.MarkAnyDeclReferenced(Loc, DM);
 } 
 

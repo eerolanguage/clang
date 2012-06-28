@@ -111,6 +111,8 @@ public:
   }
 
   size_t size() const { return UniqueFiles.size(); }
+
+  friend class FileManager;
 };
 
 //===----------------------------------------------------------------------===//
@@ -152,6 +154,8 @@ public:
   }
 
   size_t size() const { return UniqueFiles.size(); }
+
+  friend class FileManager;
 };
 
 #endif
@@ -558,6 +562,19 @@ bool FileManager::getNoncachedStatValue(StringRef Path,
 
   return ::stat(FilePath.c_str(), &StatBuf) != 0;
 }
+
+void FileManager::InvalidateCache(const FileEntry* Entry) {
+  if (!Entry)
+    return;
+
+  SeenFileEntries.erase(Entry->getName());
+#ifdef LLVM_ON_WIN32
+  UniqueRealFiles.UniqueFiles.erase(Entry->getName());
+#else
+  UniqueRealFiles.UniqueFiles.erase(*Entry);
+#endif
+}
+
 
 void FileManager::GetUniqueIDMapping(
                    SmallVectorImpl<const FileEntry *> &UIDToFiles) const {
