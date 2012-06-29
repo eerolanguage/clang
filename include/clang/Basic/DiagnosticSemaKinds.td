@@ -2175,11 +2175,11 @@ def note_ovl_candidate_bad_conv : Note<"candidate "
     "function (the implicit move assignment operator)|"
     "constructor (inherited)}0%1"
     " not viable: no known conversion %diff{from | to | }2,3for "
-    "%select{%ordinal5 argument|object argument}4; "
-    "%select{|dereference the argument with *|"
-    "take the address of the argument with &|"
-    "remove *|"
-    "remove &}6">;
+    "%select{%ordinal5 argument|object argument}4"
+    "%select{|; dereference the argument with *|"
+    "; take the address of the argument with &|"
+    "; remove *|"
+    "; remove &}6">;
 def note_ovl_candidate_bad_arc_conv : Note<"candidate "
     "%select{function|function|constructor|"
     "function |function |constructor |"
@@ -5285,6 +5285,10 @@ def warn_stringcompare : Warning<
   "result of comparison against %select{a string literal|@encode}0 is "
   "unspecified (use strncmp instead)">,
   InGroup<DiagGroup<"string-compare">>;
+
+def warn_identity_memvar_assign : Warning<
+  "assigning %select{member variable|instance variable}0 to itself">,
+  InGroup<SelfAssignmentMemvar>;
 
 // Generic selections.
 def err_assoc_type_incomplete : Error<

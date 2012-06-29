@@ -61,6 +61,10 @@ const RawComment *ASTContext::getRawCommentForDeclNoCache(const Decl *D) const {
 
   assert(D);
 
+  // User can not attach documentation to implicit declarations.
+  if (D->isImplicit())
+    return NULL;
+
   // TODO: handle comments for function parameters properly.
   if (isa<ParmVarDecl>(D))
     return NULL;
@@ -151,6 +155,8 @@ const RawComment *ASTContext::getRawCommentForDecl(const Decl *D) const {
       return Pos->second;
 
   const RawComment *RC = getRawCommentForDeclNoCache(D);
+  // If we found a comment, it should be a documentation comment.
+  assert(!RC || RC->isDocumentation());
   DeclComments[D] = RC;
   return RC;
 }

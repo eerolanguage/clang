@@ -1649,7 +1649,7 @@ void Lexer::LexStringLiteral(Token &Result, const char *CurPtr,
     if (C == '\n' || C == '\r' ||             // Newline.
         (C == 0 && CurPtr-1 == BufferEnd)) {  // End of file.
       if (!isLexingRawMode() && !LangOpts.AsmPreprocessor)
-        Diag(BufferPtr, diag::warn_unterminated_string);
+        Diag(BufferPtr, diag::ext_unterminated_string);
       FormTokenWithChars(Result, CurPtr-1, tok::unknown);
       return;
     }
@@ -1810,7 +1810,7 @@ void Lexer::LexCharConstant(Token &Result, const char *CurPtr,
        !PP || 
        PP->getSourceManager().isInSystemHeader(getSourceLocation(CurPtr)))) {
     if (!isLexingRawMode() && !getLangOpts().AsmPreprocessor)
-      Diag(BufferPtr, diag::err_empty_character);
+      Diag(BufferPtr, diag::ext_empty_character);
     FormTokenWithChars(Result, CurPtr, tok::unknown);
     return;
   }
@@ -1824,7 +1824,7 @@ void Lexer::LexCharConstant(Token &Result, const char *CurPtr,
     } else if (C == '\n' || C == '\r' ||             // Newline.
                (C == 0 && CurPtr-1 == BufferEnd)) {  // End of file.
       if (!isLexingRawMode() && !LangOpts.AsmPreprocessor)
-        Diag(BufferPtr, diag::warn_unterminated_char);
+        Diag(BufferPtr, diag::ext_unterminated_char);
       FormTokenWithChars(Result, CurPtr-1, tok::unknown);
       return;
     } else if (C == 0) {
