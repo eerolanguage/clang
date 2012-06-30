@@ -6421,8 +6421,11 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     // 'id' instead of a specific object type prevents most of our usual checks.
     // We only want to warn outside of template instantiations, though:
     // inside a template, the 'id' could have come from a parameter.
+    SourceLocation InitLoc = Init->getLocStart();
     if (ActiveTemplateInstantiations.empty() &&
-        DeducedType->getType()->isObjCIdType()) {
+        DeducedType->getType()->isObjCIdType() &&
+        (!getLangOpts().Eero || PP.isInSystemHeader() ||
+         !findMacroSpelling(InitLoc, "nil"))) {
       SourceLocation Loc = DeducedType->getTypeLoc().getBeginLoc();
       Diag(Loc, diag::warn_auto_var_is_id)
         << VDecl->getDeclName() << DeduceInit->getSourceRange();
