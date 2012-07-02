@@ -607,6 +607,9 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target) {
 
   // half type (OpenCL 6.1.1.1) / ARM NEON __fp16
   InitBuiltinType(HalfTy, BuiltinType::Half);
+
+  // Builtin type used to help define __builtin_va_list.
+  VaListTagTy = QualType();
 }
 
 DiagnosticsEngine &ASTContext::getDiagnostics() const {
@@ -4149,6 +4152,8 @@ std::string ASTContext::getObjCEncodingForBlock(const BlockExpr *Expr) const {
        E = Decl->param_end(); PI != E; ++PI) {
     QualType PType = (*PI)->getType();
     CharUnits sz = getObjCEncodingTypeSize(PType);
+    if (sz.isZero())
+      continue;
     assert (sz.isPositive() && "BlockExpr - Incomplete param type");
     ParmOffset += sz;
   }
@@ -4190,8 +4195,8 @@ bool ASTContext::getObjCEncodingForFunctionDecl(const FunctionDecl *Decl,
     QualType PType = (*PI)->getType();
     CharUnits sz = getObjCEncodingTypeSize(PType);
     if (sz.isZero())
-      return true;
-    
+      continue;
+ 
     assert (sz.isPositive() && 
         "getObjCEncodingForFunctionDecl - Incomplete param type");
     ParmOffset += sz;
@@ -4259,8 +4264,8 @@ bool ASTContext::getObjCEncodingForMethodDecl(const ObjCMethodDecl *Decl,
     QualType PType = (*PI)->getType();
     CharUnits sz = getObjCEncodingTypeSize(PType);
     if (sz.isZero())
-      return true;
-    
+      continue;
+ 
     assert (sz.isPositive() && 
         "getObjCEncodingForMethodDecl - Incomplete param type");
     ParmOffset += sz;
@@ -5113,6 +5118,7 @@ static TypedefDecl *CreatePowerABIBuiltinVaListDecl(const ASTContext *Context) {
   }
   VaListTagDecl->completeDefinition();
   QualType VaListTagType = Context->getRecordType(VaListTagDecl);
+  Context->VaListTagTy = VaListTagType;
 
   // } __va_list_tag;
   TypedefDecl *VaListTagTypedefDecl
@@ -5186,6 +5192,7 @@ CreateX86_64ABIBuiltinVaListDecl(const ASTContext *Context) {
   }
   VaListTagDecl->completeDefinition();
   QualType VaListTagType = Context->getRecordType(VaListTagDecl);
+  Context->VaListTagTy = VaListTagType;
 
   // } __va_list_tag;
   TypedefDecl *VaListTagTypedefDecl
@@ -5253,6 +5260,15 @@ TypedefDecl *ASTContext::getBuiltinVaListDecl() const {
     BuiltinVaListDecl = CreateVaListDecl(this, Target->getBuiltinVaListKind());
 
   return BuiltinVaListDecl;
+}
+
+QualType ASTContext::getVaListTagType() const {
+  // Force the creation of VaListTagTy by building the __builtin_va_list
+  // declaration.
+  if (VaListTagTy.isNull())
+    (void) getBuiltinVaListDecl();
+
+  return VaListTagTy;
 }
 
 void ASTContext::setObjCConstantStringInterface(ObjCInterfaceDecl *Decl) {

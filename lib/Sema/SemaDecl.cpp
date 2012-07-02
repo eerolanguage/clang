@@ -639,6 +639,19 @@ Corrected:
     if (!SecondTry) {
       SecondTry = true;
       CorrectionCandidateCallback DefaultValidator;
+      // Try to limit which sets of keywords should be included in typo
+      // correction based on what the next token is.
+      DefaultValidator.WantTypeSpecifiers =
+          NextToken.is(tok::l_paren) || NextToken.is(tok::less) ||
+          NextToken.is(tok::identifier) || NextToken.is(tok::star) ||
+          NextToken.is(tok::amp) || NextToken.is(tok::l_square);
+      DefaultValidator.WantExpressionKeywords =
+          NextToken.is(tok::l_paren) || NextToken.is(tok::identifier) ||
+          NextToken.is(tok::arrow) || NextToken.is(tok::period);
+      DefaultValidator.WantRemainingKeywords =
+          NextToken.is(tok::l_paren) || NextToken.is(tok::semi) ||
+          NextToken.is(tok::identifier) || NextToken.is(tok::l_brace);
+      DefaultValidator.WantCXXNamedCasts = false;
       if (TypoCorrection Corrected = CorrectTypo(Result.getLookupNameInfo(),
                                                  Result.getLookupKind(), S, 
                                                  &SS, DefaultValidator)) {
@@ -10425,6 +10438,13 @@ static void CheckForUniqueEnumValues(Sema &S, Decl **Elements,
   S.Diag(Enum->getLocation(), diag::warn_identical_enum_values)
       << EnumType << FirstVal.toString(10)
       << Enum->getSourceRange();
+
+  EnumConstantDecl *Last = cast<EnumConstantDecl>(Elements[NumElements - 1]),
+                   *Next = cast<EnumConstantDecl>(Elements[NumElements - 2]);
+
+  S.Diag(Last->getLocation(), diag::note_identical_enum_values)
+    << FixItHint::CreateReplacement(Last->getInitExpr()->getSourceRange(),
+                                    Next->getName());
 }
 
 void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceLocation LBraceLoc,

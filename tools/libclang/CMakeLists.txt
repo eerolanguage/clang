@@ -17,6 +17,7 @@ set(SOURCES
   CIndexer.h
   CXCursor.cpp
   CXCursor.h
+  CXCompilationDatabase.cpp
   CXLoadedDiagnostic.cpp
   CXLoadedDiagnostic.h
   CXSourceLocation.cpp
@@ -47,6 +48,7 @@ set(LIBRARIES
   clangEdit
   clangAST
   clangLex
+  clangTooling
   clangBasic
   )
 

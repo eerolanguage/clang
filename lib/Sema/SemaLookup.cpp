@@ -3642,6 +3642,12 @@ static void AddKeywordsToConsumer(Sema &SemaRef,
         Consumer.addKeywordResult("nullptr");
       }
     }
+
+    if (SemaRef.getLangOpts().C11) {
+      // FIXME: We should not suggest _Alignof if the alignof macro
+      // is present.
+      Consumer.addKeywordResult("_Alignof");
+    }
   }
 
   if (CCC.WantRemainingKeywords) {
