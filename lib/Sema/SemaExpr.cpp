@@ -7604,25 +7604,25 @@ static bool CheckForModifiableLvalue(Expr *E, SourceLocation Loc, Sema &S) {
   return true;
 }
 
-static void CheckIdentityMemvarAssignment(Expr *LHSExpr, Expr *RHSExpr,
-                                          SourceLocation Loc,
-                                          Sema &Sema) {
-  // C / C++ memvars
+static void CheckIdentityFieldAssignment(Expr *LHSExpr, Expr *RHSExpr,
+                                         SourceLocation Loc,
+                                         Sema &Sema) {
+  // C / C++ fields
   MemberExpr *ML = dyn_cast<MemberExpr>(LHSExpr);
   MemberExpr *MR = dyn_cast<MemberExpr>(RHSExpr);
   if (ML && MR && ML->getMemberDecl() == MR->getMemberDecl()) {
     if (isa<CXXThisExpr>(ML->getBase()) && isa<CXXThisExpr>(MR->getBase()))
-      Sema.Diag(Loc, diag::warn_identity_memvar_assign) << 0;
+      Sema.Diag(Loc, diag::warn_identity_field_assign) << 0;
   }
 
-  // Objective-C memvars
+  // Objective-C instance variables
   ObjCIvarRefExpr *OL = dyn_cast<ObjCIvarRefExpr>(LHSExpr);
   ObjCIvarRefExpr *OR = dyn_cast<ObjCIvarRefExpr>(RHSExpr);
   if (OL && OR && OL->getDecl() == OR->getDecl()) {
     DeclRefExpr *RL = dyn_cast<DeclRefExpr>(OL->getBase()->IgnoreImpCasts());
     DeclRefExpr *RR = dyn_cast<DeclRefExpr>(OR->getBase()->IgnoreImpCasts());
     if (RL && RR && RL->getDecl() == RR->getDecl())
-      Sema.Diag(Loc, diag::warn_identity_memvar_assign) << 1;
+      Sema.Diag(Loc, diag::warn_identity_field_assign) << 1;
   }
 }
 
@@ -7643,7 +7643,7 @@ QualType Sema::CheckAssignmentOperands(Expr *LHSExpr, ExprResult &RHS,
   if (CompoundType.isNull()) {
     Expr *RHSCheck = RHS.get();
 
-    CheckIdentityMemvarAssignment(LHSExpr, RHSCheck, Loc, *this);
+    CheckIdentityFieldAssignment(LHSExpr, RHSCheck, Loc, *this);
 
     QualType LHSTy(LHSType);
     ConvTy = CheckSingleAssignmentConstraints(LHSTy, RHS);
@@ -9421,7 +9421,10 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
   PopExpressionEvaluationContext();
 
   BlockScopeInfo *BSI = cast<BlockScopeInfo>(FunctionScopes.back());
-  
+
+  if (BSI->HasImplicitReturnType)
+    deduceClosureReturnType(*BSI);
+
   PopDeclContext();
 
   QualType RetTy = Context.VoidTy;
@@ -9494,7 +9497,12 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
 
   BSI->TheDecl->setBody(cast<CompoundStmt>(Body));
 
-  computeNRVO(Body, getCurBlock());
+  // Try to apply the named return value optimization. We have to check again
+  // if we can do this, though, because blocks keep return statements around
+  // to deduce an implicit return type.
+  if (getLangOpts().CPlusPlus && RetTy->isRecordType() &&
+      !BSI->TheDecl->isDependentContext())
+    computeNRVO(Body, getCurBlock());
   
   BlockExpr *Result = new (Context) BlockExpr(BSI->TheDecl, BlockTy);
   const AnalysisBasedWarnings::Policy &WP = AnalysisWarnings.getDefaultPolicy();

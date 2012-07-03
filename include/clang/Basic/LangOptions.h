@@ -6,9 +6,10 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-//
-//  This file defines the LangOptions interface.
-//
+///
+/// \file
+/// \brief Defines the clang::LangOptions interface.
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_CLANG_LANGOPTIONS_H
@@ -40,8 +41,8 @@ protected:
 #include "clang/Basic/LangOptions.def"
 };
 
-/// LangOptions - This class keeps track of the various options that can be
-/// enabled, which controls the dialect of C that is accepted.
+/// \brief Keeps track of the various options that can be
+/// enabled, which controls the dialect of C or C++ that is accepted.
 class LangOptions : public RefCountedBase<LangOptions>, public LangOptionsBase {
 public:
   typedef clang::Visibility Visibility;
@@ -60,7 +61,9 @@ public:
 
   std::string ObjCConstantStringClass;
   
-  /// The name of the handler function to be called when -ftrapv is specified.
+  /// \brief The name of the handler function to be called when -ftrapv is
+  /// specified.
+  ///
   /// If none is specified, abort (GCC-compatible behaviour).
   std::string OverflowHandler;
 
@@ -85,7 +88,7 @@ public:
   void resetNonModularOptions();
 };
 
-/// Floating point control options
+/// \brief Floating point control options
 class FPOptions {
 public:
   unsigned fp_contract : 1;
@@ -96,7 +99,7 @@ public:
     fp_contract(LangOpts.DefaultFPContract) {}
 };
 
-/// OpenCL volatile options
+/// \brief OpenCL volatile options
 class OpenCLOptions {
 public:
 #define OPENCLEXT(nm)  unsigned nm : 1;
@@ -119,7 +122,6 @@ enum TranslationUnitKind {
   TU_Module
 };
   
-  /// \brief 
 }  // end namespace clang
 
 #endif

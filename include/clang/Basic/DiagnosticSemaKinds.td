@@ -1783,6 +1783,9 @@ def warn_double_lock : Warning<
 def warn_no_unlock : Warning<
   "mutex '%0' is still locked at the end of function">,
   InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
+def warn_expecting_locked : Warning<
+  "expecting mutex '%0' to be locked at the end of function">,
+  InGroup<ThreadSafetyAnalysis>, DefaultIgnore;  
 // FIXME: improve the error message about locks not in scope
 def warn_lock_some_predecessors : Warning<
   "mutex '%0' is not locked on every path through here">,
@@ -3188,7 +3191,8 @@ def err_local_cant_init : Error<
   "'__local' variable cannot have an initializer">;
 def err_block_extern_cant_init : Error<
   "'extern' variable cannot have an initializer">;
-def warn_extern_init : Warning<"'extern' variable has an initializer">;
+def warn_extern_init : Warning<"'extern' variable has an initializer">,
+  InGroup<DiagGroup<"extern-initializer">>;
 def err_variable_object_no_init : Error<
   "variable-sized object may not be initialized">;
 def err_excess_initializers : Error<
@@ -5291,9 +5295,9 @@ def warn_stringcompare : Warning<
   "unspecified (use strncmp instead)">,
   InGroup<DiagGroup<"string-compare">>;
 
-def warn_identity_memvar_assign : Warning<
-  "assigning %select{member variable|instance variable}0 to itself">,
-  InGroup<SelfAssignmentMemvar>;
+def warn_identity_field_assign : Warning<
+  "assigning %select{field|instance variable}0 to itself">,
+  InGroup<SelfAssignmentField>;
 
 // Generic selections.
 def err_assoc_type_incomplete : Error<

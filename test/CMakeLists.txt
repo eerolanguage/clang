@@ -34,13 +34,19 @@ if( NOT CLANG_BUILT_STANDALONE )
     clang-check
     llvm-dis llc opt FileCheck count not
     )
+  set(CLANG_TEST_PARAMS
+    clang_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg
+    )
+
   if(LLVM_INCLUDE_TESTS)
     list(APPEND CLANG_TEST_DEPS ClangUnitTests)
+    list(APPEND CLANG_TEST_PARAMS
+      clang_unit_site_config=${CMAKE_CURRENT_BINARY_DIR}/Unit/lit.site.cfg
+      )
   endif()
   add_lit_testsuite(check-clang "Running the Clang regression tests"
     ${CMAKE_CURRENT_BINARY_DIR}
-    PARAMS clang_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg
-           clang_unit_site_config=${CMAKE_CURRENT_BINARY_DIR}/Unit/lit.site.cfg
+    PARAMS ${CLANG_TEST_PARAMS}
     DEPENDS ${CLANG_TEST_DEPS}
     ARGS ${CLANG_TEST_EXTRA_ARGS}
     )
@@ -51,7 +57,7 @@ else()
   include(FindPythonInterp)
   if(PYTHONINTERP_FOUND)
     if( LLVM_MAIN_SRC_DIR )
-      set(LIT "${LLVM_SOURCE_DIR}/utils/lit/lit.py")
+      set(LIT "${LLVM_MAIN_SRC_DIR}/utils/lit/lit.py")
     else()
       set(LIT "${PATH_TO_LLVM_BUILD}/bin/${CMAKE_CFG_INTDIR}/llvm-lit")
       # Installed LLVM does not contain ${CMAKE_CFG_INTDIR} in paths.
@@ -67,7 +73,6 @@ else()
       COMMAND ${PYTHON_EXECUTABLE}
               ${LIT}
               --param clang_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg
-              --param clang_unit_site_config=${CMAKE_CURRENT_BINARY_DIR}/Unit/lit.site.cfg
               --param build_config=${CMAKE_CFG_INTDIR}
               --param build_mode=${RUNTIME_BUILD_MODE}
               ${LIT_ARGS}
@@ -83,5 +88,6 @@ else()
 endif()
 
 # Add a legacy target spelling: clang-test
-add_custom_target(clang-test DEPENDS check-clang)
+add_custom_target(clang-test)
+add_dependencies(clang-test check-clang)
 set_target_properties(clang-test PROPERTIES FOLDER "Clang tests")

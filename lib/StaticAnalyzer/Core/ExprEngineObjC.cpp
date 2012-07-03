@@ -13,8 +13,8 @@
 
 #include "clang/AST/StmtObjC.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/ObjCMessage.h"
 
 using namespace clang;
 using namespace ento;
@@ -140,37 +140,42 @@ static bool isSubclass(const ObjCInterfaceDecl *Class, IdentifierInfo *II) {
   return isSubclass(Class->getSuperClass(), II);
 }
 
-void ExprEngine::VisitObjCMessage(const ObjCMessage &msg,
+void ExprEngine::VisitObjCMessage(const ObjCMethodCall &msg,
                                   ExplodedNode *Pred,
                                   ExplodedNodeSet &Dst) {
   
   // Handle the previsits checks.
   ExplodedNodeSet dstPrevisit;
-  getCheckerManager().runCheckersForPreObjCMessage(dstPrevisit, Pred, 
+  getCheckerManager().runCheckersForPreObjCMessage(dstPrevisit, Pred,
                                                    msg, *this);
-  
+  ExplodedNodeSet dstGenericPrevisit;
+  getCheckerManager().runCheckersForPreCall(dstGenericPrevisit, dstPrevisit,
+                                            msg, *this);
+
   // Proceed with evaluate the message expression.
   ExplodedNodeSet dstEval;
-  StmtNodeBuilder Bldr(dstPrevisit, dstEval, *currentBuilderContext);
+  StmtNodeBuilder Bldr(dstGenericPrevisit, dstEval, *currentBuilderContext);
 
-  for (ExplodedNodeSet::iterator DI = dstPrevisit.begin(),
-       DE = dstPrevisit.end(); DI != DE; ++DI) {
+  for (ExplodedNodeSet::iterator DI = dstGenericPrevisit.begin(),
+       DE = dstGenericPrevisit.end(); DI != DE; ++DI) {
     
     ExplodedNode *Pred = *DI;
     bool RaisesException = false;
     
-    if (const Expr *Receiver = msg.getInstanceReceiver()) {
-      ProgramStateRef state = Pred->getState();
-      SVal recVal = state->getSVal(Receiver, Pred->getLocationContext());
+    if (msg.isInstanceMessage()) {
+      SVal recVal = msg.getReceiverSVal();
       if (!recVal.isUndef()) {
         // Bifurcate the state into nil and non-nil ones.
         DefinedOrUnknownSVal receiverVal = cast<DefinedOrUnknownSVal>(recVal);
         
+        ProgramStateRef state = Pred->getState();
         ProgramStateRef notNilState, nilState;
         llvm::tie(notNilState, nilState) = state->assume(receiverVal);
         
         // There are three cases: can be nil or non-nil, must be nil, must be
         // non-nil. We ignore must be nil, and merge the rest two into non-nil.
+        // FIXME: This ignores many potential bugs (<rdar://problem/11733396>).
+        // Revisit once we have lazier constraints.
         if (nilState && !notNilState) {
           continue;
         }
@@ -185,12 +190,9 @@ void ExprEngine::VisitObjCMessage(const ObjCMessage &msg,
         // Dispatch to plug-in transfer function.
         evalObjCMessage(Bldr, msg, Pred, notNilState, RaisesException);
       }
-    } else if (const ObjCInterfaceDecl *Iface = msg.getReceiverInterface()) {
-      // Note that this branch also handles messages to super, not just
-      // class methods!
-
+    } else {
       // Check for special class methods.
-      if (!msg.isInstanceMessage()) {
+      if (const ObjCInterfaceDecl *Iface = msg.getReceiverInterface()) {
         if (!NSExceptionII) {
           ASTContext &Ctx = getContext();
           NSExceptionII = &Ctx.Idents.get("NSException");
@@ -236,13 +238,17 @@ void ExprEngine::VisitObjCMessage(const ObjCMessage &msg,
     }
   }
   
+  ExplodedNodeSet dstPostvisit;
+  getCheckerManager().runCheckersForPostCall(dstPostvisit, dstEval, msg, *this);
+
   // Finally, perform the post-condition check of the ObjCMessageExpr and store
   // the created nodes in 'Dst'.
-  getCheckerManager().runCheckersForPostObjCMessage(Dst, dstEval, msg, *this);
+  getCheckerManager().runCheckersForPostObjCMessage(Dst, dstPostvisit,
+                                                    msg, *this);
 }
 
 void ExprEngine::evalObjCMessage(StmtNodeBuilder &Bldr,
-                                 const ObjCMessage &msg,
+                                 const ObjCMethodCall &msg,
                                  ExplodedNode *Pred,
                                  ProgramStateRef state,
                                  bool GenSink) {
@@ -257,32 +263,31 @@ void ExprEngine::evalObjCMessage(StmtNodeBuilder &Bldr,
   case OMF_retain:
   case OMF_self: {
     // These methods return their receivers.
-    const Expr *ReceiverE = msg.getInstanceReceiver();
-    if (ReceiverE)
-      ReturnValue = state->getSVal(ReceiverE, Pred->getLocationContext());
+    ReturnValue = msg.getReceiverSVal();
     break;
   }
   }
 
+  const LocationContext *LCtx = Pred->getLocationContext();
+  unsigned BlockCount = currentBuilderContext->getCurrentBlockCount();
+
   // If we failed to figure out the return value, use a conjured value instead.
   if (ReturnValue.isUnknown()) {
     SValBuilder &SVB = getSValBuilder();
-    QualType ResultTy = msg.getResultType(getContext());
-    unsigned Count = currentBuilderContext->getCurrentBlockCount();
+    QualType ResultTy = msg.getResultType();
     const Expr *CurrentE = cast<Expr>(currentStmt);
-    const LocationContext *LCtx = Pred->getLocationContext();
-    ReturnValue = SVB.getConjuredSymbolVal(NULL, CurrentE, LCtx, ResultTy, Count);
+    ReturnValue = SVB.getConjuredSymbolVal(NULL, CurrentE, LCtx, ResultTy,
+                                           BlockCount);
   }
 
   // Bind the return value.
-  const LocationContext *LCtx = Pred->getLocationContext();
   state = state->BindExpr(currentStmt, LCtx, ReturnValue);
 
   // Invalidate the arguments (and the receiver)
-  state = invalidateArguments(state, CallOrObjCMessage(msg, state, LCtx), LCtx);
+  state = msg.invalidateRegions(BlockCount, state);
 
   // And create the new node.
-  Bldr.generateNode(msg.getMessageExpr(), Pred, state, GenSink);
+  Bldr.generateNode(currentStmt, Pred, state, GenSink);
   assert(Bldr.hasGeneratedNodes());
 }
 

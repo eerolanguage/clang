@@ -924,9 +924,9 @@ public:
   ThreadSafetyAnalyzer(ThreadSafetyHandler &H) : Handler(H) {}
 
   Lockset addLock(const Lockset &LSet, const MutexID &Mutex,
-                  const LockData &LDat);
+                  const LockData &LDat, bool Warn=true);
   Lockset addLock(const Lockset &LSet, Expr *MutexExp, const NamedDecl *D,
-                  const LockData &LDat);
+                  const LockData &LDat, bool Warn=true);
   Lockset removeLock(const Lockset &LSet, const MutexID &Mutex,
                      SourceLocation UnlockLoc,
                      bool Warn=true, bool FullyRemove=false);
@@ -951,7 +951,13 @@ public:
                          const CFGBlock *CurrBlock);
 
   Lockset intersectAndWarn(const Lockset &LSet1, const Lockset &LSet2,
-                           SourceLocation JoinLoc, LockErrorKind LEK);
+                           SourceLocation JoinLoc,
+                           LockErrorKind LEK1, LockErrorKind LEK2);
+
+  Lockset intersectAndWarn(const Lockset &LSet1, const Lockset &LSet2,
+                           SourceLocation JoinLoc, LockErrorKind LEK1) {
+    return intersectAndWarn(LSet1, LSet2, JoinLoc, LEK1, LEK1);
+  }
 
   void runAnalysis(AnalysisDeclContext &AC);
 };
@@ -962,11 +968,13 @@ public:
 /// \param LDat  -- the LockData for the lock
 Lockset ThreadSafetyAnalyzer::addLock(const Lockset &LSet,
                                       const MutexID &Mutex,
-                                      const LockData &LDat) {
+                                      const LockData &LDat,
+                                      bool Warn) {
   // FIXME: deal with acquired before/after annotations.
   // FIXME: Don't always warn when we have support for reentrant locks.
   if (LSet.lookup(Mutex)) {
-    Handler.handleDoubleLock(Mutex.getName(), LDat.AcquireLoc);
+    if (Warn)
+      Handler.handleDoubleLock(Mutex.getName(), LDat.AcquireLoc);
     return LSet;
   } else {
     return LocksetFactory.add(LSet, Mutex, LDat);
@@ -976,13 +984,14 @@ Lockset ThreadSafetyAnalyzer::addLock(const Lockset &LSet,
 /// \brief Construct a new mutex and add it to the lockset.
 Lockset ThreadSafetyAnalyzer::addLock(const Lockset &LSet,
                                       Expr *MutexExp, const NamedDecl *D,
-                                      const LockData &LDat) {
+                                      const LockData &LDat,
+                                      bool Warn) {
   MutexID Mutex(MutexExp, 0, D);
   if (!Mutex.isValid()) {
     MutexID::warnInvalidLock(Handler, MutexExp, 0, D);
     return LSet;
   }
-  return addLock(LSet, Mutex, LDat);
+  return addLock(LSet, Mutex, LDat, Warn);
 }
 
 
@@ -1538,42 +1547,63 @@ void BuildLockset::VisitDeclStmt(DeclStmt *S) {
 /// \param LSet1 The first lockset.
 /// \param LSet2 The second lockset.
 /// \param JoinLoc The location of the join point for error reporting
-/// \param LEK The error message to report.
+/// \param LEK1 The error message to report if a mutex is missing from LSet1
+/// \param LEK2 The error message to report if a mutex is missing from Lset2
 Lockset ThreadSafetyAnalyzer::intersectAndWarn(const Lockset &LSet1,
                                                const Lockset &LSet2,
                                                SourceLocation JoinLoc,
-                                               LockErrorKind LEK) {
+                                               LockErrorKind LEK1,
+                                               LockErrorKind LEK2) {
   Lockset Intersection = LSet1;
 
   for (Lockset::iterator I = LSet2.begin(), E = LSet2.end(); I != E; ++I) {
     const MutexID &LSet2Mutex = I.getKey();
-    const LockData &LSet2LockData = I.getData();
-    if (const LockData *LD = LSet1.lookup(LSet2Mutex)) {
-      if (LD->LKind != LSet2LockData.LKind) {
+    const LockData &LDat2 = I.getData();
+    if (const LockData *LDat1 = LSet1.lookup(LSet2Mutex)) {
+      if (LDat1->LKind != LDat2.LKind) {
         Handler.handleExclusiveAndShared(LSet2Mutex.getName(),
-                                         LSet2LockData.AcquireLoc,
-                                         LD->AcquireLoc);
-        if (LD->LKind != LK_Exclusive)
-          Intersection = LocksetFactory.add(Intersection, LSet2Mutex,
-                                            LSet2LockData);
+                                         LDat2.AcquireLoc,
+                                         LDat1->AcquireLoc);
+        if (LDat1->LKind != LK_Exclusive)
+          Intersection = LocksetFactory.add(Intersection, LSet2Mutex, LDat2);
       }
     } else {
-      if (!LSet2LockData.Managed)
+      if (LDat2.UnderlyingMutex.isValid()) {
+        if (LSet2.lookup(LDat2.UnderlyingMutex)) {
+          // If this is a scoped lock that manages another mutex, and if the
+          // underlying mutex is still held, then warn about the underlying
+          // mutex.
+          Handler.handleMutexHeldEndOfScope(LDat2.UnderlyingMutex.getName(),
+                                            LDat2.AcquireLoc,
+                                            JoinLoc, LEK1);
+        }
+      }
+      else if (!LDat2.Managed)
         Handler.handleMutexHeldEndOfScope(LSet2Mutex.getName(),
-                                          LSet2LockData.AcquireLoc,
-                                          JoinLoc, LEK);
+                                          LDat2.AcquireLoc,
+                                          JoinLoc, LEK1);
     }
   }
 
   for (Lockset::iterator I = LSet1.begin(), E = LSet1.end(); I != E; ++I) {
     if (!LSet2.contains(I.getKey())) {
       const MutexID &Mutex = I.getKey();
-      const LockData &MissingLock = I.getData();
+      const LockData &LDat1 = I.getData();
 
-      if (!MissingLock.Managed)
+      if (LDat1.UnderlyingMutex.isValid()) {
+        if (LSet1.lookup(LDat1.UnderlyingMutex)) {
+          // If this is a scoped lock that manages another mutex, and if the
+          // underlying mutex is still held, then warn about the underlying
+          // mutex.
+          Handler.handleMutexHeldEndOfScope(LDat1.UnderlyingMutex.getName(),
+                                            LDat1.AcquireLoc,
+                                            JoinLoc, LEK1);
+        }
+      }
+      else if (!LDat1.Managed)
         Handler.handleMutexHeldEndOfScope(Mutex.getName(),
-                                          MissingLock.AcquireLoc,
-                                          JoinLoc, LEK);
+                                          LDat1.AcquireLoc,
+                                          JoinLoc, LEK2);
       Intersection = LocksetFactory.remove(Intersection, Mutex);
     }
   }
@@ -1637,14 +1667,14 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
              SLRIter = SLRAttr->args_begin(),
              SLREnd = SLRAttr->args_end(); SLRIter != SLREnd; ++SLRIter)
           InitialLockset = addLock(InitialLockset, *SLRIter, D,
-                                   LockData(AttrLoc, LK_Shared));
+                                   LockData(AttrLoc, LK_Shared), false);
       } else if (ExclusiveLocksRequiredAttr *ELRAttr
                    = dyn_cast<ExclusiveLocksRequiredAttr>(Attr)) {
         for (ExclusiveLocksRequiredAttr::args_iterator
              ELRIter = ELRAttr->args_begin(),
              ELREnd = ELRAttr->args_end(); ELRIter != ELREnd; ++ELRIter)
           InitialLockset = addLock(InitialLockset, *ELRIter, D,
-                                   LockData(AttrLoc, LK_Exclusive));
+                                   LockData(AttrLoc, LK_Exclusive), false);
       } else if (isa<UnlockFunctionAttr>(Attr)) {
         // Don't try to check unlock functions for now
         return;
@@ -1653,6 +1683,12 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
         return;
       } else if (isa<SharedLockFunctionAttr>(Attr)) {
         // Don't try to check lock functions for now
+        return;
+      } else if (isa<ExclusiveTrylockFunctionAttr>(Attr)) {
+        // Don't try to check trylock functions for now
+        return;
+      } else if (isa<SharedTrylockFunctionAttr>(Attr)) {
+        // Don't try to check trylock functions for now
         return;
       }
     }
@@ -1809,7 +1845,8 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   // FIXME: Should we call this function for all blocks which exit the function?
   intersectAndWarn(Initial->EntrySet, Final->ExitSet,
                    Final->ExitLoc,
-                   LEK_LockedAtEndOfFunction);
+                   LEK_LockedAtEndOfFunction,
+                   LEK_NotLockedAtEndOfFunction);
 }
 
 } // end anonymous namespace

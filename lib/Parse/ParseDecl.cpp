@@ -1401,6 +1401,14 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
 
   bool ExpectSemi = Context != Declarator::ForContext;
 
+  if (CurParsedObjCImpl && D.isFunctionDeclarator() &&
+      Tok.is(tok::l_brace)) {
+    // Consume the tokens and store them for later parsing.
+    StashAwayMethodOrFunctionBodyTokens(FirstDecl);
+    CurParsedObjCImpl->HasCFunction = true;
+    ExpectSemi = false;
+  }
+  
   // If we don't have a comma, it is either the end of the list (a ';') or an
   // error, bail out.
   while (Tok.is(tok::comma)) {
@@ -3151,9 +3159,10 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
   TypeResult BaseType;
 
   // Parse the fixed underlying type.
+  bool CanBeBitfield = getCurScope()->getFlags() & Scope::ClassScope;
   if (AllowFixedUnderlyingType && Tok.is(tok::colon)) {
     bool PossibleBitfield = false;
-    if (getCurScope()->getFlags() & Scope::ClassScope) {
+    if (CanBeBitfield) {
       // If we're in class scope, this can either be an enum declaration with
       // an underlying type, or a declaration of a bitfield member. We try to
       // use a simple disambiguation scheme first to catch the common cases
@@ -3242,7 +3251,8 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
     }
   } else if (DSC != DSC_type_specifier &&
              (Tok.is(tok::semi) ||
-              (Tok.isAtStartOfLine() && !isValidAfterTypeSpecifier()))) {
+              (Tok.isAtStartOfLine() &&
+               !isValidAfterTypeSpecifier(CanBeBitfield)))) {
     TUK = DS.isFriendSpecified() ? Sema::TUK_Friend : Sema::TUK_Declaration;
     if (Tok.isNot(tok::semi)) {
       // A semicolon was missing after this declaration. Diagnose and recover.
@@ -3454,7 +3464,8 @@ void Parser::ParseEnumBody(SourceLocation StartLoc, Decl *EnumDecl) {
 
   // The next token must be valid after an enum definition. If not, a ';'
   // was probably forgotten.
-  if (!isValidAfterTypeSpecifier()) {
+  bool CanBeBitfield = getCurScope()->getFlags() & Scope::ClassScope;
+  if (!isValidAfterTypeSpecifier(CanBeBitfield)) {
     ExpectAndConsume(tok::semi, diag::err_expected_semi_after_tagdecl, "enum");
     // Push this token back into the preprocessor and change our current token
     // to ';' so that the rest of the code recovers as though there were an

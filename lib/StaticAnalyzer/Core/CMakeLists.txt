@@ -8,6 +8,7 @@ add_clang_library(clangStaticAnalyzerCore
   BlockCounter.cpp
   BugReporter.cpp
   BugReporterVisitors.cpp
+  Calls.cpp
   Checker.cpp
   CheckerContext.cpp
   CheckerHelpers.cpp
@@ -24,7 +25,6 @@ add_clang_library(clangStaticAnalyzerCore
   FunctionSummary.cpp
   HTMLDiagnostics.cpp
   MemRegion.cpp
-  ObjCMessage.cpp
   PathDiagnostic.cpp
   PlistDiagnostics.cpp
   ProgramState.cpp

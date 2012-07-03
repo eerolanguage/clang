@@ -11,9 +11,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Analysis/Analyses/LiveVariables.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/ObjCMessage.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
 #include "clang/AST/DeclCXX.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/SaveAndRestore.h"
@@ -207,6 +208,10 @@ static unsigned getNumberStackFrames(const LocationContext *LCtx) {
 
 // Determine if we should inline the call.
 bool ExprEngine::shouldInlineDecl(const Decl *D, ExplodedNode *Pred) {
+  // FIXME: default constructors don't have bodies.
+  if (!D->hasBody())
+    return false;
+
   AnalysisDeclContext *CalleeADC = AMgr.getAnalysisDeclContext(D);
   const CFG *CalleeCFG = CalleeADC->getCFG();
 
@@ -235,52 +240,54 @@ bool ExprEngine::shouldInlineDecl(const Decl *D, ExplodedNode *Pred) {
       return false;
   }
 
+  // It is possible that the live variables analysis cannot be
+  // run.  If so, bail out.
+  if (!CalleeADC->getAnalysis<RelaxedLiveVariables>())
+    return false;
+
   return true;
 }
 
-bool ExprEngine::InlineCall(ExplodedNodeSet &Dst,
-                            const CallExpr *CE, 
+bool ExprEngine::inlineCall(ExplodedNodeSet &Dst,
+                            const CallEvent &Call,
                             ExplodedNode *Pred) {
   if (!getAnalysisManager().shouldInlineCall())
     return false;
 
-  //  if (!shouldInlineCallExpr(CE, this))
-  //    return false;
-
   const StackFrameContext *CallerSFC =
     Pred->getLocationContext()->getCurrentStackFrame();
 
-  ProgramStateRef state = Pred->getState();
-  const Expr *Callee = CE->getCallee();
-  SVal CalleeVal = state->getSVal(Callee, Pred->getLocationContext());
-  const Decl *D = 0;
+  const Decl *D = Call.getDecl();
   const LocationContext *ParentOfCallee = 0;
-  
-  if (const FunctionDecl *FD = CalleeVal.getAsFunctionDecl()) {
-    if (!FD->hasBody(FD))
+
+  switch (Call.getKind()) {
+  case CE_Function:
+  case CE_CXXMember:
+    // These are always at least possible to inline.
+    break;
+  case CE_CXXConstructor:
+    // Do not inline constructors until we can model destructors.
+    // This is unfortunate, but basically necessary for smart pointers and such.
+    return false;
+  case CE_CXXAllocator:
+    // Do not inline allocators until we model deallocators.
+    // This is unfortunate, but basically necessary for smart pointers and such.
+    return false;
+  case CE_Block: {
+    const BlockDataRegion *BR = cast<BlockCall>(Call).getBlockRegion();
+    if (!BR)
       return false;
-  
-    switch (CE->getStmtClass()) {
-      default:
-        break;
-      case Stmt::CXXMemberCallExprClass:
-      case Stmt::CallExprClass: {
-        D = FD;
-        break;
-        
-      }
-    }
-  } else if (const BlockDataRegion *BR =
-              dyn_cast_or_null<BlockDataRegion>(CalleeVal.getAsRegion())) {
-    assert(CE->getStmtClass() == Stmt::CallExprClass);
-    const BlockDecl *BD = BR->getDecl();
-    D = BD;
-    AnalysisDeclContext *BlockCtx = AMgr.getAnalysisDeclContext(BD);
+    D = BR->getDecl();
+    AnalysisDeclContext *BlockCtx = AMgr.getAnalysisDeclContext(D);
     ParentOfCallee = BlockCtx->getBlockInvocationContext(CallerSFC,
-                                                         BD,
+                                                         cast<BlockDecl>(D),
                                                          BR);
-  } else {
-    // This is case we don't handle yet.
+    break;
+  }
+  case CE_ObjCMessage:
+  case CE_ObjCPropertyAccess:
+    // These always use dynamic dispatch; enabling inlining means assuming
+    // that a particular method will be called at runtime.
     return false;
   }
   
@@ -290,16 +297,19 @@ bool ExprEngine::InlineCall(ExplodedNodeSet &Dst,
   if (!ParentOfCallee)
     ParentOfCallee = CallerSFC;
 
+  const Expr *CallE = Call.getOriginExpr();
+  assert(CallE && "It is not yet possible to have calls without statements");
+
   // Construct a new stack frame for the callee.
   AnalysisDeclContext *CalleeADC = AMgr.getAnalysisDeclContext(D);
   const StackFrameContext *CalleeSFC =
-    CalleeADC->getStackFrame(ParentOfCallee, CE,
+    CalleeADC->getStackFrame(ParentOfCallee, CallE,
                              currentBuilderContext->getBlock(),
                              currentStmtIdx);
   
-  CallEnter Loc(CE, CalleeSFC, Pred->getLocationContext());
+  CallEnter Loc(CallE, CalleeSFC, Pred->getLocationContext());
   bool isNew;
-  if (ExplodedNode *N = G.getNode(Loc, state, false, &isNew)) {
+  if (ExplodedNode *N = G.getNode(Loc, Pred->getState(), false, &isNew)) {
     N->addPredecessor(Pred, G);
     if (isNew)
       Engine.getWorkList()->enqueue(N);
@@ -307,186 +317,13 @@ bool ExprEngine::InlineCall(ExplodedNodeSet &Dst,
   return true;
 }
 
-static bool isPointerToConst(const ParmVarDecl *ParamDecl) {
-  QualType PointeeTy = ParamDecl->getOriginalType()->getPointeeType();
-  if (PointeeTy != QualType() && PointeeTy.isConstQualified() &&
-      !PointeeTy->isAnyPointerType() && !PointeeTy->isReferenceType()) {
-    return true;
-  }
-  return false;
-}
-
-// Try to retrieve the function declaration and find the function parameter
-// types which are pointers/references to a non-pointer const.
-// We do not invalidate the corresponding argument regions.
-static void findPtrToConstParams(llvm::SmallSet<unsigned, 1> &PreserveArgs,
-                       const CallOrObjCMessage &Call) {
-  const Decl *CallDecl = Call.getDecl();
-  if (!CallDecl)
-    return;
-
-  if (const FunctionDecl *FDecl = dyn_cast<FunctionDecl>(CallDecl)) {
-    const IdentifierInfo *II = FDecl->getIdentifier();
-
-    // List the cases, where the region should be invalidated even if the
-    // argument is const.
-    if (II) {
-      StringRef FName = II->getName();
-      //  - 'int pthread_setspecific(ptheread_key k, const void *)' stores a
-      // value into thread local storage. The value can later be retrieved with
-      // 'void *ptheread_getspecific(pthread_key)'. So even thought the
-      // parameter is 'const void *', the region escapes through the call.
-      //  - funopen - sets a buffer for future IO calls.
-      //  - ObjC functions that end with "NoCopy" can free memory, of the passed
-      // in buffer.
-      // - Many CF containers allow objects to escape through custom
-      // allocators/deallocators upon container construction.
-      // - NSXXInsertXX, for example NSMapInsertIfAbsent, since they can
-      // be deallocated by NSMapRemove.
-      // - Any call that has a callback as one of the arguments.
-      if (FName == "pthread_setspecific" ||
-          FName == "funopen" ||
-          FName.endswith("NoCopy") ||
-          (FName.startswith("NS") &&
-            (FName.find("Insert") != StringRef::npos)) ||
-          Call.isCFCGAllowingEscape(FName) ||
-          Call.hasNonZeroCallbackArg())
-        return;
-    }
-
-    for (unsigned Idx = 0, E = Call.getNumArgs(); Idx != E; ++Idx) {
-      if (FDecl && Idx < FDecl->getNumParams()) {
-        if (isPointerToConst(FDecl->getParamDecl(Idx)))
-          PreserveArgs.insert(Idx);
-      }
-    }
-    return;
-  }
-
-  if (const ObjCMethodDecl *MDecl = dyn_cast<ObjCMethodDecl>(CallDecl)) {
-    assert(MDecl->param_size() <= Call.getNumArgs());
-    unsigned Idx = 0;
-
-    if (Call.hasNonZeroCallbackArg())
-      return;
-
-    for (clang::ObjCMethodDecl::param_const_iterator
-         I = MDecl->param_begin(), E = MDecl->param_end(); I != E; ++I, ++Idx) {
-      if (isPointerToConst(*I))
-        PreserveArgs.insert(Idx);
-    }
-    return;
-  }
-}
-
-ProgramStateRef 
-ExprEngine::invalidateArguments(ProgramStateRef State,
-                                const CallOrObjCMessage &Call,
-                                const LocationContext *LC) {
-  SmallVector<const MemRegion *, 8> RegionsToInvalidate;
-
-  if (Call.isObjCMessage()) {
-    // Invalidate all instance variables of the receiver of an ObjC message.
-    // FIXME: We should be able to do better with inter-procedural analysis.
-    if (const MemRegion *MR = Call.getInstanceMessageReceiver(LC).getAsRegion())
-      RegionsToInvalidate.push_back(MR);
-
-  } else if (Call.isCXXCall()) {
-    // Invalidate all instance variables for the callee of a C++ method call.
-    // FIXME: We should be able to do better with inter-procedural analysis.
-    // FIXME: We can probably do better for const versus non-const methods.
-    if (const MemRegion *Callee = Call.getCXXCallee().getAsRegion())
-      RegionsToInvalidate.push_back(Callee);
-
-  } else if (Call.isFunctionCall()) {
-    // Block calls invalidate all captured-by-reference values.
-    SVal CalleeVal = Call.getFunctionCallee();
-    if (const MemRegion *Callee = CalleeVal.getAsRegion()) {
-      if (isa<BlockDataRegion>(Callee))
-        RegionsToInvalidate.push_back(Callee);
-    }
-  }
-
-  // Indexes of arguments whose values will be preserved by the call.
-  llvm::SmallSet<unsigned, 1> PreserveArgs;
-  findPtrToConstParams(PreserveArgs, Call);
-
-  for (unsigned idx = 0, e = Call.getNumArgs(); idx != e; ++idx) {
-    if (PreserveArgs.count(idx))
-      continue;
-
-    SVal V = Call.getArgSVal(idx);
-
-    // If we are passing a location wrapped as an integer, unwrap it and
-    // invalidate the values referred by the location.
-    if (nonloc::LocAsInteger *Wrapped = dyn_cast<nonloc::LocAsInteger>(&V))
-      V = Wrapped->getLoc();
-    else if (!isa<Loc>(V))
-      continue;
-
-    if (const MemRegion *R = V.getAsRegion()) {
-      // Invalidate the value of the variable passed by reference.
-
-      // Are we dealing with an ElementRegion?  If the element type is
-      // a basic integer type (e.g., char, int) and the underlying region
-      // is a variable region then strip off the ElementRegion.
-      // FIXME: We really need to think about this for the general case
-      //   as sometimes we are reasoning about arrays and other times
-      //   about (char*), etc., is just a form of passing raw bytes.
-      //   e.g., void *p = alloca(); foo((char*)p);
-      if (const ElementRegion *ER = dyn_cast<ElementRegion>(R)) {
-        // Checking for 'integral type' is probably too promiscuous, but
-        // we'll leave it in for now until we have a systematic way of
-        // handling all of these cases.  Eventually we need to come up
-        // with an interface to StoreManager so that this logic can be
-        // appropriately delegated to the respective StoreManagers while
-        // still allowing us to do checker-specific logic (e.g.,
-        // invalidating reference counts), probably via callbacks.
-        if (ER->getElementType()->isIntegralOrEnumerationType()) {
-          const MemRegion *superReg = ER->getSuperRegion();
-          if (isa<VarRegion>(superReg) || isa<FieldRegion>(superReg) ||
-              isa<ObjCIvarRegion>(superReg))
-            R = cast<TypedRegion>(superReg);
-        }
-        // FIXME: What about layers of ElementRegions?
-      }
-
-      // Mark this region for invalidation.  We batch invalidate regions
-      // below for efficiency.
-      RegionsToInvalidate.push_back(R);
-    } else {
-      // Nuke all other arguments passed by reference.
-      // FIXME: is this necessary or correct? This handles the non-Region
-      //  cases.  Is it ever valid to store to these?
-      State = State->unbindLoc(cast<Loc>(V));
-    }
-  }
-
-  // Invalidate designated regions using the batch invalidation API.
-
-  // FIXME: We can have collisions on the conjured symbol if the
-  //  expression *I also creates conjured symbols.  We probably want
-  //  to identify conjured symbols by an expression pair: the enclosing
-  //  expression (the context) and the expression itself.  This should
-  //  disambiguate conjured symbols.
-  unsigned Count = currentBuilderContext->getCurrentBlockCount();
-  StoreManager::InvalidatedSymbols IS;
-
-  // NOTE: Even if RegionsToInvalidate is empty, we may still invalidate
-  //  global variables.
-  return State->invalidateRegions(RegionsToInvalidate,
-                                  Call.getOriginExpr(), Count, LC,
-                                  &IS, &Call);
-
-}
-
-static ProgramStateRef getReplayWithoutInliningState(ExplodedNode *&N,
-                                                     const CallExpr *CE) {
+static ProgramStateRef getInlineFailedState(ExplodedNode *&N,
+                                            const Stmt *CallE) {
   void *ReplayState = N->getState()->get<ReplayWithoutInlining>();
   if (!ReplayState)
     return 0;
-  const CallExpr *ReplayCE = reinterpret_cast<const CallExpr*>(ReplayState);
-  if (CE == ReplayCE) {
+  const Stmt *ReplayCallE = reinterpret_cast<const Stmt *>(ReplayState);
+  if (CallE == ReplayCallE) {
     return N->getState()->remove<ReplayWithoutInlining>();
   }
   return 0;
@@ -497,72 +334,86 @@ void ExprEngine::VisitCallExpr(const CallExpr *CE, ExplodedNode *Pred,
   // Perform the previsit of the CallExpr.
   ExplodedNodeSet dstPreVisit;
   getCheckerManager().runCheckersForPreStmt(dstPreVisit, Pred, CE, *this);
-  
-  // Now evaluate the call itself.
-  class DefaultEval : public GraphExpander {
-    ExprEngine &Eng;
-    const CallExpr *CE;
-  public:
-    
-    DefaultEval(ExprEngine &eng, const CallExpr *ce)
-    : Eng(eng), CE(ce) {}
-    virtual void expandGraph(ExplodedNodeSet &Dst, ExplodedNode *Pred) {
 
-      ProgramStateRef state = getReplayWithoutInliningState(Pred, CE);
+  // Get the callee kind.
+  const CXXMemberCallExpr *MemberCE = dyn_cast<CXXMemberCallExpr>(CE);
+  bool IsBlock = (MemberCE ? false
+                           : CE->getCallee()->getType()->isBlockPointerType());
 
-      // First, try to inline the call.
-      if (state == 0 && Eng.InlineCall(Dst, CE, Pred))
-        return;
-
-      // First handle the return value.
-      StmtNodeBuilder Bldr(Pred, Dst, *Eng.currentBuilderContext);
-
-      // Get the callee.
-      const Expr *Callee = CE->getCallee()->IgnoreParens();
-      if (state == 0)
-        state = Pred->getState();
-      SVal L = state->getSVal(Callee, Pred->getLocationContext());
-
-      // Figure out the result type. We do this dance to handle references.
-      QualType ResultTy;
-      if (const FunctionDecl *FD = L.getAsFunctionDecl())
-        ResultTy = FD->getResultType();
-      else
-        ResultTy = CE->getType();
-
-      if (CE->isGLValue())
-        ResultTy = Eng.getContext().getPointerType(ResultTy);
-
-      // Conjure a symbol value to use as the result.
-      SValBuilder &SVB = Eng.getSValBuilder();
-      unsigned Count = Eng.currentBuilderContext->getCurrentBlockCount();
-      const LocationContext *LCtx = Pred->getLocationContext();
-      SVal RetVal = SVB.getConjuredSymbolVal(0, CE, LCtx, ResultTy, Count);
-
-      // Generate a new state with the return value set.
-      state = state->BindExpr(CE, LCtx, RetVal);
-
-      // Invalidate the arguments.
-      state = Eng.invalidateArguments(state, CallOrObjCMessage(CE, state, LCtx),
-                                      LCtx);
-
-      // And make the result node.
-      Bldr.generateNode(CE, Pred, state);
-    }
-  };
-  
-  // Finally, evaluate the function call.  We try each of the checkers
+  // Evaluate the function call.  We try each of the checkers
   // to see if the can evaluate the function call.
   ExplodedNodeSet dstCallEvaluated;
-  DefaultEval defEval(*this, CE);
-  getCheckerManager().runCheckersForEvalCall(dstCallEvaluated,
-                                             dstPreVisit,
-                                             CE, *this, &defEval);
-  
+  for (ExplodedNodeSet::iterator I = dstPreVisit.begin(), E = dstPreVisit.end();
+       I != E; ++I) {
+    ProgramStateRef State = (*I)->getState();
+    const LocationContext *LCtx = (*I)->getLocationContext();
+
+    // Evaluate the call.
+    if (MemberCE)
+      evalCall(dstCallEvaluated, *I, CXXMemberCall(MemberCE, State, LCtx));
+    else if (IsBlock)
+      evalCall(dstCallEvaluated, *I, BlockCall(CE, State, LCtx));
+    else
+      evalCall(dstCallEvaluated, *I, FunctionCall(CE, State, LCtx));
+  }
+
   // Finally, perform the post-condition check of the CallExpr and store
   // the created nodes in 'Dst'.
+  // Note that if the call was inlined, dstCallEvaluated will be empty.
+  // The post-CallExpr check will occur in processCallExit.
   getCheckerManager().runCheckersForPostStmt(dst, dstCallEvaluated, CE,
                                              *this);
+}
+
+void ExprEngine::evalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
+                          const SimpleCall &Call) {
+  // Run any pre-call checks using the generic call interface.
+  ExplodedNodeSet dstPreVisit;
+  getCheckerManager().runCheckersForPreCall(dstPreVisit, Pred, Call, *this);
+
+  // Actually evaluate the function call.  We try each of the checkers
+  // to see if the can evaluate the function call, and get a callback at
+  // defaultEvalCall if all of them fail.
+  ExplodedNodeSet dstCallEvaluated;
+  getCheckerManager().runCheckersForEvalCall(dstCallEvaluated, dstPreVisit,
+                                             Call, *this);
+
+  // Finally, run any post-call checks.
+  getCheckerManager().runCheckersForPostCall(Dst, dstCallEvaluated,
+                                             Call, *this);
+}
+
+void ExprEngine::defaultEvalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
+                                 const CallEvent &Call) {
+  // Try to inline the call.
+  ProgramStateRef state = 0;
+  const Expr *E = Call.getOriginExpr();
+  if (E) {
+    state = getInlineFailedState(Pred, E);
+    if (state == 0 && inlineCall(Dst, Call, Pred))
+      return;
+  }
+
+  // If we can't inline it, handle the return value and invalidate the regions.
+  StmtNodeBuilder Bldr(Pred, Dst, *currentBuilderContext);
+
+  // Invalidate any regions touched by the call.
+  unsigned Count = currentBuilderContext->getCurrentBlockCount();
+  if (state == 0)
+    state = Pred->getState();
+  state = Call.invalidateRegions(Count, state);
+
+  // Conjure a symbol value to use as the result.
+  assert(Call.getOriginExpr() && "Must have an expression to bind the result");
+  QualType ResultTy = Call.getResultType();
+  SValBuilder &SVB = getSValBuilder();
+  const LocationContext *LCtx = Pred->getLocationContext();
+  SVal RetVal = SVB.getConjuredSymbolVal(0, Call.getOriginExpr(), LCtx,
+                                         ResultTy, Count);
+
+  // And make the result node.
+  state = state->BindExpr(Call.getOriginExpr(), LCtx, RetVal);
+  Bldr.generateNode(Call.getOriginExpr(), Pred, state);
 }
 
 void ExprEngine::VisitReturnStmt(const ReturnStmt *RS, ExplodedNode *Pred,

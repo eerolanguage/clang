@@ -18,8 +18,8 @@
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/ObjCMessage.h"
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/ParentMap.h"
 #include "clang/AST/StmtObjC.h"
@@ -185,7 +185,7 @@ ExprEngine::processRegionChanges(ProgramStateRef state,
                             const StoreManager::InvalidatedSymbols *invalidated,
                                  ArrayRef<const MemRegion *> Explicits,
                                  ArrayRef<const MemRegion *> Regions,
-                                 const CallOrObjCMessage *Call) {
+                                 const CallEvent *Call) {
   return getCheckerManager().runCheckersForRegionChanges(state, invalidated,
                                                       Explicits, Regions, Call);
 }
@@ -241,7 +241,7 @@ static bool shouldRemoveDeadBindings(AnalysisManager &AMgr,
     return true;
     
   // Run before processing a call.
-  if (CallOrObjCMessage::canBeInlined(S.getStmt()))
+  if (CallEvent::mayBeInlined(S.getStmt()))
     return true;
 
   // Is this an expression that is consumed by another expression?  If so,
@@ -866,26 +866,33 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::ObjCMessageExprClass: {
       Bldr.takeNodes(Pred);
       // Is this a property access?
-      const ParentMap &PM = Pred->getLocationContext()->getParentMap();
+
+      const LocationContext *LCtx = Pred->getLocationContext();
+      const ParentMap &PM = LCtx->getParentMap();
       const ObjCMessageExpr *ME = cast<ObjCMessageExpr>(S);
       bool evaluated = false;
       
       if (const PseudoObjectExpr *PO =
-          dyn_cast_or_null<PseudoObjectExpr>(PM.getParent(S))) {
+            dyn_cast_or_null<PseudoObjectExpr>(PM.getParent(S))) {
         const Expr *syntactic = PO->getSyntacticForm();
+
+        // This handles the funny case of assigning to the result of a getter.
+        // This can happen if the getter returns a non-const reference.
+        if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(syntactic))
+          syntactic = BO->getLHS();
+
         if (const ObjCPropertyRefExpr *PR =
               dyn_cast<ObjCPropertyRefExpr>(syntactic)) {
-          bool isSetter = ME->getNumArgs() > 0;
-          VisitObjCMessage(ObjCMessage(ME, PR, isSetter), Pred, Dst);
+          VisitObjCMessage(ObjCPropertyAccess(PR, PO->getSourceRange(), ME,
+                                              Pred->getState(), LCtx),
+                           Pred, Dst);
           evaluated = true;
-        }
-        else if (isa<BinaryOperator>(syntactic)) {
-          VisitObjCMessage(ObjCMessage(ME, 0, true), Pred, Dst);
         }
       }
       
       if (!evaluated)
-        VisitObjCMessage(ME, Pred, Dst);
+        VisitObjCMessage(ObjCMessageSend(ME, Pred->getState(), LCtx),
+                         Pred, Dst);
 
       Bldr.addNodes(Dst);
       break;
