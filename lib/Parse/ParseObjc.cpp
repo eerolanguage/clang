@@ -1487,7 +1487,7 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
 
   // Tell the actions module that we have entered a method definition with the
   // specified Declarator for the method.
-  Actions.ActOnStartOfObjCMethodDef(getCurScope(), OptDecl);
+  Actions.ActOnStartOfObjCMethodOrCFunctionDef(getCurScope(), OptDecl, true);
 
   // Build list of argument expressions for generated method body,
   // which will be a message sent to self.
@@ -2386,7 +2386,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
       
     // Tell the actions module that we have entered a method definition with the
     // specified Declarator for the method.
-    Actions.ActOnStartOfObjCMethodDef(getCurScope(), MDecl);
+    Actions.ActOnStartOfObjCMethodOrCFunctionDef(getCurScope(), MDecl, true);
 
     SourceLocation ReturnLoc;
     ExprResult DefaultReturnExpr(ExprError());
