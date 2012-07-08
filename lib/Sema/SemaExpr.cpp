@@ -3388,6 +3388,8 @@ ExprResult Sema::BuildCXXDefaultArgExpr(SourceLocation CallLoc,
       = ArgList.getInnermost();
     InstantiatingTemplate Inst(*this, CallLoc, Param, Innermost.first,
                                Innermost.second);
+    if (Inst)
+      return ExprError();
 
     ExprResult Result;
     {

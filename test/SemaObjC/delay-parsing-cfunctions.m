@@ -29,4 +29,8 @@ int gorfbar(MyClass * myObject) {
 
 static int getMe;
 
+static int test() {
+  return 0;
+}
+
 @end

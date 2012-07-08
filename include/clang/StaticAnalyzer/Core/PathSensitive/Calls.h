@@ -29,6 +29,7 @@ namespace ento {
 enum CallEventKind {
   CE_Function,
   CE_CXXMember,
+  CE_CXXMemberOperator,
   CE_Block,
   CE_BEG_SIMPLE_CALLS = CE_Function,
   CE_END_SIMPLE_CALLS = CE_Block,
@@ -264,9 +265,36 @@ public:
   }
 };
 
+/// \brief Represents a C++ overloaded operator call where the operator is
+/// implemented as a non-static member function.
+///
+/// Example: <tt>iter + 1</tt>
+class CXXMemberOperatorCall : public SimpleCall {
+protected:
+  void addExtraInvalidatedRegions(RegionList &Regions) const;
+
+public:
+  CXXMemberOperatorCall(const CXXOperatorCallExpr *CE, ProgramStateRef St,
+                        const LocationContext *LCtx)
+    : SimpleCall(CE, St, LCtx, CE_CXXMemberOperator) {}
+
+  const CXXOperatorCallExpr *getOriginExpr() const {
+    return cast<CXXOperatorCallExpr>(SimpleCall::getOriginExpr());
+  }
+
+  unsigned getNumArgs() const { return getOriginExpr()->getNumArgs() - 1; }
+  const Expr *getArgExpr(unsigned Index) const {
+    return getOriginExpr()->getArg(Index + 1);
+  }
+
+  static bool classof(const CallEvent *CA) {
+    return CA->getKind() == CE_CXXMemberOperator;
+  }
+};
+
 /// \brief Represents a call to a block.
 ///
-/// Example: \c ^{ /* ... */ }()
+/// Example: <tt>^{ /* ... */ }()</tt>
 class BlockCall : public SimpleCall {
 protected:
   void addExtraInvalidatedRegions(RegionList &Regions) const;
@@ -338,6 +366,9 @@ public:
   }
 };
 
+/// \brief Represents the memory allocation call in a C++ new-expression.
+///
+/// This is a call to "operator new".
 class CXXAllocatorCall : public AnyFunctionCall {
   const CXXNewExpr *E;
 
@@ -397,12 +428,22 @@ public:
 
   const ObjCMessageExpr *getOriginExpr() const { return Msg; }
 
+  /// \brief Returns the value of the receiver at the time of this call.
   SVal getReceiverSVal() const;
 
+  /// \brief Returns the expression for the receiver of this message if it is
+  /// an instance message.
+  ///
+  /// Returns NULL otherwise.
+  /// \sa ObjCMessageExpr::getInstanceReceiver()
   const Expr *getInstanceReceiverExpr() const {
     return Msg->getInstanceReceiver();
   }
 
+  /// \brief Get the interface for the receiver.
+  ///
+  /// This works whether this is an instance message or a class message.
+  /// However, it currently just uses the static type of the receiver.
   const ObjCInterfaceDecl *getReceiverInterface() const {
     return Msg->getReceiverInterface();
   }
@@ -455,6 +496,10 @@ public:
     return EntireRange;
   }
 
+  /// \brief Return the property reference part of this access.
+  ///
+  /// In the expression "obj.prop += 1", the property reference expression is
+  /// "obj.prop".
   const ObjCPropertyRefExpr *getPropertyExpr() const {
     return PropE;
   }

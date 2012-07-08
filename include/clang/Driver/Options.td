@@ -410,6 +410,9 @@ def fhonor_infinites : Flag<"-fhonor-infinites">, Alias<fhonor_infinities>;
 def fno_honor_infinites : Flag<"-fno-honor-infinites">, Alias<fno_honor_infinities>;
 def ftrapping_math : Flag<"-ftrapping-math">, Group<f_Group>;
 def fno_trapping_math : Flag<"-fno-trapping-math">, Group<f_Group>;
+def ffp_contract : Joined<"-ffp-contract=">, Group<f_Group>,
+  Flags<[CC1Option]>, HelpText<"Form fused FP ops (e.g. FMAs): fast (everywhere)"
+  " | on (according to FP_CONTRACT pragma, default) | off (never fuse)">;
 
 def ffor_scope : Flag<"-ffor-scope">, Group<f_Group>;
 def fno_for_scope : Flag<"-fno-for-scope">, Group<f_Group>;
@@ -806,6 +809,7 @@ def mno_aes : Flag<"-mno-aes">, Group<m_x86_Features_Group>;
 def mno_avx : Flag<"-mno-avx">, Group<m_x86_Features_Group>;
 def mno_avx2 : Flag<"-mno-avx2">, Group<m_x86_Features_Group>;
 def mno_lzcnt : Flag<"-mno-lzcnt">, Group<m_x86_Features_Group>;
+def mno_rdrnd : Flag<"-mno-rdrnd">, Group<m_x86_Features_Group>;
 def mno_bmi : Flag<"-mno-bmi">, Group<m_x86_Features_Group>;
 def mno_bmi2 : Flag<"-mno-bmi2">, Group<m_x86_Features_Group>;
 def mno_popcnt : Flag<"-mno-popcnt">, Group<m_x86_Features_Group>;
@@ -842,10 +846,17 @@ def maes : Flag<"-maes">, Group<m_x86_Features_Group>;
 def mavx : Flag<"-mavx">, Group<m_x86_Features_Group>;
 def mavx2 : Flag<"-mavx2">, Group<m_x86_Features_Group>;
 def mlzcnt : Flag<"-mlzcnt">, Group<m_x86_Features_Group>;
+def mrdrnd : Flag<"-mrdrnd">, Group<m_x86_Features_Group>;
 def mbmi : Flag<"-mbmi">, Group<m_x86_Features_Group>;
 def mbmi2 : Flag<"-mbmi2">, Group<m_x86_Features_Group>;
 def mpopcnt : Flag<"-mpopcnt">, Group<m_x86_Features_Group>;
 def mfma4 : Flag<"-mfma4">, Group<m_x86_Features_Group>;
+def mips16 : Flag<"-mips16">, Group<m_Group>;
+def mno_mips16 : Flag<"-mno-mips16">, Group<m_Group>;
+def mdsp : Flag<"-mdsp">, Group<m_Group>;
+def mno_dsp : Flag<"-mno-dsp">, Group<m_Group>;
+def mdspr2 : Flag<"-mdspr2">, Group<m_Group>;
+def mno_dspr2 : Flag<"-mno-dspr2">, Group<m_Group>;
 def mthumb : Flag<"-mthumb">, Group<m_Group>;
 def mtune_EQ : Joined<"-mtune=">, Group<m_Group>;
 def multi__module : Flag<"-multi_module">;
@@ -859,6 +870,7 @@ def no_canonical_prefixes : Flag<"-no-canonical-prefixes">, Flags<[HelpHidden]>,
 def no_cpp_precomp : Flag<"-no-cpp-precomp">, Group<clang_ignored_f_Group>;
 def no_integrated_as : Flag<"-no-integrated-as">, Flags<[DriverOption]>;
 def no_integrated_cpp : Flag<"-no-integrated-cpp">, Flags<[DriverOption]>;
+def no_pedantic : Flag<"-no-pedantic">, Group<pedantic_Group>;
 def no__dead__strip__inits__and__terms : Flag<"-no_dead_strip_inits_and_terms">;
 def nobuiltininc : Flag<"-nobuiltininc">, Flags<[CC1Option]>,
   HelpText<"Disable builtin #include directories">;
@@ -1061,6 +1073,7 @@ def _machine_EQ : Joined<"--machine=">, Alias<m_Joined>;
 def _machine : Separate<"--machine">, Alias<m_Joined>;
 def _no_integrated_cpp : Flag<"--no-integrated-cpp">, Alias<no_integrated_cpp>;
 def _no_line_commands : Flag<"--no-line-commands">, Alias<P>;
+def _no_pedantic : Flag<"--no-pedantic">, Alias<no_pedantic>;
 def _no_standard_includes : Flag<"--no-standard-includes">, Alias<nostdinc>;
 def _no_standard_libraries : Flag<"--no-standard-libraries">, Alias<nostdlib>;
 def _no_undefined : Flag<"--no-undefined">, Flags<[LinkerInput]>;

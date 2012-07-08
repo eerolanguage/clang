@@ -16,6 +16,7 @@
 #define LLVM_CLANG_OBJCRUNTIME_H
 
 #include "clang/Basic/VersionTuple.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace clang {
@@ -40,11 +41,12 @@ public:
     /// version of iOS.
     iOS,
 
-    /// 'gnu' is the non-fragile GNU runtime.
-    GNU,
+    /// 'gcc' is the Objective-C runtime shipped with GCC, implementing a
+    /// fragile Objective-C ABI
+    GCC,
 
-    /// 'gnu-fragile' is the fragile GNU runtime.
-    FragileGNU
+    /// 'gnustep' is the modern non-fragile GNUstep runtime.
+   GNUstep 
   };
 
 private:
@@ -71,9 +73,9 @@ public:
   bool isNonFragile() const {
     switch (getKind()) {
     case FragileMacOSX: return false;
-    case FragileGNU: return false;
+    case GCC: return false;
     case MacOSX: return true;
-    case GNU: return true;
+    case GNUstep: return true;
     case iOS: return true;
     }
     llvm_unreachable("bad kind");
@@ -83,15 +85,30 @@ public:
   /// implied behaviors for a "fragile" ABI?
   bool isFragile() const { return !isNonFragile(); }
 
-  /// \brief Is this runtime basically of the GNU family of runtimes?
+  /// The default dispatch mechanism to use for the specified architecture
+  bool isLegacyDispatchDefaultForArch(llvm::Triple::ArchType Arch) {
+    // The GNUstep runtime uses a newer dispatch method by default from
+    // version 1.6 onwards
+    if (getKind() == GNUstep && getVersion() >= VersionTuple(1, 6)) {
+      if (Arch == llvm::Triple::arm ||
+          Arch == llvm::Triple::x86 ||
+          Arch == llvm::Triple::x86_64)
+        return false;
+      // Mac runtimes use legacy dispatch everywhere except x86-64
+    } else if (isNeXTFamily() && isNonFragile())
+        return Arch != llvm::Triple::x86_64;
+    return true;
+  }
+
+  /// \brief Is this runtime basically of the GNUstep family of runtimes?
   bool isGNUFamily() const {
     switch (getKind()) {
     case FragileMacOSX:
     case MacOSX:
     case iOS:
       return false;
-    case FragileGNU:
-    case GNU:
+    case GCC:
+    case GNUstep:
       return true;
     }
     llvm_unreachable("bad kind");
@@ -115,11 +132,8 @@ public:
     case MacOSX: return getVersion() >= VersionTuple(10, 7);
     case iOS: return getVersion() >= VersionTuple(5);
 
-    // This is really a lie, because some implementations and versions
-    // of the runtime do not support ARC.  Probably -fgnu-runtime
-    // should imply a "maximal" runtime or something?
-    case FragileGNU: return true;
-    case GNU: return true;
+    case GCC: return false;
+    case GNUstep: return getVersion() >= VersionTuple(1, 6);
     }
     llvm_unreachable("bad kind");
   }
@@ -143,8 +157,8 @@ public:
     // This is really a lie, because some implementations and versions
     // of the runtime do not support ARC.  Probably -fgnu-runtime
     // should imply a "maximal" runtime or something?
-    case FragileGNU: return true;
-    case GNU: return true;
+    case GCC: return true;
+    case GNUstep: return true;
     }
     llvm_unreachable("bad kind");
   }
@@ -158,8 +172,8 @@ public:
     case FragileMacOSX: return getVersion() >= VersionTuple(10, 8);
     case MacOSX: return getVersion() >= VersionTuple(10, 8);
     case iOS: return getVersion() >= VersionTuple(5);
-    case FragileGNU: return false;
-    case GNU: return false;
+    case GCC: return false;
+    case GNUstep: return false;
     }
     llvm_unreachable("bad kind");
   }
@@ -170,8 +184,19 @@ public:
     case MacOSX: return true;
     case iOS: return true;
     case FragileMacOSX: return false;
-    case FragileGNU: return false;
-    case GNU: return false;
+    case GCC: return true;
+    case GNUstep: return true;
+    }
+    llvm_unreachable("bad kind");
+  }
+  /// \brief Does this runtime use zero-cost exceptions?
+  bool hasUnwindExceptions() const {
+    switch (getKind()) {
+    case MacOSX: return true;
+    case iOS: return true;
+    case FragileMacOSX: return false;
+    case GCC: return true;
+    case GNUstep: return true;
     }
     llvm_unreachable("bad kind");
   }
