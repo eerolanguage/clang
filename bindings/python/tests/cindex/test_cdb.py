@@ -41,7 +41,7 @@ def test_1_compilecommand():
     expected = [ 'clang++', '-o', 'project.o', '-c',
                  '/home/john.doe/MyProject/project.cpp']
     for arg, exp in zip(cmds[0].arguments, expected):
-        assert arg.spelling == exp
+        assert arg == exp
 
 def test_2_compilecommand():
     """Check file with 2 compile commands"""
@@ -59,7 +59,15 @@ def test_2_compilecommand():
     for i in range(len(cmds)):
         assert cmds[i].directory == expected[i]['wd']
         for arg, exp in zip(cmds[i].arguments, expected[i]['line']):
-            assert arg.spelling == exp
+            assert arg == exp
+
+def test_compilecommand_iterator_stops():
+    """Check that iterator stops after the correct number of elements"""
+    cdb = CompilationDatabase.fromDirectory(kInputsDir)
+    count = 0
+    for cmd in cdb.getCompileCommands('/home/john.doe/MyProject/project2.cpp'):
+        count += 1
+        assert count <= 2
 
 def test_compilationDB_references():
     """Ensure CompilationsCommands are independent of the database"""

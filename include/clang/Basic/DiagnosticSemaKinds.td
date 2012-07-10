@@ -1615,10 +1615,11 @@ def err_invalid_collection_element : Error<
 def err_box_literal_collection : Error<
   "%select{string|character|boolean|numeric}0 literal must be prefixed by '@' "
   "in a collection">;
-def err_objc_literal_comparison : Error<
+def warn_objc_literal_comparison : Warning<
   "direct comparison of %select{a string literal|an array literal|"
-  "a dictionary literal|a numeric literal|a boxed expression|}0 is not "
-  "allowed%select{|; use -isEqual: instead}1">;
+  "a dictionary literal|a numeric literal|a boxed expression|}0 has "
+  "undefined behavior%select{|; use -isEqual: instead}1">,
+  InGroup<DiagGroup<"objc-literal-compare">>;
 def err_attr_tlsmodel_arg : Error<"tls_model must be \"global-dynamic\", "
   "\"local-dynamic\", \"initial-exec\" or \"local-exec\"">;
 
@@ -3741,17 +3742,17 @@ def warn_sizeof_array_param : Warning<
   InGroup<SizeofArrayArgument>;
 
 def err_sizeof_nonfragile_interface : Error<
-  "invalid application of '%select{alignof|sizeof}1' to interface %0 in "
-  "non-fragile ABI">;
+  "application of '%select{alignof|sizeof}1' to interface %0 is "
+  "not supported on this architecture and platform">;
 def err_atdef_nonfragile_interface : Error<
-  "invalid application of @defs in non-fragile ABI">;
+  "use of @defs is not supported on this architecture and platform">;
 def err_subscript_nonfragile_interface : Error<
-  "subscript requires size of interface %0, which is not constant in "
-  "non-fragile ABI">;
+  "subscript requires size of interface %0, which is not constant for "
+  "this architecture and platform">;
 
 def err_arithmetic_nonfragile_interface : Error<
-  "arithmetic on pointer to interface %0, which is not a constant size in "
-  "non-fragile ABI">;
+  "arithmetic on pointer to interface %0, which is not a constant size for "
+  "this architecture and platform">;
 
 
 def ext_subscript_non_lvalue : Extension<
@@ -5533,6 +5534,9 @@ def warn_collection_expr_type : Warning<
 
 def err_invalid_conversion_between_ext_vectors : Error<
   "invalid conversion between ext-vector type %0 and %1">;
+
+def warn_duplicate_attribute : Warning<
+  "attribute %0 is already applied with different parameters">;
 
 // Type
 def ext_invalid_sign_spec : Extension<"'%0' cannot be signed or unsigned">;
