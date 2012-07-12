@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
+#include "clang/Analysis/ProgramPoint.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 
@@ -195,25 +196,49 @@ ProgramStateRef CallEvent::invalidateRegions(unsigned BlockCount,
                                    BlockCount, LCtx, /*Symbols=*/0, this);
 }
 
+ProgramPoint CallEvent::getProgramPoint(bool IsPreVisit,
+                                        const ProgramPointTag *Tag) const {
+  if (const Expr *E = getOriginExpr()) {
+    if (IsPreVisit)
+      return PreStmt(E, LCtx, Tag);
+    return PostStmt(E, LCtx, Tag);
+  }
+
+  const Decl *D = getDecl();
+  assert(D && "Cannot get a program point without a statement or decl");  
+
+  SourceLocation Loc = getSourceRange().getBegin();
+  if (IsPreVisit)
+    return PreImplicitCall(D, Loc, LCtx, Tag);
+  return PostImplicitCall(D, Loc, LCtx, Tag);
+}
+
+
 bool CallEvent::mayBeInlined(const Stmt *S) {
   return isa<CallExpr>(S);
 }
 
 
-CallEvent::param_iterator AnyFunctionCall::param_begin() const {
-  const FunctionDecl *D = getDecl();
+CallEvent::param_iterator
+AnyFunctionCall::param_begin(bool UseDefinitionParams) const {
+  bool IgnoredDynamicDispatch;
+  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+                                      : getDecl();
   if (!D)
     return 0;
 
-  return D->param_begin();
+  return cast<FunctionDecl>(D)->param_begin();
 }
 
-CallEvent::param_iterator AnyFunctionCall::param_end() const {
-  const FunctionDecl *D = getDecl();
+CallEvent::param_iterator
+AnyFunctionCall::param_end(bool UseDefinitionParams) const {
+  bool IgnoredDynamicDispatch;
+  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+                                      : getDecl();
   if (!D)
     return 0;
 
-  return D->param_end();
+  return cast<FunctionDecl>(D)->param_end();
 }
 
 QualType AnyFunctionCall::getDeclaredResultType() const {
@@ -289,25 +314,90 @@ const FunctionDecl *SimpleCall::getDecl() const {
   return getSVal(CE->getCallee()).getAsFunctionDecl();
 }
 
+void CallEvent::dump(raw_ostream &Out) const {
+  ASTContext &Ctx = State->getStateManager().getContext();
+  if (const Expr *E = getOriginExpr()) {
+    E->printPretty(Out, Ctx, 0, Ctx.getLangOpts());
+    Out << "\n";
+    return;
+  }
 
-void CXXMemberCall::addExtraInvalidatedRegions(RegionList &Regions) const {
+  if (const Decl *D = getDecl()) {
+    Out << "Call to ";
+    D->print(Out, Ctx.getLangOpts());
+    return;
+  }
+
+  // FIXME: a string representation of the kind would be nice.
+  Out << "Unknown call (type " << getKind() << ")";
+}
+
+
+void CXXInstanceCall::addExtraInvalidatedRegions(RegionList &Regions) const {
+  if (const MemRegion *R = getCXXThisVal().getAsRegion())
+    Regions.push_back(R);
+}
+
+static const CXXMethodDecl *devirtualize(const CXXMethodDecl *MD, SVal ThisVal){
+  const MemRegion *R = ThisVal.getAsRegion();
+  if (!R)
+    return 0;
+
+  const TypedValueRegion *TR = dyn_cast<TypedValueRegion>(R->StripCasts());
+  if (!TR)
+    return 0;
+
+  const CXXRecordDecl *RD = TR->getValueType()->getAsCXXRecordDecl();
+  if (!RD)
+    return 0;
+
+  RD = RD->getDefinition();
+  if (!RD)
+    return 0;
+
+  const CXXMethodDecl *Result = MD->getCorrespondingMethodInClass(RD);
+  const FunctionDecl *Definition;
+  if (!Result->hasBody(Definition))
+    return 0;
+
+  return cast<CXXMethodDecl>(Definition);
+}
+
+
+const Decl *CXXInstanceCall::getDefinition(bool &IsDynamicDispatch) const {
+  const Decl *D = SimpleCall::getDefinition(IsDynamicDispatch);
+  if (!D)
+    return 0;
+
+  const CXXMethodDecl *MD = cast<CXXMethodDecl>(D);
+  if (!MD->isVirtual())
+    return MD;
+
+  // If the method is virtual, see if we can find the actual implementation
+  // based on context-sensitivity.
+  if (const CXXMethodDecl *Devirtualized = devirtualize(MD, getCXXThisVal()))
+    return Devirtualized;
+
+  IsDynamicDispatch = true;
+  return MD;
+}
+
+
+SVal CXXMemberCall::getCXXThisVal() const {
   const Expr *Base = getOriginExpr()->getImplicitObjectArgument();
 
   // FIXME: Will eventually need to cope with member pointers.  This is
   // a limitation in getImplicitObjectArgument().
   if (!Base)
-    return;
-    
-  if (const MemRegion *R = getSVal(Base).getAsRegion())
-    Regions.push_back(R);
+    return UnknownVal();
+
+  return getSVal(Base);
 }
 
 
-void
-CXXMemberOperatorCall::addExtraInvalidatedRegions(RegionList &Regions) const {
+SVal CXXMemberOperatorCall::getCXXThisVal() const {
   const Expr *Base = getOriginExpr()->getArg(0);
-  if (const MemRegion *R = getSVal(Base).getAsRegion())
-    Regions.push_back(R);
+  return getSVal(Base);
 }
 
 
@@ -318,14 +408,22 @@ const BlockDataRegion *BlockCall::getBlockRegion() const {
   return dyn_cast_or_null<BlockDataRegion>(DataReg);
 }
 
-CallEvent::param_iterator BlockCall::param_begin() const {
+CallEvent::param_iterator
+BlockCall::param_begin(bool UseDefinitionParams) const {
+  // Blocks don't have distinct declarations and definitions.
+  (void)UseDefinitionParams;
+
   const BlockDecl *D = getBlockDecl();
   if (!D)
     return 0;
   return D->param_begin();
 }
 
-CallEvent::param_iterator BlockCall::param_end() const {
+CallEvent::param_iterator
+BlockCall::param_end(bool UseDefinitionParams) const {
+  // Blocks don't have distinct declarations and definitions.
+  (void)UseDefinitionParams;
+
   const BlockDecl *D = getBlockDecl();
   if (!D)
     return 0;
@@ -347,26 +445,68 @@ QualType BlockCall::getDeclaredResultType() const {
 }
 
 
+SVal CXXConstructorCall::getCXXThisVal() const {
+  if (Target)
+    return loc::MemRegionVal(Target);
+  return UnknownVal();
+}
+
 void CXXConstructorCall::addExtraInvalidatedRegions(RegionList &Regions) const {
   if (Target)
     Regions.push_back(Target);
 }
 
 
-CallEvent::param_iterator ObjCMethodCall::param_begin() const {
-  const ObjCMethodDecl *D = getDecl();
-  if (!D)
-    return 0;
-
-  return D->param_begin();
+SVal CXXDestructorCall::getCXXThisVal() const {
+  if (Target)
+    return loc::MemRegionVal(Target);
+  return UnknownVal();
 }
 
-CallEvent::param_iterator ObjCMethodCall::param_end() const {
-  const ObjCMethodDecl *D = getDecl();
+void CXXDestructorCall::addExtraInvalidatedRegions(RegionList &Regions) const {
+  if (Target)
+    Regions.push_back(Target);
+}
+
+const Decl *CXXDestructorCall::getDefinition(bool &IsDynamicDispatch) const {
+  const Decl *D = AnyFunctionCall::getDefinition(IsDynamicDispatch);
   if (!D)
     return 0;
 
-  return D->param_end();
+  const CXXMethodDecl *MD = cast<CXXMethodDecl>(D);
+  if (!MD->isVirtual())
+    return MD;
+
+  // If the method is virtual, see if we can find the actual implementation
+  // based on context-sensitivity.
+  if (const CXXMethodDecl *Devirtualized = devirtualize(MD, getCXXThisVal()))
+    return Devirtualized;
+
+  IsDynamicDispatch = true;
+  return MD;
+}
+
+
+CallEvent::param_iterator
+ObjCMethodCall::param_begin(bool UseDefinitionParams) const {
+  bool IgnoredDynamicDispatch;
+  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+                                      : getDecl();
+  if (!D)
+    return 0;
+
+  return cast<ObjCMethodDecl>(D)->param_begin();
+}
+
+CallEvent::param_iterator
+ObjCMethodCall::param_end(bool UseDefinitionParams) const {
+  bool IgnoredDynamicDispatch;
+  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+                                      : getDecl();
+  if (!D)
+    return 0;
+
+  return cast<ObjCMethodDecl>(D)->param_end();
 }
 
 void

@@ -387,16 +387,15 @@ bool MallocChecker::isAllocationFunction(const FunctionDecl *FD,
   if (!FD)
     return false;
 
-  IdentifierInfo *FunI = FD->getIdentifier();
-  if (!FunI)
-    return false;
+  if (FD->getKind() == Decl::Function) {
+    IdentifierInfo *FunI = FD->getIdentifier();
+    initIdentifierInfo(C);
 
-  initIdentifierInfo(C);
-
-  if (FunI == II_malloc || FunI == II_realloc ||
-      FunI == II_reallocf || FunI == II_calloc || FunI == II_valloc ||
-      FunI == II_strdup || FunI == II_strndup)
-    return true;
+    if (FunI == II_malloc || FunI == II_realloc ||
+        FunI == II_reallocf || FunI == II_calloc || FunI == II_valloc ||
+        FunI == II_strdup || FunI == II_strndup)
+      return true;
+  }
 
   if (Filter.CMallocOptimistic && FD->hasAttrs())
     for (specific_attr_iterator<OwnershipAttr>
@@ -412,14 +411,13 @@ bool MallocChecker::isFreeFunction(const FunctionDecl *FD, ASTContext &C) const 
   if (!FD)
     return false;
 
-  IdentifierInfo *FunI = FD->getIdentifier();
-  if (!FunI)
-    return false;
+  if (FD->getKind() == Decl::Function) {
+    IdentifierInfo *FunI = FD->getIdentifier();
+    initIdentifierInfo(C);
 
-  initIdentifierInfo(C);
-
-  if (FunI == II_free || FunI == II_realloc || FunI == II_reallocf)
-    return true;
+    if (FunI == II_free || FunI == II_realloc || FunI == II_reallocf)
+      return true;
+  }
 
   if (Filter.CMallocOptimistic && FD->hasAttrs())
     for (specific_attr_iterator<OwnershipAttr>
@@ -437,29 +435,32 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
   if (!FD)
     return;
 
-  initIdentifierInfo(C.getASTContext());
-  IdentifierInfo *FunI = FD->getIdentifier();
-  if (!FunI)
-    return;
-
   ProgramStateRef State = C.getState();
-  if (FunI == II_malloc || FunI == II_valloc) {
-    if (CE->getNumArgs() < 1)
-      return;
-    State = MallocMemAux(C, CE, CE->getArg(0), UndefinedVal(), State);
-  } else if (FunI == II_realloc) {
-    State = ReallocMem(C, CE, false);
-  } else if (FunI == II_reallocf) {
-    State = ReallocMem(C, CE, true);
-  } else if (FunI == II_calloc) {
-    State = CallocMem(C, CE);
-  } else if (FunI == II_free) {
-    State = FreeMemAux(C, CE, C.getState(), 0, false);
-  } else if (FunI == II_strdup) {
-    State = MallocUpdateRefState(C, CE, State);
-  } else if (FunI == II_strndup) {
-    State = MallocUpdateRefState(C, CE, State);
-  } else if (Filter.CMallocOptimistic) {
+
+  if (FD->getKind() == Decl::Function) {
+    initIdentifierInfo(C.getASTContext());
+    IdentifierInfo *FunI = FD->getIdentifier();
+
+    if (FunI == II_malloc || FunI == II_valloc) {
+      if (CE->getNumArgs() < 1)
+        return;
+      State = MallocMemAux(C, CE, CE->getArg(0), UndefinedVal(), State);
+    } else if (FunI == II_realloc) {
+      State = ReallocMem(C, CE, false);
+    } else if (FunI == II_reallocf) {
+      State = ReallocMem(C, CE, true);
+    } else if (FunI == II_calloc) {
+      State = CallocMem(C, CE);
+    } else if (FunI == II_free) {
+      State = FreeMemAux(C, CE, State, 0, false);
+    } else if (FunI == II_strdup) {
+      State = MallocUpdateRefState(C, CE, State);
+    } else if (FunI == II_strndup) {
+      State = MallocUpdateRefState(C, CE, State);
+    }
+  }
+
+  if (Filter.CMallocOptimistic) {
     // Check all the attributes, if there are any.
     // There can be multiple of these attributes.
     if (FD->hasAttrs())
@@ -972,8 +973,10 @@ MallocChecker::getAllocationSite(const ExplodedNode *N, SymbolRef Sym,
 
   ProgramPoint P = AllocNode->getLocation();
   const Stmt *AllocationStmt = 0;
-  if (isa<StmtPoint>(P))
-    AllocationStmt = cast<StmtPoint>(P).getStmt();
+  if (CallExitEnd *Exit = dyn_cast<CallExitEnd>(&P))
+    AllocationStmt = Exit->getCalleeContext()->getCallSite();
+  else if (StmtPoint *SP = dyn_cast<StmtPoint>(&P))
+    AllocationStmt = SP->getStmt();
 
   return LeakInfo(AllocationStmt, ReferenceRegion);
 }
@@ -1524,16 +1527,21 @@ MallocChecker::MallocBugVisitor::VisitNode(const ExplodedNode *N,
 
   // Retrieve the associated statement.
   ProgramPoint ProgLoc = N->getLocation();
-  if (isa<StmtPoint>(ProgLoc))
-    S = cast<StmtPoint>(ProgLoc).getStmt();
+  if (StmtPoint *SP = dyn_cast<StmtPoint>(&ProgLoc))
+    S = SP->getStmt();
+  else if (CallExitEnd *Exit = dyn_cast<CallExitEnd>(&ProgLoc))
+    S = Exit->getCalleeContext()->getCallSite();
   // If an assumption was made on a branch, it should be caught
   // here by looking at the state transition.
-  if (isa<BlockEdge>(ProgLoc)) {
-    const CFGBlock *srcBlk = cast<BlockEdge>(ProgLoc).getSrc();
+  else if (BlockEdge *Edge = dyn_cast<BlockEdge>(&ProgLoc)) {
+    const CFGBlock *srcBlk = Edge->getSrc();
     S = srcBlk->getTerminator();
   }
   if (!S)
     return 0;
+
+  // FIXME: We will eventually need to handle non-statement-based events
+  // (__attribute__((cleanup))).
 
   // Find out if this is an interesting point and what is the kind.
   if (Mode == Normal) {

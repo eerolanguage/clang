@@ -24,16 +24,22 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/SVals.h"
 
 namespace clang {
+class ProgramPoint;
+class ProgramPointTag;
+
 namespace ento {
 
 enum CallEventKind {
   CE_Function,
   CE_CXXMember,
   CE_CXXMemberOperator,
+  CE_BEG_CXX_INSTANCE_CALLS = CE_CXXMember,
+  CE_END_CXX_INSTANCE_CALLS = CE_CXXMemberOperator,
   CE_Block,
   CE_BEG_SIMPLE_CALLS = CE_Function,
   CE_END_SIMPLE_CALLS = CE_Block,
   CE_CXXConstructor,
+  CE_CXXDestructor,
   CE_CXXAllocator,
   CE_BEG_FUNCTION_CALLS = CE_Function,
   CE_END_FUNCTION_CALLS = CE_CXXAllocator,
@@ -69,10 +75,6 @@ protected:
   /// result of this call.
   virtual void addExtraInvalidatedRegions(RegionList &Regions) const {}
 
-  typedef const ParmVarDecl * const *param_iterator;
-  virtual param_iterator param_begin() const = 0;
-  virtual param_iterator param_end() const = 0;
-
   virtual QualType getDeclaredResultType() const { return QualType(); }
 
 public:
@@ -84,7 +86,15 @@ public:
   /// called. May be null.
   ///
   /// This is used when deciding how to inline the call.
-  virtual const Decl *getDefinition() const { return getDecl(); }
+  ///
+  /// \param IsDynamicDispatch True if the definition returned may not be the
+  ///   definition that is actually invoked at runtime. Note that if we have
+  ///   sufficient type information to devirtualize a dynamic method call,
+  ///   we will (and \p IsDynamicDispatch will be set to \c false).
+  virtual const Decl *getDefinition(bool &IsDynamicDispatch) const {
+    IsDynamicDispatch = false;
+    return getDecl();
+  }
 
   /// \brief Returns the expression whose value will be the result of this call.
   /// May be null.
@@ -143,6 +153,10 @@ public:
   /// \brief Returns the result type, adjusted for references.
   QualType getResultType() const;
 
+  /// \brief Returns the value of the implicit 'this' object, or UndefinedVal if
+  /// this is not a C++ member function call.
+  virtual SVal getCXXThisVal() const { return UndefinedVal(); }
+
   /// \brief Returns true if any of the arguments appear to represent callbacks.
   bool hasNonZeroCallbackArg() const;
 
@@ -155,6 +169,10 @@ public:
     return hasNonZeroCallbackArg();
   }
 
+  /// \brief Returns an appropriate ProgramPoint for this call.
+  ProgramPoint getProgramPoint(bool IsPreVisit = false,
+                               const ProgramPointTag *Tag = 0) const;
+
   /// \brief Returns a new state with all argument regions invalidated.
   ///
   /// This accepts an alternate state in case some processing has already
@@ -166,21 +184,51 @@ public:
   /// inlining.
   static bool mayBeInlined(const Stmt *S);
 
-  // Iterator access to parameter types.
+  // Iterator access to formal parameters and their types.
 private:
   typedef std::const_mem_fun_t<QualType, ParmVarDecl> get_type_fun;
   
 public:
+  typedef const ParmVarDecl * const *param_iterator;
+
+  /// Returns an iterator over the call's formal parameters.
+  ///
+  /// If UseDefinitionParams is set, this will return the parameter decls
+  /// used in the callee's definition (suitable for inlining). Most of the
+  /// time it is better to use the decl found by name lookup, which likely
+  /// carries more annotations.
+  ///
+  /// Remember that the number of formal parameters may not match the number
+  /// of arguments for all calls. However, the first parameter will always
+  /// correspond with the argument value returned by \c getArgSVal(0).
+  ///
+  /// If the call has no accessible declaration (or definition, if
+  /// \p UseDefinitionParams is set), \c param_begin() will be equal to
+  /// \c param_end().
+  virtual param_iterator param_begin(bool UseDefinitionParams = false) const = 0;
+  /// \sa param_begin()
+  virtual param_iterator param_end(bool UseDefinitionParams = false) const = 0;
+
   typedef llvm::mapped_iterator<param_iterator, get_type_fun>
     param_type_iterator;
 
+  /// Returns an iterator over the types of the call's formal parameters.
+  ///
+  /// This uses the callee decl found by default name lookup rather than the
+  /// definition because it represents a public interface, and probably has
+  /// more annotations.
   param_type_iterator param_type_begin() const {
     return llvm::map_iterator(param_begin(),
                               get_type_fun(&ParmVarDecl::getType));
   }
+  /// \sa param_type_begin()
   param_type_iterator param_type_end() const {
     return llvm::map_iterator(param_end(), get_type_fun(&ParmVarDecl::getType));
   }
+
+  // For debugging purposes only
+  virtual void dump(raw_ostream &Out) const;
+  LLVM_ATTRIBUTE_USED void dump() const { dump(llvm::errs()); }
 
   static bool classof(const CallEvent *) { return true; }
 };
@@ -192,15 +240,16 @@ protected:
   AnyFunctionCall(ProgramStateRef St, const LocationContext *LCtx, Kind K)
     : CallEvent(St, LCtx, K) {}
 
-  param_iterator param_begin() const;
-  param_iterator param_end() const;
+  param_iterator param_begin(bool UseDefinitionParams = false) const;
+  param_iterator param_end(bool UseDefinitionParams = false) const;
 
   QualType getDeclaredResultType() const;
 
 public:
   virtual const FunctionDecl *getDecl() const = 0;
 
-  const Decl *getDefinition() const {
+  const Decl *getDefinition(bool &IsDynamicDispatch) const {
+    IsDynamicDispatch = false;
     const FunctionDecl *FD = getDecl();
     // Note that hasBody() will fill FD with the definition FunctionDecl.
     if (FD && FD->hasBody(FD))
@@ -258,21 +307,41 @@ public:
   }
 };
 
-/// \brief Represents a non-static C++ member function call.
-///
-/// Example: \c obj.fun()
-class CXXMemberCall : public SimpleCall {
+/// \brief Represents a non-static C++ member function call, no matter how
+/// it is written.
+class CXXInstanceCall : public SimpleCall {
 protected:
   void addExtraInvalidatedRegions(RegionList &Regions) const;
 
+  CXXInstanceCall(const CallExpr *CE, ProgramStateRef St,
+                  const LocationContext *LCtx, Kind K)
+    : SimpleCall(CE, St, LCtx, K) {}
+
+public:
+  SVal getCXXThisVal() const = 0;
+
+  const Decl *getDefinition(bool &IsDynamicDispatch) const;
+
+  static bool classof(const CallEvent *CA) {
+    return CA->getKind() >= CE_BEG_CXX_INSTANCE_CALLS &&
+           CA->getKind() <= CE_END_CXX_INSTANCE_CALLS;
+  }
+};
+
+/// \brief Represents a non-static C++ member function call.
+///
+/// Example: \c obj.fun()
+class CXXMemberCall : public CXXInstanceCall {
 public:
   CXXMemberCall(const CXXMemberCallExpr *CE, ProgramStateRef St,
-               const LocationContext *LCtx)
-    : SimpleCall(CE, St, LCtx, CE_CXXMember) {}
+                const LocationContext *LCtx)
+    : CXXInstanceCall(CE, St, LCtx, CE_CXXMember) {}
 
   const CXXMemberCallExpr *getOriginExpr() const {
     return cast<CXXMemberCallExpr>(SimpleCall::getOriginExpr());
   }
+
+  SVal getCXXThisVal() const;
 
   static bool classof(const CallEvent *CA) {
     return CA->getKind() == CE_CXXMember;
@@ -283,14 +352,11 @@ public:
 /// implemented as a non-static member function.
 ///
 /// Example: <tt>iter + 1</tt>
-class CXXMemberOperatorCall : public SimpleCall {
-protected:
-  void addExtraInvalidatedRegions(RegionList &Regions) const;
-
+class CXXMemberOperatorCall : public CXXInstanceCall {
 public:
   CXXMemberOperatorCall(const CXXOperatorCallExpr *CE, ProgramStateRef St,
                         const LocationContext *LCtx)
-    : SimpleCall(CE, St, LCtx, CE_CXXMemberOperator) {}
+    : CXXInstanceCall(CE, St, LCtx, CE_CXXMemberOperator) {}
 
   const CXXOperatorCallExpr *getOriginExpr() const {
     return cast<CXXOperatorCallExpr>(SimpleCall::getOriginExpr());
@@ -300,6 +366,8 @@ public:
   const Expr *getArgExpr(unsigned Index) const {
     return getOriginExpr()->getArg(Index + 1);
   }
+
+  SVal getCXXThisVal() const;
 
   static bool classof(const CallEvent *CA) {
     return CA->getKind() == CE_CXXMemberOperator;
@@ -313,8 +381,8 @@ class BlockCall : public SimpleCall {
 protected:
   void addExtraInvalidatedRegions(RegionList &Regions) const;
 
-  param_iterator param_begin() const;
-  param_iterator param_end() const;
+  param_iterator param_begin(bool UseDefinitionParams = false) const;
+  param_iterator param_end(bool UseDefinitionParams = false) const;
 
   QualType getDeclaredResultType() const;
 
@@ -339,7 +407,8 @@ public:
     return BR->getDecl();
   }
 
-  const Decl *getDefinition() const {
+  const Decl *getDefinition(bool &IsDynamicDispatch) const {
+    IsDynamicDispatch = false;
     return getBlockDecl();
   }
 
@@ -379,8 +448,43 @@ public:
     return CE->getArg(Index);
   }
 
+  SVal getCXXThisVal() const;
+
   static bool classof(const CallEvent *CA) {
     return CA->getKind() == CE_CXXConstructor;
+  }
+};
+
+/// \brief Represents an implicit call to a C++ destructor.
+///
+/// This can occur at the end of a scope (for automatic objects), at the end
+/// of a full-expression (for temporaries), or as part of a delete.
+class CXXDestructorCall : public AnyFunctionCall {
+  const CXXDestructorDecl *DD;
+  const MemRegion *Target;
+  SourceLocation Loc;
+
+protected:
+  void addExtraInvalidatedRegions(RegionList &Regions) const;
+
+public:
+  CXXDestructorCall(const CXXDestructorDecl *dd, const Stmt *Trigger,
+                    const MemRegion *target, ProgramStateRef St,
+                    const LocationContext *LCtx)
+    : AnyFunctionCall(St, LCtx, CE_CXXDestructor), DD(dd), Target(target),
+      Loc(Trigger->getLocEnd()) {}
+
+  const Expr *getOriginExpr() const { return 0; }
+  SourceRange getSourceRange() const { return Loc; }
+
+  const CXXDestructorDecl *getDecl() const { return DD; }
+  unsigned getNumArgs() const { return 0; }
+
+  SVal getCXXThisVal() const;
+  const Decl *getDefinition(bool &IsDynamicDispatch) const;
+
+  static bool classof(const CallEvent *CA) {
+    return CA->getKind() == CE_CXXDestructor;
   }
 };
 
@@ -427,8 +531,8 @@ protected:
 
   void addExtraInvalidatedRegions(RegionList &Regions) const;
 
-  param_iterator param_begin() const;
-  param_iterator param_end() const;
+  param_iterator param_begin(bool UseDefinitionParams = false) const;
+  param_iterator param_end(bool UseDefinitionParams = false) const;
 
   QualType getDeclaredResultType() const;
 
@@ -470,7 +574,9 @@ public:
     return Msg->getReceiverRange();
   }
 
-  const Decl *getDefinition() const {
+  const Decl *getDefinition(bool &IsDynamicDispatch) const {
+    IsDynamicDispatch = true;
+    
     const ObjCMethodDecl *MD = getDecl();
     for (Decl::redecl_iterator I = MD->redecls_begin(), E = MD->redecls_end();
          I != E; ++I) {

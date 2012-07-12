@@ -38,7 +38,8 @@ namespace clang {
       DIAG_START_LEX           = DIAG_START_SERIALIZATION   +  120,
       DIAG_START_PARSE         = DIAG_START_LEX             +  300,
       DIAG_START_AST           = DIAG_START_PARSE           +  400,
-      DIAG_START_SEMA          = DIAG_START_AST             +  100,
+      DIAG_START_COMMENT       = DIAG_START_AST             +  100,
+      DIAG_START_SEMA          = DIAG_START_COMMENT         +  100,
       DIAG_START_ANALYSIS      = DIAG_START_SEMA            + 3000,
       DIAG_UPPER_LIMIT         = DIAG_START_ANALYSIS        +  100
     };
@@ -267,6 +268,10 @@ private:
   /// \returns \c true if the diagnostic was emitted, \c false if it was
   /// suppressed.
   bool ProcessDiag(DiagnosticsEngine &Diag) const;
+
+  /// \brief Used to emit a diagnostic that is finally fully formed,
+  /// ignoring suppression.
+  void EmitDiag(DiagnosticsEngine &Diag, Level DiagLevel) const;
 
   /// \brief Whether the diagnostic may leave the AST in a state where some
   /// invariants can break.

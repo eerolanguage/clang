@@ -12,10 +12,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Tooling/CompilationDatabase.h"
+#include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/YAMLParser.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/system_error.h"
+
+#ifdef USE_CUSTOM_COMPILATION_DATABASE
+#include "CustomCompilationDatabase.h"
+#endif
 
 namespace clang {
 namespace tooling {
@@ -119,6 +124,52 @@ CompilationDatabase::loadFromDirectory(StringRef BuildDirectory,
     return NULL;
   }
   return Database.take();
+}
+
+static CompilationDatabase *
+findCompilationDatabaseFromDirectory(StringRef Directory) {
+#ifdef USE_CUSTOM_COMPILATION_DATABASE
+  if (CompilationDatabase *DB =
+      ::findCompilationDatabaseForDirectory(Directory))
+    return DB;
+#endif
+  while (!Directory.empty()) {
+    std::string LoadErrorMessage;
+
+    if (CompilationDatabase *DB =
+           CompilationDatabase::loadFromDirectory(Directory, LoadErrorMessage))
+      return DB;
+
+    Directory = llvm::sys::path::parent_path(Directory);
+  }
+  return NULL;
+}
+
+CompilationDatabase *
+CompilationDatabase::autoDetectFromSource(StringRef SourceFile,
+                                          std::string &ErrorMessage) {
+  llvm::SmallString<1024> AbsolutePath(getAbsolutePath(SourceFile));
+  StringRef Directory = llvm::sys::path::parent_path(AbsolutePath);
+
+  CompilationDatabase *DB = findCompilationDatabaseFromDirectory(Directory);
+
+  if (!DB)
+    ErrorMessage = ("Could not auto-detect compilation database for file \"" +
+                   SourceFile + "\"").str();
+  return DB;
+}
+
+CompilationDatabase *
+CompilationDatabase::autoDetectFromDirectory(StringRef SourceDir,
+                                             std::string &ErrorMessage) {
+  llvm::SmallString<1024> AbsolutePath(getAbsolutePath(SourceDir));
+
+  CompilationDatabase *DB = findCompilationDatabaseFromDirectory(AbsolutePath);
+
+  if (!DB)
+    ErrorMessage = ("Could not auto-detect compilation database from directory \"" +
+                   SourceDir + "\"").str();
+  return DB;
 }
 
 FixedCompilationDatabase *
@@ -283,4 +334,3 @@ bool JSONCompilationDatabase::parse(std::string &ErrorMessage) {
 
 } // end namespace tooling
 } // end namespace clang
-

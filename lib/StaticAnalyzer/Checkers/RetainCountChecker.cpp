@@ -948,6 +948,7 @@ RetainSummaryManager::getSummary(const CallEvent &Call,
   case CE_CXXMemberOperator:
   case CE_Block:
   case CE_CXXConstructor:
+  case CE_CXXDestructor:
   case CE_CXXAllocator:
     // FIXME: These calls are currently unsupported.
     return getPersistentStopSummary();
@@ -1928,7 +1929,8 @@ PathDiagnosticPiece *CFRefReportVisitor::VisitNode(const ExplodedNode *N,
                                                    const ExplodedNode *PrevN,
                                                    BugReporterContext &BRC,
                                                    BugReport &BR) {
-
+  // FIXME: We will eventually need to handle non-statement-based events
+  // (__attribute__((cleanup))).
   if (!isa<StmtPoint>(N->getLocation()))
     return NULL;
 
@@ -2350,8 +2352,15 @@ CFRefLeakReport::CFRefLeakReport(CFRefBug &D, const LangOptions &LOpts,
     GetAllocationSite(Ctx.getStateManager(), getErrorNode(), sym);
 
   // Get the SourceLocation for the allocation site.
+  // FIXME: This will crash the analyzer if an allocation comes from an
+  // implicit call. (Currently there are no such allocations in Cocoa, though.)
+  const Stmt *AllocStmt;
   ProgramPoint P = AllocNode->getLocation();
-  const Stmt *AllocStmt = cast<PostStmt>(P).getStmt();
+  if (CallExitEnd *Exit = dyn_cast<CallExitEnd>(&P))
+    AllocStmt = Exit->getCalleeContext()->getCallSite();
+  else
+    AllocStmt = cast<PostStmt>(P).getStmt();
+  assert(AllocStmt && "All allocations must come from explicit calls");
   Location = PathDiagnosticLocation::createBegin(AllocStmt, SMgr,
                                                   n->getLocationContext());
   // Fill in the description of the bug.

@@ -221,7 +221,8 @@ public:
   /// \brief Open the specified file as a MemoryBuffer, returning a new
   /// MemoryBuffer if successful, otherwise returning null.
   llvm::MemoryBuffer *getBufferForFile(const FileEntry *Entry,
-                                       std::string *ErrorStr = 0);
+                                       std::string *ErrorStr = 0,
+                                       bool isVolatile = false);
   llvm::MemoryBuffer *getBufferForFile(StringRef Filename,
                                        std::string *ErrorStr = 0);
 
@@ -232,7 +233,7 @@ public:
   bool getNoncachedStatValue(StringRef Path, struct stat &StatBuf);
 
   /// \brief Remove the real file \p Entry from the cache.
-  void InvalidateCache(const FileEntry* Entry);
+  void invalidateCache(const FileEntry *Entry);
 
   /// \brief If path is not absolute and FileSystemOptions set the working
   /// directory, the path is modified to be relative to the given

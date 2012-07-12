@@ -974,3 +974,30 @@ namespace test52 {
   // CHECK: define internal void @_ZN6test523zedILPNS_12_GLOBAL__N_13fooE0EEEvv
   // CHECK-HIDDEN: define internal void @_ZN6test523zedILPNS_12_GLOBAL__N_13fooE0EEEvv
 }
+
+namespace test53 {
+  template<typename _Tp > struct vector   {
+    static void       _M_fill_insert();
+  };
+#pragma GCC visibility push(hidden)
+  // GCC doesn't seem to use the visibility of enums at all, we do.
+  enum zed {v1};
+
+  // GCC fails to mark this specialization hidden, we mark it.
+  template<>
+  struct vector<int> {
+    static void       _M_fill_insert();
+  };
+  void foo() {
+    vector<unsigned>::_M_fill_insert();
+    vector<int>::_M_fill_insert();
+    vector<zed>::_M_fill_insert();
+  }
+#pragma GCC visibility pop
+  // CHECK: declare void @_ZN6test536vectorIjE14_M_fill_insertEv
+  // CHECK-HIDDEN: declare void @_ZN6test536vectorIjE14_M_fill_insertEv
+  // CHECK: declare hidden void @_ZN6test536vectorIiE14_M_fill_insertEv
+  // CHECK-HIDDEN: declare hidden void @_ZN6test536vectorIiE14_M_fill_insertEv
+  // CHECK: declare hidden void @_ZN6test536vectorINS_3zedEE14_M_fill_insertEv
+  // CHECK-HIDDEN: declare hidden void @_ZN6test536vectorINS_3zedEE14_M_fill_insertEv
+}
