@@ -1001,3 +1001,33 @@ namespace test53 {
   // CHECK: declare hidden void @_ZN6test536vectorINS_3zedEE14_M_fill_insertEv
   // CHECK-HIDDEN: declare hidden void @_ZN6test536vectorINS_3zedEE14_M_fill_insertEv
 }
+
+namespace test54 {
+  template <class T>
+  struct foo {
+    static void bar();
+  };
+#pragma GCC visibility push(hidden)
+  class zed {
+    zed(const zed &);
+  };
+  void bah() {
+    foo<zed>::bar();
+  }
+#pragma GCC visibility pop
+  // CHECK: declare hidden void @_ZN6test543fooINS_3zedEE3barEv
+  // CHECK-HIDDEN: declare hidden void @_ZN6test543fooINS_3zedEE3barEv
+}
+
+namespace test55 {
+  template <class T>
+  struct __attribute__((visibility("hidden"))) foo {
+    static void bar();
+  };
+  template <class T> struct foo;
+  void foobar() {
+    foo<int>::bar();
+  }
+  // CHECK: declare hidden void @_ZN6test553fooIiE3barEv
+  // CHECK-HIDDEN: declare hidden void @_ZN6test553fooIiE3barEv
+}

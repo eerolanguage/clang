@@ -46,7 +46,7 @@ class Sema {
 
   /// A stack of HTML tags that are currently open (not matched with closing
   /// tags).
-  SmallVector<HTMLOpenTagComment *, 8> HTMLOpenTags;
+  SmallVector<HTMLStartTagComment *, 8> HTMLOpenTags;
 
 public:
   Sema(llvm::BumpPtrAllocator &Allocator, const SourceManager &SourceMgr,
@@ -123,18 +123,18 @@ public:
                                          SourceLocation TextBegin,
                                          StringRef Text);
 
-  HTMLOpenTagComment *actOnHTMLOpenTagStart(SourceLocation LocBegin,
-                                            StringRef TagName);
+  HTMLStartTagComment *actOnHTMLStartTagStart(SourceLocation LocBegin,
+                                              StringRef TagName);
 
-  HTMLOpenTagComment *actOnHTMLOpenTagFinish(
-                              HTMLOpenTagComment *Tag,
-                              ArrayRef<HTMLOpenTagComment::Attribute> Attrs,
+  HTMLStartTagComment *actOnHTMLStartTagFinish(
+                              HTMLStartTagComment *Tag,
+                              ArrayRef<HTMLStartTagComment::Attribute> Attrs,
                               SourceLocation GreaterLoc,
                               bool IsSelfClosing);
 
-  HTMLCloseTagComment *actOnHTMLCloseTag(SourceLocation LocBegin,
-                                         SourceLocation LocEnd,
-                                         StringRef TagName);
+  HTMLEndTagComment *actOnHTMLEndTag(SourceLocation LocBegin,
+                                     SourceLocation LocEnd,
+                                     StringRef TagName);
 
   FullComment *actOnFullComment(ArrayRef<BlockContentComment *> Blocks);
 
@@ -156,7 +156,9 @@ public:
   unsigned getBlockCommandNumArgs(StringRef Name);
 
   bool isInlineCommand(StringRef Name);
-  bool HTMLOpenTagNeedsClosing(StringRef Name);
+
+  bool isHTMLEndTagOptional(StringRef Name);
+  bool isHTMLEndTagForbidden(StringRef Name);
 };
 
 } // end namespace comments
