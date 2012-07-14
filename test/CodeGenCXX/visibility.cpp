@@ -1031,3 +1031,33 @@ namespace test55 {
   // CHECK: declare hidden void @_ZN6test553fooIiE3barEv
   // CHECK-HIDDEN: declare hidden void @_ZN6test553fooIiE3barEv
 }
+
+namespace test56 {
+  template <class T> struct foo;
+  template <class T>
+  struct __attribute__((visibility("hidden"))) foo {
+    static void bar();
+  };
+  void foobar() {
+    foo<int>::bar();
+  }
+  // CHECK: declare hidden void @_ZN6test563fooIiE3barEv
+  // CHECK-HIDDEN: declare hidden void @_ZN6test563fooIiE3barEv
+}
+
+namespace test57 {
+#pragma GCC visibility push(hidden)
+  template <class T>
+  struct foo;
+  void bar(foo<int>*);
+  template <class T>
+  struct foo {
+    static void zed();
+  };
+  void bah() {
+    foo<int>::zed();
+  }
+#pragma GCC visibility pop
+  // CHECK: declare hidden void @_ZN6test573fooIiE3zedEv
+  // CHECK-HIDDEN: declare hidden void @_ZN6test573fooIiE3zedEv
+}

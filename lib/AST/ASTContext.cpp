@@ -78,9 +78,21 @@ RawComment *ASTContext::getRawCommentForDeclNoCache(const Decl *D) const {
   if (RawComments.empty())
     return NULL;
 
+  // Find declaration location.
+  // For Objective-C declarations we generally don't expect to have multiple
+  // declarators, thus use declaration starting location as the "declaration
+  // location".
+  // For all other declarations multiple declarators are used quite frequently,
+  // so we use the location of the identifier as the "declaration location".
+  SourceLocation DeclLoc;
+  if (isa<ObjCMethodDecl>(D) || isa<ObjCContainerDecl>(D) ||
+      isa<ObjCPropertyDecl>(D))
+    DeclLoc = D->getLocStart();
+  else
+    DeclLoc = D->getLocation();
+
   // If the declaration doesn't map directly to a location in a file, we
   // can't find the comment.
-  SourceLocation DeclLoc = D->getLocation();
   if (DeclLoc.isInvalid() || !DeclLoc.isFileID())
     return NULL;
 
@@ -144,7 +156,7 @@ RawComment *ASTContext::getRawCommentForDeclNoCache(const Decl *D) const {
 
   // There should be no other declarations or preprocessor directives between
   // comment and declaration.
-  if (Text.find_first_of(",;{}#") != StringRef::npos)
+  if (Text.find_first_of(",;{}#@") != StringRef::npos)
     return NULL;
 
   return *Comment;
@@ -1035,6 +1047,10 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
       Align = llvm::NextPowerOf2(Align);
       Width = llvm::RoundUpToAlignment(Width, Align);
     }
+    // Adjust the alignment based on the target max.
+    uint64_t TargetVectorAlign = Target->getMaxVectorAlign();
+    if (TargetVectorAlign && TargetVectorAlign < Align)
+      Align = TargetVectorAlign;
     break;
   }
 

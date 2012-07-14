@@ -242,7 +242,7 @@ public:
                        getLocEnd());
   }
 
-  unsigned getArgCount() const {
+  unsigned getNumArgs() const {
     return Args.size();
   }
 
@@ -354,7 +354,7 @@ public:
 
   child_iterator child_end() const { return NULL; }
 
-  unsigned getAttrCount() const {
+  unsigned getNumAttrs() const {
     return Attributes.size();
   }
 
@@ -532,7 +532,7 @@ public:
                        getLocStart().getLocWithOffset(1 + Name.size()));
   }
 
-  unsigned getArgCount() const {
+  unsigned getNumArgs() const {
     return Args.size();
   }
 
@@ -611,7 +611,7 @@ public:
   }
 
   bool hasParamName() const {
-    return getArgCount() > 0;
+    return getNumArgs() > 0;
   }
 
   StringRef getParamName() const {
@@ -664,8 +664,8 @@ public:
   }
 };
 
-/// Verbatim block (e. g., preformatted code).  Verbatim block has an opening
-/// and a closing command and contains multiple lines of text
+/// A verbatim block command (e. g., preformatted code).  Verbatim block has an
+/// opening and a closing command and contains multiple lines of text
 /// (VerbatimBlockLineComment nodes).
 class VerbatimBlockComment : public BlockCommandComment {
 protected:
@@ -708,7 +708,7 @@ public:
     return CloseName;
   }
 
-  unsigned getLineCount() const {
+  unsigned getNumLines() const {
     return Lines.size();
   }
 
@@ -717,8 +717,9 @@ public:
   }
 };
 
-/// Verbatim line.  Verbatim line has an opening command and a single line of
-/// text (up to the newline after the opening command).
+/// A verbatim line command.  Verbatim line has an opening command, a single
+/// line of text (up to the newline after the opening command) and has no
+/// closing command.
 class VerbatimLineComment : public BlockCommandComment {
 protected:
   StringRef Text;
