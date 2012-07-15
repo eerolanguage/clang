@@ -1759,12 +1759,12 @@ bool Sema::mergeDeclAttribute(Decl *D, InheritableAttr *Attr) {
   return false;
 }
 
-static const Decl *getDefinition(Decl *D) {
-  if (TagDecl *TD = dyn_cast<TagDecl>(D))
+static const Decl *getDefinition(const Decl *D) {
+  if (const TagDecl *TD = dyn_cast<TagDecl>(D))
     return TD->getDefinition();
-  if (VarDecl *VD = dyn_cast<VarDecl>(D))
+  if (const VarDecl *VD = dyn_cast<VarDecl>(D))
     return VD->getDefinition();
-  if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
+  if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
     const FunctionDecl* Def;
     if (FD->hasBody(Def))
       return Def;
@@ -1772,16 +1772,46 @@ static const Decl *getDefinition(Decl *D) {
   return NULL;
 }
 
+static bool hasAttribute(const Decl *D, attr::Kind Kind) {
+  for (Decl::attr_iterator I = D->attr_begin(), E = D->attr_end();
+       I != E; ++I) {
+    Attr *Attribute = *I;
+    if (Attribute->getKind() == Kind)
+      return true;
+  }
+  return false;
+}
+
+/// checkNewAttributesAfterDef - If we already have a definition, check that
+/// there are no new attributes in this declaration.
+static void checkNewAttributesAfterDef(Sema &S, Decl *New, const Decl *Old) {
+  if (!New->hasAttrs())
+    return;
+
+  const Decl *Def = getDefinition(Old);
+  if (!Def || Def == New)
+    return;
+
+  AttrVec &NewAttributes = New->getAttrs();
+  for (unsigned I = 0, E = NewAttributes.size(); I != E;) {
+    const Attr *NewAttribute = NewAttributes[I];
+    if (hasAttribute(Def, NewAttribute->getKind())) {
+      ++I;
+      continue; // regular attr merging will take care of validating this.
+    }
+    S.Diag(NewAttribute->getLocation(),
+           diag::warn_attribute_precede_definition);
+    S.Diag(Def->getLocation(), diag::note_previous_definition);
+    NewAttributes.erase(NewAttributes.begin() + I);
+    --E;
+  }
+}
+
 /// mergeDeclAttributes - Copy attributes from the Old decl to the New one.
 void Sema::mergeDeclAttributes(Decl *New, Decl *Old,
                                bool MergeDeprecation) {
   // attributes declared post-definition are currently ignored
-  const Decl *Def = getDefinition(Old);
-  if (Def && Def != New && New->hasAttrs()) {
-    Diag(New->getLocation(), diag::warn_attribute_precede_definition);
-    Diag(Def->getLocation(), diag::note_previous_definition);
-    New->dropAttrs();
-  }
+  checkNewAttributesAfterDef(*this, New, Old);
 
   if (!Old->hasAttrs())
     return;
@@ -10496,7 +10526,7 @@ static void CheckForUniqueEnumValues(Sema &S, Decl **Elements,
       continue;
     }
 
-    if (FirstVal != ECD->getInitVal())
+    if (!llvm::APSInt::isSameValue(FirstVal, ECD->getInitVal()))
       return;
   }
 
