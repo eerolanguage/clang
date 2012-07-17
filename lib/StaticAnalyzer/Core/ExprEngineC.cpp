@@ -520,6 +520,7 @@ void ExprEngine::VisitLogicalExpr(const BinaryOperator* B, ExplodedNode *Pred,
   // The only terminator (if there is one) that makes sense is a logical op.
   CFGTerminator T = SrcBlock->getTerminator();
   if (const BinaryOperator *Term = cast_or_null<BinaryOperator>(T.getStmt())) {
+    (void) Term;
     assert(Term->isLogicalOp());
     assert(SrcBlock->succ_size() == 2);
     // Did we take the true or false branch?
@@ -570,18 +571,17 @@ void ExprEngine::VisitInitListExpr(const InitListExpr *IE,
                                    svalBuilder.makeCompoundVal(T, vals)));
     return;
   }
-  
-  if (Loc::isLocType(T) || T->isIntegerType()) {
-    assert(IE->getNumInits() == 1);
-    const Expr *initEx = IE->getInit(0);
-    B.generateNode(IE, Pred, state->BindExpr(IE, LCtx,
-                                             state->getSVal(initEx, LCtx)));
-    return;
-  }
 
-  assert(IE->getNumInits() == 1);
-  B.generateNode(IE, Pred, state->BindExpr(IE, LCtx, UnknownVal()));
-  return;
+  // Handle scalars: int{5} and int{}.
+  assert(NumInitElements <= 1);
+
+  SVal V;
+  if (NumInitElements == 0)
+    V = getSValBuilder().makeZeroVal(T);
+  else
+    V = state->getSVal(IE->getInit(0), LCtx);
+
+  B.generateNode(IE, Pred, state->BindExpr(IE, LCtx, V));
 }
 
 void ExprEngine::VisitGuardedExpr(const Expr *Ex,
