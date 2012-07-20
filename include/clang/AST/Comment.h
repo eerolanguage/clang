@@ -48,17 +48,43 @@ protected:
     /// (There is no separate AST node for a newline.)
     unsigned HasTrailingNewline : 1;
   };
-  enum { NumInlineContentCommentBitfields = 9 };
+  enum { NumInlineContentCommentBits = NumCommentBits + 1 };
+
+  class TextCommentBitfields {
+    friend class TextComment;
+
+    unsigned : NumInlineContentCommentBits;
+
+    /// True if \c IsWhitespace field contains a valid value.
+    mutable unsigned IsWhitespaceValid : 1;
+
+    /// True if this comment AST node contains only whitespace.
+    mutable unsigned IsWhitespace : 1;
+  };
+  enum { NumTextCommentBits = NumInlineContentCommentBits + 2 };
 
   class HTMLStartTagCommentBitfields {
     friend class HTMLStartTagComment;
 
-    unsigned : NumInlineContentCommentBitfields;
+    unsigned : NumInlineContentCommentBits;
 
     /// True if this tag is self-closing (e. g., <br />).  This is based on tag
     /// spelling in comment (plain <br> would not set this flag).
     unsigned IsSelfClosing : 1;
   };
+
+  class ParagraphCommentBitfields {
+    friend class ParagraphComment;
+
+    unsigned : NumCommentBits;
+
+    /// True if \c IsWhitespace field contains a valid value.
+    mutable unsigned IsWhitespaceValid : 1;
+
+    /// True if this comment AST node contains only whitespace.
+    mutable unsigned IsWhitespace : 1;
+  };
+  enum { NumParagraphCommentBits = NumCommentBits + 2 };
 
   class ParamCommandCommentBitfields {
     friend class ParamCommandComment;
@@ -71,12 +97,14 @@ protected:
     /// True if direction was specified explicitly in the comment.
     unsigned IsDirectionExplicit : 1;
   };
-  enum { NumParamCommandCommentBitfields = 11 };
+  enum { NumParamCommandCommentBits = 11 };
 
   union {
     CommentBitfields CommentBits;
     InlineContentCommentBitfields InlineContentCommentBits;
+    TextCommentBitfields TextCommentBits;
     HTMLStartTagCommentBitfields HTMLStartTagCommentBits;
+    ParagraphCommentBitfields ParagraphCommentBits;
     ParamCommandCommentBitfields ParamCommandCommentBits;
   };
 
@@ -115,6 +143,7 @@ public:
 
   LLVM_ATTRIBUTE_USED void dump() const;
   LLVM_ATTRIBUTE_USED void dump(SourceManager &SM) const;
+  void dump(llvm::raw_ostream &OS, SourceManager *SM) const;
 
   static bool classof(const Comment *) { return true; }
 
@@ -179,8 +208,9 @@ public:
               SourceLocation LocEnd,
               StringRef Text) :
       InlineContentComment(TextCommentKind, LocBegin, LocEnd),
-      Text(Text)
-  { }
+      Text(Text) {
+    TextCommentBits.IsWhitespaceValid = false;
+  }
 
   static bool classof(const Comment *C) {
     return C->getCommentKind() == TextCommentKind;
@@ -194,7 +224,17 @@ public:
 
   StringRef getText() const LLVM_READONLY { return Text; }
 
-  bool isWhitespace() const;
+  bool isWhitespace() const {
+    if (TextCommentBits.IsWhitespaceValid)
+      return TextCommentBits.IsWhitespace;
+
+    TextCommentBits.IsWhitespace = isWhitespaceNoCache();
+    TextCommentBits.IsWhitespaceValid = true;
+    return TextCommentBits.IsWhitespace;
+  }
+
+private:
+  bool isWhitespaceNoCache() const;
 };
 
 /// A command with word-like arguments that is considered inline content.
@@ -441,8 +481,13 @@ public:
                           SourceLocation(),
                           SourceLocation()),
       Content(Content) {
-    if (Content.empty())
+    if (Content.empty()) {
+      ParagraphCommentBits.IsWhitespace = true;
+      ParagraphCommentBits.IsWhitespaceValid = true;
       return;
+    }
+
+    ParagraphCommentBits.IsWhitespaceValid = false;
 
     setSourceRange(SourceRange(Content.front()->getLocStart(),
                                Content.back()->getLocEnd()));
@@ -463,7 +508,17 @@ public:
     return reinterpret_cast<child_iterator>(Content.end());
   }
 
-  bool isWhitespace() const;
+  bool isWhitespace() const {
+    if (ParagraphCommentBits.IsWhitespaceValid)
+      return ParagraphCommentBits.IsWhitespace;
+
+    ParagraphCommentBits.IsWhitespace = isWhitespaceNoCache();
+    ParagraphCommentBits.IsWhitespaceValid = true;
+    return ParagraphCommentBits.IsWhitespace;
+  }
+
+private:
+  bool isWhitespaceNoCache() const;
 };
 
 /// A command that has zero or more word-like arguments (number of word-like

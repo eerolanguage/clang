@@ -1378,11 +1378,6 @@ Value *CodeGenFunction::EmitTargetBuiltinExpr(unsigned BuiltinID,
   case llvm::Triple::ppc:
   case llvm::Triple::ppc64:
     return EmitPPCBuiltinExpr(BuiltinID, E);
-  case llvm::Triple::mips:
-  case llvm::Triple::mipsel:
-  case llvm::Triple::mips64:
-  case llvm::Triple::mips64el:
-    return EmitMipsBuiltinExpr(BuiltinID, E);
   default:
     return 0;
   }
@@ -1642,8 +1637,9 @@ Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
   }
   case ARM::BI__builtin_neon_vcnt_v:
   case ARM::BI__builtin_neon_vcntq_v: {
-    Function *F = CGM.getIntrinsic(Intrinsic::arm_neon_vcnt, Ty);
-    return EmitNeonCall(F, Ops, "vcnt");
+    // generate target-independent intrinsic
+    Function *F = CGM.getIntrinsic(Intrinsic::ctpop, Ty);
+    return EmitNeonCall(F, Ops, "vctpop");
   }
   case ARM::BI__builtin_neon_vcvt_f16_v: {
     assert(Type.getEltType() == NeonTypeFlags::Float16 && !quad &&
@@ -2567,28 +2563,4 @@ Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
     return Builder.CreateCall(F, Ops, "");
   }
   }
-}
-
-Value *CodeGenFunction::EmitMipsBuiltinExpr(unsigned BuiltinID,
-                                            const CallExpr *E) {
-  SmallVector<Value*, 4> Ops;
-
-  for (unsigned i = 0, e = E->getNumArgs(); i != e; i++)
-    Ops.push_back(EmitScalarExpr(E->getArg(i)));
-
-  Intrinsic::ID ID = Intrinsic::not_intrinsic;
-
-  switch (BuiltinID) {
-  default: return 0;
-  case Mips::BI__builtin_mips_shll_qb:
-    llvm::APSInt Value;
-    if (E->getArg(1)->isIntegerConstantExpr(Value, getContext()))
-      ID = Intrinsic::mips_shll_qb;
-    else
-      ID = Intrinsic::mips_shll_qb_v;
-    break;
-  }
-
-  llvm::Function *F = CGM.getIntrinsic(ID);
-  return Builder.CreateCall(F, Ops, "");
 }

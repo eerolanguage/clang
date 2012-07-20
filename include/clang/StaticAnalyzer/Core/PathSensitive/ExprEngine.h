@@ -378,9 +378,6 @@ public:
   void VisitCXXThisExpr(const CXXThisExpr *TE, ExplodedNode *Pred, 
                         ExplodedNodeSet & Dst);
 
-  void VisitCXXTemporaryObjectExpr(const CXXTemporaryObjectExpr *expr,
-                                   ExplodedNode *Pred, ExplodedNodeSet &Dst);
-
   void VisitCXXConstructExpr(const CXXConstructExpr *E, const MemRegion *Dest,
                              ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
@@ -470,9 +467,17 @@ public:
                  ExplodedNode *Pred, ProgramStateRef St, SVal TargetLV, SVal Val,
                  const ProgramPointTag *tag = 0);
 
+  /// \brief Create a new state in which the call return value is binded to the
+  /// call origin expression.
+  ProgramStateRef bindReturnValue(const CallEvent &Call,
+                                  const LocationContext *LCtx,
+                                  ProgramStateRef State);
+
   void evalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
                 const SimpleCall &Call);
-  void defaultEvalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
+
+  /// \bried Default implementation of call evaluation.
+  void defaultEvalCall(NodeBuilder &B, ExplodedNode *Pred,
                        const CallEvent &Call);
 private:
   void evalLoadCommon(ExplodedNodeSet &Dst,
@@ -494,8 +499,7 @@ private:
                     const ProgramPointTag *tag, bool isLoad);
 
   bool shouldInlineDecl(const Decl *D, ExplodedNode *Pred);
-  bool inlineCall(ExplodedNodeSet &Dst, const CallEvent &Call,
-                  ExplodedNode *Pred);
+  bool inlineCall(const CallEvent &Call, ExplodedNode *Pred);
 
   bool replayWithoutInlining(ExplodedNode *P, const LocationContext *CalleeLC);
 };

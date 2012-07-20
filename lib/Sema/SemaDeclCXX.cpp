@@ -4235,9 +4235,15 @@ struct SpecialMemberDeletionInfo {
   bool inUnion() const { return MD->getParent()->isUnion(); }
 
   /// Look up the corresponding special member in the given class.
-  Sema::SpecialMemberOverloadResult *lookupIn(CXXRecordDecl *Class) {
+  Sema::SpecialMemberOverloadResult *lookupIn(CXXRecordDecl *Class,
+                                              unsigned Quals) {
     unsigned TQ = MD->getTypeQualifiers();
-    return S.LookupSpecialMember(Class, CSM, ConstArg, VolatileArg,
+    // cv-qualifiers on class members don't affect default ctor / dtor calls.
+    if (CSM == Sema::CXXDefaultConstructor || CSM == Sema::CXXDestructor)
+      Quals = 0;
+    return S.LookupSpecialMember(Class, CSM,
+                                 ConstArg || (Quals & Qualifiers::Const),
+                                 VolatileArg || (Quals & Qualifiers::Volatile),
                                  MD->getRefQualifier() == RQ_RValue,
                                  TQ & Qualifiers::Const,
                                  TQ & Qualifiers::Volatile);
@@ -4249,7 +4255,8 @@ struct SpecialMemberDeletionInfo {
   bool shouldDeleteForField(FieldDecl *FD);
   bool shouldDeleteForAllConstMembers();
 
-  bool shouldDeleteForClassSubobject(CXXRecordDecl *Class, Subobject Subobj);
+  bool shouldDeleteForClassSubobject(CXXRecordDecl *Class, Subobject Subobj,
+                                     unsigned Quals);
   bool shouldDeleteForSubobjectCall(Subobject Subobj,
                                     Sema::SpecialMemberOverloadResult *SMOR,
                                     bool IsDtorCallInCtor);
@@ -4330,9 +4337,9 @@ bool SpecialMemberDeletionInfo::shouldDeleteForSubobjectCall(
 }
 
 /// Check whether we should delete a special member function due to having a
-/// direct or virtual base class or static data member of class type M.
+/// direct or virtual base class or non-static data member of class type M.
 bool SpecialMemberDeletionInfo::shouldDeleteForClassSubobject(
-    CXXRecordDecl *Class, Subobject Subobj) {
+    CXXRecordDecl *Class, Subobject Subobj, unsigned Quals) {
   FieldDecl *Field = Subobj.dyn_cast<FieldDecl*>();
 
   // C++11 [class.ctor]p5:
@@ -4351,7 +4358,7 @@ bool SpecialMemberDeletionInfo::shouldDeleteForClassSubobject(
   //    that is deleted or inaccessible
   if (!(CSM == Sema::CXXDefaultConstructor &&
         Field && Field->hasInClassInitializer()) &&
-      shouldDeleteForSubobjectCall(Subobj, lookupIn(Class), false))
+      shouldDeleteForSubobjectCall(Subobj, lookupIn(Class, Quals), false))
     return true;
 
   // C++11 [class.ctor]p5, C++11 [class.copy]p11:
@@ -4372,7 +4379,7 @@ bool SpecialMemberDeletionInfo::shouldDeleteForClassSubobject(
 /// having a particular direct or virtual base class.
 bool SpecialMemberDeletionInfo::shouldDeleteForBase(CXXBaseSpecifier *Base) {
   CXXRecordDecl *BaseClass = Base->getType()->getAsCXXRecordDecl();
-  return shouldDeleteForClassSubobject(BaseClass, Base);
+  return shouldDeleteForClassSubobject(BaseClass, Base, 0);
 }
 
 /// Check whether we should delete a special member function due to the class
@@ -4449,7 +4456,8 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
 
         CXXRecordDecl *UnionFieldRecord = UnionFieldType->getAsCXXRecordDecl();
         if (UnionFieldRecord &&
-            shouldDeleteForClassSubobject(UnionFieldRecord, *UI))
+            shouldDeleteForClassSubobject(UnionFieldRecord, *UI,
+                                          UnionFieldType.getCVRQualifiers()))
           return true;
       }
 
@@ -4468,7 +4476,8 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
       return false;
     }
 
-    if (shouldDeleteForClassSubobject(FieldRecord, FD))
+    if (shouldDeleteForClassSubobject(FieldRecord, FD,
+                                      FieldType.getCVRQualifiers()))
       return true;
   }
 
@@ -7559,7 +7568,9 @@ Sema::ComputeDefaultedCopyAssignmentExceptionSpecAndConst(
     QualType FieldType = Context.getBaseElementType(Field->getType());
     if (CXXRecordDecl *FieldClassDecl = FieldType->getAsCXXRecordDecl()) {
       if (CXXMethodDecl *CopyAssign =
-          LookupCopyingAssignment(FieldClassDecl, ArgQuals, false, 0))
+          LookupCopyingAssignment(FieldClassDecl,
+                                  ArgQuals | FieldType.getCVRQualifiers(),
+                                  false, 0))
         ExceptSpec.CalledDecl(Field->getLocation(), CopyAssign);
     }
   }
@@ -7966,7 +7977,7 @@ Sema::ComputeDefaultedMoveAssignmentExceptionSpec(CXXRecordDecl *ClassDecl) {
     CXXRecordDecl *BaseClassDecl
       = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
     if (CXXMethodDecl *MoveAssign = LookupMovingAssignment(BaseClassDecl,
-                                                           false, 0))
+                                                           0, false, 0))
       ExceptSpec.CalledDecl(Base->getLocStart(), MoveAssign);
   }
 
@@ -7976,7 +7987,7 @@ Sema::ComputeDefaultedMoveAssignmentExceptionSpec(CXXRecordDecl *ClassDecl) {
     CXXRecordDecl *BaseClassDecl
       = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
     if (CXXMethodDecl *MoveAssign = LookupMovingAssignment(BaseClassDecl,
-                                                           false, 0))
+                                                           0, false, 0))
       ExceptSpec.CalledDecl(Base->getLocStart(), MoveAssign);
   }
 
@@ -7986,8 +7997,10 @@ Sema::ComputeDefaultedMoveAssignmentExceptionSpec(CXXRecordDecl *ClassDecl) {
        ++Field) {
     QualType FieldType = Context.getBaseElementType(Field->getType());
     if (CXXRecordDecl *FieldClassDecl = FieldType->getAsCXXRecordDecl()) {
-      if (CXXMethodDecl *MoveAssign = LookupMovingAssignment(FieldClassDecl,
-                                                             false, 0))
+      if (CXXMethodDecl *MoveAssign =
+              LookupMovingAssignment(FieldClassDecl,
+                                     FieldType.getCVRQualifiers(),
+                                     false, 0))
         ExceptSpec.CalledDecl(Field->getLocation(), MoveAssign);
     }
   }
@@ -8580,7 +8593,8 @@ Sema::ComputeDefaultedCopyCtorExceptionSpecAndConst(CXXRecordDecl *ClassDecl) {
     QualType FieldType = Context.getBaseElementType(Field->getType());
     if (CXXRecordDecl *FieldClassDecl = FieldType->getAsCXXRecordDecl()) {
       if (CXXConstructorDecl *CopyConstructor =
-        LookupCopyingConstructor(FieldClassDecl, Quals))
+              LookupCopyingConstructor(FieldClassDecl,
+                                       Quals | FieldType.getCVRQualifiers()))
       ExceptSpec.CalledDecl(Field->getLocation(), CopyConstructor);
     }
   }
@@ -8708,7 +8722,8 @@ Sema::ComputeDefaultedMoveCtorExceptionSpec(CXXRecordDecl *ClassDecl) {
     
     if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
-      CXXConstructorDecl *Constructor = LookupMovingConstructor(BaseClassDecl);
+      CXXConstructorDecl *Constructor =
+          LookupMovingConstructor(BaseClassDecl, 0);
       // If this is a deleted function, add it anyway. This might be conformant
       // with the standard. This might not. I'm not sure. It might not matter.
       if (Constructor)
@@ -8722,7 +8737,8 @@ Sema::ComputeDefaultedMoveCtorExceptionSpec(CXXRecordDecl *ClassDecl) {
        B != BEnd; ++B) {
     if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
-      CXXConstructorDecl *Constructor = LookupMovingConstructor(BaseClassDecl);
+      CXXConstructorDecl *Constructor =
+          LookupMovingConstructor(BaseClassDecl, 0);
       // If this is a deleted function, add it anyway. This might be conformant
       // with the standard. This might not. I'm not sure. It might not matter.
       if (Constructor)
@@ -8734,10 +8750,10 @@ Sema::ComputeDefaultedMoveCtorExceptionSpec(CXXRecordDecl *ClassDecl) {
   for (RecordDecl::field_iterator F = ClassDecl->field_begin(),
                                FEnd = ClassDecl->field_end();
        F != FEnd; ++F) {
-    if (const RecordType *RecordTy
-              = Context.getBaseElementType(F->getType())->getAs<RecordType>()) {
-      CXXRecordDecl *FieldRecDecl = cast<CXXRecordDecl>(RecordTy->getDecl());
-      CXXConstructorDecl *Constructor = LookupMovingConstructor(FieldRecDecl);
+    QualType FieldType = Context.getBaseElementType(F->getType());
+    if (CXXRecordDecl *FieldRecDecl = FieldType->getAsCXXRecordDecl()) {
+      CXXConstructorDecl *Constructor =
+          LookupMovingConstructor(FieldRecDecl, FieldType.getCVRQualifiers());
       // If this is a deleted function, add it anyway. This might be conformant
       // with the standard. This might not. I'm not sure. It might not matter.
       // In particular, the problem is that this function never gets called. It

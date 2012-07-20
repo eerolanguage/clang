@@ -9,6 +9,7 @@
 
 #include "clang/AST/Comment.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace clang {
 namespace comments {
@@ -25,6 +26,19 @@ const char *Comment::getCommentKindName() const {
 #undef ABSTRACT_COMMENT
   }
   llvm_unreachable("Unknown comment kind!");
+}
+
+void Comment::dump() const {
+  // It is important that Comment::dump() is defined in a different TU than
+  // Comment::dump(raw_ostream, SourceManager).  If both functions were defined
+  // in CommentDumper.cpp, that object file would be removed by linker because
+  // none of its functions are referenced by other object files, despite the
+  // LLVM_ATTRIBUTE_USED.
+  dump(llvm::errs(), NULL);
+}
+
+void Comment::dump(SourceManager &SM) const {
+  dump(llvm::errs(), &SM);
 }
 
 namespace {
@@ -86,7 +100,7 @@ Comment::child_iterator Comment::child_end() const {
   llvm_unreachable("Unknown comment kind!");
 }
 
-bool TextComment::isWhitespace() const {
+bool TextComment::isWhitespaceNoCache() const {
   for (StringRef::const_iterator I = Text.begin(), E = Text.end();
        I != E; ++I) {
     const char C = *I;
@@ -97,12 +111,13 @@ bool TextComment::isWhitespace() const {
   return true;
 }
 
-bool ParagraphComment::isWhitespace() const {
+bool ParagraphComment::isWhitespaceNoCache() const {
   for (child_iterator I = child_begin(), E = child_end(); I != E; ++I) {
     if (const TextComment *TC = dyn_cast<TextComment>(*I)) {
       if (!TC->isWhitespace())
         return false;
-    }
+    } else
+      return false;
   }
   return true;
 }

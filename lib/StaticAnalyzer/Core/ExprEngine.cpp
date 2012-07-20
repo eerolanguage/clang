@@ -560,6 +560,10 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Expr::MSDependentExistsStmtClass:
       llvm_unreachable("Stmt should not be in analyzer evaluation loop");
 
+    case Stmt::ObjCSubscriptRefExprClass:
+    case Stmt::ObjCPropertyRefExprClass:
+      llvm_unreachable("These are handled by PseudoObjectExpr");
+
     case Stmt::GNUNullExprClass: {
       // GNU __null is a pointer-width integer, not an actual pointer.
       ProgramStateRef state = Pred->getState();
@@ -573,14 +577,6 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       Bldr.takeNodes(Pred);
       VisitObjCAtSynchronizedStmt(cast<ObjCAtSynchronizedStmt>(S), Pred, Dst);
       Bldr.addNodes(Dst);
-      break;
-
-    // FIXME.
-    case Stmt::ObjCSubscriptRefExprClass:
-      break;
-      
-    case Stmt::ObjCPropertyRefExprClass:
-      // Implicitly handled by Environment::getSVal().
       break;
 
     case Stmt::ExprWithCleanupsClass:
@@ -894,35 +890,10 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
 
     case Stmt::ObjCMessageExprClass: {
       Bldr.takeNodes(Pred);
-      // Is this a property access?
-
-      const LocationContext *LCtx = Pred->getLocationContext();
-      const ParentMap &PM = LCtx->getParentMap();
-      const ObjCMessageExpr *ME = cast<ObjCMessageExpr>(S);
-      bool evaluated = false;
-      
-      if (const PseudoObjectExpr *PO =
-            dyn_cast_or_null<PseudoObjectExpr>(PM.getParent(S))) {
-        const Expr *syntactic = PO->getSyntacticForm();
-
-        // This handles the funny case of assigning to the result of a getter.
-        // This can happen if the getter returns a non-const reference.
-        if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(syntactic))
-          syntactic = BO->getLHS();
-
-        if (const ObjCPropertyRefExpr *PR =
-              dyn_cast<ObjCPropertyRefExpr>(syntactic)) {
-          VisitObjCMessage(ObjCPropertyAccess(PR, PO->getSourceRange(), ME,
-                                              Pred->getState(), LCtx),
-                           Pred, Dst);
-          evaluated = true;
-        }
-      }
-      
-      if (!evaluated)
-        VisitObjCMessage(ObjCMessageSend(ME, Pred->getState(), LCtx),
-                         Pred, Dst);
-
+      VisitObjCMessage(ObjCMethodCall(cast<ObjCMessageExpr>(S),
+                                      Pred->getState(),
+                                      Pred->getLocationContext()),
+                       Pred, Dst);
       Bldr.addNodes(Dst);
       break;
     }
@@ -1699,10 +1670,6 @@ void ExprEngine::evalStore(ExplodedNodeSet &Dst, const Expr *AssignE,
   // ProgramPoint if it is non-NULL, and LocationE otherwise.
   const Expr *StoreE = AssignE ? AssignE : LocationE;
 
-  if (isa<loc::ObjCPropRef>(location)) {
-    assert(false);
-  }
-
   // Evaluate the location (checks for bad dereferences).
   ExplodedNodeSet Tmp;
   evalLocation(Tmp, AssignE, LocationE, Pred, state, location, tag, false);
@@ -1727,7 +1694,6 @@ void ExprEngine::evalLoad(ExplodedNodeSet &Dst,
                           QualType LoadTy)
 {
   assert(!isa<NonLoc>(location) && "location cannot be a NonLoc.");
-  assert(!isa<loc::ObjCPropRef>(location));
 
   // Are we loading from a region?  This actually results in two loads; one
   // to fetch the address of the referenced value and one to fetch the

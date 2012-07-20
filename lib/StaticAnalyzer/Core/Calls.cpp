@@ -15,39 +15,18 @@
 
 #include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
 #include "clang/Analysis/ProgramPoint.h"
+#include "clang/AST/ParentMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 
 using namespace clang;
 using namespace ento;
 
-SVal CallEvent::getArgSVal(unsigned Index) const {
-  const Expr *ArgE = getArgExpr(Index);
-  if (!ArgE)
-    return UnknownVal();
-  return getSVal(ArgE);
-}
-
-SourceRange CallEvent::getArgSourceRange(unsigned Index) const {
-  const Expr *ArgE = getArgExpr(Index);
-  if (!ArgE)
-    return SourceRange();
-  return ArgE->getSourceRange();
-}
-
 QualType CallEvent::getResultType() const {
   QualType ResultTy = getDeclaredResultType();
 
-  if (const Expr *E = getOriginExpr()) {
-    if (ResultTy.isNull())
-      ResultTy = E->getType();
-
-    // FIXME: This is copied from CallOrObjCMessage, but it seems suspicious.
-    if (E->isGLValue()) {
-      ASTContext &Ctx = State->getStateManager().getContext();
-      ResultTy = Ctx.getPointerType(ResultTy);
-    }
-  }
+  if (ResultTy.isNull())
+    ResultTy = getOriginExpr()->getType();
 
   return ResultTy;
 }
@@ -133,10 +112,10 @@ static void findPtrToConstParams(llvm::SmallSet<unsigned, 1> &PreserveArgs,
 
 ProgramStateRef CallEvent::invalidateRegions(unsigned BlockCount,
                                               ProgramStateRef Orig) const {
-  ProgramStateRef Result = (Orig ? Orig : State);
+  ProgramStateRef Result = (Orig ? Orig : getState());
 
   SmallVector<const MemRegion *, 8> RegionsToInvalidate;
-  addExtraInvalidatedRegions(RegionsToInvalidate);
+  getExtraInvalidatedRegions(RegionsToInvalidate);
 
   // Indexes of arguments whose values will be preserved by the call.
   llvm::SmallSet<unsigned, 1> PreserveArgs;
@@ -193,15 +172,16 @@ ProgramStateRef CallEvent::invalidateRegions(unsigned BlockCount,
   // NOTE: Even if RegionsToInvalidate is empty, we may still invalidate
   //  global variables.
   return Result->invalidateRegions(RegionsToInvalidate, getOriginExpr(),
-                                   BlockCount, LCtx, /*Symbols=*/0, this);
+                                   BlockCount, getLocationContext(),
+                                   /*Symbols=*/0, this);
 }
 
 ProgramPoint CallEvent::getProgramPoint(bool IsPreVisit,
                                         const ProgramPointTag *Tag) const {
   if (const Expr *E = getOriginExpr()) {
     if (IsPreVisit)
-      return PreStmt(E, LCtx, Tag);
-    return PostStmt(E, LCtx, Tag);
+      return PreStmt(E, getLocationContext(), Tag);
+    return PostStmt(E, getLocationContext(), Tag);
   }
 
   const Decl *D = getDecl();
@@ -209,8 +189,8 @@ ProgramPoint CallEvent::getProgramPoint(bool IsPreVisit,
 
   SourceLocation Loc = getSourceRange().getBegin();
   if (IsPreVisit)
-    return PreImplicitCall(D, Loc, LCtx, Tag);
-  return PostImplicitCall(D, Loc, LCtx, Tag);
+    return PreImplicitCall(D, Loc, getLocationContext(), Tag);
+  return PostImplicitCall(D, Loc, getLocationContext(), Tag);
 }
 
 
@@ -250,7 +230,7 @@ QualType AnyFunctionCall::getDeclaredResultType() const {
 }
 
 bool AnyFunctionCall::argumentsMayEscape() const {
-  if (CallEvent::argumentsMayEscape())
+  if (hasNonZeroCallbackArg())
     return true;
 
   const FunctionDecl *D = getDecl();
@@ -305,17 +285,31 @@ bool AnyFunctionCall::argumentsMayEscape() const {
   return false;
 }
 
+SVal AnyFunctionCall::getArgSVal(unsigned Index) const {
+  const Expr *ArgE = getArgExpr(Index);
+  if (!ArgE)
+    return UnknownVal();
+  return getSVal(ArgE);
+}
+
+SourceRange AnyFunctionCall::getArgSourceRange(unsigned Index) const {
+  const Expr *ArgE = getArgExpr(Index);
+  if (!ArgE)
+    return SourceRange();
+  return ArgE->getSourceRange();
+}
+
 
 const FunctionDecl *SimpleCall::getDecl() const {
-  const FunctionDecl *D = CE->getDirectCallee();
+  const FunctionDecl *D = getOriginExpr()->getDirectCallee();
   if (D)
     return D;
 
-  return getSVal(CE->getCallee()).getAsFunctionDecl();
+  return getSVal(getOriginExpr()->getCallee()).getAsFunctionDecl();
 }
 
 void CallEvent::dump(raw_ostream &Out) const {
-  ASTContext &Ctx = State->getStateManager().getContext();
+  ASTContext &Ctx = getState()->getStateManager().getContext();
   if (const Expr *E = getOriginExpr()) {
     E->printPretty(Out, Ctx, 0, Ctx.getLangOpts());
     Out << "\n";
@@ -333,7 +327,7 @@ void CallEvent::dump(raw_ostream &Out) const {
 }
 
 
-void CXXInstanceCall::addExtraInvalidatedRegions(RegionList &Regions) const {
+void CXXInstanceCall::getExtraInvalidatedRegions(RegionList &Regions) const {
   if (const MemRegion *R = getCXXThisVal().getAsRegion())
     Regions.push_back(R);
 }
@@ -348,10 +342,6 @@ static const CXXMethodDecl *devirtualize(const CXXMethodDecl *MD, SVal ThisVal){
     return 0;
 
   const CXXRecordDecl *RD = TR->getValueType()->getAsCXXRecordDecl();
-  if (!RD)
-    return 0;
-
-  RD = RD->getDefinition();
   if (!RD)
     return 0;
 
@@ -430,7 +420,7 @@ BlockCall::param_end(bool UseDefinitionParams) const {
   return D->param_end();
 }
 
-void BlockCall::addExtraInvalidatedRegions(RegionList &Regions) const {
+void BlockCall::getExtraInvalidatedRegions(RegionList &Regions) const {
   // FIXME: This also needs to invalidate captured globals.
   if (const MemRegion *R = getBlockRegion())
     Regions.push_back(R);
@@ -446,26 +436,26 @@ QualType BlockCall::getDeclaredResultType() const {
 
 
 SVal CXXConstructorCall::getCXXThisVal() const {
-  if (Target)
-    return loc::MemRegionVal(Target);
+  if (Data)
+    return loc::MemRegionVal(static_cast<const MemRegion *>(Data));
   return UnknownVal();
 }
 
-void CXXConstructorCall::addExtraInvalidatedRegions(RegionList &Regions) const {
-  if (Target)
-    Regions.push_back(Target);
+void CXXConstructorCall::getExtraInvalidatedRegions(RegionList &Regions) const {
+  if (Data)
+    Regions.push_back(static_cast<const MemRegion *>(Data));
 }
 
 
 SVal CXXDestructorCall::getCXXThisVal() const {
-  if (Target)
-    return loc::MemRegionVal(Target);
+  if (Data)
+    return loc::MemRegionVal(static_cast<const MemRegion *>(Data));
   return UnknownVal();
 }
 
-void CXXDestructorCall::addExtraInvalidatedRegions(RegionList &Regions) const {
-  if (Target)
-    Regions.push_back(Target);
+void CXXDestructorCall::getExtraInvalidatedRegions(RegionList &Regions) const {
+  if (Data)
+    Regions.push_back(static_cast<const MemRegion *>(Data));
 }
 
 const Decl *CXXDestructorCall::getDefinition(bool &IsDynamicDispatch) const {
@@ -510,7 +500,7 @@ ObjCMethodCall::param_end(bool UseDefinitionParams) const {
 }
 
 void
-ObjCMethodCall::addExtraInvalidatedRegions(RegionList &Regions) const {
+ObjCMethodCall::getExtraInvalidatedRegions(RegionList &Regions) const {
   if (const MemRegion *R = getReceiverSVal().getAsRegion())
     Regions.push_back(R);
 }
@@ -528,14 +518,78 @@ SVal ObjCMethodCall::getReceiverSVal() const {
   if (!isInstanceMessage())
     return UnknownVal();
     
-  const Expr *Base = Msg->getInstanceReceiver();
-  if (Base)
+  if (const Expr *Base = getOriginExpr()->getInstanceReceiver())
     return getSVal(Base);
 
   // An instance message with no expression means we are sending to super.
   // In this case the object reference is the same as 'self'.
+  const LocationContext *LCtx = getLocationContext();
   const ImplicitParamDecl *SelfDecl = LCtx->getSelfDecl();
   assert(SelfDecl && "No message receiver Expr, but not in an ObjC method");
-  return State->getSVal(State->getRegion(SelfDecl, LCtx));
+  return getState()->getSVal(getState()->getRegion(SelfDecl, LCtx));
 }
 
+SourceRange ObjCMethodCall::getSourceRange() const {
+  switch (getMessageKind()) {
+  case OCM_Message:
+    return getOriginExpr()->getSourceRange();
+  case OCM_PropertyAccess:
+  case OCM_Subscript:
+    return getContainingPseudoObjectExpr()->getSourceRange();
+  }
+  llvm_unreachable("unknown message kind");
+}
+
+typedef llvm::PointerIntPair<const PseudoObjectExpr *, 2> ObjCMessageDataTy;
+
+const PseudoObjectExpr *ObjCMethodCall::getContainingPseudoObjectExpr() const {
+  assert(Data != 0 && "Lazy lookup not yet performed.");
+  assert(getMessageKind() != OCM_Message && "Explicit message send.");
+  return ObjCMessageDataTy::getFromOpaqueValue(Data).getPointer();
+}
+
+ObjCMessageKind ObjCMethodCall::getMessageKind() const {
+  if (Data == 0) {
+    ParentMap &PM = getLocationContext()->getParentMap();
+    const Stmt *S = PM.getParent(getOriginExpr());
+    if (const PseudoObjectExpr *POE = dyn_cast_or_null<PseudoObjectExpr>(S)) {
+      const Expr *Syntactic = POE->getSyntacticForm();
+
+      // This handles the funny case of assigning to the result of a getter.
+      // This can happen if the getter returns a non-const reference.
+      if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(Syntactic))
+        Syntactic = BO->getLHS();
+
+      ObjCMessageKind K;
+      switch (Syntactic->getStmtClass()) {
+      case Stmt::ObjCPropertyRefExprClass:
+        K = OCM_PropertyAccess;
+        break;
+      case Stmt::ObjCSubscriptRefExprClass:
+        K = OCM_Subscript;
+        break;
+      default:
+        // FIXME: Can this ever happen?
+        K = OCM_Message;
+        break;
+      }
+
+      if (K != OCM_Message) {
+        const_cast<ObjCMethodCall *>(this)->Data
+          = ObjCMessageDataTy(POE, K).getOpaqueValue();
+        assert(getMessageKind() == K);
+        return K;
+      }
+    }
+    
+    const_cast<ObjCMethodCall *>(this)->Data
+      = ObjCMessageDataTy(0, 1).getOpaqueValue();
+    assert(getMessageKind() == OCM_Message);
+    return OCM_Message;
+  }
+
+  ObjCMessageDataTy Info = ObjCMessageDataTy::getFromOpaqueValue(Data);
+  if (!Info.getPointer())
+    return OCM_Message;
+  return static_cast<ObjCMessageKind>(Info.getInt());
+}

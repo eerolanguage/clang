@@ -42,16 +42,12 @@ void cleanupBrief(std::string &S) {
 
 bool isBlockCommand(StringRef Name) {
   return llvm::StringSwitch<bool>(Name)
-      .Case("brief", true)
-      .Case("result", true)
-      .Case("return", true)
-      .Case("returns", true)
-      .Case("author", true)
-      .Case("authors", true)
+      .Cases("brief", "short", true)
+      .Cases("result", "return", "returns", true)
+      .Cases("author", "authors", true)
       .Case("pre", true)
       .Case("post", true)
-      .Case("param", true)
-      .Case("arg", true)
+      .Cases("param", "arg", true)
       .Default(false);
 }
 } // unnamed namespace
@@ -71,7 +67,7 @@ std::string BriefParser::Parse() {
 
     if (Tok.is(tok::command)) {
       StringRef Name = Tok.getCommandName();
-      if (Name == "brief") {
+      if (Name == "brief" || Name == "short") {
         Paragraph.clear();
         InBrief = true;
         ConsumeToken();

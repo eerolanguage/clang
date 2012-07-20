@@ -22,6 +22,7 @@
 #include "clang/AST/ExprObjC.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SVals.h"
+#include "llvm/ADT/PointerIntPair.h"
 
 namespace clang {
 class ProgramPoint;
@@ -43,11 +44,9 @@ enum CallEventKind {
   CE_CXXAllocator,
   CE_BEG_FUNCTION_CALLS = CE_Function,
   CE_END_FUNCTION_CALLS = CE_CXXAllocator,
-  CE_ObjCMessage,
-  CE_ObjCPropertyAccess,
-  CE_BEG_OBJC_CALLS = CE_ObjCMessage,
-  CE_END_OBJC_CALLS = CE_ObjCPropertyAccess
+  CE_ObjCMessage
 };
+
 
 /// \brief Represents an abstract call to a function or method along a
 /// particular path.
@@ -55,32 +54,71 @@ class CallEvent {
 public:
   typedef CallEventKind Kind;
 
-protected:
-  ProgramStateRef State;
-  const LocationContext *LCtx;
-  const Kind K;
+private:
+  // PointerIntPair doesn't respect IntrusiveRefCntPtr, so we have to manually
+  // retain and release the state.
+  llvm::PointerIntPair<const ProgramState *, 2> State;
+  llvm::PointerIntPair<const LocationContext *, 2> LCtx;
+  llvm::PointerUnion<const Expr *, const Decl *> Origin;
 
-  CallEvent(ProgramStateRef state, const LocationContext *lctx, Kind k)
-    : State(state), LCtx(lctx), K(k) {}
-  virtual ~CallEvent() {}
+protected:
+  // This is user data for subclasses.
+  const void *Data;
+  SourceLocation Location;
+
+  CallEvent(const Expr *E, ProgramStateRef state, const LocationContext *lctx,
+            Kind k)
+    : State(state.getPtr(), (k & 0x3)),
+      LCtx(lctx, ((k >> 2) & 0x3)),
+      Origin(E) {
+    IntrusiveRefCntPtrInfo<const ProgramState>::retain(getState());
+    assert(k == getKind() && "More kinds than bits in the PointerIntPairs.");
+  }
+
+  CallEvent(const Decl *D, ProgramStateRef state, const LocationContext *lctx,
+            Kind k)
+    : State(state.getPtr(), (k & 0x3)),
+      LCtx(lctx, ((k >> 2) & 0x3)),
+      Origin(D) {
+    IntrusiveRefCntPtrInfo<const ProgramState>::retain(getState());
+    assert(k == getKind() && "More kinds than bits in the PointerIntPairs.");
+  }
+
+  const ProgramState *getState() const {
+    return State.getPointer();
+  }
+
+  const LocationContext *getLocationContext() const {
+    return LCtx.getPointer();
+  }
+
+  ~CallEvent() {
+    IntrusiveRefCntPtrInfo<const ProgramState>::release(getState());
+  }
+
 
   /// \brief Get the value of arbitrary expressions at this point in the path.
   SVal getSVal(const Stmt *S) const {
-    return State->getSVal(S, LCtx);
+    return getState()->getSVal(S, getLocationContext());
   }
 
   typedef SmallVectorImpl<const MemRegion *> RegionList;
 
   /// \brief Used to specify non-argument regions that will be invalidated as a
   /// result of this call.
-  virtual void addExtraInvalidatedRegions(RegionList &Regions) const {}
+  void getExtraInvalidatedRegions(RegionList &Regions) const;
 
-  virtual QualType getDeclaredResultType() const { return QualType(); }
+  QualType getDeclaredResultType() const;
 
 public:
+  /// \brief Returns the kind of call this is.
+  Kind getKind() const {
+    return static_cast<Kind>((State.getInt()) | (LCtx.getInt() << 2));
+  }
+
   /// \brief Returns the declaration of the function or method that will be
   /// called. May be null.
-  virtual const Decl *getDecl() const = 0;
+  const Decl *getDecl() const;
 
   /// \brief Returns the definition of the function or method that will be
   /// called. May be null.
@@ -91,21 +129,20 @@ public:
   ///   definition that is actually invoked at runtime. Note that if we have
   ///   sufficient type information to devirtualize a dynamic method call,
   ///   we will (and \p IsDynamicDispatch will be set to \c false).
-  virtual const Decl *getDefinition(bool &IsDynamicDispatch) const {
-    IsDynamicDispatch = false;
-    return getDecl();
-  }
+  const Decl *getDefinition(bool &IsDynamicDispatch) const;
 
   /// \brief Returns the expression whose value will be the result of this call.
   /// May be null.
-  virtual const Expr *getOriginExpr() const = 0;
+  const Expr *getOriginExpr() const {
+    return Origin.dyn_cast<const Expr *>();
+  }
 
   /// \brief Returns the number of arguments (explicit and implicit).
   ///
   /// Note that this may be greater than the number of parameters in the
   /// callee's declaration, and that it may include arguments not written in
   /// the source.
-  virtual unsigned getNumArgs() const = 0;
+  unsigned getNumArgs() const;
 
   /// \brief Returns true if the callee is known to be from a system header.
   bool isInSystemHeader() const {
@@ -116,7 +153,7 @@ public:
     SourceLocation Loc = D->getLocation();
     if (Loc.isValid()) {
       const SourceManager &SM =
-        State->getStateManager().getContext().getSourceManager();
+        getState()->getStateManager().getContext().getSourceManager();
       return SM.isInSystemHeader(D->getLocation());
     }
 
@@ -128,34 +165,29 @@ public:
     return false;
   }
 
-  /// \brief Returns the kind of call this is.
-  Kind getKind() const { return K; }
-
   /// \brief Returns a source range for the entire call, suitable for
   /// outputting in diagnostics.
-  virtual SourceRange getSourceRange() const = 0;
+  SourceRange getSourceRange() const;
 
   /// \brief Returns the value of a given argument at the time of the call.
-  virtual SVal getArgSVal(unsigned Index) const;
+  SVal getArgSVal(unsigned Index) const;
 
   /// \brief Returns the expression associated with a given argument.
   /// May be null if this expression does not appear in the source.
-  virtual const Expr *getArgExpr(unsigned Index) const {
-    return 0;
-  }
+  const Expr *getArgExpr(unsigned Index) const;
 
   /// \brief Returns the source range for errors associated with this argument.
   /// May be invalid if the argument is not written in the source.
   // FIXME: Is it better to return an invalid range or the range of the origin
   // expression?
-  virtual SourceRange getArgSourceRange(unsigned Index) const;
+  SourceRange getArgSourceRange(unsigned Index) const;
 
   /// \brief Returns the result type, adjusted for references.
   QualType getResultType() const;
 
   /// \brief Returns the value of the implicit 'this' object, or UndefinedVal if
   /// this is not a C++ member function call.
-  virtual SVal getCXXThisVal() const { return UndefinedVal(); }
+  SVal getCXXThisVal() const;
 
   /// \brief Returns true if any of the arguments appear to represent callbacks.
   bool hasNonZeroCallbackArg() const;
@@ -165,9 +197,7 @@ public:
   // NOTE: The exact semantics of this are still being defined!
   // We don't really want a list of hardcoded exceptions in the long run,
   // but we don't want duplicated lists of known APIs in the short term either.
-  virtual bool argumentsMayEscape() const {
-    return hasNonZeroCallbackArg();
-  }
+  bool argumentsMayEscape() const;
 
   /// \brief Returns an appropriate ProgramPoint for this call.
   ProgramPoint getProgramPoint(bool IsPreVisit = false,
@@ -205,9 +235,9 @@ public:
   /// If the call has no accessible declaration (or definition, if
   /// \p UseDefinitionParams is set), \c param_begin() will be equal to
   /// \c param_end().
-  virtual param_iterator param_begin(bool UseDefinitionParams = false) const = 0;
+  param_iterator param_begin(bool UseDefinitionParams = false) const;
   /// \sa param_begin()
-  virtual param_iterator param_end(bool UseDefinitionParams = false) const = 0;
+  param_iterator param_end(bool UseDefinitionParams = false) const;
 
   typedef llvm::mapped_iterator<param_iterator, get_type_fun>
     param_type_iterator;
@@ -227,26 +257,37 @@ public:
   }
 
   // For debugging purposes only
-  virtual void dump(raw_ostream &Out) const;
+  void dump(raw_ostream &Out) const;
   LLVM_ATTRIBUTE_USED void dump() const { dump(llvm::errs()); }
 
   static bool classof(const CallEvent *) { return true; }
 };
 
+
 /// \brief Represents a call to any sort of function that might have a
 /// FunctionDecl.
 class AnyFunctionCall : public CallEvent {
-protected:
-  AnyFunctionCall(ProgramStateRef St, const LocationContext *LCtx, Kind K)
-    : CallEvent(St, LCtx, K) {}
+  friend class CallEvent;
 
-  param_iterator param_begin(bool UseDefinitionParams = false) const;
-  param_iterator param_end(bool UseDefinitionParams = false) const;
+protected:
+  AnyFunctionCall(const Expr *E, ProgramStateRef St,
+                  const LocationContext *LCtx, Kind K)
+    : CallEvent(E, St, LCtx, K) {}
+  AnyFunctionCall(const Decl *D, ProgramStateRef St,
+                  const LocationContext *LCtx, Kind K)
+    : CallEvent(D, St, LCtx, K) {}
+
+  // Most function calls have no extra invalidated regions.
+  void getExtraInvalidatedRegions(RegionList &Regions) const {}
 
   QualType getDeclaredResultType() const;
 
 public:
-  virtual const FunctionDecl *getDecl() const = 0;
+  // This function is overridden by subclasses, but they must return
+  // a FunctionDecl.
+  const FunctionDecl *getDecl() const {
+    return cast_or_null<FunctionDecl>(CallEvent::getDecl());
+  }
 
   const Decl *getDefinition(bool &IsDynamicDispatch) const {
     IsDynamicDispatch = false;
@@ -259,6 +300,12 @@ public:
 
   bool argumentsMayEscape() const;
 
+  SVal getArgSVal(unsigned Index) const;
+  SourceRange getArgSourceRange(unsigned Index) const;
+
+  param_iterator param_begin(bool UseDefinitionParams = false) const;
+  param_iterator param_end(bool UseDefinitionParams = false) const;
+
   static bool classof(const CallEvent *CA) {
     return CA->getKind() >= CE_BEG_FUNCTION_CALLS &&
            CA->getKind() <= CE_END_FUNCTION_CALLS;
@@ -267,24 +314,26 @@ public:
 
 /// \brief Represents a call to a written as a CallExpr.
 class SimpleCall : public AnyFunctionCall {
-  const CallExpr *CE;
-
 protected:
-  SimpleCall(const CallExpr *ce, ProgramStateRef St,
+  SimpleCall(const CallExpr *CE, ProgramStateRef St,
              const LocationContext *LCtx, Kind K)
-    : AnyFunctionCall(St, LCtx, K), CE(ce) {
+    : AnyFunctionCall(CE, St, LCtx, K) {
   }
 
 public:
-  const CallExpr *getOriginExpr() const { return CE; }
+  const CallExpr *getOriginExpr() const {
+    return cast<CallExpr>(AnyFunctionCall::getOriginExpr());
+  }
 
   const FunctionDecl *getDecl() const;
 
-  unsigned getNumArgs() const { return CE->getNumArgs(); }
-  SourceRange getSourceRange() const { return CE->getSourceRange(); }
+  unsigned getNumArgs() const { return getOriginExpr()->getNumArgs(); }
+  SourceRange getSourceRange() const {
+    return getOriginExpr()->getSourceRange();
+  }
   
   const Expr *getArgExpr(unsigned Index) const {
-    return CE->getArg(Index);
+    return getOriginExpr()->getArg(Index);
   }
 
   static bool classof(const CallEvent *CA) {
@@ -302,6 +351,8 @@ public:
                const LocationContext *LCtx)
     : SimpleCall(CE, St, LCtx, CE_Function) {}
 
+  SVal getCXXThisVal() const { return UndefinedVal(); }
+
   static bool classof(const CallEvent *CA) {
     return CA->getKind() == CE_Function;
   }
@@ -310,16 +361,16 @@ public:
 /// \brief Represents a non-static C++ member function call, no matter how
 /// it is written.
 class CXXInstanceCall : public SimpleCall {
+  friend class CallEvent;
+
 protected:
-  void addExtraInvalidatedRegions(RegionList &Regions) const;
+  void getExtraInvalidatedRegions(RegionList &Regions) const;
 
   CXXInstanceCall(const CallExpr *CE, ProgramStateRef St,
                   const LocationContext *LCtx, Kind K)
     : SimpleCall(CE, St, LCtx, K) {}
 
 public:
-  SVal getCXXThisVal() const = 0;
-
   const Decl *getDefinition(bool &IsDynamicDispatch) const;
 
   static bool classof(const CallEvent *CA) {
@@ -378,11 +429,10 @@ public:
 ///
 /// Example: <tt>^{ /* ... */ }()</tt>
 class BlockCall : public SimpleCall {
-protected:
-  void addExtraInvalidatedRegions(RegionList &Regions) const;
+  friend class CallEvent;
 
-  param_iterator param_begin(bool UseDefinitionParams = false) const;
-  param_iterator param_end(bool UseDefinitionParams = false) const;
+protected:
+  void getExtraInvalidatedRegions(RegionList &Regions) const;
 
   QualType getDeclaredResultType() const;
 
@@ -412,6 +462,11 @@ public:
     return getBlockDecl();
   }
 
+  param_iterator param_begin(bool UseDefinitionParams = false) const;
+  param_iterator param_end(bool UseDefinitionParams = false) const;
+
+  SVal getCXXThisVal() const { return UndefinedVal(); }
+
   static bool classof(const CallEvent *CA) {
     return CA->getKind() == CE_Block;
   }
@@ -421,31 +476,42 @@ public:
 ///
 /// Example: \c T(1)
 class CXXConstructorCall : public AnyFunctionCall {
-  const CXXConstructExpr *CE;
-  const MemRegion *Target;
+  friend class CallEvent;
 
 protected:
-  void addExtraInvalidatedRegions(RegionList &Regions) const;
+  void getExtraInvalidatedRegions(RegionList &Regions) const;
 
 public:
-  CXXConstructorCall(const CXXConstructExpr *ce, ProgramStateRef St,
+  /// Represents a constructor call to a new or unknown region.
+  CXXConstructorCall(const CXXConstructExpr *CE, ProgramStateRef St,
                      const LocationContext *LCtx)
-    : AnyFunctionCall(St, LCtx, CE_CXXConstructor), CE(ce), Target(0) {}
-  CXXConstructorCall(const CXXConstructExpr *ce, const MemRegion *target,
-                     ProgramStateRef St, const LocationContext *LCtx)
-    : AnyFunctionCall(St, LCtx, CE_CXXConstructor), CE(ce), Target(target) {}
-
-  const CXXConstructExpr *getOriginExpr() const { return CE; }
-  SourceRange getSourceRange() const { return CE->getSourceRange(); }
-
-  const CXXConstructorDecl *getDecl() const {
-    return CE->getConstructor();
+    : AnyFunctionCall(CE, St, LCtx, CE_CXXConstructor) {
+    Data = 0;
   }
 
-  unsigned getNumArgs() const { return CE->getNumArgs(); }
+  /// Represents a constructor call on an existing object region.
+  CXXConstructorCall(const CXXConstructExpr *CE, const MemRegion *target,
+                     ProgramStateRef St, const LocationContext *LCtx)
+    : AnyFunctionCall(CE, St, LCtx, CE_CXXConstructor) {
+    Data = target;
+  }
+
+  const CXXConstructExpr *getOriginExpr() const {
+    return cast<CXXConstructExpr>(AnyFunctionCall::getOriginExpr());
+  }
+
+  SourceRange getSourceRange() const {
+    return getOriginExpr()->getSourceRange();
+  }
+
+  const CXXConstructorDecl *getDecl() const {
+    return getOriginExpr()->getConstructor();
+  }
+
+  unsigned getNumArgs() const { return getOriginExpr()->getNumArgs(); }
 
   const Expr *getArgExpr(unsigned Index) const {
-    return CE->getArg(Index);
+    return getOriginExpr()->getArg(Index);
   }
 
   SVal getCXXThisVal() const;
@@ -460,24 +526,28 @@ public:
 /// This can occur at the end of a scope (for automatic objects), at the end
 /// of a full-expression (for temporaries), or as part of a delete.
 class CXXDestructorCall : public AnyFunctionCall {
-  const CXXDestructorDecl *DD;
-  const MemRegion *Target;
-  SourceLocation Loc;
+  friend class CallEvent;
 
 protected:
-  void addExtraInvalidatedRegions(RegionList &Regions) const;
+  void getExtraInvalidatedRegions(RegionList &Regions) const;
 
 public:
-  CXXDestructorCall(const CXXDestructorDecl *dd, const Stmt *Trigger,
-                    const MemRegion *target, ProgramStateRef St,
+  /// Creates an implicit destructor.
+  ///
+  /// \param DD The destructor that will be called.
+  /// \param Trigger The statement whose completion causes this destructor call.
+  /// \param Target The object region to be destructed.
+  /// \param St The path-sensitive state at this point in the program.
+  /// \param LCtx The location context at this point in the program.
+  CXXDestructorCall(const CXXDestructorDecl *DD, const Stmt *Trigger,
+                    const MemRegion *Target, ProgramStateRef St,
                     const LocationContext *LCtx)
-    : AnyFunctionCall(St, LCtx, CE_CXXDestructor), DD(dd), Target(target),
-      Loc(Trigger->getLocEnd()) {}
+    : AnyFunctionCall(DD, St, LCtx, CE_CXXDestructor) {
+    Data = Target;
+    Location = Trigger->getLocEnd();
+  }
 
-  const Expr *getOriginExpr() const { return 0; }
-  SourceRange getSourceRange() const { return Loc; }
-
-  const CXXDestructorDecl *getDecl() const { return DD; }
+  SourceRange getSourceRange() const { return Location; }
   unsigned getNumArgs() const { return 0; }
 
   SVal getCXXThisVal() const;
@@ -492,92 +562,129 @@ public:
 ///
 /// This is a call to "operator new".
 class CXXAllocatorCall : public AnyFunctionCall {
-  const CXXNewExpr *E;
-
 public:
-  CXXAllocatorCall(const CXXNewExpr *e, ProgramStateRef St,
+  CXXAllocatorCall(const CXXNewExpr *E, ProgramStateRef St,
                    const LocationContext *LCtx)
-    : AnyFunctionCall(St, LCtx, CE_CXXAllocator), E(e) {}
+    : AnyFunctionCall(E, St, LCtx, CE_CXXAllocator) {}
 
-  const CXXNewExpr *getOriginExpr() const { return E; }
-  SourceRange getSourceRange() const { return E->getSourceRange(); }
-
-  const FunctionDecl *getDecl() const {
-    return E->getOperatorNew();
+  const CXXNewExpr *getOriginExpr() const {
+    return cast<CXXNewExpr>(AnyFunctionCall::getOriginExpr());
   }
 
-  unsigned getNumArgs() const { return E->getNumPlacementArgs() + 1; }
+  // FIXME: This isn't exactly the range of the allocator...
+  SourceRange getSourceRange() const {
+    return getOriginExpr()->getSourceRange();
+  }
+
+  const FunctionDecl *getDecl() const {
+    return getOriginExpr()->getOperatorNew();
+  }
+
+  unsigned getNumArgs() const {
+    return getOriginExpr()->getNumPlacementArgs() + 1;
+  }
 
   const Expr *getArgExpr(unsigned Index) const {
     // The first argument of an allocator call is the size of the allocation.
     if (Index == 0)
       return 0;
-    return E->getPlacementArg(Index - 1);
+    return getOriginExpr()->getPlacementArg(Index - 1);
   }
+
+  SVal getCXXThisVal() const { return UndefinedVal(); }
 
   static bool classof(const CallEvent *CE) {
     return CE->getKind() == CE_CXXAllocator;
   }
 };
 
+/// \brief Represents the ways an Objective-C message send can occur.
+//
+// Note to maintainers: OCM_Message should always be last, since it does not
+// need to fit in the Data field's low bits.
+enum ObjCMessageKind {
+  OCM_PropertyAccess,
+  OCM_Subscript,
+  OCM_Message
+};
+
 /// \brief Represents any expression that calls an Objective-C method.
+///
+/// This includes all of the kinds listed in ObjCMessageKind.
 class ObjCMethodCall : public CallEvent {
-  const ObjCMessageExpr *Msg;
+  friend class CallEvent;
+
+  const PseudoObjectExpr *getContainingPseudoObjectExpr() const;
 
 protected:
-  ObjCMethodCall(const ObjCMessageExpr *msg, ProgramStateRef St,
-                 const LocationContext *LCtx, Kind K)
-    : CallEvent(St, LCtx, K), Msg(msg) {}
-
-  void addExtraInvalidatedRegions(RegionList &Regions) const;
-
-  param_iterator param_begin(bool UseDefinitionParams = false) const;
-  param_iterator param_end(bool UseDefinitionParams = false) const;
+  void getExtraInvalidatedRegions(RegionList &Regions) const;
 
   QualType getDeclaredResultType() const;
 
 public:
-  Selector getSelector() const { return Msg->getSelector(); }
-  bool isInstanceMessage() const { return Msg->isInstanceMessage(); }
-  ObjCMethodFamily getMethodFamily() const { return Msg->getMethodFamily(); }
-
-  const ObjCMethodDecl *getDecl() const { return Msg->getMethodDecl(); }
-  SourceRange getSourceRange() const { return Msg->getSourceRange(); }
-  unsigned getNumArgs() const { return Msg->getNumArgs(); }
-  const Expr *getArgExpr(unsigned Index) const {
-    return Msg->getArg(Index);
+  ObjCMethodCall(const ObjCMessageExpr *Msg, ProgramStateRef St,
+                 const LocationContext *LCtx)
+    : CallEvent(Msg, St, LCtx, CE_ObjCMessage) {
+    Data = 0;
   }
 
-  const ObjCMessageExpr *getOriginExpr() const { return Msg; }
+  const ObjCMessageExpr *getOriginExpr() const {
+    return cast<ObjCMessageExpr>(CallEvent::getOriginExpr());
+  }
+  const ObjCMethodDecl *getDecl() const {
+    return getOriginExpr()->getMethodDecl();
+  }
+  unsigned getNumArgs() const {
+    return getOriginExpr()->getNumArgs();
+  }
+  const Expr *getArgExpr(unsigned Index) const {
+    return getOriginExpr()->getArg(Index);
+  }
+
+  bool isInstanceMessage() const {
+    return getOriginExpr()->isInstanceMessage();
+  }
+  ObjCMethodFamily getMethodFamily() const {
+    return getOriginExpr()->getMethodFamily();
+  }
+  Selector getSelector() const {
+    return getOriginExpr()->getSelector();
+  }
+
+  SourceRange getSourceRange() const;
 
   /// \brief Returns the value of the receiver at the time of this call.
   SVal getReceiverSVal() const;
-
-  /// \brief Returns the expression for the receiver of this message if it is
-  /// an instance message.
-  ///
-  /// Returns NULL otherwise.
-  /// \sa ObjCMessageExpr::getInstanceReceiver()
-  const Expr *getInstanceReceiverExpr() const {
-    return Msg->getInstanceReceiver();
-  }
 
   /// \brief Get the interface for the receiver.
   ///
   /// This works whether this is an instance message or a class message.
   /// However, it currently just uses the static type of the receiver.
   const ObjCInterfaceDecl *getReceiverInterface() const {
-    return Msg->getReceiverInterface();
+    return getOriginExpr()->getReceiverInterface();
   }
 
-  SourceRange getReceiverSourceRange() const {
-    return Msg->getReceiverRange();
+  ObjCMessageKind getMessageKind() const;
+
+  bool isSetter() const {
+    switch (getMessageKind()) {
+    case OCM_Message:
+      llvm_unreachable("This is not a pseudo-object access!");
+    case OCM_PropertyAccess:
+      return getNumArgs() > 0;
+    case OCM_Subscript:
+      return getNumArgs() > 1;
+    }
+    llvm_unreachable("Unknown message kind");
   }
 
   const Decl *getDefinition(bool &IsDynamicDispatch) const {
     IsDynamicDispatch = true;
     
     const ObjCMethodDecl *MD = getDecl();
+    if (!MD)
+      return 0;
+
     for (Decl::redecl_iterator I = MD->redecls_begin(), E = MD->redecls_end();
          I != E; ++I) {
       if (cast<ObjCMethodDecl>(*I)->isThisDeclarationADefinition())
@@ -586,62 +693,128 @@ public:
     return 0;
   }
 
-  static bool classof(const CallEvent *CA) {
-    return CA->getKind() >= CE_BEG_OBJC_CALLS &&
-           CA->getKind() <= CE_END_OBJC_CALLS;
-  }
-};
+  SVal getCXXThisVal() const { return UndefinedVal(); }
 
-/// \brief Represents an explicit message send to an Objective-C object.
-///
-/// Example: [obj descriptionWithLocale:locale];
-class ObjCMessageSend : public ObjCMethodCall {
-public:
-  ObjCMessageSend(const ObjCMessageExpr *Msg, ProgramStateRef St,
-                  const LocationContext *LCtx)
-    : ObjCMethodCall(Msg, St, LCtx, CE_ObjCMessage) {}
+  bool argumentsMayEscape() const {
+    return hasNonZeroCallbackArg();
+  }
+  
+  SVal getArgSVal(unsigned Index) const { return getSVal(getArgExpr(Index)); }
+  SourceRange getArgSourceRange(unsigned Index) const {
+    return getArgExpr(Index)->getSourceRange();
+  }
+
+  param_iterator param_begin(bool UseDefinitionParams = false) const;
+  param_iterator param_end(bool UseDefinitionParams = false) const;
 
   static bool classof(const CallEvent *CA) {
     return CA->getKind() == CE_ObjCMessage;
   }
 };
 
-/// \brief Represents an Objective-C property getter or setter invocation.
-///
-/// Example: obj.prop += 1;
-class ObjCPropertyAccess : public ObjCMethodCall {
-  const ObjCPropertyRefExpr *PropE;
-  SourceRange EntireRange;
 
-public:
-  ObjCPropertyAccess(const ObjCPropertyRefExpr *pe, SourceRange range,
-                     const ObjCMessageExpr *Msg, const ProgramStateRef St,
-                     const LocationContext *LCtx)
-    : ObjCMethodCall(Msg, St, LCtx, CE_ObjCPropertyAccess), PropE(pe),
-      EntireRange(range)
-    {}
+// FIXME: Use a .def or .td file for this.
+#define DISPATCH(fn) \
+  switch (getKind()) { \
+  case CE_Function: \
+    return cast<FunctionCall>(this)->fn(); \
+  case CE_CXXMember: \
+    return cast<CXXMemberCall>(this)->fn(); \
+  case CE_CXXMemberOperator: \
+    return cast<CXXMemberOperatorCall>(this)->fn(); \
+  case CE_Block: \
+    return cast<BlockCall>(this)->fn(); \
+  case CE_CXXConstructor: \
+    return cast<CXXConstructorCall>(this)->fn(); \
+  case CE_CXXDestructor: \
+    return cast<CXXDestructorCall>(this)->fn(); \
+  case CE_CXXAllocator: \
+    return cast<CXXAllocatorCall>(this)->fn(); \
+  case CE_ObjCMessage: \
+    return cast<ObjCMethodCall>(this)->fn(); \
+  } \
+  llvm_unreachable("unknown CallEvent kind");
 
-  /// \brief Returns true if this property access is calling the setter method.
-  bool isSetter() const {
-    return getNumArgs() > 0;
-  }
+#define DISPATCH_ARG(fn, arg) \
+  switch (getKind()) { \
+  case CE_Function: \
+    return cast<FunctionCall>(this)->fn(arg); \
+  case CE_CXXMember: \
+    return cast<CXXMemberCall>(this)->fn(arg); \
+  case CE_CXXMemberOperator: \
+    return cast<CXXMemberOperatorCall>(this)->fn(arg); \
+  case CE_Block: \
+    return cast<BlockCall>(this)->fn(arg); \
+  case CE_CXXConstructor: \
+    return cast<CXXConstructorCall>(this)->fn(arg); \
+  case CE_CXXDestructor: \
+    return cast<CXXDestructorCall>(this)->fn(arg); \
+  case CE_CXXAllocator: \
+    return cast<CXXAllocatorCall>(this)->fn(arg); \
+  case CE_ObjCMessage: \
+    return cast<ObjCMethodCall>(this)->fn(arg); \
+  } \
+  llvm_unreachable("unknown CallEvent kind");
 
-  SourceRange getSourceRange() const {
-    return EntireRange;
-  }
+inline void CallEvent::getExtraInvalidatedRegions(RegionList &Regions) const {
+  DISPATCH_ARG(getExtraInvalidatedRegions, Regions);
+}
 
-  /// \brief Return the property reference part of this access.
-  ///
-  /// In the expression "obj.prop += 1", the property reference expression is
-  /// "obj.prop".
-  const ObjCPropertyRefExpr *getPropertyExpr() const {
-    return PropE;
-  }
+inline QualType CallEvent::getDeclaredResultType() const {
+  DISPATCH(getDeclaredResultType);
+}
 
-  static bool classof(const CallEvent *CA) {
-    return CA->getKind() == CE_ObjCPropertyAccess;
-  }
-};
+inline const Decl *CallEvent::getDecl() const {
+  if (const Decl *D = Origin.dyn_cast<const Decl *>())
+    return D;
+  DISPATCH(getDecl);
+}
+
+inline const Decl *CallEvent::getDefinition(bool &IsDynamicDispatch) const {
+  DISPATCH_ARG(getDefinition, IsDynamicDispatch);
+}
+
+inline unsigned CallEvent::getNumArgs() const {
+  DISPATCH(getNumArgs);
+}
+
+inline SourceRange CallEvent::getSourceRange() const {
+  DISPATCH(getSourceRange);
+}
+
+inline SVal CallEvent::getArgSVal(unsigned Index) const {
+  DISPATCH_ARG(getArgSVal, Index);
+}
+
+inline const Expr *CallEvent::getArgExpr(unsigned Index) const {
+  DISPATCH_ARG(getArgExpr, Index);
+}
+
+inline SourceRange CallEvent::getArgSourceRange(unsigned Index) const {
+  DISPATCH_ARG(getArgSourceRange, Index);
+}
+
+inline SVal CallEvent::getCXXThisVal() const {
+  DISPATCH(getCXXThisVal);
+}
+
+
+inline bool CallEvent::argumentsMayEscape() const {
+  DISPATCH(argumentsMayEscape);
+}
+
+inline CallEvent::param_iterator
+CallEvent::param_begin(bool UseDefinitionParams) const {
+  DISPATCH_ARG(param_begin, UseDefinitionParams);
+}
+
+inline CallEvent::param_iterator
+CallEvent::param_end(bool UseDefinitionParams) const {
+  DISPATCH_ARG(param_end, UseDefinitionParams);
+}
+
+#undef DISPATCH
+#undef DISPATCH_ARG
 
 } // end namespace ento
 } // end namespace clang

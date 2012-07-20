@@ -1151,11 +1151,10 @@ static bool EvaluateAsBooleanCondition(const Expr *E, bool &Result,
 }
 
 template<typename T>
-static bool HandleOverflow(EvalInfo &Info, const Expr *E,
+static void HandleOverflow(EvalInfo &Info, const Expr *E,
                            const T &SrcValue, QualType DestType) {
-  Info.Diag(E, diag::note_constexpr_overflow)
+  Info.CCEDiag(E, diag::note_constexpr_overflow)
     << SrcValue << DestType;
-  return false;
 }
 
 static bool HandleFloatToIntCast(EvalInfo &Info, const Expr *E,
@@ -1169,7 +1168,7 @@ static bool HandleFloatToIntCast(EvalInfo &Info, const Expr *E,
   bool ignored;
   if (Value.convertToInteger(Result, llvm::APFloat::rmTowardZero, &ignored)
       & APFloat::opInvalidOp)
-    return HandleOverflow(Info, E, Value, DestType);
+    HandleOverflow(Info, E, Value, DestType);
   return true;
 }
 
@@ -1181,7 +1180,7 @@ static bool HandleFloatToFloatCast(EvalInfo &Info, const Expr *E,
   if (Result.convert(Info.Ctx.getFloatTypeSemantics(DestType),
                      APFloat::rmNearestTiesToEven, &ignored)
       & APFloat::opOverflow)
-    return HandleOverflow(Info, E, Value, DestType);
+    HandleOverflow(Info, E, Value, DestType);
   return true;
 }
 
@@ -1204,7 +1203,7 @@ static bool HandleIntToFloatCast(EvalInfo &Info, const Expr *E,
   if (Result.convertFromAPInt(Value, Value.isSigned(),
                               APFloat::rmNearestTiesToEven)
       & APFloat::opOverflow)
-    return HandleOverflow(Info, E, Value, DestType);
+    HandleOverflow(Info, E, Value, DestType);
   return true;
 }
 
@@ -2341,6 +2340,12 @@ public:
     return Visit(E->getSubExpr());
   }
   bool VisitUnaryOperator(const UnaryOperator *E) { return Visit(E->getSubExpr()); }
+  bool VisitGNUNullExpr(const GNUNullExpr *E) { return false; }
+  bool VisitCXXBoolLiteralExpr(const CXXBoolLiteralExpr *E) { return false; }
+  bool VisitCXXThisExpr(const CXXThisExpr *E) { return false; }
+  bool VisitCXXNullPtrLiteralExpr(const CXXNullPtrLiteralExpr *E) {
+    return false;
+  }
     
   // Has side effects if any element does.
   bool VisitInitListExpr(const InitListExpr *E) {

@@ -40,12 +40,6 @@ void ExprEngine::CreateCXXTemporaryObject(const MaterializeTemporaryExpr *ME,
   Bldr.generateNode(ME, Pred, state->BindExpr(ME, LCtx, loc::MemRegionVal(R)));
 }
 
-void ExprEngine::VisitCXXTemporaryObjectExpr(const CXXTemporaryObjectExpr *expr,
-                                             ExplodedNode *Pred,
-                                             ExplodedNodeSet &Dst) {
-  VisitCXXConstructExpr(expr, 0, Pred, Dst);
-}
-
 void ExprEngine::VisitCXXConstructExpr(const CXXConstructExpr *CE,
                                        const MemRegion *Dest,
                                        ExplodedNode *Pred,
@@ -60,9 +54,10 @@ void ExprEngine::VisitCXXConstructExpr(const CXXConstructExpr *CE,
                                             Call, *this);
 
   ExplodedNodeSet DstInvalidated;
+  StmtNodeBuilder Bldr(DstPreCall, DstInvalidated, *currentBuilderContext);
   for (ExplodedNodeSet::iterator I = DstPreCall.begin(), E = DstPreCall.end();
        I != E; ++I)
-    defaultEvalCall(DstInvalidated, *I, Call);
+    defaultEvalCall(Bldr, *I, Call);
 
   ExplodedNodeSet DstPostCall;
   getCheckerManager().runCheckersForPostCall(DstPostCall, DstInvalidated,
@@ -83,9 +78,10 @@ void ExprEngine::VisitCXXDestructor(const CXXDestructorDecl *DD,
                                             Call, *this);
 
   ExplodedNodeSet DstInvalidated;
+  StmtNodeBuilder Bldr(DstPreCall, DstInvalidated, *currentBuilderContext);
   for (ExplodedNodeSet::iterator I = DstPreCall.begin(), E = DstPreCall.end();
        I != E; ++I)
-    defaultEvalCall(DstInvalidated, *I, Call);
+    defaultEvalCall(Bldr, *I, Call);
 
   ExplodedNodeSet DstPostCall;
   getCheckerManager().runCheckersForPostCall(Dst, DstInvalidated,
