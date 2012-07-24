@@ -3312,7 +3312,7 @@ public:
                               TypeResult Type);
 
   /// InitializeVarWithConstructor - Creates an CXXConstructExpr
-  /// and sets it as the initializer for the the passed in VarDecl.
+  /// and sets it as the initializer for the passed in VarDecl.
   bool InitializeVarWithConstructor(VarDecl *VD,
                                     CXXConstructorDecl *Constructor,
                                     MultiExprArg Exprs,
@@ -4079,10 +4079,7 @@ public:
                                        SourceRange IntroducerRange,
                                        TypeSourceInfo *MethodType,
                                        SourceLocation EndLoc,
-                                       llvm::ArrayRef<ParmVarDecl *> Params,
-                                       llvm::Optional<unsigned> ManglingNumber 
-                                         = llvm::Optional<unsigned>(),
-                                       Decl *ContextDecl = 0);
+                                       llvm::ArrayRef<ParmVarDecl *> Params);
   
   /// \brief Introduce the scope for a lambda expression.
   sema::LambdaScopeInfo *enterLambdaScope(CXXMethodDecl *CallOperator,

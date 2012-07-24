@@ -184,7 +184,7 @@ static void expandTabs(std::string &SourceLine, unsigned TabStop) {
 ///  characters will appear at (numbering the first column as 0).
 ///
 /// If a byte 'i' corresponds to muliple columns (e.g. the byte contains a tab
-///  character) then the the array will map that byte to the first column the
+///  character) then the array will map that byte to the first column the
 ///  tab appears at and the next value in the map will have been incremented
 ///  more than once.
 ///
@@ -1130,10 +1130,11 @@ std::string TextDiagnostic::buildFixItInsertionLine(
        I != E; ++I) {
     if (!I->CodeToInsert.empty()) {
       // We have an insertion hint. Determine whether the inserted
-      // code is on the same line as the caret.
+      // code contains no newlines and is on the same line as the caret.
       std::pair<FileID, unsigned> HintLocInfo
         = SM.getDecomposedExpansionLoc(I->RemoveRange.getBegin());
-      if (LineNo == SM.getLineNumber(HintLocInfo.first, HintLocInfo.second)) {
+      if (LineNo == SM.getLineNumber(HintLocInfo.first, HintLocInfo.second) &&
+          StringRef(I->CodeToInsert).find_first_of("\n\r") == StringRef::npos) {
         // Insert the new code into the line just below the code
         // that the user wrote.
         // Note: When modifying this function, be very careful about what is a

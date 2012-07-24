@@ -38,7 +38,21 @@ class Sema {
 
   DiagnosticsEngine &Diags;
 
+  /// Declaration this comment is attached to.
   const Decl *ThisDecl;
+
+  /// Parameters that can be referenced by \\param if \c ThisDecl is something
+  /// that we consider a "function".
+  /// Contains a valid value if \c IsThisDeclInspected is true.
+  ArrayRef<const ParmVarDecl *> ParamVars;
+
+  /// True if we extracted all important information from \c ThisDecl into
+  /// \c Sema members.
+  unsigned IsThisDeclInspected : 1;
+
+  /// Is \c ThisDecl something that we consider a "function".
+  /// Contains a valid value if \c IsThisDeclInspected is true.
+  unsigned IsFunctionDecl : 1;
 
   DiagnosticBuilder Diag(SourceLocation Loc, unsigned DiagID) {
     return Diags.Report(Loc, DiagID);
@@ -140,22 +154,30 @@ public:
 
   void checkBlockCommandEmptyParagraph(BlockCommandComment *Command);
 
+  bool isFunctionDecl();
+  ArrayRef<const ParmVarDecl *> getParamVars();
+
+  /// Extract all important semantic information from \c ThisDecl into
+  /// \c Sema members.
+  void inspectThisDecl();
+
   /// Returns index of a function parameter with a given name.
   unsigned resolveParmVarReference(StringRef Name,
-                                   const ParmVarDecl * const *ParamVars,
-                                   unsigned NumParams);
+                                   ArrayRef<const ParmVarDecl *> ParamVars);
 
   /// Returns index of a function parameter with the name closest to a given
   /// typo.
   unsigned correctTypoInParmVarReference(StringRef Typo,
-                                         const ParmVarDecl * const *ParamVars,
-                                         unsigned NumParams);
+                                         ArrayRef<const ParmVarDecl *> ParamVars);
 
   bool isBlockCommand(StringRef Name);
   bool isParamCommand(StringRef Name);
   unsigned getBlockCommandNumArgs(StringRef Name);
 
-  bool isInlineCommand(StringRef Name);
+  bool isInlineCommand(StringRef Name) const;
+
+  InlineCommandComment::RenderKind
+  getInlineCommandRenderKind(StringRef Name) const;
 
   bool isHTMLEndTagOptional(StringRef Name);
   bool isHTMLEndTagForbidden(StringRef Name);

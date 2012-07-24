@@ -2500,7 +2500,7 @@ void Sema::HandleFunctionTypeMismatch(PartialDiagnostic &PDiag,
 /// for equality of their argument types. Caller has already checked that
 /// they have same number of arguments. This routine assumes that Objective-C
 /// pointer types which only differ in their protocol qualifiers are equal.
-/// If the parameters are different, ArgPos will have the the parameter index
+/// If the parameters are different, ArgPos will have the parameter index
 /// of the first different parameter.
 bool Sema::FunctionArgTypesAreEqual(const FunctionProtoType *OldType,
                                     const FunctionProtoType *NewType,
@@ -10998,7 +10998,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   // If this is a variadic call, handle args passed through "...".
   if (Proto->isVariadic()) {
     // Promote the arguments (C99 6.5.2.2p7).
-    for (unsigned i = NumArgsInProto; i != NumArgs; i++) {
+    for (unsigned i = NumArgsInProto; i < NumArgs; i++) {
       ExprResult Arg = DefaultVariadicArgumentPromotion(Args[i], VariadicMethod, 0);
       IsError |= Arg.isInvalid();
       TheCall->setArg(i + 1, Arg.take());

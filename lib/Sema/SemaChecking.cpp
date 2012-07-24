@@ -4259,7 +4259,7 @@ static bool AnalyzeBitFieldAssignment(Sema &S, FieldDecl *Bitfield, Expr *Init,
 
   // Check whether the stored value is equal to the original value.
   TruncatedValue = TruncatedValue.extend(OriginalWidth);
-  if (Value == TruncatedValue)
+  if (llvm::APSInt::isSameValue(Value, TruncatedValue))
     return false;
 
   // Special-case bitfields of width 1: booleans are naturally 0/1, and
@@ -4782,7 +4782,7 @@ bool Sema::CheckParmsForFunctionDef(ParmVarDecl **P, ParmVarDecl **PEnd,
     QualType PType = Param->getOriginalType();
     if (const ArrayType *AT = Context.getAsArrayType(PType)) {
       if (AT->getSizeModifier() == ArrayType::Star) {
-        // FIXME: This diagnosic should point the the '[*]' if source-location
+        // FIXME: This diagnosic should point the '[*]' if source-location
         // information is added for it.
         Diag(Param->getLocation(), diag::err_array_star_in_function_definition);
       }
