@@ -13,7 +13,7 @@
 
 #include "clang/AST/StmtObjC.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
 
 using namespace clang;
@@ -190,9 +190,6 @@ void ExprEngine::VisitObjCMessage(const ObjCMethodCall &msg,
         // Generate a transition to non-Nil state.
         if (notNilState != state)
           Pred = Bldr.generateNode(currentStmt, Pred, notNilState);
-
-        // Evaluate the call.
-        defaultEvalCall(Bldr, Pred, msg);
       }
     } else {
       // Check for special class methods.
@@ -242,10 +239,10 @@ void ExprEngine::VisitObjCMessage(const ObjCMethodCall &msg,
 
         }
       }
-
-      // Evaluate the call.
-      defaultEvalCall(Bldr, Pred, msg);
     }
+    // Evaluate the call.
+    defaultEvalCall(Bldr, Pred, msg);
+
   }
   
   ExplodedNodeSet dstPostvisit;

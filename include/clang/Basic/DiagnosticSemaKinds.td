@@ -192,6 +192,9 @@ def warn_return_value_size: Warning<
 def warn_return_value_udt: Warning<
   "%0 has C-linkage specified, but returns user-defined type %1 which is "
   "incompatible with C">, InGroup<ReturnTypeCLinkage>;
+def warn_return_value_udt_incomplete: Warning<
+  "%0 has C-linkage specified, but returns incomplete type %1 which could be "
+  "incompatible with C">, InGroup<ReturnTypeCLinkage>;
 def warn_implicit_function_decl : Warning<
   "implicit declaration of function %0">,
   InGroup<ImplicitFunctionDeclare>, DefaultIgnore;
@@ -485,7 +488,7 @@ def err_objc_root_class_subclass : Error<
   "objc_root_class attribute may only be specified on a root class declaration">;
 def warn_objc_root_class_missing : Warning<
 	"class %0 defined without specifying a base class">,
-  InGroup<ObjCRootClass>, DefaultIgnore;
+  InGroup<ObjCRootClass>;
 def note_objc_needs_superclass : Note<
   "add a super class to fix this problem">;
 def warn_dup_category_def : Warning<
@@ -875,8 +878,6 @@ def warn_missing_exception_specification : Warning<
   "%0 is missing exception specification '%1'">;
 def err_noexcept_needs_constant_expression : Error<
   "argument to noexcept specifier must be a constant expression">;
-def err_exception_spec_unknown : Error<
-  "exception specification is not available until end of class definition">;
 
 // C++ access checking
 def err_class_redeclared_with_different_access : Error<
@@ -5097,6 +5098,9 @@ def err_in_class_initializer_literal_type : Error<
   "'constexpr' specifier">;
 def err_in_class_initializer_non_constant : Error<
   "in-class initializer for static data member is not a constant expression">;
+def err_in_class_initializer_references_def_ctor : Error<
+  "defaulted default constructor of %0 cannot be used by non-static data "
+  "member initializer which appears before end of class definition">;
 
 def ext_in_class_initializer_non_constant : Extension<
   "in-class initializer for static data member is not a constant expression; "

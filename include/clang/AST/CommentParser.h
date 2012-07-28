@@ -27,6 +27,11 @@ namespace comments {
 
 /// Doxygen comment parser.
 class Parser {
+  Parser(const Parser&);         // DO NOT IMPLEMENT
+  void operator=(const Parser&); // DO NOT IMPLEMENT
+
+  friend class TextTokenRetokenizer;
+
   Lexer &L;
 
   Sema &S;
@@ -83,7 +88,7 @@ class Parser {
 
     MoreLATokens.push_back(Tok);
     for (const Token *I = &Toks.back(),
-         *B = &Toks.front() + 1;
+         *B = &Toks.front();
          I != B; --I) {
       MoreLATokens.push_back(*I);
     }

@@ -14,7 +14,7 @@
 #include "clang/Analysis/Analyses/LiveVariables.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/AST/DeclCXX.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/SaveAndRestore.h"
@@ -70,37 +70,49 @@ void ExprEngine::processCallEnter(CallEnter CE, ExplodedNode *Pred) {
 static std::pair<const Stmt*,
                  const CFGBlock*> getLastStmt(const ExplodedNode *Node) {
   const Stmt *S = 0;
-  const CFGBlock *Blk = 0;
   const StackFrameContext *SF =
           Node->getLocation().getLocationContext()->getCurrentStackFrame();
+
+  // Back up through the ExplodedGraph until we reach a statement node.
   while (Node) {
     const ProgramPoint &PP = Node->getLocation();
-    // Skip any BlockEdges, empty blocks, and the CallExitBegin node.
-    if (isa<BlockEdge>(PP) || isa<CallExitBegin>(PP) || isa<BlockEntrance>(PP)){
-      assert(Node->pred_size() == 1);
-      Node = *Node->pred_begin();
-      continue;
-    }
-    // If we reached the CallEnter, the function has no statements.
-    if (isa<CallEnter>(PP))
-      break;
+
     if (const StmtPoint *SP = dyn_cast<StmtPoint>(&PP)) {
       S = SP->getStmt();
-      // Now, get the enclosing basic block.
-      while (Node && Node->pred_size() >=1 ) {
-        const ProgramPoint &PP = Node->getLocation();
-        if (isa<BlockEdge>(PP) &&
-            (PP.getLocationContext()->getCurrentStackFrame() == SF)) {
-          BlockEdge &EPP = cast<BlockEdge>(PP);
-          Blk = EPP.getDst();
-          break;
-        }
-        Node = *Node->pred_begin();
-      }
       break;
+    } else if (const CallExitEnd *CEE = dyn_cast<CallExitEnd>(&PP)) {
+      S = CEE->getCalleeContext()->getCallSite();
+      if (S)
+        break;
+      // If we have an implicit call, we'll probably end up with a
+      // StmtPoint inside the callee, which is acceptable.
+      // (It's possible a function ONLY contains implicit calls -- such as an
+      // implicitly-generated destructor -- so we shouldn't just skip back to
+      // the CallEnter node and keep going.)
+    } else if (const CallEnter *CE = dyn_cast<CallEnter>(&PP)) {
+      // If we reached the CallEnter for this function, it has no statements.
+      if (CE->getCalleeContext() == SF)
+        break;
     }
-    break;
+
+    Node = *Node->pred_begin();
   }
+
+  const CFGBlock *Blk = 0;
+  if (S) {
+    // Now, get the enclosing basic block.
+    while (Node && Node->pred_size() >=1 ) {
+      const ProgramPoint &PP = Node->getLocation();
+      if (isa<BlockEdge>(PP) &&
+          (PP.getLocationContext()->getCurrentStackFrame() == SF)) {
+        BlockEdge &EPP = cast<BlockEdge>(PP);
+        Blk = EPP.getDst();
+        break;
+      }
+      Node = *Node->pred_begin();
+    }
+  }
+
   return std::pair<const Stmt*, const CFGBlock*>(S, Blk);
 }
 
@@ -271,9 +283,8 @@ bool ExprEngine::inlineCall(const CallEvent &Call,
   if (!getAnalysisManager().shouldInlineCall())
     return false;
 
-  bool IsDynamicDispatch;
-  const Decl *D = Call.getDefinition(IsDynamicDispatch);
-  if (!D || IsDynamicDispatch)
+  const Decl *D = Call.getRuntimeDefinition();
+  if (!D)
     return false;
 
   const LocationContext *CurLC = Pred->getLocationContext();
@@ -287,10 +298,29 @@ bool ExprEngine::inlineCall(const CallEvent &Call,
     // These are always at least possible to inline.
     break;
   case CE_CXXConstructor:
-  case CE_CXXDestructor:
-    // Do not inline constructors until we can really model destructors.
-    // This is unfortunate, but basically necessary for smart pointers and such.
-    return false;
+  case CE_CXXDestructor: {
+    // Only inline constructors and destructors if we built the CFGs for them
+    // properly.
+    const AnalysisDeclContext *ADC = CallerSFC->getAnalysisDeclContext();
+    if (!ADC->getCFGBuildOptions().AddImplicitDtors ||
+        !ADC->getCFGBuildOptions().AddInitializers)
+      return false;
+
+    // FIXME: We don't handle constructors or destructors for arrays properly.
+    const MemRegion *Target = Call.getCXXThisVal().getAsRegion();
+    if (Target && isa<ElementRegion>(Target))
+      return false;
+
+    // FIXME: This is a hack. We don't handle temporary destructors
+    // right now, so we shouldn't inline their constructors.
+    if (const CXXConstructorCall *Ctor = dyn_cast<CXXConstructorCall>(&Call)) {
+      const CXXConstructExpr *CtorExpr = Ctor->getOriginExpr();
+      if (CtorExpr->getConstructionKind() == CXXConstructExpr::CK_Complete)
+        if (!Target || !isa<DeclRegion>(Target))
+          return false;
+    }
+    break;
+  }
   case CE_CXXAllocator:
     // Do not inline allocators until we model deallocators.
     // This is unfortunate, but basically necessary for smart pointers and such.
@@ -305,9 +335,7 @@ bool ExprEngine::inlineCall(const CallEvent &Call,
     break;
   }
   case CE_ObjCMessage:
-    // These always use dynamic dispatch; enabling inlining means assuming
-    // that a particular method will be called at runtime.
-    llvm_unreachable("Dynamic dispatch should be handled above.");
+    break;
   }
 
   if (!shouldInlineDecl(D, Pred))
@@ -372,21 +400,26 @@ void ExprEngine::VisitCallExpr(const CallExpr *CE, ExplodedNode *Pred,
 
     // Evaluate the call.
     switch (K) {
-    case CE_Function:
-      evalCall(dstCallEvaluated, *I, FunctionCall(CE, State, LCtx));
+    case CE_Function: {
+      FunctionCall Call(CE, State, LCtx);
+      evalCall(dstCallEvaluated, *I, Call);
       break;
-    case CE_CXXMember:
-      evalCall(dstCallEvaluated, *I, CXXMemberCall(cast<CXXMemberCallExpr>(CE),
-                                                   State, LCtx));
+    }
+    case CE_CXXMember: {
+      CXXMemberCall Call(cast<CXXMemberCallExpr>(CE), State, LCtx);
+      evalCall(dstCallEvaluated, *I, Call);
       break;
-    case CE_CXXMemberOperator:
-      evalCall(dstCallEvaluated, *I,
-               CXXMemberOperatorCall(cast<CXXOperatorCallExpr>(CE),
-                                     State, LCtx));
+    }
+    case CE_CXXMemberOperator: {
+      CXXMemberOperatorCall Call(cast<CXXOperatorCallExpr>(CE), State, LCtx);
+      evalCall(dstCallEvaluated, *I, Call);
       break;
-    case CE_Block:
-      evalCall(dstCallEvaluated, *I, BlockCall(CE, State, LCtx));
+    }
+    case CE_Block: {
+      BlockCall Call(CE, State, LCtx);
+      evalCall(dstCallEvaluated, *I, Call);
       break;
+    }
     default:
       llvm_unreachable("Non-CallExpr CallEventKind");
     }
@@ -435,9 +468,10 @@ ProgramStateRef ExprEngine::bindReturnValue(const CallEvent &Call,
     case OMF_self: {
       // These methods return their receivers.
       return State->BindExpr(E, LCtx, Msg->getReceiverSVal());
-      break;
     }
     }
+  } else if (const CXXConstructorCall *C = dyn_cast<CXXConstructorCall>(&Call)){
+    return State->BindExpr(E, LCtx, C->getCXXThisVal());
   }
 
   // Conjure a symbol if the return value is unknown.
@@ -457,15 +491,13 @@ void ExprEngine::defaultEvalCall(NodeBuilder &Bldr, ExplodedNode *Pred,
   // The origin expression here is just used as a kind of checksum;
   // for CallEvents that do not have origin expressions, this should still be
   // safe.
-  if (!isa<ObjCMethodCall>(Call)) {
-    State = getInlineFailedState(Pred->getState(), E);
-    if (State == 0 && inlineCall(Call, Pred)) {
-      // If we inlined the call, the successor has been manually added onto
-      // the work list and we should not consider it for subsequent call
-      // handling steps.
-      Bldr.takeNodes(Pred);
-      return;
-    }
+  State = getInlineFailedState(Pred->getState(), E);
+  if (State == 0 && inlineCall(Call, Pred)) {
+    // If we inlined the call, the successor has been manually added onto
+    // the work list and we should not consider it for subsequent call
+    // handling steps.
+    Bldr.takeNodes(Pred);
+    return;
   }
 
   // If we can't inline it, handle the return value and invalidate the regions.

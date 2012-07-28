@@ -1281,57 +1281,6 @@ bool Sema::isSelfExpr(Expr *receiver) {
   return false;
 }
 
-// Helper method for ActOnClassMethod/ActOnInstanceMethod.
-// Will search "local" class/category implementations for a method decl.
-// If failed, then we search in class's root for an instance method.
-// Returns 0 if no method is found.
-ObjCMethodDecl *Sema::LookupPrivateClassMethod(Selector Sel,
-                                          ObjCInterfaceDecl *ClassDecl) {
-  ObjCMethodDecl *Method = 0;
-  // lookup in class and all superclasses
-  while (ClassDecl && !Method) {
-    if (ObjCImplementationDecl *ImpDecl = ClassDecl->getImplementation())
-      Method = ImpDecl->getClassMethod(Sel);
-
-    // Look through local category implementations associated with the class.
-    if (!Method)
-      Method = ClassDecl->getCategoryClassMethod(Sel);
-
-    // Before we give up, check if the selector is an instance method.
-    // But only in the root. This matches gcc's behaviour and what the
-    // runtime expects.
-    if (!Method && !ClassDecl->getSuperClass()) {
-      Method = ClassDecl->lookupInstanceMethod(Sel);
-      // Look through local category implementations associated
-      // with the root class.
-      if (!Method)
-        Method = LookupPrivateInstanceMethod(Sel, ClassDecl);
-    }
-
-    ClassDecl = ClassDecl->getSuperClass();
-  }
-  return Method;
-}
-
-ObjCMethodDecl *Sema::LookupPrivateInstanceMethod(Selector Sel,
-                                              ObjCInterfaceDecl *ClassDecl) {
-  if (!ClassDecl->hasDefinition())
-    return 0;
-
-  ObjCMethodDecl *Method = 0;
-  while (ClassDecl && !Method) {
-    // If we have implementations in scope, check "private" methods.
-    if (ObjCImplementationDecl *ImpDecl = ClassDecl->getImplementation())
-      Method = ImpDecl->getInstanceMethod(Sel);
-
-    // Look through local category implementations associated with the class.
-    if (!Method)
-      Method = ClassDecl->getCategoryInstanceMethod(Sel);
-    ClassDecl = ClassDecl->getSuperClass();
-  }
-  return Method;
-}
-
 /// LookupMethodInType - Look up a method in an ObjCObjectType.
 ObjCMethodDecl *Sema::LookupMethodInObjectType(Selector sel, QualType type,
                                                bool isInstance) {
@@ -1343,13 +1292,8 @@ ObjCMethodDecl *Sema::LookupMethodInObjectType(Selector sel, QualType type,
 
     // Okay, look for "private" methods declared in any
     // @implementations we've seen.
-    if (isInstance) {
-      if (ObjCMethodDecl *method = LookupPrivateInstanceMethod(sel, iface))
-        return method;
-    } else {
-      if (ObjCMethodDecl *method = LookupPrivateClassMethod(sel, iface))
-        return method;
-    }
+    if (ObjCMethodDecl *method = iface->lookupPrivateMethod(sel, isInstance))
+      return method;
   }
 
   // Check qualifiers.
@@ -1523,9 +1467,6 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
   if (!Getter)
     Getter = IFace->lookupPrivateMethod(Sel);
 
-  // Look through local category implementations associated with the class.
-  if (!Getter)
-    Getter = IFace->getCategoryInstanceMethod(Sel);
   if (Getter) {
     // Check if we can reference this property.
     if (DiagnoseUseOfDecl(Getter, MemberLoc))
@@ -1547,9 +1488,6 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
     // methods.
     Setter = IFace->lookupPrivateMethod(SetterSel);
   }
-  // Look through local category implementations associated with the class.
-  if (!Setter)
-    Setter = IFace->getCategoryInstanceMethod(SetterSel);
     
   if (Setter && DiagnoseUseOfDecl(Setter, MemberLoc))
     return ExprError();
@@ -2044,7 +1982,7 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
 
     // If we have an implementation in scope, check "private" methods.
     if (!Method)
-      Method = LookupPrivateClassMethod(Sel, Class);
+      Method = Class->lookupPrivateClassMethod(Sel);
 
     if (Method && DiagnoseUseOfDecl(Method, Loc))
       return ExprError();
@@ -2241,7 +2179,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
             Method = ClassDecl->lookupClassMethod(Sel);
 
             if (!Method)
-              Method = LookupPrivateClassMethod(Sel, ClassDecl);
+              Method = ClassDecl->lookupPrivateClassMethod(Sel);
           }
           if (Method && DiagnoseUseOfDecl(Method, Loc))
             return ExprError();
@@ -2314,7 +2252,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
         
         if (!Method) {
           // If we have implementations in scope, check "private" methods.
-          Method = LookupPrivateInstanceMethod(Sel, ClassDecl);
+          Method = ClassDecl->lookupPrivateMethod(Sel);
 
           if (!Method && getLangOpts().ObjCAutoRefCount) {
             Diag(Loc, diag::err_arc_may_not_respond)
@@ -2637,6 +2575,7 @@ namespace {
     ASTContext &Context;
     ARCConversionTypeClass SourceClass;
     ARCConversionTypeClass TargetClass;
+    bool Diagnose;
 
     static bool isCFType(QualType type) {
       // Someday this can use ns_bridged.  For now, it has to do this.
@@ -2645,8 +2584,9 @@ namespace {
 
   public:
     ARCCastChecker(ASTContext &Context, ARCConversionTypeClass source,
-                   ARCConversionTypeClass target)
-      : Context(Context), SourceClass(source), TargetClass(target) {}
+                   ARCConversionTypeClass target, bool diagnose)
+      : Context(Context), SourceClass(source), TargetClass(target),
+        Diagnose(diagnose) {}
 
     using super::Visit;
     ACCResult Visit(Expr *e) {
@@ -2764,7 +2704,8 @@ namespace {
       // now we're not going to permit implicit handling of +1 results,
       // because it's a bit frightening.
       if (fn->hasAttr<CFReturnsRetainedAttr>())
-        return ACC_invalid; // ACC_plusOne if we start accepting this
+        return Diagnose ? ACC_plusOne
+                        : ACC_invalid; // ACC_plusOne if we start accepting this
 
       // Recognize this specific builtin function, which is used by CFSTR.
       unsigned builtinID = fn->getBuiltinID();
@@ -2774,10 +2715,11 @@ namespace {
       // Otherwise, don't do anything implicit with an unaudited function.
       if (!fn->hasAttr<CFAuditedTransferAttr>())
         return ACC_invalid;
-
+      
       // Otherwise, it's +0 unless it follows the create convention.
       if (ento::coreFoundation::followsCreateRule(fn))
-        return ACC_invalid; // ACC_plusOne if we start accepting this
+        return Diagnose ? ACC_plusOne 
+                        : ACC_invalid; // ACC_plusOne if we start accepting this
 
       return ACC_plusZero;
     }
@@ -2952,11 +2894,15 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
       << castRange
       << castExpr->getSourceRange();
     bool br = S.isKnownName("CFBridgingRelease");
+    ACCResult  CreateRule = 
+      ARCCastChecker(S.Context, exprACTC, castACTC, true).Visit(castExpr);
+    if (CreateRule != ACC_plusOne)
     {
       DiagnosticBuilder DiagB = S.Diag(noteLoc, diag::note_arc_bridge);
       addFixitForObjCARCConversion(S, DiagB, CCK, afterLParen,
                                    castType, castExpr, "__bridge ", 0);
     }
+    if (CreateRule != ACC_plusZero && CreateRule != ACC_bottom)
     {
       DiagnosticBuilder DiagB = S.Diag(br ? castExpr->getExprLoc() : noteLoc,
                                        diag::note_arc_bridge_transfer)
@@ -2980,12 +2926,15 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
       << castType
       << castRange
       << castExpr->getSourceRange();
-
+    ACCResult CreateRule = 
+      ARCCastChecker(S.Context, exprACTC, castACTC, true).Visit(castExpr);
+    if (CreateRule != ACC_plusOne)
     {
       DiagnosticBuilder DiagB = S.Diag(noteLoc, diag::note_arc_bridge);
       addFixitForObjCARCConversion(S, DiagB, CCK, afterLParen,
                                    castType, castExpr, "__bridge ", 0);
     }
+    if (CreateRule != ACC_plusZero && CreateRule != ACC_bottom)
     {
       DiagnosticBuilder DiagB = S.Diag(br ? castExpr->getExprLoc() : noteLoc,
                                        diag::note_arc_bridge_retained)
@@ -3061,7 +3010,7 @@ Sema::CheckObjCARCConversion(SourceRange castRange, QualType castType,
       CCK != CCK_ImplicitConversion)
     return ACR_okay;
 
-  switch (ARCCastChecker(Context, exprACTC, castACTC).Visit(castExpr)) {
+  switch (ARCCastChecker(Context, exprACTC, castACTC, false).Visit(castExpr)) {
   // For invalid casts, fall through.
   case ACC_invalid:
     break;

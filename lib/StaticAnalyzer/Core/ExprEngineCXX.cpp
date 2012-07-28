@@ -14,7 +14,7 @@
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/StmtCXX.h"
 
@@ -41,11 +41,91 @@ void ExprEngine::CreateCXXTemporaryObject(const MaterializeTemporaryExpr *ME,
 }
 
 void ExprEngine::VisitCXXConstructExpr(const CXXConstructExpr *CE,
-                                       const MemRegion *Dest,
                                        ExplodedNode *Pred,
                                        ExplodedNodeSet &destNodes) {
-  CXXConstructorCall Call(CE, Dest, Pred->getState(),
-                          Pred->getLocationContext());
+  const LocationContext *LCtx = Pred->getLocationContext();
+  ProgramStateRef State = Pred->getState();
+
+  const MemRegion *Target = 0;
+
+  switch (CE->getConstructionKind()) {
+  case CXXConstructExpr::CK_Complete: {
+    // See if we're constructing an existing region by looking at the next
+    // element in the CFG.
+    const CFGBlock *B = currentBuilderContext->getBlock();
+    if (currentStmtIdx + 1 < B->size()) {
+      CFGElement Next = (*B)[currentStmtIdx+1];
+
+      // Is this a constructor for a local variable?
+      if (const CFGStmt *StmtElem = dyn_cast<CFGStmt>(&Next)) {
+        if (const DeclStmt *DS = dyn_cast<DeclStmt>(StmtElem->getStmt())) {
+          if (const VarDecl *Var = dyn_cast<VarDecl>(DS->getSingleDecl())) {
+            if (Var->getInit()->IgnoreImplicit() == CE) {
+              QualType Ty = Var->getType();
+              if (const ArrayType *AT = getContext().getAsArrayType(Ty)) {
+                // FIXME: Handle arrays, which run the same constructor for
+                // every element. This workaround will just run the first
+                // constructor (which should still invalidate the entire array).
+                SVal Base = State->getLValue(Var, LCtx);
+                Target = State->getLValue(AT->getElementType(),
+                                          getSValBuilder().makeZeroArrayIndex(),
+                                          Base).getAsRegion();
+              } else {
+                Target = State->getLValue(Var, LCtx).getAsRegion();
+              }
+            }
+          }
+        }
+      }
+      
+      // Is this a constructor for a member?
+      if (const CFGInitializer *InitElem = dyn_cast<CFGInitializer>(&Next)) {
+        const CXXCtorInitializer *Init = InitElem->getInitializer();
+        assert(Init->isAnyMemberInitializer());
+
+        const CXXMethodDecl *CurCtor = cast<CXXMethodDecl>(LCtx->getDecl());
+        Loc ThisPtr = getSValBuilder().getCXXThis(CurCtor,
+                                                  LCtx->getCurrentStackFrame());
+        SVal ThisVal = State->getSVal(ThisPtr);
+
+        if (Init->isIndirectMemberInitializer()) {
+          SVal Field = State->getLValue(Init->getIndirectMember(), ThisVal);
+          Target = Field.getAsRegion();
+        } else {
+          SVal Field = State->getLValue(Init->getMember(), ThisVal);
+          Target = Field.getAsRegion();
+        }
+      }
+
+      // FIXME: This will eventually need to handle new-expressions as well.
+    }
+
+    // If we couldn't find an existing region to construct into, we'll just
+    // generate a symbolic region, which is fine.
+
+    break;
+  }
+  case CXXConstructExpr::CK_NonVirtualBase:
+  case CXXConstructExpr::CK_VirtualBase:
+  case CXXConstructExpr::CK_Delegating: {
+    const CXXMethodDecl *CurCtor = cast<CXXMethodDecl>(LCtx->getDecl());
+    Loc ThisPtr = getSValBuilder().getCXXThis(CurCtor,
+                                              LCtx->getCurrentStackFrame());
+    SVal ThisVal = State->getSVal(ThisPtr);
+
+    if (CE->getConstructionKind() == CXXConstructExpr::CK_Delegating) {
+      Target = ThisVal.getAsRegion();
+    } else {
+      // Cast to the base type.
+      QualType BaseTy = CE->getType();
+      SVal BaseVal = getStoreManager().evalDerivedToBase(ThisVal, BaseTy);
+      Target = BaseVal.getAsRegion();
+    }
+    break;
+  }
+  }
+
+  CXXConstructorCall Call(CE, Target, State, LCtx);
 
   ExplodedNodeSet DstPreVisit;
   getCheckerManager().runCheckersForPreStmt(DstPreVisit, Pred, CE, *this);
@@ -65,12 +145,26 @@ void ExprEngine::VisitCXXConstructExpr(const CXXConstructExpr *CE,
   getCheckerManager().runCheckersForPostStmt(destNodes, DstPostCall, CE, *this);
 }
 
-void ExprEngine::VisitCXXDestructor(const CXXDestructorDecl *DD,
-                                      const MemRegion *Dest,
-                                      const Stmt *S,
-                                      ExplodedNode *Pred, 
-                                      ExplodedNodeSet &Dst) {
-  CXXDestructorCall Call(DD, S, Dest, Pred->getState(),
+void ExprEngine::VisitCXXDestructor(QualType ObjectType,
+                                    const MemRegion *Dest,
+                                    const Stmt *S,
+                                    ExplodedNode *Pred, 
+                                    ExplodedNodeSet &Dst) {
+  // FIXME: We need to run the same destructor on every element of the array.
+  // This workaround will just run the first destructor (which will still
+  // invalidate the entire array).
+  if (const ArrayType *AT = getContext().getAsArrayType(ObjectType)) {
+    ObjectType = AT->getElementType();
+    Dest = Pred->getState()->getLValue(ObjectType,
+                                       getSValBuilder().makeZeroArrayIndex(),
+                                       loc::MemRegionVal(Dest)).getAsRegion();
+  }
+
+  const CXXRecordDecl *RecordDecl = ObjectType->getAsCXXRecordDecl();
+  assert(RecordDecl && "Only CXXRecordDecls should have destructors");
+  const CXXDestructorDecl *DtorDecl = RecordDecl->getDestructor();
+
+  CXXDestructorCall Call(DtorDecl, S, Dest, Pred->getState(),
                          Pred->getLocationContext());
 
   ExplodedNodeSet DstPreCall;

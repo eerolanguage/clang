@@ -46,14 +46,17 @@ add_dependencies(clangSema
   ClangARMNeon
   ClangAttrClasses
   ClangAttrList
-  ClangDiagnosticComment
-  ClangDiagnosticSema
-  ClangCommentNodes
-  ClangDeclNodes
-  ClangStmtNodes
-  ClangAttrTemplateInstantiate
   ClangAttrParsedAttrList
   ClangAttrParsedAttrKinds
+  ClangAttrTemplateInstantiate
+  ClangCommentNodes
+  ClangDeclNodes
+  ClangDiagnosticAST
+  ClangDiagnosticComment
+  ClangDiagnosticCommon
+  ClangDiagnosticParse
+  ClangDiagnosticSema
+  ClangStmtNodes
   )
 
 target_link_libraries(clangSema

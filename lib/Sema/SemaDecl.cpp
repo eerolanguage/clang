@@ -4708,11 +4708,6 @@ static bool FindOverriddenMethod(const CXXBaseSpecifier *Specifier,
   return false;
 }
 
-static bool hasDelayedExceptionSpec(CXXMethodDecl *Method) {
-  const FunctionProtoType *Proto =Method->getType()->getAs<FunctionProtoType>();
-  return Proto && Proto->getExceptionSpecType() == EST_Delayed;
-}
-
 /// AddOverriddenMethods - See if a method overrides any in the base classes,
 /// and if so, check that it's a valid override and remember it.
 bool Sema::AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
@@ -4728,8 +4723,7 @@ bool Sema::AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
       if (CXXMethodDecl *OldMD = dyn_cast<CXXMethodDecl>(*I)) {
         MD->addOverriddenMethod(OldMD->getCanonicalDecl());
         if (!CheckOverridingFunctionReturnType(MD, OldMD) &&
-            (hasDelayedExceptionSpec(MD) ||
-             !CheckOverridingFunctionExceptionSpec(MD, OldMD)) &&
+            !CheckOverridingFunctionExceptionSpec(MD, OldMD) &&
             !CheckIfOverriddenFunctionIsMarkedFinal(MD, OldMD)) {
           AddedAny = true;
         }
@@ -6140,10 +6134,11 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
     // compatible, and if it does, warn the user.
     if (NewFD->isExternC()) {
       QualType R = NewFD->getResultType();
-      if (!R.isPODType(Context) && 
-          !R->isVoidType())
-        Diag( NewFD->getLocation(), diag::warn_return_value_udt ) 
-          << NewFD << R;
+      if (R->isIncompleteType() && !R->isVoidType())
+        Diag(NewFD->getLocation(), diag::warn_return_value_udt_incomplete)
+            << NewFD << R;
+      else if (!R.isPODType(Context) && !R->isVoidType())
+        Diag(NewFD->getLocation(), diag::warn_return_value_udt) << NewFD << R;
     }
   }
   return Redeclaration;
@@ -7567,6 +7562,10 @@ static bool ShouldWarnAboutMissingPrototype(const FunctionDecl *FD) {
   if (FD->isFunctionTemplateSpecialization())
     return false;
 
+  // Don't warn for OpenCL kernels.
+  if (FD->hasAttr<OpenCLKernelAttr>())
+    return false;
+  
   bool MissingPrototype = true;
   for (const FunctionDecl *Prev = FD->getPreviousDecl();
        Prev; Prev = Prev->getPreviousDecl()) {

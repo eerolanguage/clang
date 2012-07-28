@@ -103,9 +103,9 @@ namespace {
     KEYOPENCL = 0x200,
     KEYC11 = 0x400,
     KEYARC = 0x800,
-    KEYALL = 0x0fff,
-    KEYNOMS = 0x1000,
-    KEYEERO = 0x10000
+    KEYEERO = 0x1000,
+    KEYNOMS = 0x10000,
+    KEYALL = (0xfffff & ~KEYNOMS) // Because KEYNOMS is used to exclude.
   };
 }
 

@@ -153,12 +153,25 @@ ParamCommandComment *Sema::actOnParamCommandParamNameArg(
   const unsigned ResolvedParamIndex = resolveParmVarReference(Arg, ParamVars);
   if (ResolvedParamIndex != ParamCommandComment::InvalidParamIndex) {
     Command->setParamIndex(ResolvedParamIndex);
+    if (ParamVarDocs[ResolvedParamIndex]) {
+      SourceRange ArgRange(ArgLocBegin, ArgLocEnd);
+      Diag(ArgLocBegin, diag::warn_doc_param_duplicate)
+        << Arg << ArgRange;
+      ParamCommandComment *PrevCommand = ParamVarDocs[ResolvedParamIndex];
+      Diag(PrevCommand->getLocation(), diag::note_doc_param_previous)
+        << PrevCommand->getParamNameRange();
+    }
+    ParamVarDocs[ResolvedParamIndex] = Command;
     return Command;
   }
 
   SourceRange ArgRange(ArgLocBegin, ArgLocEnd);
   Diag(ArgLocBegin, diag::warn_doc_param_not_found)
     << Arg << ArgRange;
+
+  // No parameters -- can't suggest a correction.
+  if (ParamVars.size() == 0)
+    return Command;
 
   unsigned CorrectedParamIndex = ParamCommandComment::InvalidParamIndex;
   if (ParamVars.size() == 1) {
@@ -351,7 +364,6 @@ HTMLEndTagComment *Sema::actOnHTMLEndTag(SourceLocation LocBegin,
 
 FullComment *Sema::actOnFullComment(
                               ArrayRef<BlockContentComment *> Blocks) {
-  SmallVector<ParamCommandComment *, 8> Params;
   return new (Allocator) FullComment(Blocks);
 }
 
@@ -370,22 +382,19 @@ void Sema::checkBlockCommandEmptyParagraph(BlockCommandComment *Command) {
 }
 
 bool Sema::isFunctionDecl() {
-  if (IsThisDeclInspected)
-    return IsFunctionDecl;
-
-  inspectThisDecl();
+  if (!IsThisDeclInspected)
+    inspectThisDecl();
   return IsFunctionDecl;
 }
 
 ArrayRef<const ParmVarDecl *> Sema::getParamVars() {
-  if (IsThisDeclInspected)
-    return ParamVars;
-
-  inspectThisDecl();
+  if (!IsThisDeclInspected)
+    inspectThisDecl();
   return ParamVars;
 }
 
 void Sema::inspectThisDecl() {
+  assert(!IsThisDeclInspected);
   if (!ThisDecl) {
     IsFunctionDecl = false;
     ParamVars = ArrayRef<const ParmVarDecl *>();
@@ -401,6 +410,7 @@ void Sema::inspectThisDecl() {
     IsFunctionDecl = false;
     ParamVars = ArrayRef<const ParmVarDecl *>();
   }
+  ParamVarDocs.resize(ParamVars.size(), NULL);
   IsThisDeclInspected = true;
 }
 
@@ -441,7 +451,7 @@ unsigned Sema::correctTypoInParmVarReference(
   if (BestEditDistance <= MaxEditDistance)
     return BestPVDIndex;
   else
-    return ParamCommandComment::InvalidParamIndex;;
+    return ParamCommandComment::InvalidParamIndex;
 }
 
 // TODO: tablegen

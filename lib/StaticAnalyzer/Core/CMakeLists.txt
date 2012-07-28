@@ -8,7 +8,7 @@ add_clang_library(clangStaticAnalyzerCore
   BlockCounter.cpp
   BugReporter.cpp
   BugReporterVisitors.cpp
-  Calls.cpp
+  CallEvent.cpp
   Checker.cpp
   CheckerContext.cpp
   CheckerHelpers.cpp
@@ -45,6 +45,7 @@ add_dependencies(clangStaticAnalyzerCore
   ClangAttrList
   ClangCommentNodes
   ClangDeclNodes
+  ClangDiagnosticCommon
   ClangStmtNodes
   )
 

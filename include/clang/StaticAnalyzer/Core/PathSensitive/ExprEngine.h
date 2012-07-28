@@ -378,10 +378,10 @@ public:
   void VisitCXXThisExpr(const CXXThisExpr *TE, ExplodedNode *Pred, 
                         ExplodedNodeSet & Dst);
 
-  void VisitCXXConstructExpr(const CXXConstructExpr *E, const MemRegion *Dest,
-                             ExplodedNode *Pred, ExplodedNodeSet &Dst);
+  void VisitCXXConstructExpr(const CXXConstructExpr *E, ExplodedNode *Pred,
+                             ExplodedNodeSet &Dst);
 
-  void VisitCXXDestructor(const CXXDestructorDecl *DD,
+  void VisitCXXDestructor(QualType ObjectType,
                           const MemRegion *Dest, const Stmt *S,
                           ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
@@ -435,11 +435,6 @@ protected:
                        ExplodedNode *Pred, ProgramStateRef state,
                        bool GenSink);
 
-  ProgramStateRef MarkBranch(ProgramStateRef state,
-                                 const Stmt *Terminator,
-                                 const LocationContext *LCtx,
-                                 bool branchTaken);
-
   /// evalBind - Handle the semantics of binding a value to a specific location.
   ///  This method is used by evalStore, VisitDeclStmt, and others.
   void evalBind(ExplodedNodeSet &Dst, const Stmt *StoreE, ExplodedNode *Pred,
@@ -476,7 +471,7 @@ public:
   void evalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
                 const SimpleCall &Call);
 
-  /// \bried Default implementation of call evaluation.
+  /// \brief Default implementation of call evaluation.
   void defaultEvalCall(NodeBuilder &B, ExplodedNode *Pred,
                        const CallEvent &Call);
 private:

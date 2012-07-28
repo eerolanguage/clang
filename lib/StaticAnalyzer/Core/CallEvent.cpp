@@ -13,7 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/Analysis/ProgramPoint.h"
 #include "clang/AST/ParentMap.h"
 #include "llvm/ADT/SmallSet.h"
@@ -193,16 +193,49 @@ ProgramPoint CallEvent::getProgramPoint(bool IsPreVisit,
   return PostImplicitCall(D, Loc, getLocationContext(), Tag);
 }
 
+SVal CallEvent::getArgSVal(unsigned Index) const {
+  const Expr *ArgE = getArgExpr(Index);
+  if (!ArgE)
+    return UnknownVal();
+  return getSVal(ArgE);
+}
+
+SourceRange CallEvent::getArgSourceRange(unsigned Index) const {
+  const Expr *ArgE = getArgExpr(Index);
+  if (!ArgE)
+    return SourceRange();
+  return ArgE->getSourceRange();
+}
+
+void CallEvent::dump(raw_ostream &Out) const {
+  ASTContext &Ctx = getState()->getStateManager().getContext();
+  if (const Expr *E = getOriginExpr()) {
+    E->printPretty(Out, Ctx, 0, Ctx.getPrintingPolicy());
+    Out << "\n";
+    return;
+  }
+
+  if (const Decl *D = getDecl()) {
+    Out << "Call to ";
+    D->print(Out, Ctx.getPrintingPolicy());
+    return;
+  }
+
+  // FIXME: a string representation of the kind would be nice.
+  Out << "Unknown call (type " << getKind() << ")";
+}
+
 
 bool CallEvent::mayBeInlined(const Stmt *S) {
-  return isa<CallExpr>(S);
+  // FIXME: Kill this.
+  return isa<CallExpr>(S) || isa<ObjCMessageExpr>(S)
+                          || isa<CXXConstructExpr>(S);
 }
 
 
 CallEvent::param_iterator
 AnyFunctionCall::param_begin(bool UseDefinitionParams) const {
-  bool IgnoredDynamicDispatch;
-  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
                                       : getDecl();
   if (!D)
     return 0;
@@ -212,8 +245,7 @@ AnyFunctionCall::param_begin(bool UseDefinitionParams) const {
 
 CallEvent::param_iterator
 AnyFunctionCall::param_end(bool UseDefinitionParams) const {
-  bool IgnoredDynamicDispatch;
-  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
                                       : getDecl();
   if (!D)
     return 0;
@@ -285,20 +317,6 @@ bool AnyFunctionCall::argumentsMayEscape() const {
   return false;
 }
 
-SVal AnyFunctionCall::getArgSVal(unsigned Index) const {
-  const Expr *ArgE = getArgExpr(Index);
-  if (!ArgE)
-    return UnknownVal();
-  return getSVal(ArgE);
-}
-
-SourceRange AnyFunctionCall::getArgSourceRange(unsigned Index) const {
-  const Expr *ArgE = getArgExpr(Index);
-  if (!ArgE)
-    return SourceRange();
-  return ArgE->getSourceRange();
-}
-
 
 const FunctionDecl *SimpleCall::getDecl() const {
   const FunctionDecl *D = getOriginExpr()->getDirectCallee();
@@ -306,24 +324,6 @@ const FunctionDecl *SimpleCall::getDecl() const {
     return D;
 
   return getSVal(getOriginExpr()->getCallee()).getAsFunctionDecl();
-}
-
-void CallEvent::dump(raw_ostream &Out) const {
-  ASTContext &Ctx = getState()->getStateManager().getContext();
-  if (const Expr *E = getOriginExpr()) {
-    E->printPretty(Out, Ctx, 0, Ctx.getLangOpts());
-    Out << "\n";
-    return;
-  }
-
-  if (const Decl *D = getDecl()) {
-    Out << "Call to ";
-    D->print(Out, Ctx.getLangOpts());
-    return;
-  }
-
-  // FIXME: a string representation of the kind would be nice.
-  Out << "Unknown call (type " << getKind() << ")";
 }
 
 
@@ -354,8 +354,8 @@ static const CXXMethodDecl *devirtualize(const CXXMethodDecl *MD, SVal ThisVal){
 }
 
 
-const Decl *CXXInstanceCall::getDefinition(bool &IsDynamicDispatch) const {
-  const Decl *D = SimpleCall::getDefinition(IsDynamicDispatch);
+const Decl *CXXInstanceCall::getRuntimeDefinition() const {
+  const Decl *D = SimpleCall::getRuntimeDefinition();
   if (!D)
     return 0;
 
@@ -368,8 +368,7 @@ const Decl *CXXInstanceCall::getDefinition(bool &IsDynamicDispatch) const {
   if (const CXXMethodDecl *Devirtualized = devirtualize(MD, getCXXThisVal()))
     return Devirtualized;
 
-  IsDynamicDispatch = true;
-  return MD;
+  return 0;
 }
 
 
@@ -458,8 +457,8 @@ void CXXDestructorCall::getExtraInvalidatedRegions(RegionList &Regions) const {
     Regions.push_back(static_cast<const MemRegion *>(Data));
 }
 
-const Decl *CXXDestructorCall::getDefinition(bool &IsDynamicDispatch) const {
-  const Decl *D = AnyFunctionCall::getDefinition(IsDynamicDispatch);
+const Decl *CXXDestructorCall::getRuntimeDefinition() const {
+  const Decl *D = AnyFunctionCall::getRuntimeDefinition();
   if (!D)
     return 0;
 
@@ -472,15 +471,13 @@ const Decl *CXXDestructorCall::getDefinition(bool &IsDynamicDispatch) const {
   if (const CXXMethodDecl *Devirtualized = devirtualize(MD, getCXXThisVal()))
     return Devirtualized;
 
-  IsDynamicDispatch = true;
-  return MD;
+  return 0;
 }
 
 
 CallEvent::param_iterator
 ObjCMethodCall::param_begin(bool UseDefinitionParams) const {
-  bool IgnoredDynamicDispatch;
-  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
                                       : getDecl();
   if (!D)
     return 0;
@@ -490,8 +487,7 @@ ObjCMethodCall::param_begin(bool UseDefinitionParams) const {
 
 CallEvent::param_iterator
 ObjCMethodCall::param_end(bool UseDefinitionParams) const {
-  bool IgnoredDynamicDispatch;
-  const Decl *D = UseDefinitionParams ? getDefinition(IgnoredDynamicDispatch)
+  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
                                       : getDecl();
   if (!D)
     return 0;
@@ -593,3 +589,34 @@ ObjCMessageKind ObjCMethodCall::getMessageKind() const {
     return OCM_Message;
   return static_cast<ObjCMessageKind>(Info.getInt());
 }
+
+// TODO: This implementation is copied from SemaExprObjC.cpp, needs to be
+// factored into the ObjCInterfaceDecl.
+ObjCMethodDecl *ObjCMethodCall::LookupClassMethodDefinition(Selector Sel,
+                                           ObjCInterfaceDecl *ClassDecl) const {
+  ObjCMethodDecl *Method = 0;
+  // Lookup in class and all superclasses.
+  while (ClassDecl && !Method) {
+    if (ObjCImplementationDecl *ImpDecl = ClassDecl->getImplementation())
+      Method = ImpDecl->getClassMethod(Sel);
+
+    // Look through local category implementations associated with the class.
+    if (!Method)
+      Method = ClassDecl->getCategoryClassMethod(Sel);
+
+    // Before we give up, check if the selector is an instance method.
+    // But only in the root. This matches gcc's behavior and what the
+    // runtime expects.
+    if (!Method && !ClassDecl->getSuperClass()) {
+      Method = ClassDecl->lookupInstanceMethod(Sel);
+      // Look through local category implementations associated
+      // with the root class.
+      //if (!Method)
+      //  Method = LookupPrivateInstanceMethod(Sel, ClassDecl);
+    }
+
+    ClassDecl = ClassDecl->getSuperClass();
+  }
+  return Method;
+}
+

@@ -838,6 +838,19 @@ namespace {
       return move(Result);
     }
 
+    ExprResult TransformLambdaExpr(LambdaExpr *E) {
+      LocalInstantiationScope Scope(SemaRef, /*CombineWithOuterScope=*/true);
+      return TreeTransform<TemplateInstantiator>::TransformLambdaExpr(E);
+    }
+
+    ExprResult TransformLambdaScope(LambdaExpr *E,
+                                    CXXMethodDecl *CallOperator) {
+      CallOperator->setInstantiationOfMemberFunction(E->getCallOperator(),
+                                                     TSK_ImplicitInstantiation);
+      return TreeTransform<TemplateInstantiator>::
+         TransformLambdaScope(E, CallOperator);
+    }
+
   private:
     ExprResult transformNonTypeTemplateParmRef(NonTypeTemplateParmDecl *parm,
                                                SourceLocation loc,
@@ -1983,8 +1996,7 @@ Sema::InstantiateClass(SourceLocation PointOfInstantiation,
   Instantiator.disableLateAttributeInstantiation();
   LateAttrs.clear();
 
-  if (!FieldsWithMemberInitializers.empty())
-    ActOnFinishDelayedMemberInitializers(Instantiation);
+  ActOnFinishDelayedMemberInitializers(Instantiation);
 
   if (TSK == TSK_ImplicitInstantiation) {
     Instantiation->setLocation(Pattern->getLocation());

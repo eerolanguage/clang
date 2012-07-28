@@ -857,8 +857,11 @@ public:
   static void printGroup(Decl** Begin, unsigned NumDecls,
                          raw_ostream &Out, const PrintingPolicy &Policy,
                          unsigned Indentation = 0);
-  LLVM_ATTRIBUTE_USED void dump() const;
-  LLVM_ATTRIBUTE_USED void dumpXML() const;
+  // Debuggers don't usually respect default arguments.
+  LLVM_ATTRIBUTE_USED void dump() const { dump(llvm::errs()); }
+  void dump(raw_ostream &Out) const;
+  // Debuggers don't usually respect default arguments.
+  LLVM_ATTRIBUTE_USED void dumpXML() const { dumpXML(llvm::errs()); }
   void dumpXML(raw_ostream &OS) const;
 
 private:
