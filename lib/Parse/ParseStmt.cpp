@@ -566,7 +566,6 @@ StmtResult Parser::ParseLabeledStatement(ParsedAttributesWithRange &attrs) {
 ///
 StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
   assert((MissingCase || Tok.is(tok::kw_case)) && "Not a case stmt!");
-  SourceLocation FirstCaseLoc = Tok.getLocation(); // used by Eero
 
   // It is very very common for code to contain many case statements recursively
   // nested, as in (but usually without indentation):
