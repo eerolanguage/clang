@@ -232,25 +232,53 @@ bool CallEvent::mayBeInlined(const Stmt *S) {
                           || isa<CXXConstructExpr>(S);
 }
 
+static void addParameterValuesToBindings(const StackFrameContext *CalleeCtx,
+                                         CallEvent::BindingsTy &Bindings,
+                                         SValBuilder &SVB,
+                                         const CallEvent &Call,
+                                         CallEvent::param_iterator I,
+                                         CallEvent::param_iterator E) {
+  MemRegionManager &MRMgr = SVB.getRegionManager();
 
-CallEvent::param_iterator
-AnyFunctionCall::param_begin(bool UseDefinitionParams) const {
-  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
-                                      : getDecl();
-  if (!D)
-    return 0;
+  unsigned Idx = 0;
+  for (; I != E; ++I, ++Idx) {
+    const ParmVarDecl *ParamDecl = *I;
+    assert(ParamDecl && "Formal parameter has no decl?");
 
-  return cast<FunctionDecl>(D)->param_begin();
+    SVal ArgVal = Call.getArgSVal(Idx);
+    if (!ArgVal.isUnknown()) {
+      Loc ParamLoc = SVB.makeLoc(MRMgr.getVarRegion(ParamDecl, CalleeCtx));
+      Bindings.push_back(std::make_pair(ParamLoc, ArgVal));
+    }
+  }
+
+  // FIXME: Variadic arguments are not handled at all right now.
 }
 
-CallEvent::param_iterator
-AnyFunctionCall::param_end(bool UseDefinitionParams) const {
-  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
-                                      : getDecl();
+
+CallEvent::param_iterator AnyFunctionCall::param_begin() const {
+  const FunctionDecl *D = getDecl();
   if (!D)
     return 0;
 
-  return cast<FunctionDecl>(D)->param_end();
+  return D->param_begin();
+}
+
+CallEvent::param_iterator AnyFunctionCall::param_end() const {
+  const FunctionDecl *D = getDecl();
+  if (!D)
+    return 0;
+
+  return D->param_end();
+}
+
+void AnyFunctionCall::getInitialStackFrameContents(
+                                        const StackFrameContext *CalleeCtx,
+                                        BindingsTy &Bindings) const {
+  const FunctionDecl *D = cast<FunctionDecl>(CalleeCtx->getDecl());
+  SValBuilder &SVB = getState()->getStateManager().getSValBuilder();
+  addParameterValuesToBindings(CalleeCtx, Bindings, SVB, *this,
+                               D->param_begin(), D->param_end());
 }
 
 QualType AnyFunctionCall::getDeclaredResultType() const {
@@ -365,11 +393,30 @@ const Decl *CXXInstanceCall::getRuntimeDefinition() const {
 
   // If the method is virtual, see if we can find the actual implementation
   // based on context-sensitivity.
+  // FIXME: Virtual method calls behave differently when an object is being
+  // constructed or destructed. It's not as simple as "no devirtualization"
+  // because a /partially/ constructed object can be referred to through a
+  // base pointer. We'll eventually want to use DynamicTypeInfo here.
   if (const CXXMethodDecl *Devirtualized = devirtualize(MD, getCXXThisVal()))
     return Devirtualized;
 
   return 0;
 }
+
+void CXXInstanceCall::getInitialStackFrameContents(
+                                            const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const {
+  AnyFunctionCall::getInitialStackFrameContents(CalleeCtx, Bindings);
+
+  SVal ThisVal = getCXXThisVal();
+  if (!ThisVal.isUnknown()) {
+    SValBuilder &SVB = getState()->getStateManager().getSValBuilder();
+    const CXXMethodDecl *MD = cast<CXXMethodDecl>(CalleeCtx->getDecl());
+    Loc ThisLoc = SVB.getCXXThis(MD, CalleeCtx);
+    Bindings.push_back(std::make_pair(ThisLoc, ThisVal));
+  }
+}
+
 
 
 SVal CXXMemberCall::getCXXThisVal() const {
@@ -397,22 +444,14 @@ const BlockDataRegion *BlockCall::getBlockRegion() const {
   return dyn_cast_or_null<BlockDataRegion>(DataReg);
 }
 
-CallEvent::param_iterator
-BlockCall::param_begin(bool UseDefinitionParams) const {
-  // Blocks don't have distinct declarations and definitions.
-  (void)UseDefinitionParams;
-
+CallEvent::param_iterator BlockCall::param_begin() const {
   const BlockDecl *D = getBlockDecl();
   if (!D)
     return 0;
   return D->param_begin();
 }
 
-CallEvent::param_iterator
-BlockCall::param_end(bool UseDefinitionParams) const {
-  // Blocks don't have distinct declarations and definitions.
-  (void)UseDefinitionParams;
-
+CallEvent::param_iterator BlockCall::param_end() const {
   const BlockDecl *D = getBlockDecl();
   if (!D)
     return 0;
@@ -424,6 +463,15 @@ void BlockCall::getExtraInvalidatedRegions(RegionList &Regions) const {
   if (const MemRegion *R = getBlockRegion())
     Regions.push_back(R);
 }
+
+void BlockCall::getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                             BindingsTy &Bindings) const {
+  const BlockDecl *D = cast<BlockDecl>(CalleeCtx->getDecl());
+  SValBuilder &SVB = getState()->getStateManager().getSValBuilder();
+  addParameterValuesToBindings(CalleeCtx, Bindings, SVB, *this,
+                               D->param_begin(), D->param_end());
+}
+
 
 QualType BlockCall::getDeclaredResultType() const {
   const BlockDataRegion *BR = getBlockRegion();
@@ -444,6 +492,21 @@ void CXXConstructorCall::getExtraInvalidatedRegions(RegionList &Regions) const {
   if (Data)
     Regions.push_back(static_cast<const MemRegion *>(Data));
 }
+
+void CXXConstructorCall::getInitialStackFrameContents(
+                                             const StackFrameContext *CalleeCtx,
+                                             BindingsTy &Bindings) const {
+  AnyFunctionCall::getInitialStackFrameContents(CalleeCtx, Bindings);
+
+  SVal ThisVal = getCXXThisVal();
+  if (!ThisVal.isUnknown()) {
+    SValBuilder &SVB = getState()->getStateManager().getSValBuilder();
+    const CXXMethodDecl *MD = cast<CXXMethodDecl>(CalleeCtx->getDecl());
+    Loc ThisLoc = SVB.getCXXThis(MD, CalleeCtx);
+    Bindings.push_back(std::make_pair(ThisLoc, ThisVal));
+  }
+}
+
 
 
 SVal CXXDestructorCall::getCXXThisVal() const {
@@ -468,31 +531,45 @@ const Decl *CXXDestructorCall::getRuntimeDefinition() const {
 
   // If the method is virtual, see if we can find the actual implementation
   // based on context-sensitivity.
+  // FIXME: Virtual method calls behave differently when an object is being
+  // constructed or destructed. It's not as simple as "no devirtualization"
+  // because a /partially/ constructed object can be referred to through a
+  // base pointer. We'll eventually want to use DynamicTypeInfo here.
   if (const CXXMethodDecl *Devirtualized = devirtualize(MD, getCXXThisVal()))
     return Devirtualized;
 
   return 0;
 }
 
+void CXXDestructorCall::getInitialStackFrameContents(
+                                             const StackFrameContext *CalleeCtx,
+                                             BindingsTy &Bindings) const {
+  AnyFunctionCall::getInitialStackFrameContents(CalleeCtx, Bindings);
 
-CallEvent::param_iterator
-ObjCMethodCall::param_begin(bool UseDefinitionParams) const {
-  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
-                                      : getDecl();
-  if (!D)
-    return 0;
-
-  return cast<ObjCMethodDecl>(D)->param_begin();
+  SVal ThisVal = getCXXThisVal();
+  if (!ThisVal.isUnknown()) {
+    SValBuilder &SVB = getState()->getStateManager().getSValBuilder();
+    const CXXMethodDecl *MD = cast<CXXMethodDecl>(CalleeCtx->getDecl());
+    Loc ThisLoc = SVB.getCXXThis(MD, CalleeCtx);
+    Bindings.push_back(std::make_pair(ThisLoc, ThisVal));
+  }
 }
 
-CallEvent::param_iterator
-ObjCMethodCall::param_end(bool UseDefinitionParams) const {
-  const Decl *D = UseDefinitionParams ? getRuntimeDefinition()
-                                      : getDecl();
+
+CallEvent::param_iterator ObjCMethodCall::param_begin() const {
+  const ObjCMethodDecl *D = getDecl();
   if (!D)
     return 0;
 
-  return cast<ObjCMethodDecl>(D)->param_end();
+  return D->param_begin();
+}
+
+CallEvent::param_iterator ObjCMethodCall::param_end() const {
+  const ObjCMethodDecl *D = getDecl();
+  if (!D)
+    return 0;
+
+  return D->param_end();
 }
 
 void
@@ -590,33 +667,137 @@ ObjCMessageKind ObjCMethodCall::getMessageKind() const {
   return static_cast<ObjCMessageKind>(Info.getInt());
 }
 
-// TODO: This implementation is copied from SemaExprObjC.cpp, needs to be
-// factored into the ObjCInterfaceDecl.
-ObjCMethodDecl *ObjCMethodCall::LookupClassMethodDefinition(Selector Sel,
-                                           ObjCInterfaceDecl *ClassDecl) const {
-  ObjCMethodDecl *Method = 0;
-  // Lookup in class and all superclasses.
-  while (ClassDecl && !Method) {
-    if (ObjCImplementationDecl *ImpDecl = ClassDecl->getImplementation())
-      Method = ImpDecl->getClassMethod(Sel);
+const Decl *ObjCMethodCall::getRuntimeDefinition() const {
+  const ObjCMessageExpr *E = getOriginExpr();
+  assert(E);
+  Selector Sel = E->getSelector();
 
-    // Look through local category implementations associated with the class.
-    if (!Method)
-      Method = ClassDecl->getCategoryClassMethod(Sel);
+  if (E->isInstanceMessage()) {
 
-    // Before we give up, check if the selector is an instance method.
-    // But only in the root. This matches gcc's behavior and what the
-    // runtime expects.
-    if (!Method && !ClassDecl->getSuperClass()) {
-      Method = ClassDecl->lookupInstanceMethod(Sel);
-      // Look through local category implementations associated
-      // with the root class.
-      //if (!Method)
-      //  Method = LookupPrivateInstanceMethod(Sel, ClassDecl);
+    // Find the the receiver type.
+    const ObjCObjectPointerType *ReceiverT = 0;
+    QualType SupersType = E->getSuperType();
+    if (!SupersType.isNull()) {
+      ReceiverT = cast<ObjCObjectPointerType>(SupersType.getTypePtr());
+    } else {
+      const MemRegion *Receiver = getReceiverSVal().getAsRegion();
+      if (!Receiver)
+        return 0;
+
+      DynamicTypeInfo TI = getState()->getDynamicTypeInfo(Receiver);
+      ReceiverT = dyn_cast<ObjCObjectPointerType>(TI.getType().getTypePtr());
     }
 
-    ClassDecl = ClassDecl->getSuperClass();
+    // Lookup the method implementation.
+    if (ReceiverT)
+      if (ObjCInterfaceDecl *IDecl = ReceiverT->getInterfaceDecl())
+        return IDecl->lookupPrivateMethod(Sel);
+
+  } else {
+    // This is a class method.
+    // If we have type info for the receiver class, we are calling via
+    // class name.
+    if (ObjCInterfaceDecl *IDecl = E->getReceiverInterface()) {
+      // Find/Return the method implementation.
+      return IDecl->lookupPrivateClassMethod(Sel);
+    }
   }
-  return Method;
+
+  return 0;
+}
+
+void ObjCMethodCall::getInitialStackFrameContents(
+                                             const StackFrameContext *CalleeCtx,
+                                             BindingsTy &Bindings) const {
+  const ObjCMethodDecl *D = cast<ObjCMethodDecl>(CalleeCtx->getDecl());
+  SValBuilder &SVB = getState()->getStateManager().getSValBuilder();
+  addParameterValuesToBindings(CalleeCtx, Bindings, SVB, *this,
+                               D->param_begin(), D->param_end());
+
+  SVal SelfVal = getReceiverSVal();
+  if (!SelfVal.isUnknown()) {
+    const VarDecl *SelfD = CalleeCtx->getAnalysisDeclContext()->getSelfDecl();
+    MemRegionManager &MRMgr = SVB.getRegionManager();
+    Loc SelfLoc = SVB.makeLoc(MRMgr.getVarRegion(SelfD, CalleeCtx));
+    Bindings.push_back(std::make_pair(SelfLoc, SelfVal));
+  }
+}
+
+
+CallEventRef<SimpleCall>
+CallEventManager::getSimpleCall(const CallExpr *CE, ProgramStateRef State,
+                                const LocationContext *LCtx) {
+  if (const CXXMemberCallExpr *MCE = dyn_cast<CXXMemberCallExpr>(CE))
+    return create<CXXMemberCall>(MCE, State, LCtx);
+
+  if (const CXXOperatorCallExpr *OpCE = dyn_cast<CXXOperatorCallExpr>(CE)) {
+    const FunctionDecl *DirectCallee = OpCE->getDirectCallee();
+    if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(DirectCallee))
+      if (MD->isInstance())
+        return create<CXXMemberOperatorCall>(OpCE, State, LCtx);
+
+  } else if (CE->getCallee()->getType()->isBlockPointerType()) {
+    return create<BlockCall>(CE, State, LCtx);
+  }
+
+  // Otherwise, it's a normal function call, static member function call, or
+  // something we can't reason about.
+  return create<FunctionCall>(CE, State, LCtx);
+}
+
+
+CallEventRef<>
+CallEventManager::getCaller(const StackFrameContext *CalleeCtx,
+                            ProgramStateRef State) {
+  const LocationContext *ParentCtx = CalleeCtx->getParent();
+  const LocationContext *CallerCtx = ParentCtx->getCurrentStackFrame();
+  assert(CallerCtx && "This should not be used for top-level stack frames");
+
+  const Stmt *CallSite = CalleeCtx->getCallSite();
+
+  if (CallSite) {
+    if (const CallExpr *CE = dyn_cast<CallExpr>(CallSite))
+      return getSimpleCall(CE, State, CallerCtx);
+
+    switch (CallSite->getStmtClass()) {
+    case Stmt::CXXConstructExprClass: {
+      SValBuilder &SVB = State->getStateManager().getSValBuilder();
+      const CXXMethodDecl *Ctor = cast<CXXMethodDecl>(CalleeCtx->getDecl());
+      Loc ThisPtr = SVB.getCXXThis(Ctor, CalleeCtx);
+      SVal ThisVal = State->getSVal(ThisPtr);
+
+      return getCXXConstructorCall(cast<CXXConstructExpr>(CallSite),
+                                   ThisVal.getAsRegion(), State, CallerCtx);
+    }
+    case Stmt::CXXNewExprClass:
+      return getCXXAllocatorCall(cast<CXXNewExpr>(CallSite), State, CallerCtx);
+    case Stmt::ObjCMessageExprClass:
+      return getObjCMethodCall(cast<ObjCMessageExpr>(CallSite),
+                               State, CallerCtx);
+    default:
+      llvm_unreachable("This is not an inlineable statement.");
+    }
+  }
+
+  // Fall back to the CFG. The only thing we haven't handled yet is
+  // destructors, though this could change in the future.
+  const CFGBlock *B = CalleeCtx->getCallSiteBlock();
+  CFGElement E = (*B)[CalleeCtx->getIndex()];
+  assert(isa<CFGImplicitDtor>(E) && "All other CFG elements should have exprs");
+  assert(!isa<CFGTemporaryDtor>(E) && "We don't handle temporaries yet");
+
+  SValBuilder &SVB = State->getStateManager().getSValBuilder();
+  const CXXDestructorDecl *Dtor = cast<CXXDestructorDecl>(CalleeCtx->getDecl());
+  Loc ThisPtr = SVB.getCXXThis(Dtor, CalleeCtx);
+  SVal ThisVal = State->getSVal(ThisPtr);
+
+  const Stmt *Trigger;
+  if (const CFGAutomaticObjDtor *AutoDtor = dyn_cast<CFGAutomaticObjDtor>(&E))
+    Trigger = AutoDtor->getTriggerStmt();
+  else
+    Trigger = Dtor->getBody();
+
+  return getCXXDestructorCall(Dtor, Trigger, ThisVal.getAsRegion(),
+                              State, CallerCtx);
 }
 

@@ -19,12 +19,11 @@
 #include "clang/AST/Comment.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Allocator.h"
 
 namespace clang {
 class Decl;
-class FunctionDecl;
-class ParmVarDecl;
 class SourceMgr;
 
 namespace comments {
@@ -41,28 +40,21 @@ class Sema {
 
   DiagnosticsEngine &Diags;
 
-  /// Declaration this comment is attached to.
-  const Decl *ThisDecl;
-
-  /// Parameters that can be referenced by \\param if \c ThisDecl is something
-  /// that we consider a "function".
-  /// Contains a valid value if \c IsThisDeclInspected is true.
-  ArrayRef<const ParmVarDecl *> ParamVars;
+  /// Information about the declaration this comment is attached to.
+  DeclInfo *ThisDeclInfo;
 
   /// Comment AST nodes that correspond to \c ParamVars for which we have
   /// found a \\param command or NULL if no documentation was found so far.
   ///
-  /// Has correct size and contains valid values if \c IsThisDeclInspected is
+  /// Has correct size and contains valid values if \c DeclInfo->IsFilled is
   /// true.
   llvm::SmallVector<ParamCommandComment *, 8> ParamVarDocs;
 
-  /// True if we extracted all important information from \c ThisDecl into
-  /// \c Sema members.
-  unsigned IsThisDeclInspected : 1;
-
-  /// Is \c ThisDecl something that we consider a "function".
-  /// Contains a valid value if \c IsThisDeclInspected is true.
-  unsigned IsFunctionDecl : 1;
+  /// Comment AST nodes that correspond to parameter names in
+  /// \c TemplateParameters.
+  ///
+  /// Contains a valid value if \c DeclInfo->IsFilled is true.
+  llvm::StringMap<TParamCommandComment *> TemplateParameterDocs;
 
   DiagnosticBuilder Diag(SourceLocation Loc, unsigned DiagID) {
     return Diags.Report(Loc, DiagID);
@@ -77,6 +69,18 @@ public:
        DiagnosticsEngine &Diags);
 
   void setDecl(const Decl *D);
+
+  /// Returns a copy of array, owned by Sema's allocator.
+  template<typename T>
+  ArrayRef<T> copyArray(ArrayRef<T> Source) {
+    size_t Size = Source.size();
+    if (Size != 0) {
+      T *Mem = Allocator.Allocate<T>(Size);
+      std::uninitialized_copy(Source.begin(), Source.end(), Mem);
+      return llvm::makeArrayRef(Mem, Size);
+    } else
+      return llvm::makeArrayRef(static_cast<T *>(NULL), 0);
+  }
 
   ParagraphComment *actOnParagraphComment(
       ArrayRef<InlineContentComment *> Content);
@@ -110,6 +114,19 @@ public:
 
   ParamCommandComment *actOnParamCommandFinish(ParamCommandComment *Command,
                                                ParagraphComment *Paragraph);
+
+  TParamCommandComment *actOnTParamCommandStart(SourceLocation LocBegin,
+                                                SourceLocation LocEnd,
+                                                StringRef Name);
+
+  TParamCommandComment *actOnTParamCommandParamNameArg(
+                                            TParamCommandComment *Command,
+                                            SourceLocation ArgLocBegin,
+                                            SourceLocation ArgLocEnd,
+                                            StringRef Arg);
+
+  TParamCommandComment *actOnTParamCommandFinish(TParamCommandComment *Command,
+                                                 ParagraphComment *Paragraph);
 
   InlineCommandComment *actOnInlineCommand(SourceLocation CommandLocBegin,
                                            SourceLocation CommandLocEnd,
@@ -165,10 +182,12 @@ public:
   void checkBlockCommandEmptyParagraph(BlockCommandComment *Command);
 
   bool isFunctionDecl();
+  bool isTemplateDecl();
+
   ArrayRef<const ParmVarDecl *> getParamVars();
 
-  /// Extract all important semantic information from \c ThisDecl into
-  /// \c Sema members.
+  /// Extract all important semantic information from
+  /// \c ThisDeclInfo->ThisDecl into \c ThisDeclInfo members.
   void inspectThisDecl();
 
   /// Returns index of a function parameter with a given name.
@@ -180,8 +199,17 @@ public:
   unsigned correctTypoInParmVarReference(StringRef Typo,
                                          ArrayRef<const ParmVarDecl *> ParamVars);
 
+  bool resolveTParamReference(StringRef Name,
+                              const TemplateParameterList *TemplateParameters,
+                              SmallVectorImpl<unsigned> *Position);
+
+  StringRef correctTypoInTParamReference(
+                              StringRef Typo,
+                              const TemplateParameterList *TemplateParameters);
+
   bool isBlockCommand(StringRef Name);
   bool isParamCommand(StringRef Name);
+  bool isTParamCommand(StringRef Name);
   unsigned getBlockCommandNumArgs(StringRef Name);
 
   bool isInlineCommand(StringRef Name) const;

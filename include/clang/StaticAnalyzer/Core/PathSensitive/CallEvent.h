@@ -47,9 +47,36 @@ enum CallEventKind {
   CE_ObjCMessage
 };
 
+class CallEvent;
+class CallEventManager;
+
+template<typename T = CallEvent>
+class CallEventRef : public IntrusiveRefCntPtr<const T> {
+public:
+  CallEventRef(const T *Call) : IntrusiveRefCntPtr<const T>(Call) {}
+  CallEventRef(const CallEventRef &Orig) : IntrusiveRefCntPtr<const T>(Orig) {}
+
+  CallEventRef<T> cloneWithState(ProgramStateRef State) const {
+    return this->getPtr()->template cloneWithState<T>(State);
+  }
+
+  // Allow implicit conversions to a superclass type, since CallEventRef
+  // behaves like a pointer-to-const.
+  template <typename SuperT>
+  operator CallEventRef<SuperT> () const {
+    return this->getPtr();
+  }
+};
 
 /// \brief Represents an abstract call to a function or method along a
 /// particular path.
+///
+/// CallEvents are created through the factory methods of CallEventManager.
+///
+/// CallEvents should always be cheap to create and destroy. In order for
+/// CallEventManager to be able to re-use CallEvent-sized memory blocks,
+/// subclasses of CallEvent may not add any data members to the base class.
+/// Use the "Data" and "Location" fields instead.
 class CallEvent {
 public:
   typedef CallEventKind Kind;
@@ -59,20 +86,39 @@ private:
   const LocationContext *LCtx;
   llvm::PointerUnion<const Expr *, const Decl *> Origin;
 
-  // DO NOT IMPLEMENT! CallEvents should not be copied.
-  CallEvent(const CallEvent &);
+  // DO NOT IMPLEMENT
   CallEvent &operator=(const CallEvent &);
 
 protected:
   // This is user data for subclasses.
   const void *Data;
+
+  // This is user data for subclasses.
+  // This should come right before RefCount, so that the two fields can be
+  // packed together on LP64 platforms.
   SourceLocation Location;
 
+private:
+  mutable unsigned RefCount;
+
+  template <typename T> friend struct llvm::IntrusiveRefCntPtrInfo;
+  void Retain() const { ++RefCount; }
+  void Release() const;
+
+protected:
+  friend class CallEventManager;
+
   CallEvent(const Expr *E, ProgramStateRef state, const LocationContext *lctx)
-    : State(state), LCtx(lctx), Origin(E) {}
+    : State(state), LCtx(lctx), Origin(E), RefCount(0) {}
 
   CallEvent(const Decl *D, ProgramStateRef state, const LocationContext *lctx)
-    : State(state), LCtx(lctx), Origin(D) {}
+    : State(state), LCtx(lctx), Origin(D), RefCount(0) {}
+
+  // DO NOT MAKE PUBLIC
+  CallEvent(const CallEvent &Original)
+    : State(Original.State), LCtx(Original.LCtx), Origin(Original.Origin),
+      Data(Original.Data), Location(Original.Location), RefCount(0) {}
+
 
   ProgramStateRef getState() const {
     return State;
@@ -83,10 +129,14 @@ protected:
   }
 
 
+  /// Copies this CallEvent, with vtable intact, into a new block of memory.
+  virtual void cloneTo(void *Dest) const = 0;
+
   /// \brief Get the value of arbitrary expressions at this point in the path.
   SVal getSVal(const Stmt *S) const {
     return getState()->getSVal(S, getLocationContext());
   }
+
 
   typedef SmallVectorImpl<const MemRegion *> RegionList;
 
@@ -168,12 +218,6 @@ public:
   /// \brief Returns the result type, adjusted for references.
   QualType getResultType() const;
 
-  /// \brief Returns the value of the implicit 'this' object, or UndefinedVal if
-  /// this is not a C++ member function call.
-  virtual SVal getCXXThisVal() const {
-    return UndefinedVal();
-  }
-
   /// \brief Returns true if any of the arguments appear to represent callbacks.
   bool hasNonZeroCallbackArg() const;
 
@@ -196,6 +240,23 @@ public:
   /// occurred.
   ProgramStateRef invalidateRegions(unsigned BlockCount,
                                     ProgramStateRef Orig = 0) const;
+
+  typedef std::pair<Loc, SVal> FrameBindingTy;
+  typedef SmallVectorImpl<FrameBindingTy> BindingsTy;
+
+  /// Populates the given SmallVector with the bindings in the callee's stack
+  /// frame at the start of this call.
+  virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const = 0;
+
+  /// Returns a copy of this CallEvent, but using the given state.
+  template <typename T>
+  CallEventRef<T> cloneWithState(ProgramStateRef NewState) const;
+
+  /// Returns a copy of this CallEvent, but using the given state.
+  CallEventRef<> cloneWithState(ProgramStateRef NewState) const {
+    return cloneWithState<CallEvent>(NewState);
+  }
 
   /// \brief Returns true if this is a statement that can be considered for
   /// inlining.
@@ -225,9 +286,9 @@ public:
   /// If the call has no accessible declaration (or definition, if
   /// \p UseDefinitionParams is set), \c param_begin() will be equal to
   /// \c param_end().
-  virtual param_iterator param_begin(bool UseDefinitionParams = false) const =0;
+  virtual param_iterator param_begin() const =0;
   /// \sa param_begin()
-  virtual param_iterator param_end(bool UseDefinitionParams = false) const = 0;
+  virtual param_iterator param_end() const = 0;
 
   typedef llvm::mapped_iterator<param_iterator, get_type_fun>
     param_type_iterator;
@@ -264,6 +325,7 @@ protected:
   AnyFunctionCall(const Decl *D, ProgramStateRef St,
                   const LocationContext *LCtx)
     : CallEvent(D, St, LCtx) {}
+  AnyFunctionCall(const AnyFunctionCall &Other) : CallEvent(Other) {}
 
   virtual QualType getDeclaredResultType() const;
 
@@ -284,8 +346,11 @@ public:
 
   virtual bool argumentsMayEscape() const;
 
-  virtual param_iterator param_begin(bool UseDefinitionParams = false) const;
-  virtual param_iterator param_end(bool UseDefinitionParams = false) const;
+  virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const;
+
+  virtual param_iterator param_begin() const;
+  virtual param_iterator param_end() const;
 
   static bool classof(const CallEvent *CA) {
     return CA->getKind() >= CE_BEG_FUNCTION_CALLS &&
@@ -298,8 +363,8 @@ class SimpleCall : public AnyFunctionCall {
 protected:
   SimpleCall(const CallExpr *CE, ProgramStateRef St,
              const LocationContext *LCtx)
-    : AnyFunctionCall(CE, St, LCtx) {
-  }
+    : AnyFunctionCall(CE, St, LCtx) {}
+  SimpleCall(const SimpleCall &Other) : AnyFunctionCall(Other) {}
 
 public:
   virtual const CallExpr *getOriginExpr() const {
@@ -324,11 +389,17 @@ public:
 ///
 /// Example: \c fun()
 class FunctionCall : public SimpleCall {
-public:
+  friend class CallEventManager;
+
+protected:
   FunctionCall(const CallExpr *CE, ProgramStateRef St,
                const LocationContext *LCtx)
     : SimpleCall(CE, St, LCtx) {}
 
+  FunctionCall(const FunctionCall &Other) : SimpleCall(Other) {}
+  virtual void cloneTo(void *Dest) const { new (Dest) FunctionCall(*this); }
+
+public:
   virtual Kind getKind() const { return CE_Function; }
 
   static bool classof(const CallEvent *CA) {
@@ -346,8 +417,16 @@ protected:
                   const LocationContext *LCtx)
     : SimpleCall(CE, St, LCtx) {}
 
+  CXXInstanceCall(const CXXInstanceCall &Other) : SimpleCall(Other) {}
+
 public:
+  /// \brief Returns the value of the implicit 'this' object.
+  virtual SVal getCXXThisVal() const = 0;
+
   virtual const Decl *getRuntimeDefinition() const;
+
+  virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const;
 
   static bool classof(const CallEvent *CA) {
     return CA->getKind() >= CE_BEG_CXX_INSTANCE_CALLS &&
@@ -359,11 +438,17 @@ public:
 ///
 /// Example: \c obj.fun()
 class CXXMemberCall : public CXXInstanceCall {
-public:
+  friend class CallEventManager;
+
+protected:
   CXXMemberCall(const CXXMemberCallExpr *CE, ProgramStateRef St,
                 const LocationContext *LCtx)
     : CXXInstanceCall(CE, St, LCtx) {}
 
+  CXXMemberCall(const CXXMemberCall &Other) : CXXInstanceCall(Other) {}
+  virtual void cloneTo(void *Dest) const { new (Dest) CXXMemberCall(*this); }
+
+public:
   virtual const CXXMemberCallExpr *getOriginExpr() const {
     return cast<CXXMemberCallExpr>(SimpleCall::getOriginExpr());
   }
@@ -382,11 +467,20 @@ public:
 ///
 /// Example: <tt>iter + 1</tt>
 class CXXMemberOperatorCall : public CXXInstanceCall {
-public:
+  friend class CallEventManager;
+
+protected:
   CXXMemberOperatorCall(const CXXOperatorCallExpr *CE, ProgramStateRef St,
                         const LocationContext *LCtx)
     : CXXInstanceCall(CE, St, LCtx) {}
 
+  CXXMemberOperatorCall(const CXXMemberOperatorCall &Other)
+    : CXXInstanceCall(Other) {}
+  virtual void cloneTo(void *Dest) const {
+    new (Dest) CXXMemberOperatorCall(*this);
+  }
+
+public:
   virtual const CXXOperatorCallExpr *getOriginExpr() const {
     return cast<CXXOperatorCallExpr>(SimpleCall::getOriginExpr());
   }
@@ -411,16 +505,21 @@ public:
 ///
 /// Example: <tt>^{ /* ... */ }()</tt>
 class BlockCall : public SimpleCall {
+  friend class CallEventManager;
+
 protected:
+  BlockCall(const CallExpr *CE, ProgramStateRef St,
+            const LocationContext *LCtx)
+    : SimpleCall(CE, St, LCtx) {}
+
+  BlockCall(const BlockCall &Other) : SimpleCall(Other) {}
+  virtual void cloneTo(void *Dest) const { new (Dest) BlockCall(*this); }
+
   virtual void getExtraInvalidatedRegions(RegionList &Regions) const;
 
   virtual QualType getDeclaredResultType() const;
 
 public:
-  BlockCall(const CallExpr *CE, ProgramStateRef St,
-            const LocationContext *LCtx)
-    : SimpleCall(CE, St, LCtx) {}
-
   /// \brief Returns the region associated with this instance of the block.
   ///
   /// This may be NULL if the block's origin is unknown.
@@ -441,8 +540,11 @@ public:
     return getBlockDecl();
   }
 
-  virtual param_iterator param_begin(bool UseDefinitionParams = false) const;
-  virtual param_iterator param_end(bool UseDefinitionParams = false) const;
+  virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const;
+
+  virtual param_iterator param_begin() const;
+  virtual param_iterator param_end() const;
 
   virtual Kind getKind() const { return CE_Block; }
 
@@ -455,24 +557,28 @@ public:
 ///
 /// Example: \c T(1)
 class CXXConstructorCall : public AnyFunctionCall {
+  friend class CallEventManager;
+
 protected:
-  virtual void getExtraInvalidatedRegions(RegionList &Regions) const;
-
-public:
-  /// Represents a constructor call to a new or unknown region.
-  CXXConstructorCall(const CXXConstructExpr *CE, ProgramStateRef St,
-                     const LocationContext *LCtx)
-    : AnyFunctionCall(CE, St, LCtx) {
-    Data = 0;
-  }
-
-  /// Represents a constructor call on an existing object region.
+  /// Creates a constructor call.
+  ///
+  /// \param CE The constructor expression as written in the source.
+  /// \param Target The region where the object should be constructed. If NULL,
+  ///               a new symbolic region will be used.
+  /// \param St The path-sensitive state at this point in the program.
+  /// \param LCtx The location context at this point in the program.
   CXXConstructorCall(const CXXConstructExpr *CE, const MemRegion *target,
                      ProgramStateRef St, const LocationContext *LCtx)
     : AnyFunctionCall(CE, St, LCtx) {
     Data = target;
   }
 
+  CXXConstructorCall(const CXXConstructorCall &Other) : AnyFunctionCall(Other){}
+  virtual void cloneTo(void *Dest) const { new (Dest) CXXConstructorCall(*this); }
+
+  virtual void getExtraInvalidatedRegions(RegionList &Regions) const;
+
+public:
   virtual const CXXConstructExpr *getOriginExpr() const {
     return cast<CXXConstructExpr>(AnyFunctionCall::getOriginExpr());
   }
@@ -487,7 +593,11 @@ public:
     return getOriginExpr()->getArg(Index);
   }
 
+  /// \brief Returns the value of the implicit 'this' object.
   virtual SVal getCXXThisVal() const;
+
+  virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const;
 
   virtual Kind getKind() const { return CE_CXXConstructor; }
 
@@ -501,10 +611,9 @@ public:
 /// This can occur at the end of a scope (for automatic objects), at the end
 /// of a full-expression (for temporaries), or as part of a delete.
 class CXXDestructorCall : public AnyFunctionCall {
-protected:
-  virtual void getExtraInvalidatedRegions(RegionList &Regions) const;
+  friend class CallEventManager;
 
-public:
+protected:
   /// Creates an implicit destructor.
   ///
   /// \param DD The destructor that will be called.
@@ -520,11 +629,22 @@ public:
     Location = Trigger->getLocEnd();
   }
 
+  CXXDestructorCall(const CXXDestructorCall &Other) : AnyFunctionCall(Other) {}
+  virtual void cloneTo(void *Dest) const { new (Dest) CXXDestructorCall(*this); }
+
+  virtual void getExtraInvalidatedRegions(RegionList &Regions) const;
+
+public:
   virtual SourceRange getSourceRange() const { return Location; }
   virtual unsigned getNumArgs() const { return 0; }
 
+  /// \brief Returns the value of the implicit 'this' object.
   virtual SVal getCXXThisVal() const;
+
   virtual const Decl *getRuntimeDefinition() const;
+
+  virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const;
 
   virtual Kind getKind() const { return CE_CXXDestructor; }
 
@@ -537,11 +657,17 @@ public:
 ///
 /// This is a call to "operator new".
 class CXXAllocatorCall : public AnyFunctionCall {
-public:
+  friend class CallEventManager;
+
+protected:
   CXXAllocatorCall(const CXXNewExpr *E, ProgramStateRef St,
                    const LocationContext *LCtx)
     : AnyFunctionCall(E, St, LCtx) {}
 
+  CXXAllocatorCall(const CXXAllocatorCall &Other) : AnyFunctionCall(Other) {}
+  virtual void cloneTo(void *Dest) const { new (Dest) CXXAllocatorCall(*this); }
+
+public:
   virtual const CXXNewExpr *getOriginExpr() const {
     return cast<CXXNewExpr>(AnyFunctionCall::getOriginExpr());
   }
@@ -582,22 +708,25 @@ enum ObjCMessageKind {
 ///
 /// This includes all of the kinds listed in ObjCMessageKind.
 class ObjCMethodCall : public CallEvent {
+  friend class CallEventManager;
+
   const PseudoObjectExpr *getContainingPseudoObjectExpr() const;
 
 protected:
-  virtual void getExtraInvalidatedRegions(RegionList &Regions) const;
-
-  virtual QualType getDeclaredResultType() const;
-  ObjCMethodDecl *LookupClassMethodDefinition(Selector Sel,
-                                           ObjCInterfaceDecl *ClassDecl) const;
-
-public:
   ObjCMethodCall(const ObjCMessageExpr *Msg, ProgramStateRef St,
                  const LocationContext *LCtx)
     : CallEvent(Msg, St, LCtx) {
     Data = 0;
   }
 
+  ObjCMethodCall(const ObjCMethodCall &Other) : CallEvent(Other) {}
+  virtual void cloneTo(void *Dest) const { new (Dest) ObjCMethodCall(*this); }
+
+  virtual void getExtraInvalidatedRegions(RegionList &Regions) const;
+
+  virtual QualType getDeclaredResultType() const;
+
+public:
   virtual const ObjCMessageExpr *getOriginExpr() const {
     return cast<ObjCMessageExpr>(CallEvent::getOriginExpr());
   }
@@ -648,28 +777,13 @@ public:
     llvm_unreachable("Unknown message kind");
   }
 
-  // TODO: We might want to only compute this once (or change the API for 
-  // getting the parameters). Currently, this gets called 3 times during 
-  // inlining.
-  virtual const Decl *getRuntimeDefinition() const {
-    const ObjCMessageExpr *E = getOriginExpr();
-    assert(E);
+  virtual const Decl *getRuntimeDefinition() const;
 
-    if (E->isInstanceMessage()) {
-      return 0;
-    } else {
-      // This is a class method.
-      // If we have type info for the receiver class, we are calling via
-      // class name.
-      if (ObjCInterfaceDecl *IDecl = E->getReceiverInterface())
-        return LookupClassMethodDefinition(E->getSelector(), IDecl);
-    }
+  virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
+                                            BindingsTy &Bindings) const;
 
-    return 0;
-  }
-
-  virtual param_iterator param_begin(bool UseDefinitionParams = false) const;
-  virtual param_iterator param_end(bool UseDefinitionParams = false) const;
+  virtual param_iterator param_begin() const;
+  virtual param_iterator param_end() const;
 
   virtual Kind getKind() const { return CE_ObjCMessage; }
 
@@ -678,7 +792,130 @@ public:
   }
 };
 
+
+/// \brief Manages the lifetime of CallEvent objects.
+///
+/// CallEventManager provides a way to create arbitrary CallEvents "on the
+/// stack" as if they were value objects by keeping a cache of CallEvent-sized
+/// memory blocks. The CallEvents created by CallEventManager are only valid
+/// for the lifetime of the OwnedCallEvent that holds them; right now these
+/// objects cannot be copied and ownership cannot be transferred.
+class CallEventManager {
+  friend class CallEvent;
+
+  llvm::BumpPtrAllocator &Alloc;
+  SmallVector<void *, 8> Cache;
+
+  void reclaim(const void *Memory) {
+    Cache.push_back(const_cast<void *>(Memory));
+  }
+
+  /// Returns memory that can be initialized as a CallEvent.
+  void *allocate() {
+    if (Cache.empty())
+      return Alloc.Allocate<FunctionCall>();
+    else
+      return Cache.pop_back_val();
+  }
+
+  template <typename T, typename Arg>
+  T *create(Arg A, ProgramStateRef St, const LocationContext *LCtx) {
+    return new (allocate()) T(A, St, LCtx);
+  }
+
+  template <typename T, typename Arg1, typename Arg2>
+  T *create(Arg1 A1, Arg2 A2, ProgramStateRef St, const LocationContext *LCtx) {
+    return new (allocate()) T(A1, A2, St, LCtx);
+  }
+
+  template <typename T, typename Arg1, typename Arg2, typename Arg3>
+  T *create(Arg1 A1, Arg2 A2, Arg3 A3, ProgramStateRef St,
+            const LocationContext *LCtx) {
+    return new (allocate()) T(A1, A2, A3, St, LCtx);
+  }
+
+public:
+  CallEventManager(llvm::BumpPtrAllocator &alloc) : Alloc(alloc) {}
+
+
+  CallEventRef<>
+  getCaller(const StackFrameContext *CalleeCtx, ProgramStateRef State);
+
+
+  CallEventRef<SimpleCall>
+  getSimpleCall(const CallExpr *E, ProgramStateRef State,
+                const LocationContext *LCtx);
+
+  CallEventRef<ObjCMethodCall>
+  getObjCMethodCall(const ObjCMessageExpr *E, ProgramStateRef State,
+                    const LocationContext *LCtx) {
+    return create<ObjCMethodCall>(E, State, LCtx);
+  }
+
+  CallEventRef<CXXConstructorCall>
+  getCXXConstructorCall(const CXXConstructExpr *E, const MemRegion *Target,
+                        ProgramStateRef State, const LocationContext *LCtx) {
+    return create<CXXConstructorCall>(E, Target, State, LCtx);
+  }
+
+  CallEventRef<CXXDestructorCall>
+  getCXXDestructorCall(const CXXDestructorDecl *DD, const Stmt *Trigger,
+                       const MemRegion *Target, ProgramStateRef State,
+                       const LocationContext *LCtx) {
+    return create<CXXDestructorCall>(DD, Trigger, Target, State, LCtx);
+  }
+
+  CallEventRef<CXXAllocatorCall>
+  getCXXAllocatorCall(const CXXNewExpr *E, ProgramStateRef State,
+                      const LocationContext *LCtx) {
+    return create<CXXAllocatorCall>(E, State, LCtx);
+  }
+};
+
+
+template <typename T>
+CallEventRef<T> CallEvent::cloneWithState(ProgramStateRef NewState) const {
+  assert(isa<T>(*this) && "Cloning to unrelated type");
+  assert(sizeof(T) == sizeof(CallEvent) && "Subclasses may not add fields");
+
+  if (NewState == State)
+    return cast<T>(this);
+
+  CallEventManager &Mgr = State->getStateManager().getCallEventManager();
+  T *Copy = static_cast<T *>(Mgr.allocate());
+  cloneTo(Copy);
+  assert(Copy->getKind() == this->getKind() && "Bad copy");
+
+  Copy->State = NewState;
+  return Copy;
+}
+
+inline void CallEvent::Release() const {
+  assert(RefCount > 0 && "Reference count is already zero.");
+  --RefCount;
+
+  if (RefCount > 0)
+    return;
+
+  CallEventManager &Mgr = State->getStateManager().getCallEventManager();
+  Mgr.reclaim(this);
+
+  this->~CallEvent();
+}
+
 } // end namespace ento
 } // end namespace clang
+
+namespace llvm {
+  // Support isa<>, cast<>, and dyn_cast<> for CallEventRef.
+  template<class T> struct simplify_type< clang::ento::CallEventRef<T> > {
+    typedef const T *SimpleType;
+
+    static SimpleType
+    getSimplifiedValue(const clang::ento::CallEventRef<T>& Val) {
+      return Val.getPtr();
+    }
+  };
+}
 
 #endif

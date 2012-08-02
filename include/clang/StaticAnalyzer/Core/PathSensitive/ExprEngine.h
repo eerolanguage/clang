@@ -43,7 +43,6 @@ namespace ento {
 class AnalysisManager;
 class CallEvent;
 class SimpleCall;
-class ObjCMethodCall;
 
 class ExprEngine : public SubEngine {
   AnalysisManager &AMgr;
@@ -348,7 +347,7 @@ public:
   void VisitObjCForCollectionStmt(const ObjCForCollectionStmt *S, 
                                   ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
-  void VisitObjCMessage(const ObjCMethodCall &Msg, ExplodedNode *Pred,
+  void VisitObjCMessage(const ObjCMessageExpr *ME, ExplodedNode *Pred,
                         ExplodedNodeSet &Dst);
 
   /// VisitReturnStmt - Transfer function logic for return statements.
@@ -431,10 +430,6 @@ public:
   }
   
 protected:
-  void evalObjCMessage(StmtNodeBuilder &Bldr, const ObjCMethodCall &Msg,
-                       ExplodedNode *Pred, ProgramStateRef state,
-                       bool GenSink);
-
   /// evalBind - Handle the semantics of binding a value to a specific location.
   ///  This method is used by evalStore, VisitDeclStmt, and others.
   void evalBind(ExplodedNodeSet &Dst, const Stmt *StoreE, ExplodedNode *Pred,

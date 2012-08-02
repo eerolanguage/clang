@@ -10,7 +10,7 @@
 #include "clang/AST/CommentSema.h"
 #include "clang/AST/CommentDiagnostic.h"
 #include "clang/AST/Decl.h"
-#include "clang/AST/DeclObjC.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/StringSwitch.h"
 
@@ -19,12 +19,17 @@ namespace comments {
 
 Sema::Sema(llvm::BumpPtrAllocator &Allocator, const SourceManager &SourceMgr,
            DiagnosticsEngine &Diags) :
-    Allocator(Allocator), SourceMgr(SourceMgr), Diags(Diags), ThisDecl(NULL),
-    IsThisDeclInspected(false) {
+    Allocator(Allocator), SourceMgr(SourceMgr), Diags(Diags),
+    ThisDeclInfo(NULL) {
 }
 
 void Sema::setDecl(const Decl *D) {
-  ThisDecl = D;
+  if (!D)
+    return;
+
+  ThisDeclInfo = new (Allocator) DeclInfo;
+  ThisDeclInfo->ThisDecl = D;
+  ThisDeclInfo->IsFilled = false;
 }
 
 ParagraphComment *Sema::actOnParagraphComment(
@@ -200,6 +205,92 @@ ParamCommandComment *Sema::actOnParamCommandFinish(ParamCommandComment *Command,
   return Command;
 }
 
+TParamCommandComment *Sema::actOnTParamCommandStart(SourceLocation LocBegin,
+                                                    SourceLocation LocEnd,
+                                                    StringRef Name) {
+  TParamCommandComment *Command =
+      new (Allocator) TParamCommandComment(LocBegin, LocEnd, Name);
+
+  if (!isTemplateDecl())
+    Diag(Command->getLocation(),
+         diag::warn_doc_tparam_not_attached_to_a_template_decl)
+      << Command->getCommandNameRange();
+
+  return Command;
+}
+
+TParamCommandComment *Sema::actOnTParamCommandParamNameArg(
+                                            TParamCommandComment *Command,
+                                            SourceLocation ArgLocBegin,
+                                            SourceLocation ArgLocEnd,
+                                            StringRef Arg) {
+  // Parser will not feed us more arguments than needed.
+  assert(Command->getNumArgs() == 0);
+
+  typedef BlockCommandComment::Argument Argument;
+  Argument *A = new (Allocator) Argument(SourceRange(ArgLocBegin,
+                                                     ArgLocEnd),
+                                         Arg);
+  Command->setArgs(llvm::makeArrayRef(A, 1));
+
+  if (!isTemplateDecl()) {
+    // We already warned that this \\tparam is not attached to a template decl.
+    return Command;
+  }
+
+  const TemplateParameterList *TemplateParameters =
+      ThisDeclInfo->TemplateParameters;
+  SmallVector<unsigned, 2> Position;
+  if (resolveTParamReference(Arg, TemplateParameters, &Position)) {
+    Command->setPosition(copyArray(llvm::makeArrayRef(Position)));
+    llvm::StringMap<TParamCommandComment *>::iterator PrevCommandIt =
+        TemplateParameterDocs.find(Arg);
+    if (PrevCommandIt != TemplateParameterDocs.end()) {
+      SourceRange ArgRange(ArgLocBegin, ArgLocEnd);
+      Diag(ArgLocBegin, diag::warn_doc_tparam_duplicate)
+        << Arg << ArgRange;
+      TParamCommandComment *PrevCommand = PrevCommandIt->second;
+      Diag(PrevCommand->getLocation(), diag::note_doc_tparam_previous)
+        << PrevCommand->getParamNameRange();
+    }
+    TemplateParameterDocs[Arg] = Command;
+    return Command;
+  }
+
+  SourceRange ArgRange(ArgLocBegin, ArgLocEnd);
+  Diag(ArgLocBegin, diag::warn_doc_tparam_not_found)
+    << Arg << ArgRange;
+
+  if (!TemplateParameters || TemplateParameters->size() == 0)
+    return Command;
+
+  StringRef CorrectedName;
+  if (TemplateParameters->size() == 1) {
+    const NamedDecl *Param = TemplateParameters->getParam(0);
+    const IdentifierInfo *II = Param->getIdentifier();
+    if (II)
+      CorrectedName = II->getName();
+  } else {
+    CorrectedName = correctTypoInTParamReference(Arg, TemplateParameters);
+  }
+
+  if (!CorrectedName.empty()) {
+    Diag(ArgLocBegin, diag::note_doc_tparam_name_suggestion)
+      << CorrectedName
+      << FixItHint::CreateReplacement(ArgRange, CorrectedName);
+  }
+
+  return Command;
+}
+
+TParamCommandComment *Sema::actOnTParamCommandFinish(
+                                            TParamCommandComment *Command,
+                                            ParagraphComment *Paragraph) {
+  Command->setParagraph(Paragraph);
+  checkBlockCommandEmptyParagraph(Command);
+  return Command;
+}
+
 InlineCommandComment *Sema::actOnInlineCommand(SourceLocation CommandLocBegin,
                                                SourceLocation CommandLocEnd,
                                                StringRef CommandName) {
@@ -364,7 +455,7 @@ HTMLEndTagComment *Sema::actOnHTMLEndTag(SourceLocation LocBegin,
 
 FullComment *Sema::actOnFullComment(
                               ArrayRef<BlockContentComment *> Blocks) {
-  return new (Allocator) FullComment(Blocks);
+  return new (Allocator) FullComment(Blocks, ThisDeclInfo);
 }
 
 void Sema::checkBlockCommandEmptyParagraph(BlockCommandComment *Command) {
@@ -382,36 +473,30 @@ void Sema::checkBlockCommandEmptyParagraph(BlockCommandComment *Command) {
 }
 
 bool Sema::isFunctionDecl() {
-  if (!IsThisDeclInspected)
+  if (!ThisDeclInfo)
+    return false;
+  if (!ThisDeclInfo->IsFilled)
     inspectThisDecl();
-  return IsFunctionDecl;
+  return ThisDeclInfo->IsFunctionDecl;
+}
+
+bool Sema::isTemplateDecl() {
+  if (!ThisDeclInfo)
+    return false;
+  if (!ThisDeclInfo->IsFilled)
+    inspectThisDecl();
+  return ThisDeclInfo->IsTemplateDecl;
 }
 
 ArrayRef<const ParmVarDecl *> Sema::getParamVars() {
-  if (!IsThisDeclInspected)
+  if (!ThisDeclInfo->IsFilled)
     inspectThisDecl();
-  return ParamVars;
+  return ThisDeclInfo->ParamVars;
 }
 
 void Sema::inspectThisDecl() {
-  assert(!IsThisDeclInspected);
-  if (!ThisDecl) {
-    IsFunctionDecl = false;
-    ParamVars = ArrayRef<const ParmVarDecl *>();
-  } else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(ThisDecl)) {
-    IsFunctionDecl = true;
-    ParamVars = ArrayRef<const ParmVarDecl *>(FD->param_begin(),
-                                              FD->getNumParams());
-  } else if (const ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(ThisDecl)) {
-    IsFunctionDecl = true;
-    ParamVars = ArrayRef<const ParmVarDecl *>(MD->param_begin(),
-                                              MD->param_size());
-  } else {
-    IsFunctionDecl = false;
-    ParamVars = ArrayRef<const ParmVarDecl *>();
-  }
-  ParamVarDocs.resize(ParamVars.size(), NULL);
-  IsThisDeclInspected = true;
+  ThisDeclInfo->fill();
+  ParamVarDocs.resize(ThisDeclInfo->ParamVars.size(), NULL);
 }
 
 unsigned Sema::resolveParmVarReference(StringRef Name,
@@ -424,34 +509,136 @@ unsigned Sema::resolveParmVarReference(StringRef Name,
   return ParamCommandComment::InvalidParamIndex;
 }
 
+namespace {
+class SimpleTypoCorrector {
+  StringRef Typo;
+  const unsigned MaxEditDistance;
+
+  const NamedDecl *BestDecl;
+  unsigned BestEditDistance;
+  unsigned BestIndex;
+  unsigned NextIndex;
+
+public:
+  SimpleTypoCorrector(StringRef Typo) :
+      Typo(Typo), MaxEditDistance((Typo.size() + 2) / 3),
+      BestDecl(NULL), BestEditDistance(MaxEditDistance + 1),
+      BestIndex(0), NextIndex(0)
+  { }
+
+  void addDecl(const NamedDecl *ND);
+
+  const NamedDecl *getBestDecl() const {
+    if (BestEditDistance > MaxEditDistance)
+      return NULL;
+
+    return BestDecl;
+  }
+
+  unsigned getBestDeclIndex() const {
+    assert(getBestDecl());
+    return BestIndex;
+  }
+};
+
+void SimpleTypoCorrector::addDecl(const NamedDecl *ND) {
+  unsigned CurrIndex = NextIndex++;
+
+  const IdentifierInfo *II = ND->getIdentifier();
+  if (!II)
+    return;
+
+  StringRef Name = II->getName();
+  unsigned MinPossibleEditDistance = abs((int)Name.size() - (int)Typo.size());
+  if (MinPossibleEditDistance > 0 &&
+      Typo.size() / MinPossibleEditDistance < 3)
+    return;
+
+  unsigned EditDistance = Typo.edit_distance(Name, true, MaxEditDistance);
+  if (EditDistance < BestEditDistance) {
+    BestEditDistance = EditDistance;
+    BestDecl = ND;
+    BestIndex = CurrIndex;
+  }
+}
+} // unnamed namespace
+
 unsigned Sema::correctTypoInParmVarReference(
                                     StringRef Typo,
                                     ArrayRef<const ParmVarDecl *> ParamVars) {
-  const unsigned MaxEditDistance = (Typo.size() + 2) / 3;
-  unsigned BestPVDIndex = 0;
-  unsigned BestEditDistance = MaxEditDistance + 1;
-  for (unsigned i = 0, e = ParamVars.size(); i != e; ++i) {
-    const IdentifierInfo *II = ParamVars[i]->getIdentifier();
-    if (II) {
-      StringRef Name = II->getName();
-      unsigned MinPossibleEditDistance =
-        abs((int)Name.size() - (int)Typo.size());
-      if (MinPossibleEditDistance > 0 &&
-          Typo.size() / MinPossibleEditDistance < 3)
-        continue;
+  SimpleTypoCorrector Corrector(Typo);
+  for (unsigned i = 0, e = ParamVars.size(); i != e; ++i)
+    Corrector.addDecl(ParamVars[i]);
+  if (Corrector.getBestDecl())
+    return Corrector.getBestDeclIndex();
+  else
+    return ParamCommandComment::InvalidParamIndex;;
+}
 
-      unsigned EditDistance = Typo.edit_distance(Name, true, MaxEditDistance);
-      if (EditDistance < BestEditDistance) {
-        BestEditDistance = EditDistance;
-        BestPVDIndex = i;
-      }
+namespace {
+bool ResolveTParamReferenceHelper(
+                            StringRef Name,
+                            const TemplateParameterList *TemplateParameters,
+                            SmallVectorImpl<unsigned> *Position) {
+  for (unsigned i = 0, e = TemplateParameters->size(); i != e; ++i) {
+    const NamedDecl *Param = TemplateParameters->getParam(i);
+    const IdentifierInfo *II = Param->getIdentifier();
+    if (II && II->getName() == Name) {
+      Position->push_back(i);
+      return true;
+    }
+
+    if (const TemplateTemplateParmDecl *TTP =
+            dyn_cast<TemplateTemplateParmDecl>(Param)) {
+      Position->push_back(i);
+      if (ResolveTParamReferenceHelper(Name, TTP->getTemplateParameters(),
+                                       Position))
+        return true;
+      Position->pop_back();
     }
   }
+  return false;
+}
+} // unnamed namespace
 
-  if (BestEditDistance <= MaxEditDistance)
-    return BestPVDIndex;
-  else
-    return ParamCommandComment::InvalidParamIndex;
+bool Sema::resolveTParamReference(
+                            StringRef Name,
+                            const TemplateParameterList *TemplateParameters,
+                            SmallVectorImpl<unsigned> *Position) {
+  Position->clear();
+  if (!TemplateParameters)
+    return false;
+
+  return ResolveTParamReferenceHelper(Name, TemplateParameters, Position);
+}
+
+namespace {
+void CorrectTypoInTParamReferenceHelper(
+                            const TemplateParameterList *TemplateParameters,
+                            SimpleTypoCorrector &Corrector) {
+  for (unsigned i = 0, e = TemplateParameters->size(); i != e; ++i) {
+    const NamedDecl *Param = TemplateParameters->getParam(i);
+    Corrector.addDecl(Param);
+
+    if (const TemplateTemplateParmDecl *TTP =
+            dyn_cast<TemplateTemplateParmDecl>(Param))
+      CorrectTypoInTParamReferenceHelper(TTP->getTemplateParameters(),
+                                         Corrector);
+  }
+}
+} // unnamed namespace
+
+StringRef Sema::correctTypoInTParamReference(
+                            StringRef Typo,
+                            const TemplateParameterList *TemplateParameters) {
+  SimpleTypoCorrector Corrector(Typo);
+  CorrectTypoInTParamReferenceHelper(TemplateParameters, Corrector);
+  if (const NamedDecl *ND = Corrector.getBestDecl()) {
+    const IdentifierInfo *II = ND->getIdentifier();
+    assert(II && "SimpleTypoCorrector should not return this decl");
+    return II->getName();
+  }
+  return StringRef();
 }
 
 // TODO: tablegen
@@ -465,7 +652,7 @@ bool Sema::isBlockCommand(StringRef Name) {
       .Case("authors", true)
       .Case("pre", true)
       .Case("post", true)
-      .Default(false) || isParamCommand(Name);
+      .Default(false) || isParamCommand(Name) || isTParamCommand(Name);
 }
 
 bool Sema::isParamCommand(StringRef Name) {
@@ -473,6 +660,10 @@ bool Sema::isParamCommand(StringRef Name) {
       .Case("param", true)
       .Case("arg", true)
       .Default(false);
+}
+
+bool Sema::isTParamCommand(StringRef Name) {
+  return Name == "tparam";
 }
 
 unsigned Sema::getBlockCommandNumArgs(StringRef Name) {

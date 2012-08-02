@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Analysis/CFG.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SubEngine.h"
@@ -69,6 +70,19 @@ ProgramState::~ProgramState() {
   if (store)
     stateMgr->getStoreManager().decrementReferenceCount(store);
 }
+
+ProgramStateManager::ProgramStateManager(ASTContext &Ctx,
+                                         StoreManagerCreator CreateSMgr,
+                                         ConstraintManagerCreator CreateCMgr,
+                                         llvm::BumpPtrAllocator &alloc,
+                                         SubEngine &SubEng)
+  : Eng(&SubEng), EnvMgr(alloc), GDMFactory(alloc),
+    svalBuilder(createSimpleSValBuilder(alloc, Ctx, *this)),
+    CallEventMgr(new CallEventManager(alloc)), Alloc(alloc) {
+  StoreMgr.reset((*CreateSMgr)(*this));
+  ConstraintMgr.reset((*CreateCMgr)(*this, SubEng));
+}
+
 
 ProgramStateManager::~ProgramStateManager() {
   for (GDMContextsTy::iterator I=GDMContexts.begin(), E=GDMContexts.end();
@@ -716,4 +730,13 @@ bool ProgramState::isTainted(SymbolRef Sym, TaintTagType Kind) const {
   }
   
   return Tainted;
+}
+
+DynamicTypeInfo ProgramState::getDynamicTypeInfo(const MemRegion *Reg) const {
+  if (const TypedRegion *TR = dyn_cast<TypedRegion>(Reg))
+    return DynamicTypeInfo(TR->getLocationType());
+  if (const SymbolicRegion *SR = dyn_cast<SymbolicRegion>(Reg))
+    return DynamicTypeInfo(SR->getSymbol()
+                             ->getType(getStateManager().getContext()));
+  return DynamicTypeInfo();
 }

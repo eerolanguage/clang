@@ -91,7 +91,7 @@ public:
                   bool vizdot, bool vizubi, AnalysisPurgeMode purge,
                   bool eager, bool trim,
                   bool useUnoptimizedCFG,
-                  bool addImplicitDtors, bool addInitializers,
+                  bool addImplicitDtors,
                   bool eagerlyTrimEGraph,
                   AnalysisIPAMode ipa,
                   unsigned inlineMaxStack,
@@ -169,7 +169,7 @@ public:
 
   bool shouldEagerlyAssume() const { return EagerlyAssume; }
 
-  bool shouldInlineCall() const { return (IPAMode == Inlining); }
+  bool shouldInlineCall() const { return (IPAMode != None); }
 
   CFG *getCFG(Decl const *D) {
     return AnaCtxMgr.getContext(D)->getCFG();

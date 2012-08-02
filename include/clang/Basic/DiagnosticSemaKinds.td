@@ -158,6 +158,11 @@ def warn_redefinition_in_param_list : Warning<
 def warn_empty_parens_are_function_decl : Warning<
   "empty parentheses interpreted as a function declaration">,
   InGroup<VexingParse>;
+def warn_parens_disambiguated_as_function_declaration : Warning<
+  "parentheses were disambiguated as a function declaration">,
+  InGroup<VexingParse>;
+def note_additional_parens_for_variable_declaration : Note<
+  "add a pair of parentheses to declare a variable">;
 def note_empty_parens_function_call : Note<
   "change this ',' to a ';' to call %0">;
 def note_empty_parens_default_ctor : Note<
@@ -739,6 +744,9 @@ def warn_objc_property_attr_mutually_exclusive : Warning<
 def warn_objc_missing_super_dealloc : Warning<
   "method possibly missing a [super dealloc] call">,
   InGroup<ObjCMissingSuperCalls>;
+def error_dealloc_bad_result_type : Error<
+  "dealloc return type must be correctly specified as 'void' under ARC, "
+  "instead of %0">;
 def warn_objc_missing_super_finalize : Warning<
   "method possibly missing a [super finalize] call">,
   InGroup<ObjCMissingSuperCalls>;
@@ -5339,9 +5347,6 @@ def warn_array_index_exceeds_bounds : Warning<
 def note_array_index_out_of_bounds : Note<
   "array %0 declared here">;
 
-def warn_printf_write_back : Warning<
-  "use of '%%n' in format string discouraged (potentially insecure)">,
-  InGroup<FormatSecurity>;
 def warn_printf_insufficient_data_args : Warning<
   "more '%%' conversions than data arguments">, InGroup<Format>;
 def warn_printf_data_arg_not_used : Warning<

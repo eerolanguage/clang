@@ -629,16 +629,11 @@ static StringRef getARMFloatABI(const Driver &D,
       break;
     }
 
-    case llvm::Triple::Linux: {
-      if (Triple.getEnvironment() == llvm::Triple::GNUEABI) {
-        FloatABI = "softfp";
-        break;
-      }
-    }
-    // fall through
-
     default:
       switch(Triple.getEnvironment()) {
+      case llvm::Triple::GNUEABIHF:
+        FloatABI = "hard";
+        break;
       case llvm::Triple::GNUEABI:
         FloatABI = "softfp";
         break;
@@ -685,6 +680,7 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
     switch(Triple.getEnvironment()) {
     case llvm::Triple::ANDROIDEABI:
     case llvm::Triple::GNUEABI:
+    case llvm::Triple::GNUEABIHF:
       ABIName = "aapcs-linux";
       break;
     case llvm::Triple::EABI:
@@ -1537,7 +1533,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     // Use PCH if the user requested it.
     bool UsePCH = D.CCCUsePCH;
 
-    if (UsePCH)
+    if (JA.getType() == types::TY_Nothing)
+      CmdArgs.push_back("-fsyntax-only");
+    else if (UsePCH)
       CmdArgs.push_back("-emit-pch");
     else
       CmdArgs.push_back("-emit-pth");
@@ -5517,8 +5515,12 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     else if (ToolChain.getArch() == llvm::Triple::x86)
       CmdArgs.push_back("/lib/ld-linux.so.2");
     else if (ToolChain.getArch() == llvm::Triple::arm ||
-             ToolChain.getArch() == llvm::Triple::thumb)
-      CmdArgs.push_back("/lib/ld-linux.so.3");
+             ToolChain.getArch() == llvm::Triple::thumb) {
+      if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF)
+        CmdArgs.push_back("/lib/ld-linux-armhf.so.3");
+      else
+        CmdArgs.push_back("/lib/ld-linux.so.3");
+    }
     else if (ToolChain.getArch() == llvm::Triple::mips ||
              ToolChain.getArch() == llvm::Triple::mipsel)
       CmdArgs.push_back("/lib/ld.so.1");

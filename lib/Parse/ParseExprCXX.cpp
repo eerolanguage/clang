@@ -642,7 +642,13 @@ llvm::Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro){
   while (Tok.isNot(tok::r_square)) {
     if (!first) {
       if (Tok.isNot(tok::comma)) {
-        if (Tok.is(tok::code_completion)) {
+        // Provide a completion for a lambda introducer here. Except
+        // in Objective-C, where this is Almost Surely meant to be a message
+        // send. In that case, fail here and let the ObjC message
+        // expression parser perform the completion.
+        if (Tok.is(tok::code_completion) &&
+            !(getLangOpts().ObjC1 && Intro.Default == LCD_None &&
+              !Intro.Captures.empty())) {
           Actions.CodeCompleteLambdaIntroducer(getCurScope(), Intro, 
                                                /*AfterAmpersand=*/false);
           ConsumeCodeCompletionToken();
@@ -804,7 +810,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
 
     D.AddTypeInfo(DeclaratorChunk::getFunction(/*hasProto=*/true,
                                            /*isVariadic=*/EllipsisLoc.isValid(),
-                                           EllipsisLoc,
+                                           /*isAmbiguous=*/false, EllipsisLoc,
                                            ParamInfo.data(), ParamInfo.size(),
                                            DS.getTypeQualifiers(),
                                            /*RefQualifierIsLValueRef=*/true,
@@ -849,6 +855,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     ParsedAttributes Attr(AttrFactory);
     D.AddTypeInfo(DeclaratorChunk::getFunction(/*hasProto=*/true,
                      /*isVariadic=*/false,
+                     /*isAmbiguous=*/false,
                      /*EllipsisLoc=*/SourceLocation(),
                      /*Params=*/0, /*NumParams=*/0,
                      /*TypeQuals=*/0,

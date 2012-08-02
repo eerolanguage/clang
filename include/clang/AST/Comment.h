@@ -19,6 +19,10 @@
 #include "llvm/ADT/StringRef.h"
 
 namespace clang {
+class Decl;
+class ParmVarDecl;
+class TemplateParameterList;
+
 namespace comments {
 
 /// Any part of the comment.
@@ -713,12 +717,75 @@ public:
   }
 
   unsigned getParamIndex() const LLVM_READONLY {
+    assert(isParamIndexValid());
     return ParamIndex;
   }
 
   void setParamIndex(unsigned Index) {
     ParamIndex = Index;
     assert(isParamIndexValid());
+  }
+};
+
+/// Doxygen \\tparam command, describes a template parameter.
+class TParamCommandComment : public BlockCommandComment {
+private:
+  /// If this template parameter name was resolved (found in template parameter
+  /// list), then this stores a list of position indexes in all template
+  /// parameter lists.
+  ///
+  /// For example:
+  /// \verbatim
+  ///     template<typename C, template<typename T> class TT>
+  ///     void test(TT<int> aaa);
+  /// \endverbatim
+  /// For C:  Position = { 0 }
+  /// For TT: Position = { 1 }
+  /// For T:  Position = { 1, 0 }
+  llvm::ArrayRef<unsigned> Position;
+
+public:
+  TParamCommandComment(SourceLocation LocBegin,
+                       SourceLocation LocEnd,
+                       StringRef Name) :
+      BlockCommandComment(TParamCommandCommentKind, LocBegin, LocEnd, Name)
+  { }
+
+  static bool classof(const Comment *C) {
+    return C->getCommentKind() == TParamCommandCommentKind;
+  }
+
+  static bool classof(const TParamCommandComment *) { return true; }
+
+  bool hasParamName() const {
+    return getNumArgs() > 0;
+  }
+
+  StringRef getParamName() const {
+    return Args[0].Text;
+  }
+
+  SourceRange getParamNameRange() const {
+    return Args[0].Range;
+  }
+
+  bool isPositionValid() const LLVM_READONLY {
+    return !Position.empty();
+  }
+
+  unsigned getDepth() const {
+    assert(isPositionValid());
+    return Position.size();
+  }
+
+  unsigned getIndex(unsigned Depth) const {
+    assert(isPositionValid());
+    return Position[Depth];
+  }
+
+  void setPosition(ArrayRef<unsigned> NewPosition) {
+    Position = NewPosition;
+    assert(isPositionValid());
   }
 };
 
@@ -843,14 +910,61 @@ public:
   }
 };
 
+/// Information about the declaration, useful to clients of FullComment.
+struct DeclInfo {
+  /// Declaration the comment is attached to.  Should not be NULL.
+  const Decl *ThisDecl;
+
+  /// Parameters that can be referenced by \\param if \c ThisDecl is something
+  /// that we consider a "function".
+  ArrayRef<const ParmVarDecl *> ParamVars;
+
+  /// Template parameters that can be referenced by \\tparam if \c ThisDecl is
+  /// a template.
+  const TemplateParameterList *TemplateParameters;
+
+  /// If false, only \c ThisDecl is valid.
+  unsigned IsFilled : 1;
+
+  /// Is \c ThisDecl something that we consider a "function".
+  unsigned IsFunctionDecl : 1;
+
+  /// Is \c ThisDecl something that we consider a "class".
+  unsigned IsClassDecl : 1;
+
+  /// Is \c ThisDecl a template declaration.
+  unsigned IsTemplateDecl : 1;
+
+  /// Is \c ThisDecl a template specialization.
+  unsigned IsTemplateSpecialization : 1;
+
+  /// Is \c ThisDecl a template partial specialization.
+  /// Never true if \c IsFunctionDecl is true.
+  unsigned IsTemplatePartialSpecialization : 1;
+
+  /// Is \c ThisDecl a non-static member function of C++ class or
+  /// instance method of ObjC class.
+  /// Can be true only if \c IsFunctionDecl is true.
+  unsigned IsInstanceMethod : 1;
+
+  /// Is \c ThisDecl a static member function of C++ class or
+  /// class method of ObjC class.
+  /// Can be true only if \c IsFunctionDecl is true.
+  unsigned IsClassMethod : 1;
+
+  void fill();
+};
+
 /// A full comment attached to a declaration, contains block content.
 class FullComment : public Comment {
   llvm::ArrayRef<BlockContentComment *> Blocks;
 
+  DeclInfo *ThisDeclInfo;
+
 public:
-  FullComment(llvm::ArrayRef<BlockContentComment *> Blocks) :
+  FullComment(llvm::ArrayRef<BlockContentComment *> Blocks, DeclInfo *D) :
       Comment(FullCommentKind, SourceLocation(), SourceLocation()),
-      Blocks(Blocks) {
+      Blocks(Blocks), ThisDeclInfo(D) {
     if (Blocks.empty())
       return;
 
@@ -871,6 +985,16 @@ public:
 
   child_iterator child_end() const {
     return reinterpret_cast<child_iterator>(Blocks.end());
+  }
+
+  const Decl *getDecl() const LLVM_READONLY {
+    return ThisDeclInfo->ThisDecl;
+  }
+
+  const DeclInfo *getDeclInfo() const LLVM_READONLY {
+    if (!ThisDeclInfo->IsFilled)
+      ThisDeclInfo->fill();
+    return ThisDeclInfo;
   }
 };
 

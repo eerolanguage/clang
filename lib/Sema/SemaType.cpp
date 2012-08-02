@@ -554,7 +554,8 @@ static void maybeSynthesizeBlockSignature(TypeProcessingState &state,
   // ...and *prepend* it to the declarator.
   declarator.AddInnermostTypeInfo(DeclaratorChunk::getFunction(
                              /*proto*/ true,
-                             /*variadic*/ false, SourceLocation(),
+                             /*variadic*/ false,
+                             /*ambiguous*/ false, SourceLocation(),
                              /*args*/ 0, 0,
                              /*type quals*/ 0,
                              /*ref-qualifier*/true, SourceLocation(),
@@ -1815,6 +1816,8 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
     // Constructors and destructors don't have return types. Use
     // "void" instead.
     T = SemaRef.Context.VoidTy;
+    if (AttributeList *attrs = D.getDeclSpec().getAttributes().getList())
+      processTypeAttrs(state, T, true, attrs);
     break;
 
   case UnqualifiedId::IK_ConversionFunctionId:
@@ -2042,6 +2045,102 @@ static void checkQualifiedFunction(Sema &S, QualType T,
   S.Diag(DeclType.Loc, diag::err_compound_qualified_function_type)
     << DiagKind << isa<FunctionType>(T.IgnoreParens()) << T
     << getFunctionQualifiersAsString(T->castAs<FunctionProtoType>());
+}
+
+/// Produce an approprioate diagnostic for an ambiguity between a function
+/// declarator and a C++ direct-initializer.
+static void warnAboutAmbiguousFunction(Sema &S, Declarator &D,
+                                       DeclaratorChunk &DeclType, QualType RT) {
+  const DeclaratorChunk::FunctionTypeInfo &FTI = DeclType.Fun;
+  assert(FTI.isAmbiguous && "no direct-initializer / function ambiguity");
+
+  // If the return type is void there is no ambiguity.
+  if (RT->isVoidType())
+    return;
+
+  // An initializer for a non-class type can have at most one argument.
+  if (!RT->isRecordType() && FTI.NumArgs > 1)
+    return;
+
+  // An initializer for a reference must have exactly one argument.
+  if (RT->isReferenceType() && FTI.NumArgs != 1)
+    return;
+
+  // Only warn if this declarator is declaring a function at block scope, and
+  // doesn't have a storage class (such as 'extern') specified.
+  if (!D.isFunctionDeclarator() ||
+      D.getFunctionDefinitionKind() != FDK_Declaration ||
+      !S.CurContext->isFunctionOrMethod() ||
+      D.getDeclSpec().getStorageClassSpecAsWritten()
+        != DeclSpec::SCS_unspecified)
+    return;
+
+  // Inside a condition, a direct initializer is not permitted. We allow one to
+  // be parsed in order to give better diagnostics in condition parsing.
+  if (D.getContext() == Declarator::ConditionContext)
+    return;
+
+  SourceRange ParenRange(DeclType.Loc, DeclType.EndLoc);
+
+  S.Diag(DeclType.Loc,
+         FTI.NumArgs ? diag::warn_parens_disambiguated_as_function_declaration
+                     : diag::warn_empty_parens_are_function_decl)
+    << ParenRange;
+
+  // If the declaration looks like:
+  //   T var1,
+  //   f();
+  // and name lookup finds a function named 'f', then the ',' was
+  // probably intended to be a ';'.
+  if (!D.isFirstDeclarator() && D.getIdentifier()) {
+    FullSourceLoc Comma(D.getCommaLoc(), S.SourceMgr);
+    FullSourceLoc Name(D.getIdentifierLoc(), S.SourceMgr);
+    if (Comma.getFileID() != Name.getFileID() ||
+        Comma.getSpellingLineNumber() != Name.getSpellingLineNumber()) {
+      LookupResult Result(S, D.getIdentifier(), SourceLocation(),
+                          Sema::LookupOrdinaryName);
+      if (S.LookupName(Result, S.getCurScope()))
+        S.Diag(D.getCommaLoc(), diag::note_empty_parens_function_call)
+          << FixItHint::CreateReplacement(D.getCommaLoc(), ";")
+          << D.getIdentifier();
+    }
+  }
+
+  if (FTI.NumArgs > 0) {
+    // For a declaration with parameters, eg. "T var(T());", suggest adding parens
+    // around the first parameter to turn the declaration into a variable
+    // declaration.
+    SourceRange Range = FTI.ArgInfo[0].Param->getSourceRange();
+    SourceLocation B = Range.getBegin();
+    SourceLocation E = S.PP.getLocForEndOfToken(Range.getEnd());
+    // FIXME: Maybe we should suggest adding braces instead of parens
+    // in C++11 for classes that don't have an initializer_list constructor.
+    S.Diag(B, diag::note_additional_parens_for_variable_declaration)
+      << FixItHint::CreateInsertion(B, "(")
+      << FixItHint::CreateInsertion(E, ")");
+  } else {
+    // For a declaration without parameters, eg. "T var();", suggest replacing the
+    // parens with an initializer to turn the declaration into a variable
+    // declaration.
+    const CXXRecordDecl *RD = RT->getAsCXXRecordDecl();
+
+    // Empty parens mean value-initialization, and no parens mean
+    // default initialization. These are equivalent if the default
+    // constructor is user-provided or if zero-initialization is a
+    // no-op.
+    if (RD && RD->hasDefinition() &&
+        (RD->isEmpty() || RD->hasUserProvidedDefaultConstructor()))
+      S.Diag(DeclType.Loc, diag::note_empty_parens_default_ctor)
+        << FixItHint::CreateRemoval(ParenRange);
+    else {
+      std::string Init = S.getFixItZeroInitializerForType(RT);
+      if (Init.empty() && S.LangOpts.CPlusPlus0x)
+        Init = "{}";
+      if (!Init.empty())
+        S.Diag(DeclType.Loc, diag::note_empty_parens_zero_initialize)
+          << FixItHint::CreateReplacement(ParenRange, Init);
+    }
+  }
 }
 
 static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
@@ -2275,6 +2374,11 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
         S.Diag(FTI.getExceptionSpecLoc(), diag::err_exception_spec_in_typedef)
           << (D.getContext() == Declarator::AliasDeclContext ||
               D.getContext() == Declarator::AliasTemplateContext);
+
+      // If we see "T var();" or "T var(T());" at block scope, it is probably
+      // an attempt to initialize a variable, not a function declaration.
+      if (FTI.isAmbiguous)
+        warnAboutAmbiguousFunction(S, D, DeclType, T);
 
       if (!FTI.NumArgs && !FTI.isVariadic && !LangOpts.CPlusPlus) {
         // Simple void foo(), where the incoming T is the result type.

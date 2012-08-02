@@ -36,6 +36,7 @@ class ASTContext;
 namespace ento {
 
 class CallEvent;
+class CallEventManager;
 
 typedef ConstraintManager* (*ConstraintManagerCreator)(ProgramStateManager&,
                                                        SubEngine&);
@@ -53,6 +54,18 @@ template <typename T> struct ProgramStateTrait {
   static inline data_type MakeData(void *const* P) {
     return P ? (data_type) *P : (data_type) 0;
   }
+};
+
+/// \class Stores the dynamic type information.
+/// Information about type of an object at runtime. This is used by dynamic
+/// dispatch implementation.
+class DynamicTypeInfo {
+  QualType T;
+
+public:
+  DynamicTypeInfo() : T(QualType()) {}
+  DynamicTypeInfo(QualType WithType) : T(WithType) {}
+  QualType getType() {return T;}
 };
 
 /// \class ProgramState
@@ -312,6 +325,9 @@ public:
   bool isTainted(SymbolRef Sym, TaintTagType Kind = TaintTagGeneric) const;
   bool isTainted(const MemRegion *Reg, TaintTagType Kind=TaintTagGeneric) const;
 
+  /// Get dynamic type information for a region.
+  DynamicTypeInfo getDynamicTypeInfo(const MemRegion *Reg) const;
+
   //==---------------------------------------------------------------------==//
   // Accessing the Generic Data Map (GDM).
   //==---------------------------------------------------------------------==//
@@ -414,6 +430,9 @@ private:
   /// Object that manages the data for all created SVals.
   OwningPtr<SValBuilder> svalBuilder;
 
+  /// Manages memory for created CallEvents.
+  OwningPtr<CallEventManager> CallEventMgr;
+
   /// A BumpPtrAllocator to allocate states.
   llvm::BumpPtrAllocator &Alloc;
   
@@ -425,28 +444,7 @@ public:
                  StoreManagerCreator CreateStoreManager,
                  ConstraintManagerCreator CreateConstraintManager,
                  llvm::BumpPtrAllocator& alloc,
-                 SubEngine &subeng)
-    : Eng(&subeng),
-      EnvMgr(alloc),
-      GDMFactory(alloc),
-      svalBuilder(createSimpleSValBuilder(alloc, Ctx, *this)),
-      Alloc(alloc) {
-    StoreMgr.reset((*CreateStoreManager)(*this));
-    ConstraintMgr.reset((*CreateConstraintManager)(*this, subeng));
-  }
-
-  ProgramStateManager(ASTContext &Ctx,
-                 StoreManagerCreator CreateStoreManager,
-                 ConstraintManager* ConstraintManagerPtr,
-                 llvm::BumpPtrAllocator& alloc)
-    : Eng(0),
-      EnvMgr(alloc),
-      GDMFactory(alloc),
-      svalBuilder(createSimpleSValBuilder(alloc, Ctx, *this)),
-      Alloc(alloc) {
-    StoreMgr.reset((*CreateStoreManager)(*this));
-    ConstraintMgr.reset(ConstraintManagerPtr);
-  }
+                 SubEngine &subeng);
 
   ~ProgramStateManager();
 
@@ -481,6 +479,8 @@ public:
   const MemRegionManager& getRegionManager() const {
     return svalBuilder->getRegionManager();
   }
+
+  CallEventManager &getCallEventManager() { return *CallEventMgr; }
 
   StoreManager& getStoreManager() { return *StoreMgr; }
   ConstraintManager& getConstraintManager() { return *ConstraintMgr; }

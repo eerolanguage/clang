@@ -20,6 +20,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <climits>
+
 using namespace clang;
 using namespace clang::cxstring;
 using namespace clang::comments;
@@ -56,6 +58,9 @@ enum CXCommentKind clang_Comment_getKind(CXComment CXC) {
 
   case Comment::ParamCommandCommentKind:
     return CXComment_ParamCommand;
+
+  case Comment::TParamCommandCommentKind:
+    return CXComment_TParamCommand;
 
   case Comment::VerbatimBlockCommentKind:
     return CXComment_VerbatimBlockCommand;
@@ -256,7 +261,7 @@ unsigned clang_ParamCommandComment_isParamIndexValid(CXComment CXC) {
 
 unsigned clang_ParamCommandComment_getParamIndex(CXComment CXC) {
   const ParamCommandComment *PCC = getASTNodeAs<ParamCommandComment>(CXC);
-  if (!PCC)
+  if (!PCC || !PCC->isParamIndexValid())
     return ParamCommandComment::InvalidParamIndex;
 
   return PCC->getParamIndex();
@@ -289,6 +294,38 @@ enum CXCommentParamPassDirection clang_ParamCommandComment_getDirection(
   llvm_unreachable("unknown ParamCommandComment::PassDirection");
 }
 
+CXString clang_TParamCommandComment_getParamName(CXComment CXC) {
+  const TParamCommandComment *TPCC = getASTNodeAs<TParamCommandComment>(CXC);
+  if (!TPCC || !TPCC->hasParamName())
+    return createCXString((const char *) 0);
+
+  return createCXString(TPCC->getParamName(), /*DupString=*/ false);
+}
+
+unsigned clang_TParamCommandComment_isParamPositionValid(CXComment CXC) {
+  const TParamCommandComment *TPCC = getASTNodeAs<TParamCommandComment>(CXC);
+  if (!TPCC)
+    return false;
+
+  return TPCC->isPositionValid();
+}
+
+unsigned clang_TParamCommandComment_getDepth(CXComment CXC) {
+  const TParamCommandComment *TPCC = getASTNodeAs<TParamCommandComment>(CXC);
+  if (!TPCC || !TPCC->isPositionValid())
+    return 0;
+
+  return TPCC->getDepth();
+}
+
+unsigned clang_TParamCommandComment_getIndex(CXComment CXC, unsigned Depth) {
+  const TParamCommandComment *TPCC = getASTNodeAs<TParamCommandComment>(CXC);
+  if (!TPCC || !TPCC->isPositionValid() || Depth >= TPCC->getDepth())
+    return 0;
+
+  return TPCC->getIndex(Depth);
+}
+
 CXString clang_VerbatimBlockLineComment_getText(CXComment CXC) {
   const VerbatimBlockLineComment *VBL =
       getASTNodeAs<VerbatimBlockLineComment>(CXC);
@@ -314,15 +351,170 @@ CXString clang_VerbatimLineComment_getText(CXComment CXC) {
 
 namespace {
 
+/// This comparison will sort parameters with valid index by index and
+/// invalid (unresolved) parameters last.
 class ParamCommandCommentCompareIndex {
 public:
   bool operator()(const ParamCommandComment *LHS,
                   const ParamCommandComment *RHS) const {
-    // To sort invalid (unresolved) parameters last, this comparison relies on
-    // invalid indices to be UINT_MAX.
-    return LHS->getParamIndex() < RHS->getParamIndex();
+    unsigned LHSIndex = UINT_MAX;
+    unsigned RHSIndex = UINT_MAX;
+    if (LHS->isParamIndexValid())
+      LHSIndex = LHS->getParamIndex();
+    if (RHS->isParamIndexValid())
+      RHSIndex = RHS->getParamIndex();
+
+    return LHSIndex < RHSIndex;
   }
 };
+
+/// This comparison will sort template parameters in the following order:
+/// \li real template parameters (depth = 1) in index order;
+/// \li all other names (depth > 1);
+/// \li unresolved names.
+class TParamCommandCommentComparePosition {
+public:
+  bool operator()(const TParamCommandComment *LHS,
+                  const TParamCommandComment *RHS) const {
+    // Sort unresolved names last.
+    if (!LHS->isPositionValid())
+      return false;
+    if (!RHS->isPositionValid())
+      return true;
+
+    if (LHS->getDepth() > 1)
+      return false;
+    if (RHS->getDepth() > 1)
+      return true;
+
+    // Sort template parameters in index order.
+    if (LHS->getDepth() == 1 && RHS->getDepth() == 1)
+      return LHS->getIndex(0) < RHS->getIndex(0);
+
+    // Leave all other names in source order.
+    return true;
+  }
+};
+
+/// Separate parts of a FullComment.
+struct FullCommentParts {
+  /// Take a full comment apart and initialize members accordingly.
+  FullCommentParts(const FullComment *C);
+
+  const BlockContentComment *Brief;
+  const ParagraphComment *FirstParagraph;
+  const BlockCommandComment *Returns;
+  SmallVector<const ParamCommandComment *, 8> Params;
+  SmallVector<const TParamCommandComment *, 4> TParams;
+  SmallVector<const BlockContentComment *, 8> MiscBlocks;
+};
+
+FullCommentParts::FullCommentParts(const FullComment *C) :
+    Brief(NULL), FirstParagraph(NULL), Returns(NULL) {
+  for (Comment::child_iterator I = C->child_begin(), E = C->child_end();
+       I != E; ++I) {
+    const Comment *Child = *I;
+    if (!Child)
+      continue;
+    switch (Child->getCommentKind()) {
+    case Comment::NoCommentKind:
+      continue;
+
+    case Comment::ParagraphCommentKind: {
+      const ParagraphComment *PC = cast<ParagraphComment>(Child);
+      if (PC->isWhitespace())
+        break;
+      if (!FirstParagraph)
+        FirstParagraph = PC;
+
+      MiscBlocks.push_back(PC);
+      break;
+    }
+
+    case Comment::BlockCommandCommentKind: {
+      const BlockCommandComment *BCC = cast<BlockCommandComment>(Child);
+      StringRef CommandName = BCC->getCommandName();
+      if (!Brief && (CommandName == "brief" || CommandName == "short")) {
+        Brief = BCC;
+        break;
+      }
+      if (!Returns && (CommandName == "returns" || CommandName == "return")) {
+        Returns = BCC;
+        break;
+      }
+      MiscBlocks.push_back(BCC);
+      break;
+    }
+
+    case Comment::ParamCommandCommentKind: {
+      const ParamCommandComment *PCC = cast<ParamCommandComment>(Child);
+      if (!PCC->hasParamName())
+        break;
+
+      if (!PCC->isDirectionExplicit() && !PCC->hasNonWhitespaceParagraph())
+        break;
+
+      Params.push_back(PCC);
+      break;
+    }
+
+    case Comment::TParamCommandCommentKind: {
+      const TParamCommandComment *TPCC = cast<TParamCommandComment>(Child);
+      if (!TPCC->hasParamName())
+        break;
+
+      if (!TPCC->hasNonWhitespaceParagraph())
+        break;
+
+      TParams.push_back(TPCC);
+      break;
+    }
+
+    case Comment::VerbatimBlockCommentKind:
+    case Comment::VerbatimLineCommentKind:
+      MiscBlocks.push_back(cast<BlockCommandComment>(Child));
+      break;
+
+    case Comment::TextCommentKind:
+    case Comment::InlineCommandCommentKind:
+    case Comment::HTMLStartTagCommentKind:
+    case Comment::HTMLEndTagCommentKind:
+    case Comment::VerbatimBlockLineCommentKind:
+    case Comment::FullCommentKind:
+      llvm_unreachable("AST node of this kind can't be a child of "
+                       "a FullComment");
+    }
+  }
+
+  // Sort params in order they are declared in the function prototype.
+  // Unresolved parameters are put at the end of the list in the same order
+  // they were seen in the comment.
+  std::stable_sort(Params.begin(), Params.end(),
+                   ParamCommandCommentCompareIndex());
+
+  std::stable_sort(TParams.begin(), TParams.end(),
+                   TParamCommandCommentComparePosition());
+}
+
+void PrintHTMLStartTagComment(const HTMLStartTagComment *C,
+                              llvm::raw_svector_ostream &Result) {
+  Result << "<" << C->getTagName();
+
+  if (C->getNumAttrs() != 0) {
+    for (unsigned i = 0, e = C->getNumAttrs(); i != e; i++) {
+      Result << " ";
+      const HTMLStartTagComment::Attribute &Attr = C->getAttr(i);
+      Result << Attr.Name;
+      if (!Attr.Value.empty())
+        Result << "=\"" << Attr.Value << "\"";
+    }
+  }
+
+  if (!C->isSelfClosing())
+    Result << ">";
+  else
+    Result << "/>";
+}
 
 class CommentASTToHTMLConverter :
     public ConstCommentVisitor<CommentASTToHTMLConverter> {
@@ -340,6 +532,7 @@ public:
   void visitParagraphComment(const ParagraphComment *C);
   void visitBlockCommandComment(const BlockCommandComment *C);
   void visitParamCommandComment(const ParamCommandComment *C);
+  void visitTParamCommandComment(const TParamCommandComment *C);
   void visitVerbatimBlockComment(const VerbatimBlockComment *C);
   void visitVerbatimBlockLineComment(const VerbatimBlockLineComment *C);
   void visitVerbatimLineComment(const VerbatimLineComment *C);
@@ -377,43 +570,36 @@ void CommentASTToHTMLConverter::visitInlineCommandComment(
 
   switch (C->getRenderKind()) {
   case InlineCommandComment::RenderNormal:
-    for (unsigned i = 0, e = C->getNumArgs(); i != e; ++i)
-      Result << C->getArgText(i) << " ";
+    for (unsigned i = 0, e = C->getNumArgs(); i != e; ++i) {
+      appendToResultWithHTMLEscaping(C->getArgText(i));
+      Result << " ";
+    }
     return;
 
   case InlineCommandComment::RenderBold:
     assert(C->getNumArgs() == 1);
-    Result << "<b>" << Arg0 << "</b>";
+    Result << "<b>";
+    appendToResultWithHTMLEscaping(Arg0);
+    Result << "</b>";
     return;
   case InlineCommandComment::RenderMonospaced:
     assert(C->getNumArgs() == 1);
-    Result << "<tt>" << Arg0 << "</tt>";
+    Result << "<tt>";
+    appendToResultWithHTMLEscaping(Arg0);
+    Result<< "</tt>";
     return;
   case InlineCommandComment::RenderEmphasized:
     assert(C->getNumArgs() == 1);
-    Result << "<em>" << Arg0 << "</em>";
+    Result << "<em>";
+    appendToResultWithHTMLEscaping(Arg0);
+    Result << "</em>";
     return;
   }
 }
 
 void CommentASTToHTMLConverter::visitHTMLStartTagComment(
                                   const HTMLStartTagComment *C) {
-  Result << "<" << C->getTagName();
-
-  if (C->getNumAttrs() != 0) {
-    for (unsigned i = 0, e = C->getNumAttrs(); i != e; i++) {
-      Result << " ";
-      const HTMLStartTagComment::Attribute &Attr = C->getAttr(i);
-      Result << Attr.Name;
-      if (!Attr.Value.empty())
-        Result << "=\"" << Attr.Value << "\"";
-    }
-  }
-
-  if (!C->isSelfClosing())
-    Result << ">";
-  else
-    Result << "/>";
+  PrintHTMLStartTagComment(C, Result);
 }
 
 void CommentASTToHTMLConverter::visitHTMLEndTagComment(
@@ -464,7 +650,8 @@ void CommentASTToHTMLConverter::visitParamCommandComment(
   } else
     Result << "<dt class=\"param-name-index-invalid\">";
 
-  Result << C->getParamName() << "</dt>";
+  appendToResultWithHTMLEscaping(C->getParamName());
+  Result << "</dt>";
 
   if (C->isParamIndexValid()) {
     Result << "<dd class=\"param-descr-index-"
@@ -472,6 +659,35 @@ void CommentASTToHTMLConverter::visitParamCommandComment(
            << "\">";
   } else
     Result << "<dd class=\"param-descr-index-invalid\">";
+
+  visitNonStandaloneParagraphComment(C->getParagraph());
+  Result << "</dd>";
+}
+
+void CommentASTToHTMLConverter::visitTParamCommandComment(
+                                  const TParamCommandComment *C) {
+  if (C->isPositionValid()) {
+    if (C->getDepth() == 1)
+      Result << "<dt class=\"tparam-name-index-"
+             << C->getIndex(0)
+             << "\">";
+    else
+      Result << "<dt class=\"tparam-name-index-other\">";
+  } else
+    Result << "<dt class=\"tparam-name-index-invalid\">";
+
+  appendToResultWithHTMLEscaping(C->getParamName());
+  Result << "</dt>";
+
+  if (C->isPositionValid()) {
+    if (C->getDepth() == 1)
+      Result << "<dd class=\"tparam-descr-index-"
+             << C->getIndex(0)
+             << "\">";
+    else
+      Result << "<dd class=\"tparam-descr-index-other\">";
+  } else
+    Result << "<dd class=\"tparam-descr-index-invalid\">";
 
   visitNonStandaloneParagraphComment(C->getParagraph());
   Result << "</dd>";
@@ -505,108 +721,41 @@ void CommentASTToHTMLConverter::visitVerbatimLineComment(
 }
 
 void CommentASTToHTMLConverter::visitFullComment(const FullComment *C) {
-  const BlockContentComment *Brief = NULL;
-  const ParagraphComment *FirstParagraph = NULL;
-  const BlockCommandComment *Returns = NULL;
-  SmallVector<const ParamCommandComment *, 8> Params;
-  SmallVector<const BlockContentComment *, 8> MiscBlocks;
-
-  // Extract various blocks into separate variables and vectors above.
-  for (Comment::child_iterator I = C->child_begin(), E = C->child_end();
-       I != E; ++I) {
-    const Comment *Child = *I;
-    if (!Child)
-      continue;
-    switch (Child->getCommentKind()) {
-    case Comment::NoCommentKind:
-      continue;
-
-    case Comment::ParagraphCommentKind: {
-      const ParagraphComment *PC = cast<ParagraphComment>(Child);
-      if (PC->isWhitespace())
-        break;
-      if (!FirstParagraph)
-        FirstParagraph = PC;
-
-      MiscBlocks.push_back(PC);
-      break;
-    }
-
-    case Comment::BlockCommandCommentKind: {
-      const BlockCommandComment *BCC = cast<BlockCommandComment>(Child);
-      StringRef CommandName = BCC->getCommandName();
-      if (!Brief && (CommandName == "brief" || CommandName == "short")) {
-        Brief = BCC;
-        break;
-      }
-      if (!Returns && (CommandName == "returns" || CommandName == "return")) {
-        Returns = BCC;
-        break;
-      }
-      MiscBlocks.push_back(BCC);
-      break;
-    }
-
-    case Comment::ParamCommandCommentKind: {
-      const ParamCommandComment *PCC = cast<ParamCommandComment>(Child);
-      if (!PCC->hasParamName())
-        break;
-
-      if (!PCC->isDirectionExplicit() && !PCC->hasNonWhitespaceParagraph())
-        break;
-
-      Params.push_back(PCC);
-      break;
-    }
-
-    case Comment::VerbatimBlockCommentKind:
-    case Comment::VerbatimLineCommentKind:
-      MiscBlocks.push_back(cast<BlockCommandComment>(Child));
-      break;
-
-    case Comment::TextCommentKind:
-    case Comment::InlineCommandCommentKind:
-    case Comment::HTMLStartTagCommentKind:
-    case Comment::HTMLEndTagCommentKind:
-    case Comment::VerbatimBlockLineCommentKind:
-    case Comment::FullCommentKind:
-      llvm_unreachable("AST node of this kind can't be a child of "
-                       "a FullComment");
-    }
-  }
-
-  // Sort params in order they are declared in the function prototype.
-  // Unresolved parameters are put at the end of the list in the same order
-  // they were seen in the comment.
-  std::stable_sort(Params.begin(), Params.end(),
-                   ParamCommandCommentCompareIndex());
+  FullCommentParts Parts(C);
 
   bool FirstParagraphIsBrief = false;
-  if (Brief)
-    visit(Brief);
-  else if (FirstParagraph) {
+  if (Parts.Brief)
+    visit(Parts.Brief);
+  else if (Parts.FirstParagraph) {
     Result << "<p class=\"para-brief\">";
-    visitNonStandaloneParagraphComment(FirstParagraph);
+    visitNonStandaloneParagraphComment(Parts.FirstParagraph);
     Result << "</p>";
     FirstParagraphIsBrief = true;
   }
 
-  for (unsigned i = 0, e = MiscBlocks.size(); i != e; ++i) {
-    const Comment *C = MiscBlocks[i];
-    if (FirstParagraphIsBrief && C == FirstParagraph)
+  for (unsigned i = 0, e = Parts.MiscBlocks.size(); i != e; ++i) {
+    const Comment *C = Parts.MiscBlocks[i];
+    if (FirstParagraphIsBrief && C == Parts.FirstParagraph)
       continue;
     visit(C);
   }
 
-  if (Params.size() != 0) {
+  if (Parts.TParams.size() != 0) {
     Result << "<dl>";
-    for (unsigned i = 0, e = Params.size(); i != e; ++i)
-      visit(Params[i]);
+    for (unsigned i = 0, e = Parts.TParams.size(); i != e; ++i)
+      visit(Parts.TParams[i]);
     Result << "</dl>";
   }
 
-  if (Returns)
-    visit(Returns);
+  if (Parts.Params.size() != 0) {
+    Result << "<dl>";
+    for (unsigned i = 0, e = Parts.Params.size(); i != e; ++i)
+      visit(Parts.Params[i]);
+    Result << "</dl>";
+  }
+
+  if (Parts.Returns)
+    visit(Parts.Returns);
 
   Result.flush();
 }

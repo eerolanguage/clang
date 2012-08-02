@@ -2906,7 +2906,7 @@ static void TryConstructorInitialization(Sema &S,
   //   user-provided default constructor.
   if (Kind.getKind() == InitializationKind::IK_Default &&
       Entity.getType().isConstQualified() &&
-      cast<CXXConstructorDecl>(Best->Function)->isImplicit()) {
+      !cast<CXXConstructorDecl>(Best->Function)->isUserProvided()) {
     Sequence.SetFailed(InitializationSequence::FK_DefaultInitOfConst);
     return;
   }
@@ -6179,8 +6179,8 @@ Sema::CanPerformCopyInitialization(const InitializedEntity &Entity,
   Expr *InitE = Init.get();
   assert(InitE && "No initialization expression");
 
-  InitializationKind Kind = InitializationKind::CreateCopy(SourceLocation(),
-                                                           SourceLocation());
+  InitializationKind Kind
+    = InitializationKind::CreateCopy(InitE->getLocStart(), SourceLocation());
   InitializationSequence Seq(*this, Entity, Kind, &InitE, 1);
   return !Seq.Failed();
 }
