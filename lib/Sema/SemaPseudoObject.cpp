@@ -965,6 +965,27 @@ Sema::ObjCSubscriptKind
   return OS_Error;
 }
 
+/// CheckKeyForObjCARCConversion - This routine suggests bridge casting of CF
+/// objects used as dictionary subscript key objects.
+static void CheckKeyForObjCARCConversion(Sema &S, QualType ContainerT, 
+                                         Expr *Key) {
+  if (ContainerT.isNull())
+    return;
+  // dictionary subscripting.
+  // - (id)objectForKeyedSubscript:(id)key;
+  IdentifierInfo *KeyIdents[] = {
+    &S.Context.Idents.get("objectForKeyedSubscript")  
+  };
+  Selector GetterSelector = S.Context.Selectors.getSelector(1, KeyIdents);
+  ObjCMethodDecl *Getter = S.LookupMethodInObjectType(GetterSelector, ContainerT, 
+                                                      true /*instance*/);
+  if (!Getter)
+    return;
+  QualType T = Getter->param_begin()[0]->getType();
+  S.CheckObjCARCConversion(Key->getSourceRange(), 
+                         T, Key, Sema::CCK_ImplicitConversion);
+}
+
 bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useAlternateMethod) {
   if (AtIndexGetter)
     return true;
@@ -982,8 +1003,12 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useAlternateMethod) {
   }
   Sema::ObjCSubscriptKind Res = 
     S.CheckSubscriptingKind(RefExpr->getKeyExpr());
-  if (Res == Sema::OS_Error)
+  if (Res == Sema::OS_Error) {
+    if (S.getLangOpts().ObjCAutoRefCount)
+      CheckKeyForObjCARCConversion(S, ResultType, 
+                                   RefExpr->getKeyExpr());
     return false;
+  }
   bool arrayRef = (Res == Sema::OS_Array);
   
   if (ResultType.isNull()) {
@@ -1115,8 +1140,12 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useAlternateMethod) {
   
   Sema::ObjCSubscriptKind Res = 
     S.CheckSubscriptingKind(RefExpr->getKeyExpr());
-  if (Res == Sema::OS_Error)
+  if (Res == Sema::OS_Error) {
+    if (S.getLangOpts().ObjCAutoRefCount)
+      CheckKeyForObjCARCConversion(S, ResultType, 
+                                   RefExpr->getKeyExpr());
     return false;
+  }
   bool arrayRef = (Res == Sema::OS_Array);
   
   if (ResultType.isNull()) {

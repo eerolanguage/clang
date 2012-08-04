@@ -13,6 +13,7 @@
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/CharUnits.h"
+#include "clang/AST/Comment.h"
 #include "clang/AST/CommentLexer.h"
 #include "clang/AST/CommentSema.h"
 #include "clang/AST/CommentParser.h"
@@ -94,8 +95,8 @@ RawComment *ASTContext::getRawCommentForDeclNoCache(const Decl *D) const {
   SourceLocation DeclLoc;
   if (isa<ObjCMethodDecl>(D) || isa<ObjCContainerDecl>(D) ||
       isa<ObjCPropertyDecl>(D) ||
-      isa<FunctionTemplateDecl>(D) ||
-      isa<ClassTemplateDecl>(D) || isa<ClassTemplateSpecializationDecl>(D))
+      isa<RedeclarableTemplateDecl>(D) ||
+      isa<ClassTemplateSpecializationDecl>(D))
     DeclLoc = D->getLocStart();
   else
     DeclLoc = D->getLocation();
