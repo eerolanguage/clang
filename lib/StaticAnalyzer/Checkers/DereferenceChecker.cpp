@@ -166,10 +166,8 @@ void DereferenceChecker::reportBug(ProgramStateRef State, const Stmt *S,
                   buf.empty() ? BT_null->getDescription() : buf.str(),
                   N);
 
-  report->addVisitor(
-    bugreporter::getTrackNullOrUndefValueVisitor(N,
-                                                 bugreporter::GetDerefExpr(N),
-                                                 report));
+  bugreporter::addTrackNullOrUndefValueVisitor(N, bugreporter::GetDerefExpr(N),
+                                               report);
 
   for (SmallVectorImpl<SourceRange>::iterator
        I = Ranges.begin(), E = Ranges.end(); I!=E; ++I)
@@ -193,8 +191,9 @@ void DereferenceChecker::checkLocation(SVal l, bool isLoad, const Stmt* S,
 
       BugReport *report =
         new BugReport(*BT_undef, BT_undef->getDescription(), N);
-      report->addVisitor(bugreporter::getTrackNullOrUndefValueVisitor(N,
-                                        bugreporter::GetDerefExpr(N), report));
+      bugreporter::addTrackNullOrUndefValueVisitor(N,
+                                                   bugreporter::GetDerefExpr(N),
+                                                   report);
       report->disablePathPruning();
       C.EmitReport(report);
     }
@@ -234,7 +233,7 @@ void DereferenceChecker::checkLocation(SVal l, bool isLoad, const Stmt* S,
 
 void DereferenceChecker::checkBind(SVal L, SVal V, const Stmt *S,
                                    CheckerContext &C) const {
-  // If we're binding to a reference, check if the value is potentially null.
+  // If we're binding to a reference, check if the value is known to be null.
   if (V.isUndef())
     return;
 
@@ -266,8 +265,23 @@ void DereferenceChecker::checkBind(SVal L, SVal V, const Stmt *S,
     }
   }
 
-  // From here on out, assume the value is non-null.
-  C.addTransition(StNonNull);
+  // Unlike a regular null dereference, initializing a reference with a
+  // dereferenced null pointer does not actually cause a runtime exception in
+  // Clang's implementation of references.
+  //
+  //   int &r = *p; // safe??
+  //   if (p != NULL) return; // uh-oh
+  //   r = 5; // trap here
+  //
+  // The standard says this is invalid as soon as we try to create a "null
+  // reference" (there is no such thing), but turning this into an assumption
+  // that 'p' is never null will not match our actual runtime behavior.
+  // So we do not record this assumption, allowing us to warn on the last line
+  // of this example.
+  //
+  // We do need to add a transition because we may have generated a sink for
+  // the "implicit" null dereference.
+  C.addTransition(State, this);
 }
 
 void ento::registerDereferenceChecker(CheckerManager &mgr) {
