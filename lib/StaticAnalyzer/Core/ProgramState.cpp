@@ -499,8 +499,6 @@ ProgramStateRef ProgramStateManager::removeGDM(ProgramStateRef state, void *Key)
   return getPersistentState(NewState);
 }
 
-void ScanReachableSymbols::anchor() { }
-
 bool ScanReachableSymbols::scan(nonloc::CompoundVal val) {
   for (nonloc::CompoundVal::iterator I=val.begin(), E=val.end(); I!=E; ++I)
     if (!scan(*I))
@@ -544,6 +542,9 @@ bool ScanReachableSymbols::scan(SVal val) {
   if (loc::MemRegionVal *X = dyn_cast<loc::MemRegionVal>(&val))
     return scan(X->getRegion());
 
+  if (nonloc::LazyCompoundVal *X = dyn_cast<nonloc::LazyCompoundVal>(&val))
+    return scan(X->getRegion());
+
   if (nonloc::LocAsInteger *X = dyn_cast<nonloc::LocAsInteger>(&val))
     return scan(X->getLoc());
 
@@ -578,9 +579,18 @@ bool ScanReachableSymbols::scan(const MemRegion *R) {
       return false;
 
   // If this is a subregion, also visit the parent regions.
-  if (const SubRegion *SR = dyn_cast<SubRegion>(R))
-    if (!scan(SR->getSuperRegion()))
+  if (const SubRegion *SR = dyn_cast<SubRegion>(R)) {
+    const MemRegion *Super = SR->getSuperRegion();
+    if (!scan(Super))
       return false;
+
+    // When we reach the topmost region, scan all symbols in it.
+    if (isa<MemSpaceRegion>(Super)) {
+      StoreManager &StoreMgr = state->getStateManager().getStoreManager();
+      if (!StoreMgr.scanReachableSymbols(state->getStore(), SR, *this))
+        return false;
+    }
+  }
 
   // Regions captured by a block are also implicitly reachable.
   if (const BlockDataRegion *BDR = dyn_cast<BlockDataRegion>(R)) {
@@ -592,16 +602,7 @@ bool ScanReachableSymbols::scan(const MemRegion *R) {
     }
   }
 
-  // Now look at the binding to this region (if any).
-  if (!scan(state->getSValAsScalarOrLoc(R)))
-    return false;
-
-  // Now look at the subregions.
-  if (!SRM.get())
-    SRM.reset(state->getStateManager().getStoreManager().
-                                           getSubRegionMap(state->getStore()));
-
-  return SRM->iterSubRegions(R, *this);
+  return true;
 }
 
 bool ProgramState::scanReachableSymbols(SVal val, SymbolVisitor& visitor) const {
@@ -761,13 +762,11 @@ DynamicTypeInfo ProgramState::getDynamicTypeInfo(const MemRegion *Reg) const {
   return DynamicTypeInfo();
 }
 
-ProgramStateRef ProgramState::addDynamicTypeInfo(const MemRegion *Reg,
-                                                 QualType NewTy) const {
+ProgramStateRef ProgramState::setDynamicTypeInfo(const MemRegion *Reg,
+                                                 DynamicTypeInfo NewTy) const {
   if (const SymbolicRegion *SR = dyn_cast<SymbolicRegion>(Reg)) {
     SymbolRef Sym = SR->getSymbol();
-    // TODO: Instead of resetting the type info, check the old type info and
-    // merge and pick the most precise type.
-    ProgramStateRef NewState = set<DynamicTypeMap>(Sym, DynamicTypeInfo(NewTy));
+    ProgramStateRef NewState = set<DynamicTypeMap>(Sym, NewTy);
     assert(NewState);
     return NewState;
   }

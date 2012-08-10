@@ -1468,7 +1468,10 @@ llvm::DIType CGDebugInfo::CreateType(const ArrayType *Ty,
       CGM.getContext().getTypeAlign(CGM.getContext().getBaseElementType(VAT));
   } else if (Ty->isIncompleteArrayType()) {
     Size = 0;
-    Align = CGM.getContext().getTypeAlign(Ty->getElementType());
+    if (Ty->getElementType()->isIncompleteType())
+      Align = 0;
+    else
+      Align = CGM.getContext().getTypeAlign(Ty->getElementType());
   } else if (Ty->isDependentSizedArrayType() || Ty->isIncompleteType()) {
     Size = 0;
     Align = 0;
@@ -1629,8 +1632,13 @@ static QualType UnwrapTypeForDebugInfo(QualType T) {
     case Type::Paren:
       T = cast<ParenType>(T)->getInnerType();
       break;
-    case Type::SubstTemplateTypeParm:
+    case Type::SubstTemplateTypeParm: {
+      // We need to keep the qualifiers handy since getReplacementType()
+      // will strip them away.
+      unsigned Quals = T.getLocalFastQualifiers();
       T = cast<SubstTemplateTypeParmType>(T)->getReplacementType();
+      T.addFastQualifiers(Quals);
+    }
       break;
     case Type::Auto:
       T = cast<AutoType>(T)->getDeducedType();
@@ -1689,10 +1697,11 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
 
   // Unwrap the type as needed for debug information.
   Ty = UnwrapTypeForDebugInfo(Ty);
-  
+
   llvm::DIType T = getCompletedTypeOrNull(Ty);
 
-  if (T.Verify()) return T;
+  if (T.Verify())
+    return T;
 
   // Otherwise create the type.
   llvm::DIType Res = CreateTypeNode(Ty, Unit);
@@ -1707,6 +1716,7 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
 
   if (!Res.isForwardDecl())
     CompletedTypeCache[Ty.getAsOpaquePtr()] = Res;
+
   return Res;
 }
 
@@ -1958,6 +1968,7 @@ llvm::DISubprogram CGDebugInfo::getFunctionDeclaration(const Decl *D) {
 llvm::DIType CGDebugInfo::getOrCreateFunctionType(const Decl * D,
                                                   QualType FnType,
                                                   llvm::DIFile F) {
+
   if (const CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D))
     return getOrCreateMethodType(Method, F);
   if (const ObjCMethodDecl *OMethod = dyn_cast<ObjCMethodDecl>(D)) {

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-ipa=dynamic -verify %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-ipa=dynamic-bifurcate -verify %s
 
 #include "InlineObjCInstanceMethod.h"
 
@@ -29,7 +29,7 @@
 // Method is called on inited object.
 + (int)testAllocInit2 {
   MyClass *a = [[MyClass alloc] init];
-  return 5/[a getInt]; // todo
+  return 5/[a getInt]; // expected-warning {{Division by zero}}
 }
 
 // Method is called on a parameter.

@@ -2757,21 +2757,22 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty) const {
     }
   }
 
+  if (getABIKind() == ARMABIInfo::APCS || getABIKind() == ARMABIInfo::AAPCS) {
+    if (getContext().getTypeSizeInChars(Ty) > CharUnits::fromQuantity(64) ||
+        getContext().getTypeAlign(Ty) > 64) {
+      return ABIArgInfo::getIndirect(0, /*ByVal=*/true);
+    }
+  }
+
   // Otherwise, pass by coercing to a structure of the appropriate size.
-  //
-  // FIXME: This doesn't handle alignment > 64 bits.
   llvm::Type* ElemTy;
   unsigned SizeRegs;
-  if (getContext().getTypeSizeInChars(Ty) <= CharUnits::fromQuantity(64)) {
+  // FIXME: Try to match the types of the arguments more accurately where
+  // we can.
+  if (getContext().getTypeAlign(Ty) <= 32) {
     ElemTy = llvm::Type::getInt32Ty(getVMContext());
     SizeRegs = (getContext().getTypeSize(Ty) + 31) / 32;
-  } else if (getABIKind() == ARMABIInfo::APCS) {
-    // Initial ARM ByVal support is APCS-only.
-    return ABIArgInfo::getIndirect(0, /*ByVal=*/true);
   } else {
-    // FIXME: This is kind of nasty... but there isn't much choice
-    // because most of the ARM calling conventions don't yet support
-    // byval.
     ElemTy = llvm::Type::getInt64Ty(getVMContext());
     SizeRegs = (getContext().getTypeSize(Ty) + 63) / 64;
   }
@@ -3821,6 +3822,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
     case llvm::Triple::DragonFly:
     case llvm::Triple::FreeBSD:
     case llvm::Triple::OpenBSD:
+    case llvm::Triple::Bitrig:
       return *(TheTargetCodeGenInfo =
                new X86_32TargetCodeGenInfo(Types, false, true, DisableMMX,
                                            false,

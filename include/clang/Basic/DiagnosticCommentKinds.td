@@ -47,6 +47,16 @@ def warn_doc_block_command_empty_paragraph : Warning<
   "empty paragraph passed to '\\%0' command">,
   InGroup<Documentation>, DefaultIgnore;
 
+def warn_doc_block_command_duplicate : Warning<
+  "duplicated command '\\%0'">,
+  InGroup<Documentation>, DefaultIgnore;
+
+def note_doc_block_command_previous : Note<
+  "previous command '\\%0' here">;
+
+def note_doc_block_command_previous_alias : Note<
+  "previous command '\\%0' (an alias of '\\%1') here">;
+
 // \param command
 
 def warn_doc_param_invalid_direction : Warning<
@@ -102,12 +112,13 @@ def note_doc_tparam_name_suggestion : Note<
 
 def warn_doc_returns_not_attached_to_a_function_decl : Warning<
   "'\\%0' command used in a comment that is not attached to "
-  "a function declaration">,
+  "a function or method declaration">,
   InGroup<Documentation>, DefaultIgnore;
 
 def warn_doc_returns_attached_to_a_void_function : Warning<
   "'\\%0' command used in a comment that is attached to a "
-  "%select{void function|constructor|destructor}1">,
+  "%select{function returning void|constructor|destructor|"
+  "method returning void}1">,
   InGroup<Documentation>, DefaultIgnore;
 
 } // end of documentation issue category

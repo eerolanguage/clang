@@ -32,6 +32,18 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Triple.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCObjectFileInfo.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/MCTargetAsmParser.h"
+#include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/TargetSelect.h"
 using namespace clang;
 using namespace sema;
 
@@ -671,7 +683,7 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
     = CondExpr->isTypeDependent() || CondExpr->isValueDependent();
   unsigned CondWidth
     = HasDependentValue ? 0 : Context.getIntWidth(CondTypeBeforePromotion);
-  bool CondIsSigned 
+  bool CondIsSigned
     = CondTypeBeforePromotion->isSignedIntegerOrEnumerationType();
 
   // Accumulate all of the case values in a vector so that we can sort them
@@ -1002,7 +1014,7 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
             << CondTypeBeforePromotion;
         }
 
-        llvm::APSInt Hi = 
+        llvm::APSInt Hi =
           RI->second->getRHS()->EvaluateKnownConstInt(Context);
         AdjustAPSInt(Hi, CondWidth, CondIsSigned);
         while (EI != EIend && EI->first < Hi)
@@ -1050,12 +1062,12 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
       switch (UnhandledNames.size()) {
       case 0: break;
       case 1:
-        Diag(CondExpr->getExprLoc(), TheDefaultStmt 
+        Diag(CondExpr->getExprLoc(), TheDefaultStmt
           ? diag::warn_def_missing_case1 : diag::warn_missing_case1)
           << UnhandledNames[0];
         break;
       case 2:
-        Diag(CondExpr->getExprLoc(), TheDefaultStmt 
+        Diag(CondExpr->getExprLoc(), TheDefaultStmt
           ? diag::warn_def_missing_case2 : diag::warn_missing_case2)
           << UnhandledNames[0] << UnhandledNames[1];
         break;
@@ -1092,10 +1104,10 @@ void
 Sema::DiagnoseAssignmentEnum(QualType DstType, QualType SrcType,
                              Expr *SrcExpr) {
   unsigned DIAG = diag::warn_not_in_enum_assignement;
-  if (Diags.getDiagnosticLevel(DIAG, SrcExpr->getExprLoc()) 
+  if (Diags.getDiagnosticLevel(DIAG, SrcExpr->getExprLoc())
       == DiagnosticsEngine::Ignored)
     return;
-  
+
   if (const EnumType *ET = DstType->getAs<EnumType>())
     if (!Context.hasSameType(SrcType, DstType) &&
         SrcType->isIntegerType()) {
@@ -1110,7 +1122,7 @@ Sema::DiagnoseAssignmentEnum(QualType DstType, QualType SrcType,
         typedef SmallVector<std::pair<llvm::APSInt, EnumConstantDecl*>, 64>
         EnumValsTy;
         EnumValsTy EnumVals;
-        
+
         // Gather all enum values, set their type and sort them,
         // allowing easier comparison with rhs constant.
         for (EnumDecl::enumerator_iterator EDI = ED->enumerator_begin();
@@ -1124,7 +1136,7 @@ Sema::DiagnoseAssignmentEnum(QualType DstType, QualType SrcType,
         std::stable_sort(EnumVals.begin(), EnumVals.end(), CmpEnumVals);
         EnumValsTy::iterator EIend =
         std::unique(EnumVals.begin(), EnumVals.end(), EqEnumVals);
-        
+
         // See which case values aren't in enum.
         EnumValsTy::const_iterator EI = EnumVals.begin();
         while (EI != EIend && EI->first < RhsVal)
@@ -1265,7 +1277,7 @@ public:
   }; // end class DeclExtractor
 
   // DeclMatcher checks to see if the decls are used in a non-evauluated
-  // context.  
+  // context.
   class DeclMatcher : public EvaluatedExprVisitor<DeclMatcher> {
     llvm::SmallPtrSet<VarDecl*, 8> &Decls;
     bool FoundDecl;
@@ -1464,7 +1476,7 @@ ExprResult
 Sema::CheckObjCForCollectionOperand(SourceLocation forLoc, Expr *collection) {
   if (!collection)
     return ExprError();
-  
+
   // Bail out early if we've got a type-dependent expression.
   if (collection->isTypeDependent()) return Owned(collection);
 
@@ -1489,7 +1501,7 @@ Sema::CheckObjCForCollectionOperand(SourceLocation forLoc, Expr *collection) {
 
   // If we have a forward-declared type, we can't do this check.
   // Under ARC, it is an error not to have a forward-declared class.
-  if (iface && 
+  if (iface &&
       RequireCompleteType(forLoc, QualType(objectType, 0),
                           getLangOpts().ObjCAutoRefCount
                             ? diag::err_arc_collection_forward
@@ -1536,10 +1548,10 @@ Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
                                  SourceLocation LParenLoc,
                                  Stmt *First, Expr *collection,
                                  SourceLocation RParenLoc) {
-  
-  ExprResult CollectionExprResult = 
+
+  ExprResult CollectionExprResult =
     CheckObjCForCollectionOperand(ForLoc, collection);
-  
+
   if (First) {
     QualType FirstType;
     if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
@@ -1570,12 +1582,12 @@ Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
         return StmtError(Diag(ForLoc, diag::err_selector_element_type)
                            << FirstType << First->getSourceRange());
   }
-  
+
   if (CollectionExprResult.isInvalid())
     return StmtError();
-  
-  return Owned(new (Context) ObjCForCollectionStmt(First, 
-                                                   CollectionExprResult.take(), 0, 
+
+  return Owned(new (Context) ObjCForCollectionStmt(First,
+                                                   CollectionExprResult.take(), 0,
                                                    ForLoc, RParenLoc));
 }
 
@@ -1730,7 +1742,7 @@ static bool FinishForRangeVarDecl(Sema &SemaRef, VarDecl *Decl, Expr *Init,
   // In ARC, infer lifetime.
   // FIXME: ARC may want to turn this into 'const __unsafe_unretained' if
   // we're doing the equivalent of fast iteration.
-  if (SemaRef.getLangOpts().ObjCAutoRefCount && 
+  if (SemaRef.getLangOpts().ObjCAutoRefCount &&
       SemaRef.inferObjCARCLifetime(Decl))
     Decl->setInvalidDecl();
 
@@ -1850,7 +1862,7 @@ Sema::ActOnCXXForRangeStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
                            SourceLocation RParenLoc) {
   if (!First || !Range)
     return StmtError();
-  
+
   if (ObjCEnumerationCollection(Range))
     return ActOnObjCForCollectionStmt(ForLoc, LParenLoc, First, Range,
                                       RParenLoc);
@@ -2105,13 +2117,13 @@ Sema::BuildCXXForRangeStmt(SourceLocation ForLoc, SourceLocation ColonLoc,
                                              ColonLoc, RParenLoc));
 }
 
-/// FinishObjCForCollectionStmt - Attach the body to a objective-C foreach 
+/// FinishObjCForCollectionStmt - Attach the body to a objective-C foreach
 /// statement.
 StmtResult Sema::FinishObjCForCollectionStmt(Stmt *S, Stmt *B) {
   if (!S || !B)
     return StmtError();
   ObjCForCollectionStmt * ForStmt = cast<ObjCForCollectionStmt>(S);
-  
+
   ForStmt->setBody(B);
   return S;
 }
@@ -2126,7 +2138,7 @@ StmtResult Sema::FinishCXXForRangeStmt(Stmt *S, Stmt *B) {
 
   if (isa<ObjCForCollectionStmt>(S))
     return FinishObjCForCollectionStmt(S, B);
-  
+
   CXXForRangeStmt *ForStmt = cast<CXXForRangeStmt>(S);
   ForStmt->setBody(B);
 
@@ -2355,7 +2367,7 @@ Sema::ActOnCapScopeReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
         FnRetType = RetValExp->getType();
       else
         FnRetType = CurCap->ReturnType = Context.DependentTy;
-    } else { 
+    } else {
       if (RetValExp) {
         // C++11 [expr.lambda.prim]p4 bans inferring the result from an
         // initializer list, because it is not an expression (even
@@ -2455,7 +2467,7 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
   // Check for unexpanded parameter packs.
   if (RetValExp && DiagnoseUnexpandedParameterPack(RetValExp))
     return StmtError();
-  
+
   if (isa<CapturingScopeInfo>(getCurFunction()))
     return ActOnCapScopeReturnStmt(ReturnLoc, RetValExp);
 
@@ -2471,7 +2483,7 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     FnRetType = MD->getResultType();
     if (MD->hasRelatedResultType() && MD->getClassInterface()) {
       // In the implementation of a method with a related return type, the
-      // type used to type-check the validity of return statements within the 
+      // type used to type-check the validity of return statements within the
       // method body is a pointer to the type of the class being implemented.
       RelatedRetType = Context.getObjCInterfaceType(MD->getClassInterface());
       RelatedRetType = Context.getObjCObjectPointerType(RelatedRetType);
@@ -2645,7 +2657,7 @@ static bool CheckAsmLValue(const Expr *E, Sema &S) {
 
 /// isOperandMentioned - Return true if the specified operand # is mentioned
 /// anywhere in the decomposed asm string.
-static bool isOperandMentioned(unsigned OpNo, 
+static bool isOperandMentioned(unsigned OpNo,
                          ArrayRef<AsmStmt::AsmStringPiece> AsmStrPieces) {
   for (unsigned p = 0, e = AsmStrPieces.size(); p != e; ++p) {
     const AsmStmt::AsmStringPiece &Piece = AsmStrPieces[p];
@@ -2887,14 +2899,186 @@ StmtResult Sema::ActOnAsmStmt(SourceLocation AsmLoc, bool IsSimple,
   return Owned(NS);
 }
 
+// needSpaceAsmToken - This function handles whitespace around asm punctuation.
+// Returns true if a space should be emitted.
+static inline bool needSpaceAsmToken(Token currTok) {
+  static Token prevTok;
+
+  // No need for space after prevToken.
+  switch(prevTok.getKind()) {
+  default:
+    break;
+  case tok::l_square:
+  case tok::r_square:
+  case tok::l_brace:
+  case tok::r_brace:
+  case tok::colon:
+    prevTok = currTok;
+    return false;
+  }
+
+  // No need for a space before currToken.
+  switch(currTok.getKind()) {
+  default:
+    break;
+  case tok::l_square:
+  case tok::r_square:
+  case tok::l_brace:
+  case tok::r_brace:
+  case tok::comma:
+  case tok::colon:
+    prevTok = currTok;
+    return false;
+  }
+  prevTok = currTok;
+  return true;
+}
+
+static std::string PatchMSAsmString(Sema &SemaRef, bool &IsSimple,
+                                    SourceLocation AsmLoc,
+                                    ArrayRef<Token> AsmToks,
+                                    const TargetInfo &TI) {
+  assert (!AsmToks.empty() && "Didn't expect an empty AsmToks!");
+  std::string Res;
+  IdentifierInfo *II = AsmToks[0].getIdentifierInfo();
+  Res = II->getName().str();
+
+  // Assume simple asm stmt until we parse a non-register identifer.
+  IsSimple = true;
+
+  // Check the operands.
+  for (unsigned i = 1, e = AsmToks.size(); i != e; ++i) {
+    if (needSpaceAsmToken(AsmToks[i]))
+        Res += " ";
+
+    switch (AsmToks[i].getKind()) {
+    default:
+      //llvm_unreachable("Unknown token.");
+      break;
+    case tok::comma: Res += ","; break;
+    case tok::colon: Res += ":"; break;
+    case tok::l_square: Res += "["; break;
+    case tok::r_square: Res += "]"; break;
+    case tok::l_brace: Res += "{"; break;
+    case tok::r_brace: Res += "}"; break;
+    case tok::numeric_constant: {
+      SmallString<32> TokenBuf;
+      TokenBuf.resize(32);
+      bool StringInvalid = false;
+      const char *ThisTokBuf = &TokenBuf[0];
+      unsigned ThisTokLen =
+        Lexer::getSpelling(AsmToks[i], ThisTokBuf, SemaRef.getSourceManager(),
+                           SemaRef.getLangOpts(), &StringInvalid);
+      Res += StringRef(ThisTokBuf, ThisTokLen);
+      break;
+    }
+    case tok::identifier: {
+      II = AsmToks[i].getIdentifierInfo();
+      StringRef Name = II->getName();
+
+      // Valid registers don't need modification.
+      if (TI.isValidGCCRegisterName(Name)) {
+        Res += Name;
+        break;
+      }
+
+      // TODO: Lookup the identifier.
+      IsSimple = false;
+    }
+    } // AsmToks[i].getKind()
+  }
+  return Res;
+}
+
+// Build the unmodified MSAsmString.
+static std::string buildMSAsmString(Sema &SemaRef,
+                                    ArrayRef<Token> AsmToks,
+                                    ArrayRef<unsigned> LineEnds) {
+  assert (!AsmToks.empty() && "Didn't expect an empty AsmToks!");
+  SmallString<512> Asm;
+  SmallString<512> TokenBuf;
+  TokenBuf.resize(512);
+  unsigned AsmLineNum = 0;
+  for (unsigned i = 0, e = AsmToks.size(); i < e; ++i) {
+    const char *ThisTokBuf = &TokenBuf[0];
+    bool StringInvalid = false;
+    unsigned ThisTokLen =
+      Lexer::getSpelling(AsmToks[i], ThisTokBuf, SemaRef.getSourceManager(),
+                         SemaRef.getLangOpts(), &StringInvalid);
+    if (i && (!AsmLineNum || i != LineEnds[AsmLineNum-1]) &&
+        needSpaceAsmToken(AsmToks[i]))
+      Asm += ' ';
+    Asm += StringRef(ThisTokBuf, ThisTokLen);
+    if (i + 1 == LineEnds[AsmLineNum] && i + 1 != AsmToks.size()) {
+      Asm += '\n';
+      ++AsmLineNum;
+    }
+  }
+  return Asm.c_str();
+}
+
 StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
-                                std::string &AsmString,
+                                ArrayRef<Token> AsmToks,
+                                ArrayRef<unsigned> LineEnds,
                                 SourceLocation EndLoc) {
   // MS-style inline assembly is not fully supported, so emit a warning.
   Diag(AsmLoc, diag::warn_unsupported_msasm);
+  SmallVector<std::string,4> Clobbers;
+
+  // Empty asm statements don't need to instantiate the AsmParser, etc.
+  if (AsmToks.empty()) {
+    StringRef AsmString;
+    MSAsmStmt *NS =
+      new (Context) MSAsmStmt(Context, AsmLoc, /* IsSimple */ true,
+                              /* IsVolatile */ true, AsmToks, LineEnds,
+                              AsmString, Clobbers, EndLoc);
+    return Owned(NS);
+  }
+
+  std::string AsmString = buildMSAsmString(*this, AsmToks, LineEnds);
+
+  bool IsSimple;
+  // Rewrite operands to appease the AsmParser.
+  std::string PatchedAsmString =
+    PatchMSAsmString(*this, IsSimple, AsmLoc, AsmToks, Context.getTargetInfo());
+
+  // Initialize targets and assembly printers/parsers.
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmParsers();
+
+  // Get the target specific parser.
+  std::string Error;
+  const std::string &TT = Context.getTargetInfo().getTriple().getTriple();
+  const llvm::Target *TheTarget(llvm::TargetRegistry::lookupTarget(TT, Error));
+
+  llvm::SourceMgr SrcMgr;
+  llvm::MemoryBuffer *Buffer =
+    llvm::MemoryBuffer::getMemBuffer(PatchedAsmString, "<inline asm>");
+
+  // Tell SrcMgr about this buffer, which is what the parser will pick up.
+  SrcMgr.AddNewSourceBuffer(Buffer, llvm::SMLoc());
+
+  OwningPtr<llvm::MCAsmInfo> MAI(TheTarget->createMCAsmInfo(TT));
+  OwningPtr<llvm::MCRegisterInfo> MRI(TheTarget->createMCRegInfo(TT));
+  OwningPtr<llvm::MCObjectFileInfo> MOFI(new llvm::MCObjectFileInfo());
+  llvm::MCContext Ctx(*MAI, *MRI, MOFI.get(), &SrcMgr);
+  OwningPtr<llvm::MCSubtargetInfo>
+    STI(TheTarget->createMCSubtargetInfo(TT, "", ""));
+
+  OwningPtr<llvm::MCStreamer> Str;
+  OwningPtr<llvm::MCAsmParser>
+    Parser(createMCAsmParser(SrcMgr, Ctx, *Str.get(), *MAI));
+  OwningPtr<llvm::MCTargetAsmParser>
+    TargetParser(TheTarget->createMCAsmParser(*STI, *Parser));
+
+  // Change to the Intel dialect.
+  Parser->setAssemblerDialect(1);
+  Parser->setTargetParser(*TargetParser.get());
 
   MSAsmStmt *NS =
-    new (Context) MSAsmStmt(Context, AsmLoc, AsmString, EndLoc);
+    new (Context) MSAsmStmt(Context, AsmLoc, IsSimple, /* IsVolatile */ true,
+                            AsmToks, LineEnds, AsmString, Clobbers, EndLoc);
 
   return Owned(NS);
 }
@@ -3152,17 +3336,17 @@ StmtResult Sema::BuildMSDependentExistsStmt(SourceLocation KeywordLoc,
                                             Stmt *Nested)
 {
   return new (Context) MSDependentExistsStmt(KeywordLoc, IsIfExists,
-                                             QualifierLoc, NameInfo, 
+                                             QualifierLoc, NameInfo,
                                              cast<CompoundStmt>(Nested));
 }
 
 
-StmtResult Sema::ActOnMSDependentExistsStmt(SourceLocation KeywordLoc, 
+StmtResult Sema::ActOnMSDependentExistsStmt(SourceLocation KeywordLoc,
                                             bool IsIfExists,
-                                            CXXScopeSpec &SS, 
+                                            CXXScopeSpec &SS,
                                             UnqualifiedId &Name,
                                             Stmt *Nested) {
-  return BuildMSDependentExistsStmt(KeywordLoc, IsIfExists, 
+  return BuildMSDependentExistsStmt(KeywordLoc, IsIfExists,
                                     SS.getWithLocInContext(Context),
                                     GetNameFromUnqualifiedId(Name),
                                     Nested);

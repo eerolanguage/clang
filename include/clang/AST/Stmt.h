@@ -20,6 +20,7 @@
 #include "clang/AST/StmtIterator.h"
 #include "clang/AST/DeclGroup.h"
 #include "clang/AST/Attr.h"
+#include "clang/Lex/Token.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1625,16 +1626,30 @@ class MSAsmStmt : public Stmt {
   bool IsSimple;
   bool IsVolatile;
 
+  unsigned NumAsmToks;
+  unsigned NumLineEnds;
+  unsigned NumClobbers;
+
+  Token *AsmToks;
+  unsigned *LineEnds;
   Stmt **Exprs;
+  std::string *Clobbers;
 
 public:
-  MSAsmStmt(ASTContext &C, SourceLocation asmloc, std::string &asmstr,
-            SourceLocation endloc);
+  MSAsmStmt(ASTContext &C, SourceLocation asmloc, bool issimple,
+            bool isvolatile, ArrayRef<Token> asmtoks,
+            ArrayRef<unsigned> lineends, StringRef asmstr,
+            ArrayRef<std::string> clobbers, SourceLocation endloc);
 
   SourceLocation getAsmLoc() const { return AsmLoc; }
   void setAsmLoc(SourceLocation L) { AsmLoc = L; }
   SourceLocation getEndLoc() const { return EndLoc; }
   void setEndLoc(SourceLocation L) { EndLoc = L; }
+
+  unsigned getNumAsmToks() { return NumAsmToks; }
+  Token *getAsmToks() { return AsmToks; }
+  unsigned getNumLineEnds() { return NumLineEnds; }
+  unsigned *getLineEnds() { return LineEnds; }
 
   bool isVolatile() const { return IsVolatile; }
   void setVolatile(bool V) { IsVolatile = V; }
@@ -1648,6 +1663,9 @@ public:
   void setAsmString(StringRef &E) { AsmStr = E.str(); }
 
   //===--- Other ---===//
+
+  unsigned getNumClobbers() const { return NumClobbers; }
+  StringRef getClobber(unsigned i) { return Clobbers[i]; }
 
   SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(AsmLoc, EndLoc);

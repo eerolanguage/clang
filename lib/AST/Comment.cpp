@@ -142,9 +142,8 @@ void DeclInfo::fill() {
 
   // Set defaults.
   Kind = OtherKind;
-  IsTemplateDecl = false;
-  IsTemplateSpecialization = false;
-  IsTemplatePartialSpecialization = false;
+  TemplateKind = NotTemplate;
+  IsObjCMethod = false;
   IsInstanceMethod = false;
   IsClassMethod = false;
   ParamVars = ArrayRef<const ParmVarDecl *>();
@@ -173,8 +172,7 @@ void DeclInfo::fill() {
     ResultType = FD->getResultType();
     unsigned NumLists = FD->getNumTemplateParameterLists();
     if (NumLists != 0) {
-      IsTemplateDecl = true;
-      IsTemplateSpecialization = true;
+      TemplateKind = TemplateSpecialization;
       TemplateParameters =
           FD->getTemplateParameterList(NumLists - 1);
     }
@@ -193,6 +191,7 @@ void DeclInfo::fill() {
     ParamVars = ArrayRef<const ParmVarDecl *>(MD->param_begin(),
                                               MD->param_size());
     ResultType = MD->getResultType();
+    IsObjCMethod = true;
     IsInstanceMethod = MD->isInstanceMethod();
     IsClassMethod = !IsInstanceMethod;
     break;
@@ -200,7 +199,7 @@ void DeclInfo::fill() {
   case Decl::FunctionTemplate: {
     const FunctionTemplateDecl *FTD = cast<FunctionTemplateDecl>(ThisDecl);
     Kind = FunctionKind;
-    IsTemplateDecl = true;
+    TemplateKind = Template;
     const FunctionDecl *FD = FTD->getTemplatedDecl();
     ParamVars = ArrayRef<const ParmVarDecl *>(FD->param_begin(),
                                               FD->getNumParams());
@@ -211,7 +210,7 @@ void DeclInfo::fill() {
   case Decl::ClassTemplate: {
     const ClassTemplateDecl *CTD = cast<ClassTemplateDecl>(ThisDecl);
     Kind = ClassKind;
-    IsTemplateDecl = true;
+    TemplateKind = Template;
     TemplateParameters = CTD->getTemplateParameters();
     break;
   }
@@ -219,15 +218,13 @@ void DeclInfo::fill() {
     const ClassTemplatePartialSpecializationDecl *CTPSD =
         cast<ClassTemplatePartialSpecializationDecl>(ThisDecl);
     Kind = ClassKind;
-    IsTemplateDecl = true;
-    IsTemplatePartialSpecialization = true;
+    TemplateKind = TemplatePartialSpecialization;
     TemplateParameters = CTPSD->getTemplateParameters();
     break;
   }
   case Decl::ClassTemplateSpecialization:
     Kind = ClassKind;
-    IsTemplateDecl = true;
-    IsTemplateSpecialization = true;
+    TemplateKind = TemplateSpecialization;
     break;
   case Decl::Record:
   case Decl::CXXRecord:
@@ -235,6 +232,7 @@ void DeclInfo::fill() {
     break;
   case Decl::Var:
   case Decl::Field:
+  case Decl::EnumConstant:
   case Decl::ObjCIvar:
   case Decl::ObjCAtDefsField:
     Kind = VariableKind;
@@ -249,10 +247,13 @@ void DeclInfo::fill() {
   case Decl::TypeAliasTemplate: {
     const TypeAliasTemplateDecl *TAT = cast<TypeAliasTemplateDecl>(ThisDecl);
     Kind = TypedefKind;
-    IsTemplateDecl = true;
+    TemplateKind = Template;
     TemplateParameters = TAT->getTemplateParameters();
     break;
   }
+  case Decl::Enum:
+    Kind = EnumKind;
+    break;
   }
 
   IsFilled = true;

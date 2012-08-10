@@ -33,6 +33,12 @@ void test(const char *s, int *i) {
   scanf("%*d", i); // // expected-warning{{data argument not used by format string}}
   scanf("%*d", i); // // expected-warning{{data argument not used by format string}}
   scanf("%*d%1$d", i); // no-warning
+
+  scanf("%s", (char*)0); // no-warning
+  scanf("%s", (volatile char*)0); // no-warning
+  scanf("%s", (signed char*)0); // no-warning
+  scanf("%s", (unsigned char*)0); // no-warning
+  scanf("%hhu", (signed char*)0); // no-warning
 }
 
 void bad_length_modifiers(char *s, void *p, wchar_t *ws, long double *ld) {
@@ -125,6 +131,32 @@ void test_quad(int *x, long long *llx) {
 void test_writeback(int *x) {
   scanf("%n", (void*)0); // expected-warning{{format specifies type 'int *' but the argument has type 'void *'}}
   scanf("%n %c", x, x); // expected-warning{{format specifies type 'char *' but the argument has type 'int *'}}
+
+  scanf("%hhn", (signed char*)0); // no-warning
+  scanf("%hhn", (char*)0); // no-warning
+  scanf("%hhn", (unsigned char*)0); // no-warning
+  scanf("%hhn", (int*)0); // expected-warning{{format specifies type 'signed char *' but the argument has type 'int *'}}
+
+  scanf("%hn", (short*)0); // no-warning
+  scanf("%hn", (unsigned short*)0); // no-warning
+  scanf("%hn", (int*)0); // expected-warning{{format specifies type 'short *' but the argument has type 'int *'}}
+
+  scanf("%n", (int*)0); // no-warning
+  scanf("%n", (unsigned int*)0); // no-warning
+  scanf("%n", (char*)0); // expected-warning{{format specifies type 'int *' but the argument has type 'char *'}}
+
+  scanf("%ln", (long*)0); // no-warning
+  scanf("%ln", (unsigned long*)0); // no-warning
+  scanf("%ln", (int*)0); // expected-warning{{format specifies type 'long *' but the argument has type 'int *'}}
+
+  scanf("%lln", (long long*)0); // no-warning
+  scanf("%lln", (unsigned long long*)0); // no-warning
+  scanf("%lln", (int*)0); // expected-warning{{format specifies type 'long long *' but the argument has type 'int *'}}
+
+  scanf("%qn", (long long*)0); // no-warning
+  scanf("%qn", (unsigned long long*)0); // no-warning
+  scanf("%qn", (int*)0); // expected-warning{{format specifies type 'long long *' but the argument has type 'int *'}}
+
 }
 
 void test_qualifiers(const int *cip, volatile int* vip,

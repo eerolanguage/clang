@@ -1341,12 +1341,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
       // Look at the next token to make sure that this isn't a function
       // declaration.  We have to check this because __attribute__ might be the
       // start of a function definition in GCC-extended K&R C.
-      // FIXME. Delayed parsing not done for c/c++ functions nested in namespace
-      !isDeclarationAfterDeclarator() && 
-      (!CurParsedObjCImpl || Tok.isNot(tok::l_brace) || 
-       (getLangOpts().CPlusPlus && 
-        (D.getCXXScopeSpec().isSet() || 
-         !Actions.CurContext->isTranslationUnit())))) {
+      !isDeclarationAfterDeclarator()) {
 
     if (isStartOfFunctionDefinition(D)) {
       if (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) {
@@ -1424,14 +1419,6 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
     DeclsInGroup.push_back(FirstDecl);
 
   bool ExpectSemi = Context != Declarator::ForContext;
-
-  if (CurParsedObjCImpl && D.isFunctionDeclarator() &&
-      Tok.is(tok::l_brace)) {
-    // Consume the tokens and store them for later parsing.
-    StashAwayMethodOrFunctionBodyTokens(FirstDecl);
-    CurParsedObjCImpl->HasCFunction = true;
-    ExpectSemi = false;
-  }
   
   // If we don't have a comma, it is either the end of the list (a ';') or an
   // error, bail out.
@@ -2854,7 +2841,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 /// [GNU]   declarator[opt] ':' constant-expression attributes[opt]
 ///
 void Parser::
-ParseStructDeclaration(DeclSpec &DS, FieldCallback &Fields) {
+ParseStructDeclaration(ParsingDeclSpec &DS, FieldCallback &Fields) {
 
   if (Tok.is(tok::kw___extension__)) {
     // __extension__ silences extension warnings in the subexpression.
@@ -2869,7 +2856,9 @@ ParseStructDeclaration(DeclSpec &DS, FieldCallback &Fields) {
   // If there are no declarators, this is a free-standing declaration
   // specifier. Let the actions module cope with it.
   if (Tok.is(tok::semi)) {
-    Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS_none, DS);
+    Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS_none,
+                                                       DS);
+    DS.complete(TheDecl);
     return;
   }
 
@@ -2877,8 +2866,7 @@ ParseStructDeclaration(DeclSpec &DS, FieldCallback &Fields) {
   bool FirstDeclarator = true;
   SourceLocation CommaLoc;
   while (1) {
-    ParsingDeclRAIIObject PD(*this, ParsingDeclRAIIObject::NoParent);
-    FieldDeclarator DeclaratorInfo(DS);
+    ParsingFieldDeclarator DeclaratorInfo(*this, DS);
     DeclaratorInfo.D.setCommaLoc(CommaLoc);
 
     // Attributes are only allowed here on successive declarators.
@@ -2906,8 +2894,7 @@ ParseStructDeclaration(DeclSpec &DS, FieldCallback &Fields) {
     MaybeParseGNUAttributes(DeclaratorInfo.D);
 
     // We're done with this declarator;  invoke the callback.
-    Decl *D = Fields.invoke(DeclaratorInfo);
-    PD.complete(D);
+    Fields.invoke(DeclaratorInfo);
 
     // If we don't have a comma, it is either the end of the list (a ';')
     // or an error, bail out.
@@ -2962,9 +2949,6 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       continue;
     }
 
-    // Parse all the comma separated declarators.
-    DeclSpec DS(AttrFactory);
-
     if (!Tok.is(tok::at)) {
       struct CFieldCallback : FieldCallback {
         Parser &P;
@@ -2975,16 +2959,18 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
                        SmallVectorImpl<Decl *> &FieldDecls) :
           P(P), TagDecl(TagDecl), FieldDecls(FieldDecls) {}
 
-        virtual Decl *invoke(FieldDeclarator &FD) {
+        void invoke(ParsingFieldDeclarator &FD) {
           // Install the declarator into the current TagDecl.
           Decl *Field = P.Actions.ActOnField(P.getCurScope(), TagDecl,
                               FD.D.getDeclSpec().getSourceRange().getBegin(),
                                                  FD.D, FD.BitfieldSize);
           FieldDecls.push_back(Field);
-          return Field;
+          FD.complete(Field);
         }
       } Callback(*this, TagDecl, FieldDecls);
 
+      // Parse all the comma separated declarators.
+      ParsingDeclSpec DS(*this);
       ParseStructDeclaration(DS, Callback);
     } else { // Handle @defs
       ConsumeToken();

@@ -1405,32 +1405,50 @@ bool Sema::ActOnAccessSpecifier(AccessSpecifier Access,
   return ProcessAccessDeclAttributeList(ASDecl, Attrs);
 }
 
-/// CheckOverrideControl - Check C++0x override control semantics.
-void Sema::CheckOverrideControl(const Decl *D) {
+/// CheckOverrideControl - Check C++11 override control semantics.
+void Sema::CheckOverrideControl(Decl *D) {
   const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(D);
-  if (!MD || !MD->isVirtual())
-    return;
 
-  if (MD->isDependentContext())
-    return;
+  // Do we know which functions this declaration might be overriding?
+  bool OverridesAreKnown = !MD ||
+      (!MD->getParent()->hasAnyDependentBases() &&
+       !MD->getType()->isDependentType());
 
-  // C++0x [class.virtual]p3:
-  //   If a virtual function is marked with the virt-specifier override and does
-  //   not override a member function of a base class, 
-  //   the program is ill-formed.
-  bool HasOverriddenMethods = 
-    MD->begin_overridden_methods() != MD->end_overridden_methods();
-  if (MD->hasAttr<OverrideAttr>() && !HasOverriddenMethods) {
-    Diag(MD->getLocation(), 
-                 diag::err_function_marked_override_not_overriding)
-      << MD->getDeclName();
+  if (!MD || !MD->isVirtual()) {
+    if (OverridesAreKnown) {
+      if (OverrideAttr *OA = D->getAttr<OverrideAttr>()) {
+        Diag(OA->getLocation(),
+             diag::override_keyword_only_allowed_on_virtual_member_functions)
+          << "override" << FixItHint::CreateRemoval(OA->getLocation());
+        D->dropAttr<OverrideAttr>();
+      }
+      if (FinalAttr *FA = D->getAttr<FinalAttr>()) {
+        Diag(FA->getLocation(),
+             diag::override_keyword_only_allowed_on_virtual_member_functions)
+          << "final" << FixItHint::CreateRemoval(FA->getLocation());
+        D->dropAttr<FinalAttr>();
+      }
+    }
     return;
   }
+
+  if (!OverridesAreKnown)
+    return;
+
+  // C++11 [class.virtual]p5:
+  //   If a virtual function is marked with the virt-specifier override and
+  //   does not override a member function of a base class, the program is
+  //   ill-formed.
+  bool HasOverriddenMethods =
+    MD->begin_overridden_methods() != MD->end_overridden_methods();
+  if (MD->hasAttr<OverrideAttr>() && !HasOverriddenMethods)
+    Diag(MD->getLocation(), diag::err_function_marked_override_not_overriding)
+      << MD->getDeclName();
 }
 
-/// CheckIfOverriddenFunctionIsMarkedFinal - Checks whether a virtual member 
+/// CheckIfOverriddenFunctionIsMarkedFinal - Checks whether a virtual member
 /// function overrides a virtual member function marked 'final', according to
-/// C++0x [class.virtual]p3.
+/// C++11 [class.virtual]p4.
 bool Sema::CheckIfOverriddenFunctionIsMarkedFinal(const CXXMethodDecl *New,
                                                   const CXXMethodDecl *Old) {
   if (!Old->hasAttr<FinalAttr>())
@@ -1443,13 +1461,12 @@ bool Sema::CheckIfOverriddenFunctionIsMarkedFinal(const CXXMethodDecl *New,
 }
 
 static bool InitializationHasSideEffects(const FieldDecl &FD) {
-  if (!FD.getType().isNull()) {
-    if (const CXXRecordDecl *RD = FD.getType()->getAsCXXRecordDecl()) {
-      return !RD->isCompleteDefinition() ||
-             !RD->hasTrivialDefaultConstructor() ||
-             !RD->hasTrivialDestructor();
-    }
-  }
+  const Type *T = FD.getType()->getBaseElementTypeUnsafe();
+  // FIXME: Destruction of ObjC lifetime types has side-effects.
+  if (const CXXRecordDecl *RD = T->getAsCXXRecordDecl())
+    return !RD->isCompleteDefinition() ||
+           !RD->hasTrivialDefaultConstructor() ||
+           !RD->hasTrivialDestructor();
   return false;
 }
 
@@ -1609,31 +1626,17 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
       FunTmpl->getTemplatedDecl()->setAccess(AS);
   }
 
-  if (VS.isOverrideSpecified()) {
-    CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(Member);
-    if (!MD || !MD->isVirtual()) {
-      Diag(Member->getLocStart(), 
-           diag::override_keyword_only_allowed_on_virtual_member_functions)
-        << "override" << FixItHint::CreateRemoval(VS.getOverrideLoc());
-    } else
-      MD->addAttr(new (Context) OverrideAttr(VS.getOverrideLoc(), Context));
-  }
-  if (VS.isFinalSpecified()) {
-    CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(Member);
-    if (!MD || !MD->isVirtual()) {
-      Diag(Member->getLocStart(), 
-           diag::override_keyword_only_allowed_on_virtual_member_functions)
-      << "final" << FixItHint::CreateRemoval(VS.getFinalLoc());
-    } else
-      MD->addAttr(new (Context) FinalAttr(VS.getFinalLoc(), Context));
-  }
+  if (VS.isOverrideSpecified())
+    Member->addAttr(new (Context) OverrideAttr(VS.getOverrideLoc(), Context));
+  if (VS.isFinalSpecified())
+    Member->addAttr(new (Context) FinalAttr(VS.getFinalLoc(), Context));
 
   if (VS.getLastLocation().isValid()) {
     // Update the end location of a method that has a virt-specifiers.
     if (CXXMethodDecl *MD = dyn_cast_or_null<CXXMethodDecl>(Member))
       MD->setRangeEnd(VS.getLastLocation());
   }
-      
+
   CheckOverrideControl(Member);
 
   assert((Name || isInstField) && "No identifier for non-field ?");
@@ -1650,7 +1653,7 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
       if (!FD->isImplicit() && FD->getDeclName() &&
           FD->getAccess() == AS_private &&
           !FD->hasAttr<UnusedAttr>() &&
-          !FD->getParent()->getTypeForDecl()->isDependentType() &&
+          !FD->getParent()->isDependentContext() &&
           !InitializationHasSideEffects(*FD))
         UnusedPrivateFields.insert(FD);
     }
@@ -2158,24 +2161,6 @@ Sema::BuildMemberInitializer(ValueDecl *Member, Expr *Init,
     InitListExpr *InitList = cast<InitListExpr>(Init);
     Args = InitList->getInits();
     NumArgs = InitList->getNumInits();
-  }
-
-  // Mark FieldDecl as being used if it is a non-primitive type and the
-  // initializer does not call the default constructor (which is trivial
-  // for all entries in UnusedPrivateFields).
-  // FIXME: Make this smarter once more side effect-free types can be
-  // determined.
-  if (NumArgs > 0) {
-    if (Member->getType()->isRecordType()) {
-      UnusedPrivateFields.remove(Member);
-    } else {
-      for (unsigned i = 0; i < NumArgs; ++i) {
-        if (Args[i]->HasSideEffects(Context)) {
-          UnusedPrivateFields.remove(Member);
-          break;
-        }
-      }
-    }
   }
 
   if (getDiagnostics().getDiagnosticLevel(diag::warn_field_is_uninit, IdLoc)
@@ -2821,6 +2806,16 @@ struct BaseAndFieldInfo {
 
     llvm_unreachable("Invalid ImplicitInitializerKind!");
   }
+
+  bool addFieldInitializer(CXXCtorInitializer *Init) {
+    AllToInit.push_back(Init);
+
+    // Check whether this initializer makes the field "used".
+    if (Init->getInit() && Init->getInit()->HasSideEffects(S.Context))
+      S.UnusedPrivateFields.remove(Init->getAnyMember());
+
+    return false;
+  }
 };
 }
 
@@ -2858,12 +2853,10 @@ static bool CollectFieldInitializer(Sema &SemaRef, BaseAndFieldInfo &Info,
                                     IndirectFieldDecl *Indirect = 0) {
 
   // Overwhelmingly common case: we have a direct initializer for this field.
-  if (CXXCtorInitializer *Init = Info.AllBaseFields.lookup(Field)) {
-    Info.AllToInit.push_back(Init);
-    return false;
-  }
+  if (CXXCtorInitializer *Init = Info.AllBaseFields.lookup(Field))
+    return Info.addFieldInitializer(Init);
 
-  // C++0x [class.base.init]p8: if the entity is a non-static data member that
+  // C++11 [class.base.init]p8: if the entity is a non-static data member that
   // has a brace-or-equal-initializer, the entity is initialized as specified
   // in [dcl.init].
   if (Field->hasInClassInitializer() && !Info.isImplicitCopyOrMove()) {
@@ -2878,15 +2871,7 @@ static bool CollectFieldInitializer(Sema &SemaRef, BaseAndFieldInfo &Info,
                                                       SourceLocation(),
                                                       SourceLocation(), 0,
                                                       SourceLocation());
-    Info.AllToInit.push_back(Init);
-
-    // Check whether this initializer makes the field "used".
-    Expr *InitExpr = Field->getInClassInitializer();
-    if (Field->getType()->isRecordType() ||
-        (InitExpr && InitExpr->HasSideEffects(SemaRef.Context)))
-      SemaRef.UnusedPrivateFields.remove(Field);
-
-    return false;
+    return Info.addFieldInitializer(Init);
   }
 
   // Don't build an implicit initializer for union members if none was
@@ -2910,10 +2895,10 @@ static bool CollectFieldInitializer(Sema &SemaRef, BaseAndFieldInfo &Info,
                                      Indirect, Init))
     return true;
 
-  if (Init)
-    Info.AllToInit.push_back(Init);
+  if (!Init)
+    return false;
 
-  return false;
+  return Info.addFieldInitializer(Init);
 }
 
 bool
@@ -4552,7 +4537,8 @@ bool SpecialMemberDeletionInfo::shouldDeleteForAllConstMembers() {
 /// C++11 [class.copy]p23, and C++11 [class.dtor]p5.
 bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM,
                                      bool Diagnose) {
-  assert(!MD->isInvalidDecl());
+  if (MD->isInvalidDecl())
+    return false;
   CXXRecordDecl *RD = MD->getParent();
   assert(!RD->isDependentType() && "do deletion after instantiation");
   if (!LangOpts.CPlusPlus0x || RD->isInvalidDecl())
@@ -10356,9 +10342,11 @@ Decl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
   FrD->setAccess(AS_public);
   CurContext->addDecl(FrD);
 
-  if (ND->isInvalidDecl())
+  if (ND->isInvalidDecl()) {
     FrD->setInvalidDecl();
-  else {
+  } else {
+    if (DC->isRecord()) CheckFriendAccess(ND);
+
     FunctionDecl *FD;
     if (FunctionTemplateDecl *FTD = dyn_cast<FunctionTemplateDecl>(ND))
       FD = FTD->getTemplatedDecl();

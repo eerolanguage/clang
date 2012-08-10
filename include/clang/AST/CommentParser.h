@@ -24,6 +24,7 @@ namespace clang {
 class SourceManager;
 
 namespace comments {
+class CommandTraits;
 
 /// Doxygen comment parser.
 class Parser {
@@ -48,6 +49,8 @@ class Parser {
     return Diags.Report(Loc, DiagID);
   }
 
+  const CommandTraits &Traits;
+
   /// Current lookahead token.  We can safely assume that all tokens are from
   /// a single source file.
   Token Tok;
@@ -55,15 +58,13 @@ class Parser {
   /// A stack of additional lookahead tokens.
   SmallVector<Token, 8> MoreLATokens;
 
-  SourceLocation consumeToken() {
-    SourceLocation Loc = Tok.getLocation();
+  void consumeToken() {
     if (MoreLATokens.empty())
       L.lex(Tok);
     else {
       Tok = MoreLATokens.back();
       MoreLATokens.pop_back();
     }
-    return Loc;
   }
 
   void putBack(const Token &OldTok) {
@@ -87,22 +88,20 @@ class Parser {
 
 public:
   Parser(Lexer &L, Sema &S, llvm::BumpPtrAllocator &Allocator,
-         const SourceManager &SourceMgr, DiagnosticsEngine &Diags);
+         const SourceManager &SourceMgr, DiagnosticsEngine &Diags,
+         const CommandTraits &Traits);
 
   /// Parse arguments for \\param command.
-  ParamCommandComment *parseParamCommandArgs(
-                                    ParamCommandComment *PC,
-                                    TextTokenRetokenizer &Retokenizer);
+  void parseParamCommandArgs(ParamCommandComment *PC,
+                             TextTokenRetokenizer &Retokenizer);
 
   /// Parse arguments for \\tparam command.
-  TParamCommandComment *parseTParamCommandArgs(
-                                    TParamCommandComment *TPC,
-                                    TextTokenRetokenizer &Retokenizer);
+  void parseTParamCommandArgs(TParamCommandComment *TPC,
+                              TextTokenRetokenizer &Retokenizer);
 
-  BlockCommandComment *parseBlockCommandArgs(
-                                    BlockCommandComment *BC,
-                                    TextTokenRetokenizer &Retokenizer,
-                                    unsigned NumArgs);
+  void parseBlockCommandArgs(BlockCommandComment *BC,
+                             TextTokenRetokenizer &Retokenizer,
+                             unsigned NumArgs);
 
   BlockCommandComment *parseBlockCommand();
   InlineCommandComment *parseInlineCommand();

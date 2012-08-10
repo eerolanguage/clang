@@ -61,16 +61,20 @@ template <typename T> struct ProgramStateTrait {
 /// dispatch implementation.
 class DynamicTypeInfo {
   QualType T;
+  bool CanBeASubClass;
 
 public:
   DynamicTypeInfo() : T(QualType()) {}
-  DynamicTypeInfo(QualType WithType) : T(WithType) {}
-  QualType getType() {return T;}
+  DynamicTypeInfo(QualType WithType, bool CanBeSub = true):
+    T(WithType), CanBeASubClass(CanBeSub) {}
+  QualType getType() { return T; }
+  bool canBeASubClass() { return CanBeASubClass; }
   void Profile(llvm::FoldingSetNodeID &ID) const {
     T.Profile(ID);
+    ID.AddInteger((unsigned)CanBeASubClass);
   }
   bool operator==(const DynamicTypeInfo &X) const {
-    return T == X.T;
+    return T == X.T && CanBeASubClass == X.CanBeASubClass;
   }
 };
 
@@ -331,10 +335,19 @@ public:
   bool isTainted(SymbolRef Sym, TaintTagType Kind = TaintTagGeneric) const;
   bool isTainted(const MemRegion *Reg, TaintTagType Kind=TaintTagGeneric) const;
 
-  /// Get dynamic type information for a region.
+  /// \brief Get dynamic type information for a region.
   DynamicTypeInfo getDynamicTypeInfo(const MemRegion *Reg) const;
-  /// Add dynamic type information to the region and return the new state.
-  ProgramStateRef addDynamicTypeInfo(const MemRegion *Reg, QualType NewTy)const;
+
+  /// \brief Set dynamic type information of the region; return the new state.
+  ProgramStateRef setDynamicTypeInfo(const MemRegion *Reg,
+                                     DynamicTypeInfo NewTy) const;
+
+  /// \brief Set dynamic type information of the region; return the new state.
+  ProgramStateRef setDynamicTypeInfo(const MemRegion *Reg,
+                                     QualType NewTy,
+                                     bool CanBeSubClassed = true) const {
+    return setDynamicTypeInfo(Reg, DynamicTypeInfo(NewTy, CanBeSubClassed));
+  }
 
   //==---------------------------------------------------------------------==//
   // Accessing the Generic Data Map (GDM).
@@ -787,14 +800,12 @@ CB ProgramState::scanReachableSymbols(const MemRegion * const *beg,
 /// \class ScanReachableSymbols
 /// A Utility class that allows to visit the reachable symbols using a custom
 /// SymbolVisitor.
-class ScanReachableSymbols : public SubRegionMap::Visitor  {
-  virtual void anchor();
+class ScanReachableSymbols {
   typedef llvm::DenseMap<const void*, unsigned> VisitedItems;
 
   VisitedItems visited;
   ProgramStateRef state;
   SymbolVisitor &visitor;
-  OwningPtr<SubRegionMap> SRM;
 public:
 
   ScanReachableSymbols(ProgramStateRef st, SymbolVisitor& v)
@@ -804,11 +815,6 @@ public:
   bool scan(SVal val);
   bool scan(const MemRegion *R);
   bool scan(const SymExpr *sym);
-
-  // From SubRegionMap::Visitor.
-  bool Visit(const MemRegion* Parent, const MemRegion* SubRegion) {
-    return scan(SubRegion);
-  }
 };
 
 } // end GR namespace

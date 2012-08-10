@@ -11,9 +11,36 @@ typedef struct objc_object {
 @protocol NSObject  - (BOOL)isEqual:(id)object; @end
 @interface NSObject <NSObject> {}
 +(id)alloc;
++(id)new;
 -(id)init;
 -(id)autorelease;
 -(id)copy;
 - (Class)class;
 -(id)retain;
 @end
+
+@interface PublicClass : NSObject {
+  int value3;
+}
+- (int)getZeroPublic;
+
+- (int) value2;
+
+@property (readonly) int value1;
+
+@property int value3;
+- (int)value3;
+- (void)setValue3:(int)newValue;
+@end
+
+@interface PublicSubClass : PublicClass
+@end
+
+@interface PublicParent : NSObject
+- (int)getZeroOverridden;
+@end
+
+@interface PublicSubClass2 : PublicParent
+- (int) getZeroOverridden;
+@end
+

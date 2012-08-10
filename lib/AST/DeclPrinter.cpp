@@ -114,6 +114,8 @@ static QualType GetBaseType(QualType T) {
       BaseType = FTy->getResultType();
     else if (const VectorType *VTy = BaseType->getAs<VectorType>())
       BaseType = VTy->getElementType();
+    else if (const ReferenceType *RTy = BaseType->getAs<ReferenceType>())
+      BaseType = RTy->getPointeeType();
     else
       llvm_unreachable("Unknown declarator!");
   }
@@ -438,13 +440,12 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
 
     Proto += ")";
     
-    if (FT && FT->getTypeQuals()) {
-      unsigned TypeQuals = FT->getTypeQuals();
-      if (TypeQuals & Qualifiers::Const)
+    if (FT) {
+      if (FT->isConst())
         Proto += " const";
-      if (TypeQuals & Qualifiers::Volatile) 
+      if (FT->isVolatile())
         Proto += " volatile";
-      if (TypeQuals & Qualifiers::Restrict)
+      if (FT->isRestrict())
         Proto += " restrict";
     }
 

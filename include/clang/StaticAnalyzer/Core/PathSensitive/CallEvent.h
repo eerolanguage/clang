@@ -68,6 +68,26 @@ public:
   }
 };
 
+/// \brief Defines the runtime definition of the called function.
+class RuntimeDefinition {
+  /// The Declaration of the function which will be called at runtime.
+  /// 0 if not available.
+  const Decl *D;
+
+  /// The region representing an object (ObjC/C++) on which the method is
+  /// called. With dynamic dispatch, the method definition depends on the
+  /// runtime type of this object. 0 when there is no dynamic dispatch.
+  const MemRegion *R;
+
+public:
+  RuntimeDefinition(): D(0), R(0) {}
+  RuntimeDefinition(const Decl *InD): D(InD), R(0) {}
+  RuntimeDefinition(const Decl *InD, const MemRegion *InR): D(InD), R(InR) {}
+  const Decl *getDecl() { return D; }
+  const MemRegion *getDispatchRegion() { return R; }
+  bool mayHaveOtherDefinitions() { return R != 0; }
+};
+
 /// \brief Represents an abstract call to a function or method along a
 /// particular path.
 ///
@@ -159,9 +179,8 @@ public:
   }
 
   /// \brief Returns the definition of the function or method that will be
-  /// called. Returns NULL if the definition cannot be found; ex: due to
-  /// dynamic dispatch in ObjC methods.
-  virtual const Decl *getRuntimeDefinition() const = 0;
+  /// called.
+  virtual RuntimeDefinition getRuntimeDefinition() const = 0;
 
   /// \brief Returns the expression whose value will be the result of this call.
   /// May be null.
@@ -336,12 +355,12 @@ public:
     return cast<FunctionDecl>(CallEvent::getDecl());
   }
 
-  virtual const Decl *getRuntimeDefinition() const {
+  virtual RuntimeDefinition getRuntimeDefinition() const {
     const FunctionDecl *FD = getDecl();
     // Note that hasBody() will fill FD with the definition FunctionDecl.
     if (FD && FD->hasBody(FD))
-      return FD;
-    return 0;
+      return RuntimeDefinition(FD);
+    return RuntimeDefinition();
   }
 
   virtual bool argumentsMayEscape() const;
@@ -432,7 +451,7 @@ public:
     return getSVal(Base);
   }
 
-  virtual const Decl *getRuntimeDefinition() const;
+  virtual RuntimeDefinition getRuntimeDefinition() const;
 
   virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
                                             BindingsTy &Bindings) const;
@@ -545,8 +564,8 @@ public:
     return BR->getDecl();
   }
 
-  virtual const Decl *getRuntimeDefinition() const {
-    return getBlockDecl();
+  virtual RuntimeDefinition getRuntimeDefinition() const {
+    return RuntimeDefinition(getBlockDecl());
   }
 
   virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
@@ -650,7 +669,7 @@ public:
   /// \brief Returns the value of the implicit 'this' object.
   virtual SVal getCXXThisVal() const;
 
-  virtual const Decl *getRuntimeDefinition() const;
+  virtual RuntimeDefinition getRuntimeDefinition() const;
 
   virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
                                             BindingsTy &Bindings) const;
@@ -735,6 +754,10 @@ protected:
 
   virtual QualType getDeclaredResultType() const;
 
+  /// Check if the selector may have multiple definitions (may have overrides).
+  virtual bool canBeOverridenInSubclass(ObjCInterfaceDecl *IDecl,
+                                        Selector Sel) const;
+
 public:
   virtual const ObjCMessageExpr *getOriginExpr() const {
     return cast<ObjCMessageExpr>(CallEvent::getOriginExpr());
@@ -786,7 +809,7 @@ public:
     llvm_unreachable("Unknown message kind");
   }
 
-  virtual const Decl *getRuntimeDefinition() const;
+  virtual RuntimeDefinition getRuntimeDefinition() const;
 
   virtual void getInitialStackFrameContents(const StackFrameContext *CalleeCtx,
                                             BindingsTy &Bindings) const;

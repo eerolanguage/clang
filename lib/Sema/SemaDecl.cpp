@@ -4905,7 +4905,7 @@ static NamedDecl* DiagnoseInvalidRedeclaration(
 
   bool NewFDisConst = false;
   if (CXXMethodDecl *NewMD = dyn_cast<CXXMethodDecl>(NewFD))
-    NewFDisConst = NewMD->getTypeQualifiers() & Qualifiers::Const;
+    NewFDisConst = NewMD->isConst();
 
   for (llvm::SmallVector<std::pair<FunctionDecl*, unsigned>, 1>::iterator
        NearMatch = NearMatches.begin(), NearMatchEnd = NearMatches.end();
@@ -4913,7 +4913,7 @@ static NamedDecl* DiagnoseInvalidRedeclaration(
     FunctionDecl *FD = NearMatch->first;
     bool FDisConst = false;
     if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(FD))
-      FDisConst = MD->getTypeQualifiers() & Qualifiers::Const;
+      FDisConst = MD->isConst();
 
     if (unsigned Idx = NearMatch->second) {
       ParmVarDecl *FDParam = FD->getParamDecl(Idx-1);
@@ -6085,7 +6085,8 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
       if (R->isIncompleteType() && !R->isVoidType())
         Diag(NewFD->getLocation(), diag::warn_return_value_udt_incomplete)
             << NewFD << R;
-      else if (!R.isPODType(Context) && !R->isVoidType())
+      else if (!R.isPODType(Context) && !R->isVoidType() &&
+               !R->isObjCObjectPointerType())
         Diag(NewFD->getLocation(), diag::warn_return_value_udt) << NewFD << R;
     }
   }
@@ -6364,7 +6365,10 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   // Check for self-references within variable initializers.
   // Variables declared within a function/method body are handled
   // by a dataflow analysis.
-  if (!VDecl->hasLocalStorage() && !VDecl->isStaticLocal())
+  // Record types initialized by initializer list are handled here.
+  // Initialization by constructors are handled in TryConstructorInitialization.
+  if (!VDecl->hasLocalStorage() && !VDecl->isStaticLocal() &&
+      (isa<InitListExpr>(Init) || !VDecl->getType()->isRecordType()))
     CheckSelfReference(RealDecl, Init);
 
   ParenListExpr *CXXDirectInit = dyn_cast<ParenListExpr>(Init);
@@ -7542,6 +7546,7 @@ void Sema::CheckForFunctionRedefinition(FunctionDecl *FD) {
     else
       Diag(FD->getLocation(), diag::err_redefinition) << FD->getDeclName();
     Diag(Definition->getLocation(), diag::note_previous_definition);
+    FD->setInvalidDecl();
   }
 }
 
@@ -8027,6 +8032,13 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
       FD->addAttr(::new (Context) FormatAttr(FD->getLocation(), Context,
                                              "printf", 2,
                                              Name->isStr("vasprintf") ? 0 : 3));
+  }
+
+  if (Name->isStr("__CFStringMakeConstantString")) {
+    // We already have a __builtin___CFStringMakeConstantString,
+    // but builds that use -fno-constant-cfstrings don't go through that.
+    if (!FD->getAttr<FormatArgAttr>())
+      FD->addAttr(::new (Context) FormatArgAttr(FD->getLocation(), Context, 1));
   }
 }
 
@@ -8861,9 +8873,10 @@ CreateNewDecl:
     // many points during the parsing of a struct declaration (because
     // the #pragma tokens are effectively skipped over during the
     // parsing of the struct).
-    AddAlignmentAttributesForRecord(RD);
-    
-    AddMsStructLayoutForRecord(RD);
+    if (TUK == TUK_Definition) {
+      AddAlignmentAttributesForRecord(RD);
+      AddMsStructLayoutForRecord(RD);
+    }
   }
 
   if (ModulePrivateLoc.isValid()) {
@@ -9804,11 +9817,6 @@ void Sema::ActOnFields(Scope* S,
                        SourceLocation LBrac, SourceLocation RBrac,
                        AttributeList *Attr) {
   assert(EnclosingDecl && "missing record or interface decl");
-
-  // If the decl this is being inserted into is invalid, then it may be a
-  // redeclaration or some other bogus case.  Don't try to add fields to it.
-  if (EnclosingDecl->isInvalidDecl())
-    return;
 
   // If this is an Objective-C @implementation or category and we have
   // new fields here we should reset the layout of the interface since

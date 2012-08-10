@@ -27,6 +27,7 @@ class Decl;
 class SourceMgr;
 
 namespace comments {
+class CommandTraits;
 
 class Sema {
   Sema(const Sema&);           // DO NOT IMPLEMENT
@@ -39,6 +40,8 @@ class Sema {
   const SourceManager &SourceMgr;
 
   DiagnosticsEngine &Diags;
+
+  const CommandTraits &Traits;
 
   /// Information about the declaration this comment is attached to.
   DeclInfo *ThisDeclInfo;
@@ -56,6 +59,12 @@ class Sema {
   /// Contains a valid value if \c DeclInfo->IsFilled is true.
   llvm::StringMap<TParamCommandComment *> TemplateParameterDocs;
 
+  /// AST node for the \\brief command and its aliases.
+  const BlockCommandComment *BriefCommand;
+
+  /// AST node for the \\returns command and its aliases.
+  const BlockCommandComment *ReturnsCommand;
+
   DiagnosticBuilder Diag(SourceLocation Loc, unsigned DiagID) {
     return Diags.Report(Loc, DiagID);
   }
@@ -66,7 +75,7 @@ class Sema {
 
 public:
   Sema(llvm::BumpPtrAllocator &Allocator, const SourceManager &SourceMgr,
-       DiagnosticsEngine &Diags);
+       DiagnosticsEngine &Diags, const CommandTraits &Traits);
 
   void setDecl(const Decl *D);
 
@@ -89,44 +98,40 @@ public:
                                               SourceLocation LocEnd,
                                               StringRef Name);
 
-  BlockCommandComment *actOnBlockCommandArgs(
-                              BlockCommandComment *Command,
-                              ArrayRef<BlockCommandComment::Argument> Args);
+  void actOnBlockCommandArgs(BlockCommandComment *Command,
+                             ArrayRef<BlockCommandComment::Argument> Args);
 
-  BlockCommandComment *actOnBlockCommandFinish(BlockCommandComment *Command,
-                                               ParagraphComment *Paragraph);
+  void actOnBlockCommandFinish(BlockCommandComment *Command,
+                               ParagraphComment *Paragraph);
 
   ParamCommandComment *actOnParamCommandStart(SourceLocation LocBegin,
                                               SourceLocation LocEnd,
                                               StringRef Name);
 
-  ParamCommandComment *actOnParamCommandDirectionArg(
-                                            ParamCommandComment *Command,
-                                            SourceLocation ArgLocBegin,
-                                            SourceLocation ArgLocEnd,
-                                            StringRef Arg);
+  void actOnParamCommandDirectionArg(ParamCommandComment *Command,
+                                     SourceLocation ArgLocBegin,
+                                     SourceLocation ArgLocEnd,
+                                     StringRef Arg);
 
-  ParamCommandComment *actOnParamCommandParamNameArg(
-                                            ParamCommandComment *Command,
-                                            SourceLocation ArgLocBegin,
-                                            SourceLocation ArgLocEnd,
-                                            StringRef Arg);
+  void actOnParamCommandParamNameArg(ParamCommandComment *Command,
+                                     SourceLocation ArgLocBegin,
+                                     SourceLocation ArgLocEnd,
+                                     StringRef Arg);
 
-  ParamCommandComment *actOnParamCommandFinish(ParamCommandComment *Command,
-                                               ParagraphComment *Paragraph);
+  void actOnParamCommandFinish(ParamCommandComment *Command,
+                               ParagraphComment *Paragraph);
 
   TParamCommandComment *actOnTParamCommandStart(SourceLocation LocBegin,
                                                 SourceLocation LocEnd,
                                                 StringRef Name);
 
-  TParamCommandComment *actOnTParamCommandParamNameArg(
-                                            TParamCommandComment *Command,
-                                            SourceLocation ArgLocBegin,
-                                            SourceLocation ArgLocEnd,
-                                            StringRef Arg);
+  void actOnTParamCommandParamNameArg(TParamCommandComment *Command,
+                                      SourceLocation ArgLocBegin,
+                                      SourceLocation ArgLocEnd,
+                                      StringRef Arg);
 
-  TParamCommandComment *actOnTParamCommandFinish(TParamCommandComment *Command,
-                                                 ParagraphComment *Paragraph);
+  void actOnTParamCommandFinish(TParamCommandComment *Command,
+                                ParagraphComment *Paragraph);
 
   InlineCommandComment *actOnInlineCommand(SourceLocation CommandLocBegin,
                                            SourceLocation CommandLocEnd,
@@ -153,11 +158,10 @@ public:
   VerbatimBlockLineComment *actOnVerbatimBlockLine(SourceLocation Loc,
                                                    StringRef Text);
 
-  VerbatimBlockComment *actOnVerbatimBlockFinish(
-                              VerbatimBlockComment *Block,
-                              SourceLocation CloseNameLocBegin,
-                              StringRef CloseName,
-                              ArrayRef<VerbatimBlockLineComment *> Lines);
+  void actOnVerbatimBlockFinish(VerbatimBlockComment *Block,
+                                SourceLocation CloseNameLocBegin,
+                                StringRef CloseName,
+                                ArrayRef<VerbatimBlockLineComment *> Lines);
 
   VerbatimLineComment *actOnVerbatimLine(SourceLocation LocBegin,
                                          StringRef Name,
@@ -167,11 +171,10 @@ public:
   HTMLStartTagComment *actOnHTMLStartTagStart(SourceLocation LocBegin,
                                               StringRef TagName);
 
-  HTMLStartTagComment *actOnHTMLStartTagFinish(
-                              HTMLStartTagComment *Tag,
-                              ArrayRef<HTMLStartTagComment::Attribute> Attrs,
-                              SourceLocation GreaterLoc,
-                              bool IsSelfClosing);
+  void actOnHTMLStartTagFinish(HTMLStartTagComment *Tag,
+                               ArrayRef<HTMLStartTagComment::Attribute> Attrs,
+                               SourceLocation GreaterLoc,
+                               bool IsSelfClosing);
 
   HTMLEndTagComment *actOnHTMLEndTag(SourceLocation LocBegin,
                                      SourceLocation LocEnd,
@@ -183,8 +186,12 @@ public:
 
   void checkReturnsCommand(const BlockCommandComment *Command);
 
+  /// Emit diagnostics about duplicate block commands that should be
+  /// used only once per comment, e.g., \\brief and \\returns.
+  void checkBlockCommandDuplicate(const BlockCommandComment *Command);
+
   bool isFunctionDecl();
-  bool isTemplateDecl();
+  bool isTemplateOrSpecialization();
 
   ArrayRef<const ParmVarDecl *> getParamVars();
 
@@ -208,14 +215,6 @@ public:
   StringRef correctTypoInTParamReference(
                               StringRef Typo,
                               const TemplateParameterList *TemplateParameters);
-
-  bool isBlockCommand(StringRef Name);
-  bool isParamCommand(StringRef Name);
-  bool isTParamCommand(StringRef Name);
-  bool isReturnsCommand(StringRef Name);
-  unsigned getBlockCommandNumArgs(StringRef Name);
-
-  bool isInlineCommand(StringRef Name) const;
 
   InlineCommandComment::RenderKind
   getInlineCommandRenderKind(StringRef Name) const;

@@ -394,6 +394,29 @@ public:
   }
 };
 
+// Bitrig Target
+template<typename Target>
+class BitrigTargetInfo : public OSTargetInfo<Target> {
+protected:
+  virtual void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
+                            MacroBuilder &Builder) const {
+    // Bitrig defines; list based off of gcc output
+
+    Builder.defineMacro("__Bitrig__");
+    DefineStd(Builder, "unix", Opts);
+    Builder.defineMacro("__ELF__");
+    if (Opts.POSIXThreads)
+      Builder.defineMacro("_REENTRANT");
+  }
+public:
+  BitrigTargetInfo(const std::string &triple)
+    : OSTargetInfo<Target>(triple) {
+      this->UserLabelPrefix = "";
+      this->TLSSupported = false;
+      this->MCountName = "__mcount";
+  }
+};
+
 // PSP Target
 template<typename Target>
 class PSPTargetInfo : public OSTargetInfo<Target> {
@@ -769,8 +792,6 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
   Builder.defineMacro("__POWERPC__");
   if (PointerWidth == 64) {
     Builder.defineMacro("_ARCH_PPC64");
-    Builder.defineMacro("_LP64");
-    Builder.defineMacro("__LP64__");
     Builder.defineMacro("__powerpc64__");
     Builder.defineMacro("__ppc64__");
   } else {
@@ -957,7 +978,6 @@ public:
     case llvm::Triple::Linux:
     case llvm::Triple::FreeBSD:
     case llvm::Triple::NetBSD:
-    case llvm::Triple::OpenBSD:
       SizeType = UnsignedInt;
       PtrDiffType = SignedInt;
       IntPtrType = SignedInt;
@@ -2052,10 +2072,6 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
                                      MacroBuilder &Builder) const {
   // Target identification.
   if (PointerWidth == 64) {
-    if (getLongWidth() == 64) {
-      Builder.defineMacro("_LP64");
-      Builder.defineMacro("__LP64__");
-    }
     Builder.defineMacro("__amd64__");
     Builder.defineMacro("__amd64");
     Builder.defineMacro("__x86_64");
@@ -2444,6 +2460,18 @@ public:
 } // end anonymous namespace
 
 namespace {
+class BitrigI386TargetInfo : public BitrigTargetInfo<X86_32TargetInfo> {
+public:
+  BitrigI386TargetInfo(const std::string& triple) :
+    BitrigTargetInfo<X86_32TargetInfo>(triple) {
+    SizeType = UnsignedLong;
+    IntPtrType = SignedLong;
+    PtrDiffType = SignedLong;
+  }
+};
+} // end anonymous namespace
+
+namespace {
 class DarwinI386TargetInfo : public DarwinTargetInfo<X86_32TargetInfo> {
 public:
   DarwinI386TargetInfo(const std::string& triple) :
@@ -2772,6 +2800,18 @@ public:
     IntMaxType = SignedLongLong;
     UIntMaxType = UnsignedLongLong;
     Int64Type = SignedLongLong;
+  }
+};
+} // end anonymous namespace
+
+namespace {
+class BitrigX86_64TargetInfo : public BitrigTargetInfo<X86_64TargetInfo> {
+public:
+  BitrigX86_64TargetInfo(const std::string& triple)
+      : BitrigTargetInfo<X86_64TargetInfo>(triple) {
+     IntMaxType = SignedLongLong;
+     UIntMaxType = UnsignedLongLong;
+     Int64Type = SignedLongLong;
   }
 };
 } // end anonymous namespace
@@ -4156,6 +4196,8 @@ static TargetInfo *AllocateTarget(const std::string &T) {
       return new NetBSDTargetInfo<ARMTargetInfo>(T);
     case llvm::Triple::OpenBSD:
       return new OpenBSDTargetInfo<ARMTargetInfo>(T);
+    case llvm::Triple::Bitrig:
+      return new BitrigTargetInfo<ARMTargetInfo>(T);
     case llvm::Triple::RTEMS:
       return new RTEMSTargetInfo<ARMTargetInfo>(T);
     default:
@@ -4315,6 +4357,8 @@ static TargetInfo *AllocateTarget(const std::string &T) {
       return new NetBSDI386TargetInfo(T);
     case llvm::Triple::OpenBSD:
       return new OpenBSDI386TargetInfo(T);
+    case llvm::Triple::Bitrig:
+      return new BitrigI386TargetInfo(T);
     case llvm::Triple::FreeBSD:
       return new FreeBSDTargetInfo<X86_32TargetInfo>(T);
     case llvm::Triple::Minix:
@@ -4350,6 +4394,8 @@ static TargetInfo *AllocateTarget(const std::string &T) {
       return new NetBSDTargetInfo<X86_64TargetInfo>(T);
     case llvm::Triple::OpenBSD:
       return new OpenBSDX86_64TargetInfo(T);
+    case llvm::Triple::Bitrig:
+      return new BitrigX86_64TargetInfo(T);
     case llvm::Triple::FreeBSD:
       return new FreeBSDTargetInfo<X86_64TargetInfo>(T);
     case llvm::Triple::Solaris:
