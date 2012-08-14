@@ -1633,13 +1633,13 @@ class MSAsmStmt : public Stmt {
   Token *AsmToks;
   unsigned *LineEnds;
   Stmt **Exprs;
-  std::string *Clobbers;
+  StringRef *Clobbers;
 
 public:
   MSAsmStmt(ASTContext &C, SourceLocation asmloc, bool issimple,
             bool isvolatile, ArrayRef<Token> asmtoks,
             ArrayRef<unsigned> lineends, StringRef asmstr,
-            ArrayRef<std::string> clobbers, SourceLocation endloc);
+            ArrayRef<StringRef> clobbers, SourceLocation endloc);
 
   SourceLocation getAsmLoc() const { return AsmLoc; }
   void setAsmLoc(SourceLocation L) { AsmLoc = L; }

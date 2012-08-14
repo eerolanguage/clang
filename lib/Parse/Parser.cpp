@@ -902,27 +902,6 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
          Tok.is(tok::kw_try);          // X() try { ... }
 }
 
-/// \brief Determine whether the current token, if it occurs after a
-/// a function declarator, indicates the start of a function definition
-/// inside an objective-C class implementation and thus can be delay parsed. 
-bool Parser::isStartOfDelayParsedFunctionDefinition(
-                                       const ParsingDeclarator &Declarator) {
-  if (!CurParsedObjCImpl ||
-      !Declarator.isFunctionDeclarator())
-    return false;
-  if (Tok.is(tok::l_brace))   // int X() {}
-    return true;
-
-  // Handle K&R C argument lists: int X(f) int f; {}
-  if (!getLangOpts().CPlusPlus &&
-      Declarator.getFunctionTypeInfo().isKNRPrototype()) 
-    return isDeclarationSpecifier();
-  
-  return getLangOpts().CPlusPlus &&
-           (Tok.is(tok::colon) ||         // X() : Base() {} (used for ctors)
-            Tok.is(tok::kw_try));          // X() try { ... }
-}
-
 /// ParseDeclarationOrFunctionDefinition - Parse either a function-definition or
 /// a declaration.  We can't tell which we have until we read up to the
 /// compound-statement in function-definition. TemplateParams, if
@@ -1128,8 +1107,9 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
     return DP;
   }
   else if (CurParsedObjCImpl && 
-           (Tok.is(tok::l_brace) || Tok.is(tok::kw_try)) && 
-      !TemplateInfo.TemplateParams &&
+           !TemplateInfo.TemplateParams &&
+           (Tok.is(tok::l_brace) || Tok.is(tok::kw_try) ||
+            Tok.is(tok::colon)) && 
       Actions.CurContext->isTranslationUnit()) {
     MultiTemplateParamsArg TemplateParameterLists(Actions, 0, 0);
     ParseScope BodyScope(this, Scope::FnScope|Scope::DeclScope);
