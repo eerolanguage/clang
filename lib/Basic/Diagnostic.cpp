@@ -119,7 +119,7 @@ void DiagnosticsEngine::Reset() {
   // Create a DiagState and DiagStatePoint representing diagnostic changes
   // through command-line.
   DiagStates.push_back(DiagState());
-  PushDiagStatePoint(&DiagStates.back(), SourceLocation());
+  DiagStatePoints.push_back(DiagStatePoint(&DiagStates.back(), FullSourceLoc()));
 }
 
 void DiagnosticsEngine::SetDelayedDiagnostic(unsigned DiagID, StringRef Arg1,
@@ -167,8 +167,9 @@ void DiagnosticsEngine::setDiagnosticMapping(diag::kind Diag, diag::Mapping Map,
           (Map == diag::MAP_FATAL || Map == diag::MAP_ERROR)) &&
          "Cannot map errors into warnings!");
   assert(!DiagStatePoints.empty());
+  assert((L.isInvalid() || SourceMgr) && "No SourceMgr for valid location");
 
-  FullSourceLoc Loc(L, *SourceMgr);
+  FullSourceLoc Loc = SourceMgr? FullSourceLoc(L, *SourceMgr) : FullSourceLoc();
   FullSourceLoc LastStateChangePos = DiagStatePoints.back().Loc;
   // Don't allow a mapping to a warning override an error/fatal mapping.
   if (Map == diag::MAP_WARNING) {

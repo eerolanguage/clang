@@ -1497,6 +1497,11 @@ def note_non_literal_user_provided_dtor : Note<
   "%0 is not literal because it has a user-provided destructor">;
 def note_non_literal_nontrivial_dtor : Note<
   "%0 is not literal because it has a non-trivial destructor">;
+def warn_private_extern : Warning<
+  "Use of __private_extern__ on tentative definition has unexpected"
+  " behaviour - use __attribute__((visibility(\"hidden\"))) on extern"
+  " declaration or definition instead">,
+  InGroup<PrivateExtern>, DefaultIgnore;
 
 // C++11 char16_t/char32_t
 def warn_cxx98_compat_unicode_type : Warning<
@@ -3685,6 +3690,10 @@ def err_illegal_decl_array_of_references : Error<
   "'%0' declared as array of references of type %1">;
 def err_decl_negative_array_size : Error<
   "'%0' declared as an array with a negative size">;
+def err_array_static_outside_prototype : Error<
+  "%0 used in array declarator outside of function prototype">;
+def err_array_static_not_outermost : Error<
+  "%0 used in non-outermost array type derivation">;
 def err_array_star_outside_prototype : Error<
   "star modifier used outside of function prototype">;
 def err_illegal_decl_pointer_to_reference : Error<

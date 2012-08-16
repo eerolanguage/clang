@@ -6367,7 +6367,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   // by a dataflow analysis.
   // Record types initialized by initializer list are handled here.
   // Initialization by constructors are handled in TryConstructorInitialization.
-  if (!VDecl->hasLocalStorage() && !VDecl->isStaticLocal() &&
+  if (!VDecl->hasLocalStorage() &&
       (isa<InitListExpr>(Init) || !VDecl->getType()->isRecordType()))
     CheckSelfReference(RealDecl, Init);
 
@@ -6811,6 +6811,10 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl,
                                  diag::err_abstract_type_in_decl,
                                  AbstractVariableType))
         Var->setInvalidDecl();
+      if (!Type->isDependentType() && !Var->isInvalidDecl() &&
+          Var->getStorageClass() == SC_PrivateExtern)
+        Diag(Var->getLocation(), diag::warn_private_extern);
+        
       return;
 
     case VarDecl::TentativeDefinition:
@@ -7682,7 +7686,9 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
         << FD->getName() << "dllimport";
     }
   }
-  ActOnDocumentableDecl(FD);
+  // We want to attach documentation to original Decl (which might be
+  // a function template).
+  ActOnDocumentableDecl(D);
   return FD;
 }
 

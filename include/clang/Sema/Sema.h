@@ -2560,8 +2560,8 @@ public:
                           bool MSAsm = false);
 
   StmtResult ActOnMSAsmStmt(SourceLocation AsmLoc,
+                            SourceLocation LBraceLoc,
                             ArrayRef<Token> AsmToks,
-                            ArrayRef<unsigned> LineEnds,
                             SourceLocation EndLoc);
 
   VarDecl *BuildObjCExceptionDecl(TypeSourceInfo *TInfo, QualType ExceptionType,

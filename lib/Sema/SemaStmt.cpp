@@ -35,11 +35,15 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstPrinter.h"
+#include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCTargetAsmParser.h"
+#include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetRegistry.h"
@@ -2899,45 +2903,9 @@ StmtResult Sema::ActOnAsmStmt(SourceLocation AsmLoc, bool IsSimple,
   return Owned(NS);
 }
 
-// needSpaceAsmToken - This function handles whitespace around asm punctuation.
-// Returns true if a space should be emitted.
-static inline bool needSpaceAsmToken(Token currTok) {
-  static Token prevTok;
-
-  // No need for space after prevToken.
-  switch(prevTok.getKind()) {
-  default:
-    break;
-  case tok::l_square:
-  case tok::r_square:
-  case tok::l_brace:
-  case tok::r_brace:
-  case tok::colon:
-    prevTok = currTok;
-    return false;
-  }
-
-  // No need for a space before currToken.
-  switch(currTok.getKind()) {
-  default:
-    break;
-  case tok::l_square:
-  case tok::r_square:
-  case tok::l_brace:
-  case tok::r_brace:
-  case tok::comma:
-  case tok::colon:
-    prevTok = currTok;
-    return false;
-  }
-  prevTok = currTok;
-  return true;
-}
-
 static void patchMSAsmStrings(Sema &SemaRef, bool &IsSimple,
                               SourceLocation AsmLoc,
                               ArrayRef<Token> AsmToks,
-                              ArrayRef<unsigned> LineEnds,
                               const TargetInfo &TI,
                               std::vector<std::string> &AsmStrings) {
   assert (!AsmToks.empty() && "Didn't expect an empty AsmToks!");
@@ -2945,119 +2913,142 @@ static void patchMSAsmStrings(Sema &SemaRef, bool &IsSimple,
   // Assume simple asm stmt until we parse a non-register identifer.
   IsSimple = true;
 
-  for (unsigned i = 0, e = LineEnds.size(); i != e; ++i) {
-    SmallString<512> Asm;
+  SmallString<512> Asm;
+  unsigned NumAsmStrings = 0;
+  for (unsigned i = 0, e = AsmToks.size(); i != e; ++i) {
 
-    // Check the operands.
-    for (unsigned j = (i == 0) ? 0 : LineEnds[i-1], e = LineEnds[i]; j != e; ++j) {
+    // Determine if this should be considered a new asm.
+    bool isNewAsm = i == 0 || AsmToks[i].isAtStartOfLine() ||
+      AsmToks[i].is(tok::kw_asm);
 
-      IdentifierInfo *II;
-      if (j == 0 || (i > 0 && j == LineEnds[i-1])) {
-        II = AsmToks[j].getIdentifierInfo();
-        Asm = II->getName().str();
-        continue;
+    // Emit the previous asm string.
+    if (i && isNewAsm) {
+      AsmStrings[NumAsmStrings++] = Asm.c_str();
+      if (AsmToks[i].is(tok::kw_asm)) {
+        ++i; // Skip __asm
+        assert (i != e && "Expected another token.");
       }
-
-      if (needSpaceAsmToken(AsmToks[j]))
-        Asm += " ";
-
-      switch (AsmToks[j].getKind()) {
-      default:
-        //llvm_unreachable("Unknown token.");
-        break;
-      case tok::comma: Asm += ","; break;
-      case tok::colon: Asm += ":"; break;
-      case tok::l_square: Asm += "["; break;
-      case tok::r_square: Asm += "]"; break;
-      case tok::l_brace: Asm += "{"; break;
-      case tok::r_brace: Asm += "}"; break;
-      case tok::numeric_constant: {
-        SmallString<32> TokenBuf;
-        TokenBuf.resize(32);
-        bool StringInvalid = false;
-        Asm += SemaRef.PP.getSpelling(AsmToks[j], TokenBuf, &StringInvalid);
-        assert (!StringInvalid && "Expected valid string!");
-        break;
-      }
-      case tok::identifier: {
-        II = AsmToks[j].getIdentifierInfo();
-        StringRef Name = II->getName();
-
-        // Valid registers don't need modification.
-        if (TI.isValidGCCRegisterName(Name)) {
-          Asm += Name;
-          break;
-        }
-
-        // TODO: Lookup the identifier.
-        IsSimple = false;
-      }
-      } // AsmToks[i].getKind()
     }
-    AsmStrings[i] = Asm.c_str();
+
+    // Start a new asm string with the opcode.
+    if (isNewAsm) {
+      Asm = AsmToks[i].getIdentifierInfo()->getName().str();
+      continue;
+    }
+
+    if (i && AsmToks[i].hasLeadingSpace())
+      Asm += ' ';
+
+    // Check the operand(s).
+    switch (AsmToks[i].getKind()) {
+    default:
+      //llvm_unreachable("Unknown token.");
+      break;
+    case tok::comma: Asm += ","; break;
+    case tok::colon: Asm += ":"; break;
+    case tok::l_square: Asm += "["; break;
+    case tok::r_square: Asm += "]"; break;
+    case tok::l_brace: Asm += "{"; break;
+    case tok::r_brace: Asm += "}"; break;
+    case tok::numeric_constant: {
+      SmallString<32> TokenBuf;
+      TokenBuf.resize(32);
+      bool StringInvalid = false;
+      Asm += SemaRef.PP.getSpelling(AsmToks[i], TokenBuf, &StringInvalid);
+      assert (!StringInvalid && "Expected valid string!");
+      break;
+    }
+    case tok::identifier: {
+      StringRef Name = AsmToks[i].getIdentifierInfo()->getName();
+
+      // Valid registers don't need modification.
+      if (TI.isValidGCCRegisterName(Name)) {
+        Asm += Name;
+        break;
+      }
+
+      // TODO: Lookup the identifier.
+      IsSimple = false;
+      break;
+    }
+    } // AsmToks[i].getKind()
   }
+
+  // Emit the final (and possibly only) asm string.
+  AsmStrings[NumAsmStrings] = Asm.c_str();
 }
 
 // Build the unmodified MSAsmString.
 static std::string buildMSAsmString(Sema &SemaRef,
                                     ArrayRef<Token> AsmToks,
-                                    ArrayRef<unsigned> LineEnds) {
+                                    unsigned &NumAsmStrings) {
   assert (!AsmToks.empty() && "Didn't expect an empty AsmToks!");
   SmallString<512> Asm;
   SmallString<512> TokenBuf;
   TokenBuf.resize(512);
-  unsigned AsmLineNum = 0;
+
+  NumAsmStrings = 0;
   for (unsigned i = 0, e = AsmToks.size(); i < e; ++i) {
-    const char *ThisTokBuf = &TokenBuf[0];
-    bool StringInvalid = false;
-    unsigned ThisTokLen =
-      Lexer::getSpelling(AsmToks[i], ThisTokBuf, SemaRef.getSourceManager(),
-                         SemaRef.getLangOpts(), &StringInvalid);
-    if (i && (!AsmLineNum || i != LineEnds[AsmLineNum-1]) &&
-        needSpaceAsmToken(AsmToks[i]))
-      Asm += ' ';
-    Asm += StringRef(ThisTokBuf, ThisTokLen);
-    if (i + 1 == LineEnds[AsmLineNum] && i + 1 != AsmToks.size()) {
-      Asm += '\n';
-      ++AsmLineNum;
+    bool isNewAsm = i == 0 || AsmToks[i].isAtStartOfLine() ||
+      AsmToks[i].is(tok::kw_asm);
+
+    if (isNewAsm) {
+      ++NumAsmStrings;
+      if (i)
+        Asm += '\n';
+      if (AsmToks[i].is(tok::kw_asm)) {
+        i++; // Skip __asm
+        assert (i != e && "Expected another token");
+      }
     }
+
+    if (i && AsmToks[i].hasLeadingSpace() && !isNewAsm)
+      Asm += ' ';
+
+    bool StringInvalid = false;
+    Asm += SemaRef.PP.getSpelling(AsmToks[i], TokenBuf, &StringInvalid);
+    assert (!StringInvalid && "Expected valid string!");
   }
   return Asm.c_str();
 }
 
 StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
+                                SourceLocation LBraceLoc,
                                 ArrayRef<Token> AsmToks,
-                                ArrayRef<unsigned> LineEnds,
                                 SourceLocation EndLoc) {
   // MS-style inline assembly is not fully supported, so emit a warning.
   Diag(AsmLoc, diag::warn_unsupported_msasm);
   SmallVector<StringRef,4> Clobbers;
+  std::set<std::string> ClobberRegs;
+  SmallVector<IdentifierInfo*, 4> Inputs;
+  SmallVector<IdentifierInfo*, 4> Outputs;
 
   // Empty asm statements don't need to instantiate the AsmParser, etc.
   if (AsmToks.empty()) {
     StringRef AsmString;
     MSAsmStmt *NS =
-      new (Context) MSAsmStmt(Context, AsmLoc, /* IsSimple */ true,
-                              /* IsVolatile */ true, AsmToks, LineEnds,
+      new (Context) MSAsmStmt(Context, AsmLoc, LBraceLoc, /*IsSimple*/ true,
+                              /*IsVolatile*/ true, AsmToks, Inputs, Outputs,
                               AsmString, Clobbers, EndLoc);
     return Owned(NS);
   }
 
-  std::string AsmString = buildMSAsmString(*this, AsmToks, LineEnds);
+  unsigned NumAsmStrings;
+  std::string AsmString = buildMSAsmString(*this, AsmToks, NumAsmStrings);
 
   bool IsSimple;
   std::vector<std::string> PatchedAsmStrings;
-  PatchedAsmStrings.resize(LineEnds.size());
+  PatchedAsmStrings.resize(NumAsmStrings);
 
   // Rewrite operands to appease the AsmParser.
-  patchMSAsmStrings(*this, IsSimple, AsmLoc, AsmToks, LineEnds, 
-                   Context.getTargetInfo(), PatchedAsmStrings);
+  patchMSAsmStrings(*this, IsSimple, AsmLoc, AsmToks, Context.getTargetInfo(),
+                    PatchedAsmStrings);
 
   // patchMSAsmStrings doesn't correctly patch non-simple asm statements.
   if (!IsSimple) {
     MSAsmStmt *NS =
-      new (Context) MSAsmStmt(Context, AsmLoc, /* IsSimple */ true,
-                              /* IsVolatile */ true, AsmToks, LineEnds,
+      new (Context) MSAsmStmt(Context, AsmLoc, LBraceLoc, /*IsSimple*/ true,
+                              /*IsVolatile*/ true, AsmToks, Inputs, Outputs,
                               AsmString, Clobbers, EndLoc);
     return Owned(NS);
   }
@@ -3096,13 +3087,63 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
     Parser->setAssemblerDialect(1);
     Parser->setTargetParser(*TargetParser.get());
 
-    // TODO: Start parsing.
+    // Prime the lexer.
+    Parser->Lex();
+
+    // Parse the opcode.
+    StringRef IDVal;
+    Parser->ParseIdentifier(IDVal);
+
+    // Canonicalize the opcode to lower case.
+    SmallString<128> Opcode;
+    for (unsigned i = 0, e = IDVal.size(); i != e; ++i)
+      Opcode.push_back(tolower(IDVal[i]));
+
+    // Parse the operands.
+    llvm::SMLoc IDLoc;
+    SmallVector<llvm::MCParsedAsmOperand*, 8> Operands;
+    bool HadError = TargetParser->ParseInstruction(Opcode.str(), IDLoc,
+                                                   Operands);
+    assert (!HadError && "Unexpected error parsing instruction");
+
+    // Match the MCInstr.
+    SmallVector<llvm::MCInst, 2> Instrs;
+    HadError = TargetParser->MatchInstruction(IDLoc, Operands, Instrs);
+    assert (!HadError && "Unexpected error matching instruction");
+    assert ((Instrs.size() == 1) && "Expected only a single instruction.");
+
+    // Get the instruction descriptor.
+    llvm::MCInst Inst = Instrs[0];
+    const llvm::MCInstrInfo *MII = TheTarget->createMCInstrInfo();
+    const llvm::MCInstrDesc &Desc = MII->get(Inst.getOpcode());
+    llvm::MCInstPrinter *IP =
+      TheTarget->createMCInstPrinter(1, *MAI, *MII, *MRI, *STI);
+
+    // Build the list of clobbers.
+    for (unsigned i = 0, e = Desc.getNumDefs(); i != e; ++i) {
+      const llvm::MCOperand &Op = Inst.getOperand(i);
+      if (!Op.isReg())
+        continue;
+
+      std::string Reg;
+      llvm::raw_string_ostream OS(Reg);
+      IP->printRegName(OS, Op.getReg());
+
+      StringRef Clobber(OS.str());
+      if (!Context.getTargetInfo().isValidClobber(Clobber))
+        return StmtError(Diag(AsmLoc, diag::err_asm_unknown_register_name) <<
+                         Clobber);
+      ClobberRegs.insert(Reg);
+    }
   }
+  for (std::set<std::string>::iterator I = ClobberRegs.begin(),
+         E = ClobberRegs.end(); I != E; ++I)
+    Clobbers.push_back(*I);
 
   MSAsmStmt *NS =
-    new (Context) MSAsmStmt(Context, AsmLoc, IsSimple, /* IsVolatile */ true,
-                            AsmToks, LineEnds, AsmString, Clobbers, EndLoc);
-
+    new (Context) MSAsmStmt(Context, AsmLoc, LBraceLoc, IsSimple,
+                            /*IsVolatile*/ true, AsmToks, Inputs, Outputs,
+                            AsmString, Clobbers, EndLoc);
   return Owned(NS);
 }
 
