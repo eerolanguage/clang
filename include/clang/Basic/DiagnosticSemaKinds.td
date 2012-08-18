@@ -823,7 +823,7 @@ def err_friend_def_in_local_class : Error<
   "friend function cannot be defined in a local class">;
   
 def err_abstract_type_in_decl : Error<
-  "%select{return|parameter|variable|field}0 type %1 is an abstract class">;
+  "%select{return|parameter|variable|field|ivar}0 type %1 is an abstract class">;
 def err_allocation_of_abstract_type : Error<
   "allocating an object of abstract class type %0">;
 def err_throw_abstract_type : Error<
@@ -1555,6 +1555,8 @@ def err_attribute_argument_n_not_int : Error<
   "'%0' attribute requires parameter %1 to be an integer constant">;
 def err_attribute_argument_n_not_string : Error<
   "'%0' attribute requires parameter %1 to be a string">;
+def err_attribute_argument_n_not_identifier : Error<
+  "'%0' attribute requires parameter %1 to be an identifier">;
 def err_attribute_argument_out_of_bounds : Error<
   "'%0' attribute parameter %1 is out of bounds">;
 def err_attribute_requires_objc_interface : Error<
@@ -1563,6 +1565,8 @@ def err_attribute_uuid_malformed_guid : Error<
   "uuid attribute contains a malformed GUID">;
 def warn_nonnull_pointers_only : Warning<
   "nonnull attribute only applies to pointer arguments">;
+def err_attribute_pointers_only : Error<
+  "'%0' attribute only applies to pointer arguments">;
 def err_attribute_invalid_implicit_this_argument : Error<
   "'%0' attribute is invalid for the implicit this argument">;
 def err_ownership_type : Error<
@@ -1777,7 +1781,6 @@ def err_attribute_can_be_applied_only_to_value_decl : Error<
   "%0 attribute can only be applied to value declarations">;
 def warn_attribute_not_on_decl : Error<
   "%0 attribute ignored when parsing type">;
-
 
 // Availability attribute
 def warn_availability_unknown_platform : Warning<
@@ -4974,6 +4977,9 @@ def err_typecheck_cast_to_union_no_type : Error<
   "cast to union type from type %0 not present in union">;
 def err_cast_pointer_from_non_pointer_int : Error<
   "operand of type %0 cannot be cast to a pointer type">;
+def warn_cast_pointer_from_sel : Warning<
+  "cast of type %0 to %1 is deprecated; use sel_getName instead">,
+  InGroup<SelTypeCast>;
 def err_cast_pointer_to_non_pointer_int : Error<
   "pointer cannot be cast to type %0">;
 def err_typecheck_expect_scalar_operand : Error<
@@ -5487,6 +5493,23 @@ def warn_stringcompare : Warning<
 def warn_identity_field_assign : Warning<
   "assigning %select{field|instance variable}0 to itself">,
   InGroup<SelfAssignmentField>;
+
+// Type safety attributes
+def err_type_tag_for_datatype_not_ice : Error<
+  "'type_tag_for_datatype' attribute requires the initializer to be "
+  "an %select{integer|integral}0 constant expression">;
+def err_type_tag_for_datatype_too_large : Error<
+  "'type_tag_for_datatype' attribute requires the initializer to be "
+  "an %select{integer|integral}0 constant expression "
+  "that can be represented by a 64 bit integer">;
+def warn_type_tag_for_datatype_wrong_kind : Warning<
+  "this type tag was not designed to be used with this function">,
+  InGroup<TypeSafety>;
+def warn_type_safety_type_mismatch : Warning<
+  "argument type %0 doesn't match specified '%1' type tag "
+  "%select{that requires %3|}2">, InGroup<TypeSafety>;
+def warn_type_safety_null_pointer_required : Warning<
+  "specified %0 type tag requires a null pointer">, InGroup<TypeSafety>;
 
 // Generic selections.
 def err_assoc_type_incomplete : Error<

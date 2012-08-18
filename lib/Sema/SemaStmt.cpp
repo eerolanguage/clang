@@ -28,6 +28,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -1549,7 +1550,6 @@ Sema::CheckObjCForCollectionOperand(SourceLocation forLoc, Expr *collection) {
 
 StmtResult
 Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
-                                 SourceLocation LParenLoc,
                                  Stmt *First, Expr *collection,
                                  SourceLocation RParenLoc) {
 
@@ -1842,9 +1842,9 @@ static bool ObjCEnumerationCollection(Expr *Collection) {
           && Collection->getType()->getAs<ObjCObjectPointerType>() != 0;
 }
 
-/// ActOnCXXForRangeStmt - Check and build a C++0x for-range statement.
+/// ActOnCXXForRangeStmt - Check and build a C++11 for-range statement.
 ///
-/// C++0x [stmt.ranged]:
+/// C++11 [stmt.ranged]:
 ///   A range-based for statement is equivalent to
 ///
 ///   {
@@ -1861,15 +1861,14 @@ static bool ObjCEnumerationCollection(Expr *Collection) {
 /// The body of the loop is not available yet, since it cannot be analysed until
 /// we have determined the type of the for-range-declaration.
 StmtResult
-Sema::ActOnCXXForRangeStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
+Sema::ActOnCXXForRangeStmt(SourceLocation ForLoc,
                            Stmt *First, SourceLocation ColonLoc, Expr *Range,
                            SourceLocation RParenLoc) {
   if (!First || !Range)
     return StmtError();
 
   if (ObjCEnumerationCollection(Range))
-    return ActOnObjCForCollectionStmt(ForLoc, LParenLoc, First, Range,
-                                      RParenLoc);
+    return ActOnObjCForCollectionStmt(ForLoc, First, Range, RParenLoc);
 
   DeclStmt *DS = dyn_cast<DeclStmt>(First);
   assert(DS && "first part of for range not a decl stmt");
@@ -2903,14 +2902,38 @@ StmtResult Sema::ActOnAsmStmt(SourceLocation AsmLoc, bool IsSimple,
   return Owned(NS);
 }
 
+// isMSAsmKeyword - Return true if this is an MS-style inline asm keyword. These
+// require special handling.
+static bool isMSAsmKeyword(StringRef Name) {
+  bool Ret = llvm::StringSwitch<bool>(Name)
+    .Cases("EVEN", "ALIGN", true) // Alignment directives.
+    .Cases("LENGTH", "SIZE", "TYPE", true) // Type and variable sizes.
+    .Case("_emit", true) // _emit Pseudoinstruction.
+    .Default(false);
+  return Ret;
+}
+
+static StringRef getSpelling(Sema &SemaRef, Token AsmTok) {
+  StringRef Asm;
+  SmallString<512> TokenBuf;
+  TokenBuf.resize(512);
+  bool StringInvalid = false;
+  Asm = SemaRef.PP.getSpelling(AsmTok, TokenBuf, &StringInvalid);
+  assert (!StringInvalid && "Expected valid string!");
+  return Asm;
+}
+
 static void patchMSAsmStrings(Sema &SemaRef, bool &IsSimple,
                               SourceLocation AsmLoc,
                               ArrayRef<Token> AsmToks,
                               const TargetInfo &TI,
+                              std::vector<llvm::BitVector> &AsmRegs,
+                              std::vector<llvm::BitVector> &AsmNames,
                               std::vector<std::string> &AsmStrings) {
   assert (!AsmToks.empty() && "Didn't expect an empty AsmToks!");
 
-  // Assume simple asm stmt until we parse a non-register identifer.
+  // Assume simple asm stmt until we parse a non-register identifer (or we just
+  // need to bail gracefully).
   IsSimple = true;
 
   SmallString<512> Asm;
@@ -2932,7 +2955,16 @@ static void patchMSAsmStrings(Sema &SemaRef, bool &IsSimple,
 
     // Start a new asm string with the opcode.
     if (isNewAsm) {
-      Asm = AsmToks[i].getIdentifierInfo()->getName().str();
+      AsmRegs[NumAsmStrings].resize(AsmToks.size());
+      AsmNames[NumAsmStrings].resize(AsmToks.size());
+
+      StringRef Piece = AsmToks[i].getIdentifierInfo()->getName();
+      // MS-style inline asm keywords require special handling.
+      if (isMSAsmKeyword(Piece))
+        IsSimple = false;
+
+      // TODO: Verify this is a valid opcode.
+      Asm = Piece;
       continue;
     }
 
@@ -2942,7 +2974,8 @@ static void patchMSAsmStrings(Sema &SemaRef, bool &IsSimple,
     // Check the operand(s).
     switch (AsmToks[i].getKind()) {
     default:
-      //llvm_unreachable("Unknown token.");
+      IsSimple = false;
+      Asm += getSpelling(SemaRef, AsmToks[i]);
       break;
     case tok::comma: Asm += ","; break;
     case tok::colon: Asm += ":"; break;
@@ -2950,28 +2983,66 @@ static void patchMSAsmStrings(Sema &SemaRef, bool &IsSimple,
     case tok::r_square: Asm += "]"; break;
     case tok::l_brace: Asm += "{"; break;
     case tok::r_brace: Asm += "}"; break;
-    case tok::numeric_constant: {
-      SmallString<32> TokenBuf;
-      TokenBuf.resize(32);
-      bool StringInvalid = false;
-      Asm += SemaRef.PP.getSpelling(AsmToks[i], TokenBuf, &StringInvalid);
-      assert (!StringInvalid && "Expected valid string!");
+    case tok::numeric_constant:
+      Asm += getSpelling(SemaRef, AsmToks[i]);
       break;
-    }
     case tok::identifier: {
-      StringRef Name = AsmToks[i].getIdentifierInfo()->getName();
+      IdentifierInfo *II = AsmToks[i].getIdentifierInfo();
+      StringRef Name = II->getName();
 
-      // Valid registers don't need modification.
+      // Valid register?
       if (TI.isValidGCCRegisterName(Name)) {
+        AsmRegs[NumAsmStrings].set(i);
         Asm += Name;
         break;
       }
 
-      // TODO: Lookup the identifier.
       IsSimple = false;
+
+      // MS-style inline asm keywords require special handling.
+      if (isMSAsmKeyword(Name)) {
+        IsSimple = false;
+        Asm += Name;
+        break;
+      }
+
+      // FIXME: Why are we missing this segment register?
+      if (Name == "fs") {
+        Asm += Name;
+        break;
+      }
+
+      // Lookup the identifier.
+      // TODO: Someone with more experience with clang should verify this the
+      // proper way of doing a symbol lookup.
+      DeclarationName DeclName(II);
+      Scope *CurScope = SemaRef.getCurScope();
+      LookupResult R(SemaRef, DeclName, AsmLoc, Sema::LookupOrdinaryName);
+      if (!SemaRef.LookupName(R, CurScope, false/*AllowBuiltinCreation*/))
+        break;
+
+      assert (R.isSingleResult() && "Expected a single result?!");
+      NamedDecl *Decl = R.getFoundDecl();
+      switch (Decl->getKind()) {
+      default:
+        assert(0 && "Unknown decl kind.");
+        break;
+      case Decl::Var: {
+      case Decl::ParmVar:
+        AsmNames[NumAsmStrings].set(i);
+
+        VarDecl *Var = cast<VarDecl>(Decl);
+        QualType Ty = Var->getType();
+        (void)Ty; // Avoid warning.
+        // TODO: Patch identifier with valid operand.  One potential idea is to
+        // probe the backend with type information to guess the possible
+        // operand.
+        break;
+      }
+      }
       break;
     }
-    } // AsmToks[i].getKind()
+    }
   }
 
   // Emit the final (and possibly only) asm string.
@@ -2983,11 +3054,9 @@ static std::string buildMSAsmString(Sema &SemaRef,
                                     ArrayRef<Token> AsmToks,
                                     unsigned &NumAsmStrings) {
   assert (!AsmToks.empty() && "Didn't expect an empty AsmToks!");
-  SmallString<512> Asm;
-  SmallString<512> TokenBuf;
-  TokenBuf.resize(512);
-
   NumAsmStrings = 0;
+
+  SmallString<512> Asm;
   for (unsigned i = 0, e = AsmToks.size(); i < e; ++i) {
     bool isNewAsm = i == 0 || AsmToks[i].isAtStartOfLine() ||
       AsmToks[i].is(tok::kw_asm);
@@ -3005,9 +3074,7 @@ static std::string buildMSAsmString(Sema &SemaRef,
     if (i && AsmToks[i].hasLeadingSpace() && !isNewAsm)
       Asm += ' ';
 
-    bool StringInvalid = false;
-    Asm += SemaRef.PP.getSpelling(AsmToks[i], TokenBuf, &StringInvalid);
-    assert (!StringInvalid && "Expected valid string!");
+    Asm += getSpelling(SemaRef, AsmToks[i]);
   }
   return Asm.c_str();
 }
@@ -3037,12 +3104,17 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
   std::string AsmString = buildMSAsmString(*this, AsmToks, NumAsmStrings);
 
   bool IsSimple;
+  std::vector<llvm::BitVector> Regs;
+  std::vector<llvm::BitVector> Names;
   std::vector<std::string> PatchedAsmStrings;
+
+  Regs.resize(NumAsmStrings);
+  Names.resize(NumAsmStrings);
   PatchedAsmStrings.resize(NumAsmStrings);
 
   // Rewrite operands to appease the AsmParser.
-  patchMSAsmStrings(*this, IsSimple, AsmLoc, AsmToks, Context.getTargetInfo(),
-                    PatchedAsmStrings);
+  patchMSAsmStrings(*this, IsSimple, AsmLoc, AsmToks,
+                    Context.getTargetInfo(), Regs, Names, PatchedAsmStrings);
 
   // patchMSAsmStrings doesn't correctly patch non-simple asm statements.
   if (!IsSimple) {
