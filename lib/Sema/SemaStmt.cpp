@@ -1689,25 +1689,6 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
                                      First->getLocStart(), Second->getLocEnd()));
 }
 
-namespace {
-
-enum BeginEndFunction {
-  BEF_begin,
-  BEF_end
-};
-
-/// Build a variable declaration for a for-range statement.
-static VarDecl *BuildForRangeVarDecl(Sema &SemaRef, SourceLocation Loc,
-                                     QualType Type, const char *Name) {
-  DeclContext *DC = SemaRef.CurContext;
-  IdentifierInfo *II = &SemaRef.PP.getIdentifierTable().get(Name);
-  TypeSourceInfo *TInfo = SemaRef.Context.getTrivialTypeSourceInfo(Type, Loc);
-  VarDecl *Decl = VarDecl::Create(SemaRef.Context, DC, Loc, Loc, II, Type,
-                                  TInfo, SC_Auto, SC_None);
-  Decl->setImplicit();
-  return Decl;
-}
-
 /// Finish building a variable declaration for a for-range statement.
 /// \return true if an error occurs.
 static bool FinishForRangeVarDecl(Sema &SemaRef, VarDecl *Decl, Expr *Init,

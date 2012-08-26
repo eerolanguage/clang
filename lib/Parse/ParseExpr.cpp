@@ -292,7 +292,7 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     if (getLangOpts().OptionalSemicolons &&
         Tok.isAtStartOfLine() && 
         (ParenCount == 0) && (BracketCount == 0)) {
-      return move(LHS);
+      return LHS;
     }
 
     // Consume the operator, saving the operator token for error reporting.
@@ -1344,7 +1344,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
     if (getLangOpts().OptionalSemicolons && 
         Tok.isAtStartOfLine() &&
         (ParenCount == 0) && (BracketCount == 0)) {
-      return move(LHS);
+      return LHS;
     }
     switch (Tok.getKind()) {
     case tok::code_completion:
@@ -2565,11 +2565,11 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     ExpectAndConsume(tok::r_paren, diag::err_expected_rparen, "");
 
     if (!Stmt.isInvalid()) {     // make into a compound statement needed
-      StmtVector Stmts(Actions); // by ActOnBlockStmtExpr)
+      StmtVector Stmts; // by ActOnBlockStmtExpr)
       Stmts.push_back(Stmt.release());
       Stmt = Actions.ActOnCompoundStmt(Stmt.get()->getLocStart(),
                                        Stmt.get()->getLocEnd(),
-                                       move_arg(Stmts), false);
+                                       Stmts, false);
     }
   } else if (!getLangOpts().OffSideRule || Tok.isAtStartOfLine()) {
     Stmt = ParseCompoundStatementBody();

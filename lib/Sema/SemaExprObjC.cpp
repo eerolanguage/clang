@@ -3417,7 +3417,7 @@ ExprResult Sema::ActOnArithmeticTypeToObjectCast(Scope *S,
                                ClassType,
                                Sel,
                                LParenLoc, RParenLoc, CastExpr->getLocEnd(),
-                               MultiExprArg(*this,&CastExpr,1));
+                               MultiExprArg(&CastExpr,1));
   }
   
   return result;
@@ -3519,7 +3519,7 @@ ExprResult Sema::ActOnCStringTypeToObjectCast(Scope *S,
                            ClassType,
                            Sel,
                            LParenLoc, RParenLoc, CastExpr->getLocEnd(),
-                           MultiExprArg(*this,&CastExpr,1));
+                           MultiExprArg(&CastExpr,1));
 }
 
 // Eero: "cast" an object to a C-style string (const char*)
@@ -3604,7 +3604,7 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
                                     LHSExpr, 
                                     Sel,
                                     TokLoc, TokLoc, TokLoc,
-                                    MultiExprArg(*this, &RHSExpr, 1));
+                                    MultiExprArg(&RHSExpr, 1));
       if (invert) {
         result = CreateBuiltinUnaryOp(TokLoc, UO_LNot, result.take());
       }
@@ -3696,7 +3696,7 @@ ExprResult Sema::ActOnRangeBinOp(Scope *S, SourceLocation TokLoc,
 
   // Build (NSRange){ location, length } compound literal expression    
   Expr* exprList[] = { LHSExpr, LengthExpr.take() };
-  MultiExprArg InitExprs(*this, exprList, 2);
+  MultiExprArg InitExprs(exprList, 2);
   ExprResult Result = ActOnInitList(LLoc, InitExprs, RLoc);
   return ActOnCompoundLiteral(LLoc, RangeType, RLoc, Result.take());
 }

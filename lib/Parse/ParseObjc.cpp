@@ -1493,7 +1493,7 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
   // Build list of argument expressions for generated method body,
   // which will be a message sent to self.
   //
-  ExprVector ArgExprs(Actions);
+  ExprVector ArgExprs;
   bool doneReplacingThisPass = false; // just one replacement per pass
   for (unsigned i = 0, j = 0; i < ArgIds.size(); i++) {
     if (!doneReplacingThisPass && 
@@ -1523,9 +1523,7 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
                                    SelfExpr.get(), 
                                    Sel,
                                    mLoc, mLoc, mLoc,
-                                   MultiExprArg(Actions, 
-                                                ArgExprs.take(), 
-                                                ArgExprs.size()));
+                                   MultiExprArg(ArgExprs));
   StmtResult FnBody;
   if (MessageExpr.isInvalid())
     FnBody = StmtError();
@@ -1537,7 +1535,7 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
   // If the function body could not built, make a bogus compoundstmt.
   if (FnBody.isInvalid())
       FnBody = Actions.ActOnCompoundStmt(mLoc, mLoc,
-                                         MultiStmtArg(Actions), false);
+                                         MultiStmtArg(), false);
   // Leave the function body scope.
   BodyScope.Exit();
 
@@ -2447,16 +2445,16 @@ Decl *Parser::ParseObjCMethodDefinition() {
     // If the function body could not be parsed, make a bogus compoundstmt.
     if (FnBody.isInvalid())
       FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyStartLoc,
-                                         MultiStmtArg(Actions), false);
+                                         MultiStmtArg(), false);
 
     if (!DefaultReturnExpr.isInvalid()) {
       StmtResult DefaultReturnStmt = 
           Actions.ActOnReturnStmt(ReturnLoc, DefaultReturnExpr.take());
-      StmtVector Stmts(Actions);
+      StmtVector Stmts;
       Stmts.push_back(FnBody.release());
       Stmts.push_back(DefaultReturnStmt.release());
       FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyStartLoc, 
-                                         move_arg(Stmts), false);
+                                         Stmts, false);
     }
       
     // Leave the function body scope.
