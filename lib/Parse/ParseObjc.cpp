@@ -2226,7 +2226,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
   }
-  StmtVector CatchStmts(Actions);
+  StmtVector CatchStmts;
   StmtResult FinallyStmt;
   ParseScope TryScope(this, Scope::DeclScope);
   StmtResult TryBody(ParseCompoundStatementBody());
@@ -2323,7 +2323,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
   }
   
   return Actions.ActOnObjCAtTryStmt(atLoc, TryBody.take(), 
-                                    move_arg(CatchStmts),
+                                    CatchStmts,
                                     FinallyStmt.take());
 }
 
@@ -2564,13 +2564,13 @@ ExprResult Parser::ParseObjCAtExpression(SourceLocation AtLoc) {
 
     ExprResult Lit(Actions.ActOnNumericConstant(Tok));
     if (Lit.isInvalid()) {
-      return move(Lit);
+      return Lit;
     }
     ConsumeToken(); // Consume the literal token.
 
     Lit = Actions.ActOnUnaryOp(getCurScope(), OpLoc, Kind, Lit.take());
     if (Lit.isInvalid())
-      return move(Lit);
+      return Lit;
 
     return ParsePostfixExpressionSuffix(
              Actions.BuildObjCNumericLiteral(AtLoc, Lit.take()));
@@ -2849,7 +2849,7 @@ ExprResult Parser::ParseObjCMessageExpression() {
   ExprResult Res(ParseExpression());
   if (Res.isInvalid()) {
     SkipUntil(tok::r_square);
-    return move(Res);
+    return Res;
   }
 
   return ParseObjCMessageExpressionBody(LBracLoc, SourceLocation(),
@@ -2923,7 +2923,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
 
   SmallVector<IdentifierInfo *, 12> KeyIdents;
   SmallVector<SourceLocation, 12> KeyLocs;
-  ExprVector KeyExprs(Actions);
+  ExprVector KeyExprs;
 
   if (Tok.is(tok::colon)) {
     while (1) {
@@ -2972,7 +2972,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         // the enclosing expression.
         if (!isEero)
           SkipUntil(tok::r_square);
-        return move(Res);
+        return Res;
       }
 
       // We have a valid expression.
@@ -3030,7 +3030,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         // stop at the ']' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
         SkipUntil(tok::r_square);
-        return move(Res);
+        return Res;
       }
 
       // We have a valid expression.
@@ -3070,32 +3070,23 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
 
   if (SuperLoc.isValid())
     return Actions.ActOnSuperMessage(getCurScope(), SuperLoc, Sel,
-                                     LBracLoc, KeyLocs, RBracLoc,
-                                     MultiExprArg(Actions, 
-                                                  KeyExprs.take(),
-                                                  KeyExprs.size()));
+                                     LBracLoc, KeyLocs, RBracLoc, KeyExprs);
   else if (ReceiverType)
     return Actions.ActOnClassMessage(getCurScope(), ReceiverType, Sel,
-                                     LBracLoc, KeyLocs, RBracLoc,
-                                     MultiExprArg(Actions, 
-                                                  KeyExprs.take(), 
-                                                  KeyExprs.size()));
+                                     LBracLoc, KeyLocs, RBracLoc, KeyExprs);
   return Actions.ActOnInstanceMessage(getCurScope(), ReceiverExpr, Sel,
-                                      LBracLoc, KeyLocs, RBracLoc,
-                                      MultiExprArg(Actions, 
-                                                   KeyExprs.take(), 
-                                                   KeyExprs.size()));
+                                      LBracLoc, KeyLocs, RBracLoc, KeyExprs);
 }
 
 ExprResult Parser::ParseObjCStringLiteral(SourceLocation AtLoc) {
   ExprResult Res(ParseStringLiteralExpression());
-  if (Res.isInvalid()) return move(Res);
+  if (Res.isInvalid()) return Res;
 
   // @"foo" @"bar" is a valid concatenated string.  Eat any subsequent string
   // expressions.  At this point, we know that the only valid thing that starts
   // with '@' is an @"".
   SmallVector<SourceLocation, 4> AtLocs;
-  ExprVector AtStrings(Actions);
+  ExprVector AtStrings;
   AtLocs.push_back(AtLoc);
   AtStrings.push_back(Res.release());
 
@@ -3108,12 +3099,12 @@ ExprResult Parser::ParseObjCStringLiteral(SourceLocation AtLoc) {
 
     ExprResult Lit(ParseStringLiteralExpression());
     if (Lit.isInvalid())
-      return move(Lit);
+      return Lit;
 
     AtStrings.push_back(Lit.release());
   }
 
-  return Owned(Actions.ParseObjCStringLiteral(&AtLocs[0], AtStrings.take(),
+  return Owned(Actions.ParseObjCStringLiteral(&AtLocs[0], AtStrings.data(),
                                               AtStrings.size()));
 }
 
@@ -3134,7 +3125,7 @@ ExprResult Parser::ParseObjCBooleanLiteral(SourceLocation AtLoc,
 ExprResult Parser::ParseObjCCharacterLiteral(SourceLocation AtLoc) {
   ExprResult Lit(Actions.ActOnCharacterConstant(Tok));
   if (Lit.isInvalid()) {
-    return move(Lit);
+    return Lit;
   }
   ConsumeToken(); // Consume the literal token.
   return Owned(Actions.BuildObjCNumericLiteral(AtLoc, Lit.take()));
@@ -3148,7 +3139,7 @@ ExprResult Parser::ParseObjCCharacterLiteral(SourceLocation AtLoc) {
 ExprResult Parser::ParseObjCNumericLiteral(SourceLocation AtLoc) {
   ExprResult Lit(Actions.ActOnNumericConstant(Tok));
   if (Lit.isInvalid()) {
-    return move(Lit);
+    return Lit;
   }
   ConsumeToken(); // Consume the literal token.
   return Owned(Actions.BuildObjCNumericLiteral(AtLoc, Lit.take()));
@@ -3180,7 +3171,7 @@ Parser::ParseObjCBoxedExpr(SourceLocation AtLoc) {
 }
 
 ExprResult Parser::ParseObjCArrayLiteral(SourceLocation AtLoc) {
-  ExprVector ElementExprs(Actions);                   // array elements.
+  ExprVector ElementExprs;                   // array elements.
   ConsumeBracket(); // consume the l_square.
 
   while (Tok.isNot(tok::r_square)) {
@@ -3191,7 +3182,7 @@ ExprResult Parser::ParseObjCArrayLiteral(SourceLocation AtLoc) {
       // stop at the ']' when it skips to the ';'.  We want it to skip beyond
       // the enclosing expression.
       SkipUntil(tok::r_square);
-      return move(Res);
+      return Res;
     }    
     
     // Parse the ellipsis that indicates a pack expansion.
@@ -3208,7 +3199,7 @@ ExprResult Parser::ParseObjCArrayLiteral(SourceLocation AtLoc) {
      return ExprError(Diag(Tok, diag::err_expected_rsquare_or_comma));
   }
   SourceLocation EndLoc = ConsumeBracket(); // location of ']'
-  MultiExprArg Args(Actions, ElementExprs.take(), ElementExprs.size());
+  MultiExprArg Args(ElementExprs);
   return Owned(Actions.BuildObjCArrayLiteral(SourceRange(AtLoc, EndLoc), Args));
 }
 
@@ -3226,7 +3217,7 @@ ExprResult Parser::ParseObjCDictionaryLiteral(SourceLocation AtLoc) {
         // stop at the '}' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
         SkipUntil(tok::r_brace);
-        return move(KeyExpr);
+        return KeyExpr;
       }
     }
 
@@ -3242,7 +3233,7 @@ ExprResult Parser::ParseObjCDictionaryLiteral(SourceLocation AtLoc) {
       // stop at the '}' when it skips to the ';'.  We want it to skip beyond
       // the enclosing expression.
       SkipUntil(tok::r_brace);
-      return move(ValueExpr);
+      return ValueExpr;
     }
     
     // Parse the ellipsis that designates this as a pack expansion.

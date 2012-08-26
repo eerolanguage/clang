@@ -361,7 +361,7 @@ static ExprResult CheckObjCCollectionLiteralElement(Sema &S, Expr *Element,
                                        SourceLocation());
     InitializationSequence Seq(S, Entity, Kind, &Element, 1);
     if (!Seq.Failed())
-      return Seq.Perform(S, Entity, Kind, MultiExprArg(S, &Element, 1));
+      return Seq.Perform(S, Entity, Kind, Element);
   }
 
   Expr *OrigElement = Element;
@@ -733,7 +733,7 @@ ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
 
   // Check that each of the elements provided is valid in a collection literal,
   // performing conversions as necessary.
-  Expr **ElementsBuffer = Elements.get();
+  Expr **ElementsBuffer = Elements.data();
   for (unsigned I = 0, N = Elements.size(); I != N; ++I) {
     ExprResult Converted = CheckObjCCollectionLiteralElement(*this,
                                                              ElementsBuffer[I],
@@ -749,10 +749,8 @@ ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
                                     Context.getObjCInterfaceType(NSArrayDecl));
 
   return MaybeBindToTemporary(
-           ObjCArrayLiteral::Create(Context, 
-                                    llvm::makeArrayRef(Elements.get(), 
-                                                       Elements.size()), 
-                                    Ty, ArrayWithObjectsMethod, SR));
+           ObjCArrayLiteral::Create(Context, Elements, Ty,
+                                    ArrayWithObjectsMethod, SR));
 }
 
 ExprResult Sema::BuildObjCDictionaryLiteral(SourceRange SR, 
@@ -1822,7 +1820,7 @@ ExprResult Sema::ActOnSuperMessage(Scope *S,
     SuperTy = Context.getObjCObjectPointerType(SuperTy);
     return BuildInstanceMessage(0, SuperTy, SuperLoc,
                                 Sel, /*Method=*/0,
-                                LBracLoc, SelectorLocs, RBracLoc, move(Args));
+                                LBracLoc, SelectorLocs, RBracLoc, Args);
   }
   
   // Since we are in a class method, this is a class message to
@@ -1830,7 +1828,7 @@ ExprResult Sema::ActOnSuperMessage(Scope *S,
   return BuildClassMessage(/*ReceiverTypeInfo=*/0,
                            Context.getObjCInterfaceType(Super),
                            SuperLoc, Sel, /*Method=*/0,
-                           LBracLoc, SelectorLocs, RBracLoc, move(Args));
+                           LBracLoc, SelectorLocs, RBracLoc, Args);
 }
 
 
@@ -1945,7 +1943,7 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
     // If the receiver type is dependent, we can't type-check anything
     // at this point. Build a dependent expression.
     unsigned NumArgs = ArgsIn.size();
-    Expr **Args = reinterpret_cast<Expr **>(ArgsIn.release());
+    Expr **Args = ArgsIn.data();
     assert(SuperLoc.isInvalid() && "Message to super with dependent type");
     return Owned(ObjCMessageExpr::Create(Context, ReceiverType,
                                          VK_RValue, LBracLoc, ReceiverTypeInfo,
@@ -1999,7 +1997,7 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
   ExprValueKind VK = VK_RValue;
 
   unsigned NumArgs = ArgsIn.size();
-  Expr **Args = reinterpret_cast<Expr **>(ArgsIn.release());
+  Expr **Args = ArgsIn.data();
   if (CheckMessageArgumentTypes(ReceiverType, Args, NumArgs, Sel, Method, true,
                                 SuperLoc.isValid(), LBracLoc, RBracLoc, 
                                 ReturnType, VK))
@@ -2050,7 +2048,7 @@ ExprResult Sema::ActOnClassMessage(Scope *S,
 
   return BuildClassMessage(ReceiverTypeInfo, ReceiverType, 
                            /*SuperLoc=*/SourceLocation(), Sel, /*Method=*/0,
-                           LBracLoc, SelectorLocs, RBracLoc, move(Args));
+                           LBracLoc, SelectorLocs, RBracLoc, Args);
 }
 
 ExprResult Sema::BuildInstanceMessageImplicit(Expr *Receiver,
@@ -2129,7 +2127,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
       // If the receiver is type-dependent, we can't type-check anything
       // at this point. Build a dependent expression.
       unsigned NumArgs = ArgsIn.size();
-      Expr **Args = reinterpret_cast<Expr **>(ArgsIn.release());
+      Expr **Args = ArgsIn.data();
       assert(SuperLoc.isInvalid() && "Message to super with dependent type");
       return Owned(ObjCMessageExpr::Create(Context, Context.DependentTy,
                                            VK_RValue, LBracLoc, Receiver, Sel, 
@@ -2316,7 +2314,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
                                       LBracLoc,
                                       SelectorLocs,
                                       RBracLoc,
-                                      move(ArgsIn));
+                                      ArgsIn);
         } else {
           // Reject other random receiver types (e.g. structs).
           Diag(Loc, diag::err_bad_receiver_type)
@@ -2329,7 +2327,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
 
   // Check the message arguments.
   unsigned NumArgs = ArgsIn.size();
-  Expr **Args = reinterpret_cast<Expr **>(ArgsIn.release());
+  Expr **Args = ArgsIn.data();
   QualType ReturnType;
   ExprValueKind VK = VK_RValue;
   bool ClassMessage = (ReceiverType->isObjCClassType() ||
@@ -2482,7 +2480,7 @@ ExprResult Sema::ActOnInstanceMessage(Scope *S,
 
   return BuildInstanceMessage(Receiver, Receiver->getType(),
                               /*SuperLoc=*/SourceLocation(), Sel, /*Method=*/0, 
-                              LBracLoc, SelectorLocs, RBracLoc, move(Args));
+                              LBracLoc, SelectorLocs, RBracLoc, Args);
 }
 
 enum ARCConversionTypeClass {
@@ -3113,8 +3111,8 @@ Expr *Sema::stripARCUnbridgedCast(Expr *e) {
 
     return new (Context) GenericSelectionExpr(Context, gse->getGenericLoc(),
                                               gse->getControllingExpr(),
-                                              subTypes.data(), subExprs.data(),
-                                              n, gse->getDefaultLoc(),
+                                              subTypes, subExprs,
+                                              gse->getDefaultLoc(),
                                               gse->getRParenLoc(),
                                        gse->containsUnexpandedParameterPack(),
                                               gse->getResultIndex());
@@ -3135,8 +3133,8 @@ bool Sema::CheckObjCARCUnavailableWeakConversion(QualType castType,
       canExprType->isObjCObjectPointerType()) {
     if (const ObjCObjectPointerType *ObjT =
         canExprType->getAs<ObjCObjectPointerType>())
-      if (ObjT->getInterfaceDecl()->isArcWeakrefUnavailable())
-        return false;
+      if (const ObjCInterfaceDecl *ObjI = ObjT->getInterfaceDecl())
+        return !ObjI->isArcWeakrefUnavailable();
   }
   return true;
 }

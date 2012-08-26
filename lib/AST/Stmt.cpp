@@ -20,6 +20,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTDiagnostic.h"
 #include "clang/Basic/TargetInfo.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace clang;
 
@@ -320,20 +321,20 @@ bool Stmt::hasImplicitControlFlow() const {
   }
 }
 
-Expr *AsmStmt::getOutputExpr(unsigned i) {
+Expr *GCCAsmStmt::getOutputExpr(unsigned i) {
   return cast<Expr>(Exprs[i]);
 }
 
 /// getOutputConstraint - Return the constraint string for the specified
 /// output operand.  All output constraints are known to be non-empty (either
 /// '=' or '+').
-StringRef AsmStmt::getOutputConstraint(unsigned i) const {
+StringRef GCCAsmStmt::getOutputConstraint(unsigned i) const {
   return getOutputConstraintLiteral(i)->getString();
 }
 
 /// getNumPlusOperands - Return the number of output operands that have a "+"
 /// constraint.
-unsigned AsmStmt::getNumPlusOperands() const {
+unsigned GCCAsmStmt::getNumPlusOperands() const {
   unsigned Res = 0;
   for (unsigned i = 0, e = getNumOutputs(); i != e; ++i)
     if (isOutputPlusConstraint(i))
@@ -341,22 +342,22 @@ unsigned AsmStmt::getNumPlusOperands() const {
   return Res;
 }
 
-Expr *AsmStmt::getInputExpr(unsigned i) {
+Expr *GCCAsmStmt::getInputExpr(unsigned i) {
   return cast<Expr>(Exprs[i + NumOutputs]);
 }
-void AsmStmt::setInputExpr(unsigned i, Expr *E) {
+void GCCAsmStmt::setInputExpr(unsigned i, Expr *E) {
   Exprs[i + NumOutputs] = E;
 }
 
 
 /// getInputConstraint - Return the specified input constraint.  Unlike output
 /// constraints, these can be empty.
-StringRef AsmStmt::getInputConstraint(unsigned i) const {
+StringRef GCCAsmStmt::getInputConstraint(unsigned i) const {
   return getInputConstraintLiteral(i)->getString();
 }
 
 
-void AsmStmt::setOutputsAndInputsAndClobbers(ASTContext &C,
+void GCCAsmStmt::setOutputsAndInputsAndClobbers(ASTContext &C,
                                              IdentifierInfo **Names,
                                              StringLiteral **Constraints,
                                              Stmt **Exprs,
@@ -390,7 +391,7 @@ void AsmStmt::setOutputsAndInputsAndClobbers(ASTContext &C,
 /// getNamedOperand - Given a symbolic operand reference like %[foo],
 /// translate this into a numeric value needed to reference the same operand.
 /// This returns -1 if the operand name is invalid.
-int AsmStmt::getNamedOperand(StringRef SymbolicName) const {
+int GCCAsmStmt::getNamedOperand(StringRef SymbolicName) const {
   unsigned NumPlusOperands = 0;
 
   // Check if this is an output operand.
@@ -410,7 +411,7 @@ int AsmStmt::getNamedOperand(StringRef SymbolicName) const {
 /// AnalyzeAsmString - Analyze the asm string of the current asm, decomposing
 /// it into pieces.  If the asm string is erroneous, emit errors and return
 /// true, otherwise return false.
-unsigned AsmStmt::AnalyzeAsmString(SmallVectorImpl<AsmStringPiece>&Pieces,
+unsigned GCCAsmStmt::AnalyzeAsmString(SmallVectorImpl<AsmStringPiece>&Pieces,
                                    ASTContext &C, unsigned &DiagOffs) const {
   StringRef Str = getAsmString()->getString();
   const char *StrStart = Str.begin();
@@ -547,6 +548,37 @@ unsigned AsmStmt::AnalyzeAsmString(SmallVectorImpl<AsmStringPiece>&Pieces,
     return diag::err_asm_invalid_escape;
   }
 }
+/// GenerateAsmString - Assemble final asm string.
+std::string GCCAsmStmt::GenerateAsmString(ASTContext &C) const {
+  // Analyze the asm string to decompose it into its pieces.  We know that Sema
+  // has already done this, so it is guaranteed to be successful.
+  SmallVector<GCCAsmStmt::AsmStringPiece, 4> Pieces;
+  unsigned DiagOffs;
+  AnalyzeAsmString(Pieces, C, DiagOffs);
+
+  std::string AsmString;
+  for (unsigned i = 0, e = Pieces.size(); i != e; ++i) {
+    if (Pieces[i].isString())
+      AsmString += Pieces[i].getString();
+    else if (Pieces[i].getModifier() == '\0')
+      AsmString += '$' + llvm::utostr(Pieces[i].getOperandNo());
+    else
+      AsmString += "${" + llvm::utostr(Pieces[i].getOperandNo()) + ':' +
+                   Pieces[i].getModifier() + '}';
+  }
+  return AsmString;
+}
+
+Expr *MSAsmStmt::getOutputExpr(unsigned i) {
+  return cast<Expr>(Exprs[i]);
+}
+
+Expr *MSAsmStmt::getInputExpr(unsigned i) {
+  return cast<Expr>(Exprs[i + NumOutputs]);
+}
+void MSAsmStmt::setInputExpr(unsigned i, Expr *E) {
+  Exprs[i + NumOutputs] = E;
+}
 
 QualType CXXCatchStmt::getCaughtType() const {
   if (ExceptionDecl)
@@ -558,15 +590,15 @@ QualType CXXCatchStmt::getCaughtType() const {
 // Constructors
 //===----------------------------------------------------------------------===//
 
-AsmStmt::AsmStmt(ASTContext &C, SourceLocation asmloc, bool issimple,
-                 bool isvolatile, bool msasm,
-                 unsigned numoutputs, unsigned numinputs,
-                 IdentifierInfo **names, StringLiteral **constraints,
-                 Expr **exprs, StringLiteral *asmstr, unsigned numclobbers,
-                 StringLiteral **clobbers, SourceLocation rparenloc)
-  : Stmt(AsmStmtClass), AsmLoc(asmloc), RParenLoc(rparenloc), AsmStr(asmstr)
-  , IsSimple(issimple), IsVolatile(isvolatile), MSAsm(msasm)
-  , NumOutputs(numoutputs), NumInputs(numinputs), NumClobbers(numclobbers) {
+GCCAsmStmt::GCCAsmStmt(ASTContext &C, SourceLocation asmloc, bool issimple,
+                       bool isvolatile, unsigned numoutputs, unsigned numinputs,
+                       IdentifierInfo **names, StringLiteral **constraints,
+                       Expr **exprs, StringLiteral *asmstr,
+                       unsigned numclobbers, StringLiteral **clobbers,
+                       SourceLocation rparenloc)
+  : Stmt(GCCAsmStmtClass), AsmLoc(asmloc), RParenLoc(rparenloc), AsmStr(asmstr)
+  , IsSimple(issimple), IsVolatile(isvolatile), NumOutputs(numoutputs)
+  , NumInputs(numinputs), NumClobbers(numclobbers) {
 
   unsigned NumExprs = NumOutputs + NumInputs;
 
@@ -586,12 +618,16 @@ AsmStmt::AsmStmt(ASTContext &C, SourceLocation asmloc, bool issimple,
 MSAsmStmt::MSAsmStmt(ASTContext &C, SourceLocation asmloc,
                      SourceLocation lbraceloc, bool issimple, bool isvolatile,
                      ArrayRef<Token> asmtoks, ArrayRef<IdentifierInfo*> inputs,
-                     ArrayRef<IdentifierInfo*> outputs, StringRef asmstr,
-                     ArrayRef<StringRef> clobbers, SourceLocation endloc)
+                     ArrayRef<IdentifierInfo*> outputs,
+                     ArrayRef<Expr*> inputexprs, ArrayRef<Expr*> outputexprs,
+                     StringRef asmstr, ArrayRef<StringRef> clobbers,
+                     SourceLocation endloc)
   : Stmt(MSAsmStmtClass), AsmLoc(asmloc), LBraceLoc(lbraceloc), EndLoc(endloc),
     AsmStr(asmstr.str()), IsSimple(issimple), IsVolatile(isvolatile),
     NumAsmToks(asmtoks.size()), NumInputs(inputs.size()),
     NumOutputs(outputs.size()), NumClobbers(clobbers.size()) {
+  assert (inputs.size() == inputexprs.size() && "Input expr size mismatch!");
+  assert (outputs.size() == outputexprs.size() && "Input expr size mismatch!");
 
   unsigned NumExprs = NumOutputs + NumInputs;
 
@@ -600,6 +636,12 @@ MSAsmStmt::MSAsmStmt(ASTContext &C, SourceLocation asmloc,
     Names[i] = outputs[i];
   for (unsigned i = NumOutputs, e = NumExprs; i != e; ++i)
     Names[i] = inputs[i];
+
+  Exprs = new (C) Stmt*[NumExprs];
+  for (unsigned i = 0, e = NumOutputs; i != e; ++i)
+    Exprs[i] = outputexprs[i];
+  for (unsigned i = NumOutputs, e = NumExprs; i != e; ++i)
+    Exprs[i] = inputexprs[i];
 
   AsmToks = new (C) Token[NumAsmToks];
   for (unsigned i = 0, e = NumAsmToks; i != e; ++i)

@@ -713,7 +713,7 @@ Corrected:
         if (ObjCIvarDecl *Ivar = Result.getAsSingle<ObjCIvarDecl>()) {
           Result.clear();
           ExprResult E(LookupInObjCMethod(Result, S, Ivar->getIdentifier()));
-          return move(E);
+          return E;
         }
         
         goto Corrected;
@@ -1925,6 +1925,19 @@ static bool canRedefineFunction(const FunctionDecl *FD,
           FD->getStorageClass() == SC_Extern);
 }
 
+/// Is the given calling convention the ABI default for the given
+/// declaration?
+static bool isABIDefaultCC(Sema &S, CallingConv CC, FunctionDecl *D) {
+  CallingConv ABIDefaultCC;
+  if (isa<CXXMethodDecl>(D) && cast<CXXMethodDecl>(D)->isInstance()) {
+    ABIDefaultCC = S.Context.getDefaultCXXMethodCallConv(D->isVariadic());
+  } else {
+    // Free C function or a static method.
+    ABIDefaultCC = (S.Context.getLangOpts().MRTD ? CC_X86StdCall : CC_C);
+  }
+  return ABIDefaultCC == CC;
+}
+
 /// MergeFunctionDecl - We just parsed a function 'New' from
 /// declarator D which has the same name and scope as a previous
 /// declaration 'Old'.  Figure out how to resolve this situation,
@@ -1993,6 +2006,9 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S) {
   // later declared or defined without one, the second decl assumes the
   // calling convention of the first.
   //
+  // It's OK if a function is first declared without a calling convention,
+  // but is later declared or defined with the default calling convention.
+  //
   // For the new decl, we have to look at the NON-canonical type to tell the
   // difference between a function that really doesn't have a calling
   // convention and one that is declared cdecl. That's because in
@@ -2006,10 +2022,22 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S) {
   FunctionType::ExtInfo OldTypeInfo = OldType->getExtInfo();
   FunctionType::ExtInfo NewTypeInfo = NewType->getExtInfo();
   bool RequiresAdjustment = false;
-  if (OldTypeInfo.getCC() != CC_Default &&
-      NewTypeInfo.getCC() == CC_Default) {
+  if (OldTypeInfo.getCC() == NewTypeInfo.getCC()) {
+    // Fast path: nothing to do.
+
+  // Inherit the CC from the previous declaration if it was specified
+  // there but not here.
+  } else if (NewTypeInfo.getCC() == CC_Default) {
     NewTypeInfo = NewTypeInfo.withCallingConv(OldTypeInfo.getCC());
     RequiresAdjustment = true;
+
+  // Don't complain about mismatches when the default CC is
+  // effectively the same as the explict one.
+  } else if (OldTypeInfo.getCC() == CC_Default &&
+             isABIDefaultCC(*this, NewTypeInfo.getCC(), New)) {
+    NewTypeInfo = NewTypeInfo.withCallingConv(OldTypeInfo.getCC());
+    RequiresAdjustment = true;
+
   } else if (!Context.isSameCallConv(OldTypeInfo.getCC(),
                                      NewTypeInfo.getCC())) {
     // Calling conventions really aren't compatible, so complain.
@@ -2568,8 +2596,7 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
 /// no declarator (e.g. "struct foo;") is parsed.
 Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
                                        DeclSpec &DS) {
-  return ParsedFreeStandingDeclSpec(S, AS, DS,
-                                    MultiTemplateParamsArg(*this, 0, 0));
+  return ParsedFreeStandingDeclSpec(S, AS, DS, MultiTemplateParamsArg());
 }
 
 /// ParsedFreeStandingDeclSpec - This method is invoked when a declspec with
@@ -3428,7 +3455,7 @@ static bool RebuildDeclaratorInCurrentInstantiation(Sema &S, Declarator &D,
 
 Decl *Sema::ActOnDeclarator(Scope *S, Declarator &D) {
   D.setFunctionDefinitionKind(FDK_Declaration);
-  Decl *Dcl = HandleDeclarator(S, D, MultiTemplateParamsArg(*this));
+  Decl *Dcl = HandleDeclarator(S, D, MultiTemplateParamsArg());
 
   if (OriginalLexicalContext && OriginalLexicalContext->isObjCContainer() &&
       Dcl && Dcl->getDeclContext()->isFileContext())
@@ -3727,11 +3754,11 @@ Decl *Sema::HandleDeclarator(Scope *S, Declarator &D,
     New = ActOnTypedefDeclarator(S, D, DC, TInfo, Previous);
   } else if (R->isFunctionType()) {
     New = ActOnFunctionDeclarator(S, D, DC, TInfo, Previous,
-                                  move(TemplateParamLists),
+                                  TemplateParamLists,
                                   AddToScope);
   } else {
     New = ActOnVariableDeclarator(S, D, DC, TInfo, Previous,
-                                  move(TemplateParamLists));
+                                  TemplateParamLists);
   }
 
   if (New == 0)
@@ -4229,7 +4256,7 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
                                   D.getDeclSpec().getLocStart(),
                                                   D.getIdentifierLoc(),
                                                   D.getCXXScopeSpec(),
-                                                  TemplateParamLists.get(),
+                                                  TemplateParamLists.data(),
                                                   TemplateParamLists.size(),
                                                   /*never a friend*/ false,
                                                   isExplicitSpecialization,
@@ -4270,7 +4297,7 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     if (TemplateParamLists.size() > 0 && D.getCXXScopeSpec().isSet()) {
       NewVD->setTemplateParameterListsInfo(Context,
                                            TemplateParamLists.size(),
-                                           TemplateParamLists.release());
+                                           TemplateParamLists.data());
     }
 
     if (D.getDeclSpec().isConstexprSpecified())
@@ -5223,7 +5250,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
                                   D.getDeclSpec().getLocStart(),
                                   D.getIdentifierLoc(),
                                   D.getCXXScopeSpec(),
-                                  TemplateParamLists.get(),
+                                  TemplateParamLists.data(),
                                   TemplateParamLists.size(),
                                   isFriend,
                                   isExplicitSpecialization,
@@ -5262,7 +5289,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         if (TemplateParamLists.size() > 1) {
           NewFD->setTemplateParameterListsInfo(Context,
                                                TemplateParamLists.size() - 1,
-                                               TemplateParamLists.release());
+                                               TemplateParamLists.data());
         }
       } else {
         // This is a function template specialization.
@@ -5270,7 +5297,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         // For source fidelity, store all the template param lists.
         NewFD->setTemplateParameterListsInfo(Context,
                                              TemplateParamLists.size(),
-                                             TemplateParamLists.release());
+                                             TemplateParamLists.data());
 
         // C++0x [temp.expl.spec]p20 forbids "template<> friend void foo(int);".
         if (isFriend) {
@@ -5302,7 +5329,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         // For source fidelity, store all the template param lists.
         NewFD->setTemplateParameterListsInfo(Context,
                                              TemplateParamLists.size(),
-                                             TemplateParamLists.release());
+                                             TemplateParamLists.data());
     }
 
     if (Invalid) {
@@ -5576,12 +5603,10 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       TemplateIdAnnotation *TemplateId = D.getName().TemplateId;
       TemplateArgs.setLAngleLoc(TemplateId->LAngleLoc);
       TemplateArgs.setRAngleLoc(TemplateId->RAngleLoc);
-      ASTTemplateArgsPtr TemplateArgsPtr(*this,
-                                         TemplateId->getTemplateArgs(),
+      ASTTemplateArgsPtr TemplateArgsPtr(TemplateId->getTemplateArgs(),
                                          TemplateId->NumArgs);
       translateTemplateArguments(TemplateArgsPtr,
                                  TemplateArgs);
-      TemplateArgsPtr.release();
     
       HasExplicitTemplateArgs = true;
     
@@ -6329,8 +6354,11 @@ namespace {
       if (OrigDecl != ReferenceDecl) return;
       LookupResult Result(S, DRE->getNameInfo(), Sema::LookupOrdinaryName,
                           Sema::NotForRedeclaration);
+      unsigned diag = isReferenceType
+          ? diag::warn_uninit_self_reference_in_reference_init
+          : diag::warn_uninit_self_reference_in_init;
       S.DiagRuntimeBehavior(DRE->getLocStart(), DRE,
-                            S.PDiag(diag::warn_uninit_self_reference_in_init)
+                            S.PDiag(diag)
                               << Result.getLookupName()
                               << OrigDecl->getLocation()
                               << DRE->getSourceRange());
@@ -6564,8 +6592,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     }
     InitializationSequence InitSeq(*this, Entity, Kind, Args, NumArgs);
     ExprResult Result = InitSeq.Perform(*this, Entity, Kind,
-                                              MultiExprArg(*this, Args,NumArgs),
-                                              &DclT);
+                                        MultiExprArg(Args, NumArgs), &DclT);
     if (Result.isInvalid()) {
       VDecl->setInvalidDecl();
       return;
@@ -6952,8 +6979,7 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl,
       = InitializationKind::CreateDefault(Var->getLocation());
     
     InitializationSequence InitSeq(*this, Entity, Kind, 0, 0);
-    ExprResult Init = InitSeq.Perform(*this, Entity, Kind,
-                                      MultiExprArg(*this, 0, 0));
+    ExprResult Init = InitSeq.Perform(*this, Entity, Kind, MultiExprArg());
     if (Init.isInvalid())
       Var->setInvalidDecl();
     else if (Init.get()) {
@@ -7537,8 +7563,7 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D) {
   Scope *ParentScope = FnBodyScope->getParent();
 
   D.setFunctionDefinitionKind(FDK_Definition);
-  Decl *DP = HandleDeclarator(ParentScope, D,
-                              MultiTemplateParamsArg(*this));
+  Decl *DP = HandleDeclarator(ParentScope, D, MultiTemplateParamsArg());
   return ActOnStartOfFunctionDef(FnBodyScope, DP);
 }
 
@@ -7780,7 +7805,7 @@ void Sema::computeNRVO(Stmt *Body, FunctionScopeInfo *Scope) {
 }
 
 Decl *Sema::ActOnFinishFunctionBody(Decl *D, Stmt *BodyArg) {
-  return ActOnFinishFunctionBody(D, move(BodyArg), false);
+  return ActOnFinishFunctionBody(D, BodyArg, false);
 }
 
 Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
@@ -8349,7 +8374,7 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
       (SS.isNotEmpty() && TUK != TUK_Reference)) {
     if (TemplateParameterList *TemplateParams
           = MatchTemplateParametersToScopeSpecifier(KWLoc, NameLoc, SS,
-                                                TemplateParameterLists.get(),
+                                                TemplateParameterLists.data(),
                                                 TemplateParameterLists.size(),
                                                     TUK == TUK_Friend,
                                                     isExplicitSpecialization,
@@ -8366,8 +8391,8 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
                                                SS, Name, NameLoc, Attr,
                                                TemplateParams, AS,
                                                ModulePrivateLoc,
-                                           TemplateParameterLists.size() - 1,
-                 (TemplateParameterList**) TemplateParameterLists.release());
+                                               TemplateParameterLists.size()-1,
+                                               TemplateParameterLists.data());
         return Result.get();
       } else {
         // The "template<>" header is extraneous.
@@ -8916,7 +8941,7 @@ CreateNewDecl:
       if (TemplateParameterLists.size() > 0) {
         New->setTemplateParameterListsInfo(Context,
                                            TemplateParameterLists.size(),
-                    (TemplateParameterList**) TemplateParameterLists.release());
+                                           TemplateParameterLists.data());
       }
     }
     else

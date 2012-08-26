@@ -2353,6 +2353,18 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (StackProtectorLevel) {
     CmdArgs.push_back("-stack-protector");
     CmdArgs.push_back(Args.MakeArgString(Twine(StackProtectorLevel)));
+
+    // --param ssp-buffer-size=
+    for (arg_iterator it = Args.filtered_begin(options::OPT__param),
+           ie = Args.filtered_end(); it != ie; ++it) {
+      StringRef Str((*it)->getValue(Args));
+      if (Str.startswith("ssp-buffer-size=")) {
+        CmdArgs.push_back("-stack-protector-buffer-size");
+        // FIXME: Verify the argument is a valid integer.
+        CmdArgs.push_back(Args.MakeArgString(Str.drop_front(16)));
+        (*it)->claim();
+      }
+    }
   }
 
   // Translate -mstackrealign
@@ -2541,8 +2553,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // NOTE: This logic is duplicated in ToolChains.cpp.
   bool ARC = isObjCAutoRefCount(Args);
   if (ARC) {
-    if (!getToolChain().SupportsObjCARC())
-      D.Diag(diag::err_arc_unsupported);
+    getToolChain().CheckObjCARC();
 
     CmdArgs.push_back("-fobjc-arc");
 
@@ -4482,7 +4493,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
       ObjCRuntime runtime =
         getDarwinToolChain().getDefaultObjCRuntime(/*nonfragile*/ true);
       // We use arclite library for both ARC and subscripting support.
-      if ((!runtime.hasARC() && isObjCAutoRefCount(Args)) ||
+      if ((!runtime.hasNativeARC() && isObjCAutoRefCount(Args)) ||
           !runtime.hasSubscripting())
         getDarwinToolChain().AddLinkARCArgs(Args, CmdArgs);
     }

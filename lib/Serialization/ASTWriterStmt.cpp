@@ -218,7 +218,7 @@ void ASTStmtWriter::VisitDeclStmt(DeclStmt *S) {
   Code = serialization::STMT_DECL;
 }
 
-void ASTStmtWriter::VisitAsmStmt(AsmStmt *S) {
+void ASTStmtWriter::VisitGCCAsmStmt(GCCAsmStmt *S) {
   VisitStmt(S);
   Record.push_back(S->getNumOutputs());
   Record.push_back(S->getNumInputs());
@@ -227,7 +227,6 @@ void ASTStmtWriter::VisitAsmStmt(AsmStmt *S) {
   Writer.AddSourceLocation(S->getRParenLoc(), Record);
   Record.push_back(S->isVolatile());
   Record.push_back(S->isSimple());
-  Record.push_back(S->isMSAsm());
   Writer.AddStmt(S->getAsmString());
 
   // Outputs
@@ -248,12 +247,14 @@ void ASTStmtWriter::VisitAsmStmt(AsmStmt *S) {
   for (unsigned I = 0, N = S->getNumClobbers(); I != N; ++I)
     Writer.AddStmt(S->getClobber(I));
 
-  Code = serialization::STMT_ASM;
+  Code = serialization::STMT_GCCASM;
 }
 
 void ASTStmtWriter::VisitMSAsmStmt(MSAsmStmt *S) {
   // FIXME: Statement writer not yet implemented for MS style inline asm.
   VisitStmt(S);
+
+  Code = serialization::STMT_MSASM;
 }
 
 void ASTStmtWriter::VisitExpr(Expr *E) {
