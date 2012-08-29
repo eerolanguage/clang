@@ -454,18 +454,21 @@ static std::string buildMSAsmString(Sema &SemaRef, ArrayRef<Token> AsmToks,
   return Res.str();
 }
 
-#define DEF_SIMPLE_MSASM                                                   \
-  MSAsmStmt *NS =                                                          \
-    new (Context) MSAsmStmt(Context, AsmLoc, LBraceLoc, /*IsSimple*/ true, \
-                            /*IsVolatile*/ true, AsmToks, Inputs, Outputs, \
-                            InputExprs, OutputExprs, AsmString, Clobbers,  \
-                            EndLoc);
+#define DEF_SIMPLE_MSASM                                                     \
+  MSAsmStmt *NS =                                                            \
+    new (Context) MSAsmStmt(Context, AsmLoc, LBraceLoc, /*IsSimple*/ true,   \
+                            /*IsVolatile*/ true, AsmToks, Inputs, Outputs,   \
+                            InputExprs, OutputExprs, AsmString, Constraints, \
+                            Clobbers, EndLoc);
 
 StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
                                 SourceLocation LBraceLoc,
                                 ArrayRef<Token> AsmToks,
                                 SourceLocation EndLoc) {
-  SmallVector<StringRef,4> Clobbers;
+  SmallVector<StringRef, 4> Constraints;
+  std::vector<std::string> InputConstraints;
+  std::vector<std::string> OutputConstraints;
+  SmallVector<StringRef, 4> Clobbers;
   std::set<std::string> ClobberRegs;
   SmallVector<IdentifierInfo*, 4> Inputs;
   SmallVector<IdentifierInfo*, 4> Outputs;
@@ -535,8 +538,8 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
 
     // Canonicalize the opcode to lower case.
     SmallString<128> Opcode;
-    for (unsigned j = 0, e = IDVal.size(); j != e; ++j)
-      Opcode.push_back(tolower(IDVal[j]));
+    for (unsigned i = 0, e = IDVal.size(); i != e; ++i)
+      Opcode.push_back(tolower(IDVal[i]));
 
     // Parse the operands.
     llvm::SMLoc IDLoc;
@@ -606,9 +609,11 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
               if (isDef) {
                 Outputs.push_back(II);
                 OutputExprs.push_back(Result.take());
+                OutputConstraints.push_back("=r");
               } else {
                 Inputs.push_back(II);
                 InputExprs.push_back(Result.take());
+                InputConstraints.push_back("r");
               }
             }
           }
@@ -620,10 +625,20 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc,
          E = ClobberRegs.end(); I != E; ++I)
     Clobbers.push_back(*I);
 
+  // Merge the output and input constraints.  Output constraints are expected
+  // first.
+  for (std::vector<std::string>::iterator I = OutputConstraints.begin(),
+         E = OutputConstraints.end(); I != E; ++I)
+    Constraints.push_back(*I);
+
+  for (std::vector<std::string>::iterator I = InputConstraints.begin(),
+         E = InputConstraints.end(); I != E; ++I)
+    Constraints.push_back(*I);
+
   MSAsmStmt *NS =
     new (Context) MSAsmStmt(Context, AsmLoc, LBraceLoc, IsSimple,
                             /*IsVolatile*/ true, AsmToks, Inputs, Outputs,
-                            InputExprs, OutputExprs, AsmString, Clobbers,
-                            EndLoc);
+                            InputExprs, OutputExprs, AsmString, Constraints,
+                            Clobbers, EndLoc);
   return Owned(NS);
 }

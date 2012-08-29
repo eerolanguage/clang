@@ -132,8 +132,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::ReturnStmtClass:   EmitReturnStmt(cast<ReturnStmt>(*S));     break;
 
   case Stmt::SwitchStmtClass:   EmitSwitchStmt(cast<SwitchStmt>(*S));     break;
-  case Stmt::GCCAsmStmtClass:   EmitGCCAsmStmt(cast<GCCAsmStmt>(*S));     break;
-  case Stmt::MSAsmStmtClass:    EmitMSAsmStmt(cast<MSAsmStmt>(*S));       break;
+  case Stmt::GCCAsmStmtClass:   // Intentional fall-through.
+  case Stmt::MSAsmStmtClass:    EmitAsmStmt(cast<AsmStmt>(*S));           break;
 
   case Stmt::ObjCAtTryStmtClass:
     EmitObjCAtTryStmt(cast<ObjCAtTryStmt>(*S));
@@ -1295,7 +1295,7 @@ SimplifyConstraint(const char *Constraint, const TargetInfo &Target,
 static std::string
 AddVariableConstraints(const std::string &Constraint, const Expr &AsmExpr,
                        const TargetInfo &Target, CodeGenModule &CGM,
-                       const GCCAsmStmt &Stmt) {
+                       const AsmStmt &Stmt) {
   const DeclRefExpr *AsmDeclRef = dyn_cast<DeclRefExpr>(&AsmExpr);
   if (!AsmDeclRef)
     return Constraint;
@@ -1395,9 +1395,9 @@ static llvm::MDNode *getAsmSrcLocInfo(const StringLiteral *Str,
   return llvm::MDNode::get(CGF.getLLVMContext(), Locs);
 }
 
-void CodeGenFunction::EmitGCCAsmStmt(const GCCAsmStmt &S) {
+void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
   // Assemble the final asm string.
-  std::string AsmString = S.GenerateAsmString(getContext());
+  std::string AsmString = S.generateAsmString(getContext());
 
   // Get all the output and input constraints together.
   SmallVector<TargetInfo::ConstraintInfo, 4> OutputConstraintInfos;
@@ -1581,7 +1581,7 @@ void CodeGenFunction::EmitGCCAsmStmt(const GCCAsmStmt &S) {
 
   // Clobbers
   for (unsigned i = 0, e = S.getNumClobbers(); i != e; i++) {
-    StringRef Clobber = S.getClobber(i)->getString();
+    StringRef Clobber = S.getClobber(i);
 
     if (Clobber != "memory" && Clobber != "cc")
     Clobber = Target.getNormalizedGCCRegisterName(Clobber);
@@ -1619,9 +1619,15 @@ void CodeGenFunction::EmitGCCAsmStmt(const GCCAsmStmt &S) {
   llvm::CallInst *Result = Builder.CreateCall(IA, Args);
   Result->addAttribute(~0, llvm::Attribute::NoUnwind);
 
+  // Add the inline asm non-standard dialect attribute on MS-style inline asms.
+  if (isa<MSAsmStmt>(&S))
+    Result->addAttribute(~0, llvm::Attribute::IANSDialect);
+
   // Slap the source location of the inline asm into a !srcloc metadata on the
-  // call.
-  Result->setMetadata("srcloc", getAsmSrcLocInfo(S.getAsmString(), *this));
+  // call.  FIXME: Handle metadata for MS-style inline asms.
+  if (const GCCAsmStmt *gccAsmStmt = dyn_cast<GCCAsmStmt>(&S))
+    Result->setMetadata("srcloc", getAsmSrcLocInfo(gccAsmStmt->getAsmString(),
+                                                   *this));
 
   // Extract all of the register value results from the asm.
   std::vector<llvm::Value*> RegResults;
@@ -1665,42 +1671,4 @@ void CodeGenFunction::EmitGCCAsmStmt(const GCCAsmStmt &S) {
 
     EmitStoreThroughLValue(RValue::get(Tmp), ResultRegDests[i]);
   }
-}
-
-void CodeGenFunction::EmitMSAsmStmt(const MSAsmStmt &S) {
-  std::vector<llvm::Value*> Args;
-  std::vector<llvm::Type *> ArgTypes;
-  std::string Constraints;
-
-  // Clobbers
-  for (unsigned i = 0, e = S.getNumClobbers(); i != e; ++i) {
-    StringRef Clobber = S.getClobber(i);
-
-    if (Clobber != "memory" && Clobber != "cc")
-      Clobber = Target.getNormalizedGCCRegisterName(Clobber);
-
-    if (i != 0)
-      Constraints += ',';
-
-    Constraints += "~{";
-    Constraints += Clobber;
-    Constraints += '}';
-  }
-
-  // Add machine specific clobbers
-  std::string MachineClobbers = Target.getClobbers();
-  if (!MachineClobbers.empty()) {
-    if (!Constraints.empty())
-      Constraints += ',';
-    Constraints += MachineClobbers;
-  }
-
-  llvm::FunctionType *FTy =
-    llvm::FunctionType::get(VoidTy, ArgTypes, false);
-
-  llvm::InlineAsm *IA =
-    llvm::InlineAsm::get(FTy, *S.getAsmString(), Constraints, true);
-  llvm::CallInst *Result = Builder.CreateCall(IA, Args);
-  Result->addAttribute(~0, llvm::Attribute::NoUnwind);
-  Result->addAttribute(~0, llvm::Attribute::IANSDialect);
 }

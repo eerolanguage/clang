@@ -5568,7 +5568,7 @@ TreeTransform<Derived>::TransformGCCAsmStmt(GCCAsmStmt *S) {
 
   // Go through the clobbers.
   for (unsigned I = 0, E = S->getNumClobbers(); I != E; ++I)
-    Clobbers.push_back(S->getClobber(I));
+    Clobbers.push_back(S->getClobberStringLiteral(I));
 
   // No need to transform the asm string literal.
   AsmString = SemaRef.Owned(S->getAsmString());
@@ -7487,7 +7487,8 @@ TreeTransform<Derived>::TransformUnresolvedLookupExpr(
   // If we have template arguments, rebuild them, then rebuild the
   // templateid expression.
   TemplateArgumentListInfo TransArgs(Old->getLAngleLoc(), Old->getRAngleLoc());
-  if (getDerived().TransformTemplateArguments(Old->getTemplateArgs(),
+  if (Old->hasExplicitTemplateArgs() &&
+      getDerived().TransformTemplateArguments(Old->getTemplateArgs(),
                                               Old->getNumTemplateArgs(),
                                               TransArgs))
     return ExprError();

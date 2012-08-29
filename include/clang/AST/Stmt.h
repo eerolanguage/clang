@@ -1363,23 +1363,170 @@ public:
   }
 };
 
-/// AsmStmt - This represents a GCC inline-assembly statement extension.
+/// AsmStmt is the base class for GCCAsmStmt and MSAsmStmt.
 ///
-class GCCAsmStmt : public Stmt {
-  SourceLocation AsmLoc, RParenLoc;
-  StringLiteral *AsmStr;
-
+class AsmStmt : public Stmt {
+protected:
+  SourceLocation AsmLoc;
+  /// \brief True if the assembly statement does not have any input or output
+  /// operands.
   bool IsSimple;
+
+  /// \brief If true, treat this inline assembly as having side effects.
+  /// This assembly statement should not be optimized, deleted or moved.
   bool IsVolatile;
 
   unsigned NumOutputs;
   unsigned NumInputs;
   unsigned NumClobbers;
 
-  // FIXME: If we wanted to, we could allocate all of these in one big array.
   IdentifierInfo **Names;
-  StringLiteral **Constraints;
   Stmt **Exprs;
+
+  AsmStmt(StmtClass SC, SourceLocation asmloc, bool issimple, bool isvolatile,
+          unsigned numoutputs, unsigned numinputs, unsigned numclobbers) :
+    Stmt (SC), AsmLoc(asmloc), IsSimple(issimple), IsVolatile(isvolatile),
+    NumOutputs(numoutputs), NumInputs(numinputs), NumClobbers(numclobbers) { }
+
+public:
+  /// \brief Build an empty inline-assembly statement.
+  explicit AsmStmt(StmtClass SC, EmptyShell Empty) :
+    Stmt(SC, Empty), Names(0), Exprs(0) { }
+
+  SourceLocation getAsmLoc() const { return AsmLoc; }
+  void setAsmLoc(SourceLocation L) { AsmLoc = L; }
+
+  bool isSimple() const { return IsSimple; }
+  void setSimple(bool V) { IsSimple = V; }
+
+  bool isVolatile() const { return IsVolatile; }
+  void setVolatile(bool V) { IsVolatile = V; }
+
+  SourceRange getSourceRange() const LLVM_READONLY { return SourceRange(); }
+
+  //===--- Asm String Analysis ---===//
+
+  /// Assemble final IR asm string.
+  std::string generateAsmString(ASTContext &C) const;
+
+  //===--- Output operands ---===//
+
+  unsigned getNumOutputs() const { return NumOutputs; }
+
+  IdentifierInfo *getOutputIdentifier(unsigned i) const {
+    return Names[i];
+  }
+
+  StringRef getOutputName(unsigned i) const {
+    if (IdentifierInfo *II = getOutputIdentifier(i))
+      return II->getName();
+
+    return StringRef();
+  }
+
+  /// getOutputConstraint - Return the constraint string for the specified
+  /// output operand.  All output constraints are known to be non-empty (either
+  /// '=' or '+').
+  StringRef getOutputConstraint(unsigned i) const;
+
+  /// isOutputPlusConstraint - Return true if the specified output constraint
+  /// is a "+" constraint (which is both an input and an output) or false if it
+  /// is an "=" constraint (just an output).
+  bool isOutputPlusConstraint(unsigned i) const {
+    return getOutputConstraint(i)[0] == '+';
+  }
+
+  const Expr *getOutputExpr(unsigned i) const;
+
+  /// getNumPlusOperands - Return the number of output operands that have a "+"
+  /// constraint.
+  unsigned getNumPlusOperands() const;
+
+  //===--- Input operands ---===//
+
+  unsigned getNumInputs() const { return NumInputs; }
+
+  IdentifierInfo *getInputIdentifier(unsigned i) const {
+    return Names[i + NumOutputs];
+  }
+
+  StringRef getInputName(unsigned i) const {
+    if (IdentifierInfo *II = getInputIdentifier(i))
+      return II->getName();
+
+    return StringRef();
+  }
+
+  /// getInputConstraint - Return the specified input constraint.  Unlike output
+  /// constraints, these can be empty.
+  StringRef getInputConstraint(unsigned i) const;
+  
+  const Expr *getInputExpr(unsigned i) const;
+
+  //===--- Other ---===//
+
+  unsigned getNumClobbers() const { return NumClobbers; }
+  StringRef getClobber(unsigned i) const;
+
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == GCCAsmStmtClass ||
+      T->getStmtClass() == MSAsmStmtClass;
+  }
+  static bool classof(const AsmStmt *) { return true; }
+
+  // Input expr iterators.
+
+  typedef ExprIterator inputs_iterator;
+  typedef ConstExprIterator const_inputs_iterator;
+
+  inputs_iterator begin_inputs() {
+    return &Exprs[0] + NumOutputs;
+  }
+
+  inputs_iterator end_inputs() {
+    return &Exprs[0] + NumOutputs + NumInputs;
+  }
+
+  const_inputs_iterator begin_inputs() const {
+    return &Exprs[0] + NumOutputs;
+  }
+
+  const_inputs_iterator end_inputs() const {
+    return &Exprs[0] + NumOutputs + NumInputs;
+  }
+
+  // Output expr iterators.
+
+  typedef ExprIterator outputs_iterator;
+  typedef ConstExprIterator const_outputs_iterator;
+
+  outputs_iterator begin_outputs() {
+    return &Exprs[0];
+  }
+  outputs_iterator end_outputs() {
+    return &Exprs[0] + NumOutputs;
+  }
+
+  const_outputs_iterator begin_outputs() const {
+    return &Exprs[0];
+  }
+  const_outputs_iterator end_outputs() const {
+    return &Exprs[0] + NumOutputs;
+  }
+
+  child_range children() {
+    return child_range(&Exprs[0], &Exprs[0] + NumOutputs + NumInputs);
+  }
+};
+
+/// This represents a GCC inline-assembly statement extension.
+///
+class GCCAsmStmt : public AsmStmt {
+  SourceLocation RParenLoc;
+  StringLiteral *AsmStr;
+
+  // FIXME: If we wanted to, we could allocate all of these in one big array.
+  StringLiteral **Constraints;
   StringLiteral **Clobbers;
 
 public:
@@ -1390,18 +1537,11 @@ public:
              StringLiteral **clobbers, SourceLocation rparenloc);
 
   /// \brief Build an empty inline-assembly statement.
-  explicit GCCAsmStmt(EmptyShell Empty) : Stmt(GCCAsmStmtClass, Empty),
-    Names(0), Constraints(0), Exprs(0), Clobbers(0) { }
+  explicit GCCAsmStmt(EmptyShell Empty) : AsmStmt(GCCAsmStmtClass, Empty),
+    Constraints(0), Clobbers(0) { }
 
-  SourceLocation getAsmLoc() const { return AsmLoc; }
-  void setAsmLoc(SourceLocation L) { AsmLoc = L; }
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
-
-  bool isVolatile() const { return IsVolatile; }
-  void setVolatile(bool V) { IsVolatile = V; }
-  bool isSimple() const { return IsSimple; }
-  void setSimple(bool V) { IsSimple = V; }
 
   //===--- Asm String Analysis ---===//
 
@@ -1458,27 +1598,11 @@ public:
   unsigned AnalyzeAsmString(SmallVectorImpl<AsmStringPiece> &Pieces,
                             ASTContext &C, unsigned &DiagOffs) const;
 
-  /// GenerateAsmString - Assemble final asm string.
-  std::string GenerateAsmString(ASTContext &C) const;
+  /// Assemble final IR asm string.
+  std::string generateAsmString(ASTContext &C) const;
 
   //===--- Output operands ---===//
 
-  unsigned getNumOutputs() const { return NumOutputs; }
-
-  IdentifierInfo *getOutputIdentifier(unsigned i) const {
-    return Names[i];
-  }
-
-  StringRef getOutputName(unsigned i) const {
-    if (IdentifierInfo *II = getOutputIdentifier(i))
-      return II->getName();
-
-    return StringRef();
-  }
-
-  /// getOutputConstraint - Return the constraint string for the specified
-  /// output operand.  All output constraints are known to be non-empty (either
-  /// '=' or '+').
   StringRef getOutputConstraint(unsigned i) const;
 
   const StringLiteral *getOutputConstraintLiteral(unsigned i) const {
@@ -1494,34 +1618,8 @@ public:
     return const_cast<GCCAsmStmt*>(this)->getOutputExpr(i);
   }
 
-  /// isOutputPlusConstraint - Return true if the specified output constraint
-  /// is a "+" constraint (which is both an input and an output) or false if it
-  /// is an "=" constraint (just an output).
-  bool isOutputPlusConstraint(unsigned i) const {
-    return getOutputConstraint(i)[0] == '+';
-  }
-
-  /// getNumPlusOperands - Return the number of output operands that have a "+"
-  /// constraint.
-  unsigned getNumPlusOperands() const;
-
   //===--- Input operands ---===//
 
-  unsigned getNumInputs() const { return NumInputs; }
-
-  IdentifierInfo *getInputIdentifier(unsigned i) const {
-    return Names[i + NumOutputs];
-  }
-
-  StringRef getInputName(unsigned i) const {
-    if (IdentifierInfo *II = getInputIdentifier(i))
-      return II->getName();
-
-    return StringRef();
-  }
-
-  /// getInputConstraint - Return the specified input constraint.  Unlike output
-  /// constraints, these can be empty.
   StringRef getInputConstraint(unsigned i) const;
 
   const StringLiteral *getInputConstraintLiteral(unsigned i) const {
@@ -1554,9 +1652,11 @@ public:
   /// This returns -1 if the operand name is invalid.
   int getNamedOperand(StringRef SymbolicName) const;
 
-  unsigned getNumClobbers() const { return NumClobbers; }
-  StringLiteral *getClobber(unsigned i) { return Clobbers[i]; }
-  const StringLiteral *getClobber(unsigned i) const { return Clobbers[i]; }
+  StringRef getClobber(unsigned i) const;
+  StringLiteral *getClobberStringLiteral(unsigned i) { return Clobbers[i]; }
+  const StringLiteral *getClobberStringLiteral(unsigned i) const {
+    return Clobbers[i];
+  }
 
   SourceRange getSourceRange() const LLVM_READONLY {
     return SourceRange(AsmLoc, RParenLoc);
@@ -1566,69 +1666,18 @@ public:
     return T->getStmtClass() == GCCAsmStmtClass;
   }
   static bool classof(const GCCAsmStmt *) { return true; }
-
-  // Input expr iterators.
-
-  typedef ExprIterator inputs_iterator;
-  typedef ConstExprIterator const_inputs_iterator;
-
-  inputs_iterator begin_inputs() {
-    return &Exprs[0] + NumOutputs;
-  }
-
-  inputs_iterator end_inputs() {
-    return &Exprs[0] + NumOutputs + NumInputs;
-  }
-
-  const_inputs_iterator begin_inputs() const {
-    return &Exprs[0] + NumOutputs;
-  }
-
-  const_inputs_iterator end_inputs() const {
-    return &Exprs[0] + NumOutputs + NumInputs;
-  }
-
-  // Output expr iterators.
-
-  typedef ExprIterator outputs_iterator;
-  typedef ConstExprIterator const_outputs_iterator;
-
-  outputs_iterator begin_outputs() {
-    return &Exprs[0];
-  }
-  outputs_iterator end_outputs() {
-    return &Exprs[0] + NumOutputs;
-  }
-
-  const_outputs_iterator begin_outputs() const {
-    return &Exprs[0];
-  }
-  const_outputs_iterator end_outputs() const {
-    return &Exprs[0] + NumOutputs;
-  }
-
-  child_range children() {
-    return child_range(&Exprs[0], &Exprs[0] + NumOutputs + NumInputs);
-  }
 };
 
-/// MSAsmStmt - This represents a Microsoft inline-assembly statement extension.
+/// This represents a Microsoft inline-assembly statement extension.
 ///
-class MSAsmStmt : public Stmt {
+class MSAsmStmt : public AsmStmt {
   SourceLocation AsmLoc, LBraceLoc, EndLoc;
   std::string AsmStr;
 
-  bool IsSimple;
-  bool IsVolatile;
-
   unsigned NumAsmToks;
-  unsigned NumInputs;
-  unsigned NumOutputs;
-  unsigned NumClobbers;
 
   Token *AsmToks;
-  IdentifierInfo **Names;
-  Stmt **Exprs;
+  StringRef *Constraints;
   StringRef *Clobbers;
 
 public:
@@ -1636,16 +1685,13 @@ public:
             bool issimple, bool isvolatile, ArrayRef<Token> asmtoks,
             ArrayRef<IdentifierInfo*> inputs, ArrayRef<IdentifierInfo*> outputs,
             ArrayRef<Expr*> inputexprs, ArrayRef<Expr*> outputexprs,
-            StringRef asmstr, ArrayRef<StringRef> clobbers,
-            SourceLocation endloc);
+            StringRef asmstr, ArrayRef<StringRef> constraints, 
+            ArrayRef<StringRef> clobbers, SourceLocation endloc);
 
   /// \brief Build an empty MS-style inline-assembly statement.
-  explicit MSAsmStmt(EmptyShell Empty) : Stmt(MSAsmStmtClass, Empty),
-    NumAsmToks(0), NumInputs(0), NumOutputs(0), NumClobbers(0), AsmToks(0),
-    Names(0), Exprs(0), Clobbers(0) { }
+  explicit MSAsmStmt(EmptyShell Empty) : AsmStmt(MSAsmStmtClass, Empty),
+    NumAsmToks(0), AsmToks(0), Constraints(0), Clobbers(0) { }
 
-  SourceLocation getAsmLoc() const { return AsmLoc; }
-  void setAsmLoc(SourceLocation L) { AsmLoc = L; }
   SourceLocation getLBraceLoc() const { return LBraceLoc; }
   void setLBraceLoc(SourceLocation L) { LBraceLoc = L; }
   SourceLocation getEndLoc() const { return EndLoc; }
@@ -1656,30 +1702,19 @@ public:
   unsigned getNumAsmToks() { return NumAsmToks; }
   Token *getAsmToks() { return AsmToks; }
 
-  bool isVolatile() const { return IsVolatile; }
-  void setVolatile(bool V) { IsVolatile = V; }
-  bool isSimple() const { return IsSimple; }
-  void setSimple(bool V) { IsSimple = V; }
-
   //===--- Asm String Analysis ---===//
 
   const std::string *getAsmString() const { return &AsmStr; }
   std::string *getAsmString() { return &AsmStr; }
   void setAsmString(StringRef &E) { AsmStr = E.str(); }
 
+  /// Assemble final IR asm string.
+  std::string generateAsmString(ASTContext &C) const;
+
   //===--- Output operands ---===//
 
-  unsigned getNumOutputs() const { return NumOutputs; }
-
-  IdentifierInfo *getOutputIdentifier(unsigned i) const {
-    return Names[i];
-  }
-
-  StringRef getOutputName(unsigned i) const {
-    if (IdentifierInfo *II = getOutputIdentifier(i))
-      return II->getName();
-
-    return StringRef();
+  StringRef getOutputConstraint(unsigned i) const {
+    return Constraints[i];
   }
 
   Expr *getOutputExpr(unsigned i);
@@ -1690,17 +1725,8 @@ public:
 
   //===--- Input operands ---===//
 
-  unsigned getNumInputs() const { return NumInputs; }
-
-  IdentifierInfo *getInputIdentifier(unsigned i) const {
-    return Names[i + NumOutputs];
-  }
-
-  StringRef getInputName(unsigned i) const {
-    if (IdentifierInfo *II = getInputIdentifier(i))
-      return II->getName();
-
-    return StringRef();
+  StringRef getInputConstraint(unsigned i) const {
+    return Constraints[i + NumOutputs];
   }
 
   Expr *getInputExpr(unsigned i);
@@ -1712,7 +1738,6 @@ public:
 
   //===--- Other ---===//
 
-  unsigned getNumClobbers() const { return NumClobbers; }
   StringRef getClobber(unsigned i) const { return Clobbers[i]; }
 
   SourceRange getSourceRange() const LLVM_READONLY {

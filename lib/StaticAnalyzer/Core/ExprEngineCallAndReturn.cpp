@@ -18,6 +18,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/ParentMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/SaveAndRestore.h"
@@ -27,6 +28,9 @@ using namespace ento;
 
 STATISTIC(NumOfDynamicDispatchPathSplits,
   "The # of times we split the path due to imprecise dynamic dispatch info");
+
+STATISTIC(NumInlinedCalls,
+  "The # of times we inlined a call");
 
 void ExprEngine::processCallEnter(CallEnter CE, ExplodedNode *Pred) {
   // Get the entry block in the CFG of the callee.
@@ -62,22 +66,31 @@ static std::pair<const Stmt*,
   const StackFrameContext *SF =
           Node->getLocation().getLocationContext()->getCurrentStackFrame();
 
-  // Back up through the ExplodedGraph until we reach a statement node.
+  // Back up through the ExplodedGraph until we reach a statement node in this
+  // stack frame.
   while (Node) {
     const ProgramPoint &PP = Node->getLocation();
 
-    if (const StmtPoint *SP = dyn_cast<StmtPoint>(&PP)) {
-      S = SP->getStmt();
-      break;
-    } else if (const CallExitEnd *CEE = dyn_cast<CallExitEnd>(&PP)) {
-      S = CEE->getCalleeContext()->getCallSite();
-      if (S)
+    if (PP.getLocationContext()->getCurrentStackFrame() == SF) {
+      if (const StmtPoint *SP = dyn_cast<StmtPoint>(&PP)) {
+        S = SP->getStmt();
         break;
-      // If we have an implicit call, we'll probably end up with a
-      // StmtPoint inside the callee, which is acceptable.
-      // (It's possible a function ONLY contains implicit calls -- such as an
-      // implicitly-generated destructor -- so we shouldn't just skip back to
-      // the CallEnter node and keep going.)
+      } else if (const CallExitEnd *CEE = dyn_cast<CallExitEnd>(&PP)) {
+        S = CEE->getCalleeContext()->getCallSite();
+        if (S)
+          break;
+
+        // If there is no statement, this is an implicitly-generated call.
+        // We'll walk backwards over it and then continue the loop to find
+        // an actual statement.
+        const CallEnter *CE;
+        do {
+          Node = Node->getFirstPred();
+          CE = Node->getLocationAs<CallEnter>();
+        } while (!CE || CE->getCalleeContext() != CEE->getCalleeContext());
+
+        // Continue searching the graph.
+      }
     } else if (const CallEnter *CE = dyn_cast<CallEnter>(&PP)) {
       // If we reached the CallEnter for this function, it has no statements.
       if (CE->getCalleeContext() == SF)
@@ -163,7 +176,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   // that we report the issues such as leaks in the stack contexts in which
   // they occurred.
   ExplodedNodeSet CleanedNodes;
-  if (LastSt && Blk) {
+  if (LastSt && Blk && AMgr.getPurgeMode() != PurgeNone) {
     static SimpleProgramPointTag retValBind("ExprEngine : Bind Return Value");
     PostStmt Loc(LastSt, calleeCtx, &retValBind);
     bool isNew;
@@ -340,13 +353,6 @@ bool ExprEngine::inlineCall(const CallEvent &Call, const Decl *D,
     if (!shouldInlineCXX(getAnalysisManager()))
       return false;
 
-    // Only inline constructors and destructors if we built the CFGs for them
-    // properly.
-    const AnalysisDeclContext *ADC = CallerSFC->getAnalysisDeclContext();
-    if (!ADC->getCFGBuildOptions().AddImplicitDtors ||
-        !ADC->getCFGBuildOptions().AddInitializers)
-      return false;
-
     const CXXConstructorCall &Ctor = cast<CXXConstructorCall>(Call);
 
     // FIXME: We don't handle constructors or destructors for arrays properly.
@@ -354,9 +360,28 @@ bool ExprEngine::inlineCall(const CallEvent &Call, const Decl *D,
     if (Target && isa<ElementRegion>(Target))
       return false;
 
+    // FIXME: This is a hack. We don't use the correct region for a new
+    // expression, so if we inline the constructor its result will just be
+    // thrown away. This short-term hack is tracked in <rdar://problem/12180598>
+    // and the longer-term possible fix is discussed in PR12014.
+    const CXXConstructExpr *CtorExpr = Ctor.getOriginExpr();
+    if (const Stmt *Parent = CurLC->getParentMap().getParent(CtorExpr))
+      if (isa<CXXNewExpr>(Parent))
+        return false;
+
+    // If the destructor is trivial, it's always safe to inline the constructor.
+    if (Ctor.getDecl()->getParent()->hasTrivialDestructor())
+      break;
+    
+    // For other types, only inline constructors if we built the CFGs for the
+    // destructor properly.
+    const AnalysisDeclContext *ADC = CallerSFC->getAnalysisDeclContext();
+    assert(ADC->getCFGBuildOptions().AddInitializers && "No CFG initializers");
+    if (!ADC->getCFGBuildOptions().AddImplicitDtors)
+      return false;
+
     // FIXME: This is a hack. We don't handle temporary destructors
     // right now, so we shouldn't inline their constructors.
-    const CXXConstructExpr *CtorExpr = Ctor.getOriginExpr();
     if (CtorExpr->getConstructionKind() == CXXConstructExpr::CK_Complete)
       if (!Target || !isa<DeclRegion>(Target))
         return false;
@@ -370,8 +395,7 @@ bool ExprEngine::inlineCall(const CallEvent &Call, const Decl *D,
     // Only inline constructors and destructors if we built the CFGs for them
     // properly.
     const AnalysisDeclContext *ADC = CallerSFC->getAnalysisDeclContext();
-    if (!ADC->getCFGBuildOptions().AddImplicitDtors ||
-        !ADC->getCFGBuildOptions().AddInitializers)
+    if (!ADC->getCFGBuildOptions().AddImplicitDtors)
       return false;
 
     const CXXDestructorCall &Dtor = cast<CXXDestructorCall>(Call);
@@ -438,6 +462,8 @@ bool ExprEngine::inlineCall(const CallEvent &Call, const Decl *D,
   // If we decided to inline the call, the successor has been manually
   // added onto the work list so remove it from the node builder.
   Bldr.takeNodes(Pred);
+
+  NumInlinedCalls++;
 
   return true;
 }

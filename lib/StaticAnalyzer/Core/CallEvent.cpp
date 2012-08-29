@@ -230,10 +230,10 @@ void CallEvent::dump(raw_ostream &Out) const {
 }
 
 
-bool CallEvent::mayBeInlined(const Stmt *S) {
-  // FIXME: Kill this.
+bool CallEvent::isCallStmt(const Stmt *S) {
   return isa<CallExpr>(S) || isa<ObjCMessageExpr>(S)
-                          || isa<CXXConstructExpr>(S);
+                          || isa<CXXConstructExpr>(S)
+                          || isa<CXXNewExpr>(S);
 }
 
 static void addParameterValuesToBindings(const StackFrameContext *CalleeCtx,
@@ -841,7 +841,8 @@ CallEventManager::getCaller(const StackFrameContext *CalleeCtx,
       return getSimpleCall(CE, State, CallerCtx);
 
     switch (CallSite->getStmtClass()) {
-    case Stmt::CXXConstructExprClass: {
+    case Stmt::CXXConstructExprClass:
+    case Stmt::CXXTemporaryObjectExprClass: {
       SValBuilder &SVB = State->getStateManager().getSValBuilder();
       const CXXMethodDecl *Ctor = cast<CXXMethodDecl>(CalleeCtx->getDecl());
       Loc ThisPtr = SVB.getCXXThis(Ctor, CalleeCtx);
