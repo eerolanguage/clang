@@ -987,6 +987,14 @@ static bool CheckLValueConstantExpression(EvalInfo &Info, SourceLocation Loc,
           LVal.getLValueCallIndex() == 0) &&
          "have call index for global lvalue");
 
+  // Check if this is a thread-local variable.
+  if (const ValueDecl *VD = Base.dyn_cast<const ValueDecl*>()) {
+    if (const VarDecl *Var = dyn_cast<const VarDecl>(VD)) {
+      if (Var->isThreadSpecified())
+        return false;
+    }
+  }
+
   // Allow address constant expressions to be past-the-end pointers. This is
   // an extension: the standard requires them to point to an object.
   if (!IsReferenceType)

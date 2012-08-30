@@ -11262,7 +11262,9 @@ void Sema::DiagnoseAssignmentAsCondition(Expr *E) {
 
     IsOrAssign = Op->getOperator() == OO_PipeEqual;
     Loc = Op->getOperatorLoc();
-  } else {
+  } else if (PseudoObjectExpr *POE = dyn_cast<PseudoObjectExpr>(E))
+    return DiagnoseAssignmentAsCondition(POE->getSyntacticForm());
+  else {
     // Not an assignment.
     return;
   }
