@@ -34,7 +34,7 @@
 
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
-#include "clang/Frontend/AnalyzerOptions.h"
+#include "clang/StaticAnalyzer/AnalyzerOptions.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Path.h"
@@ -78,7 +78,6 @@ public:
   ClangDiagPathDiagConsumer(DiagnosticsEngine &Diag) : Diag(Diag) {}
   virtual ~ClangDiagPathDiagConsumer() {}
   virtual StringRef getName() const { return "ClangDiags"; }
-  virtual bool useVerboseDescription() const { return false; }
   virtual PathGenerationScheme getGenerationScheme() const { return None; }
 
   void FlushDiagnosticsImpl(std::vector<const PathDiagnostic *> &Diags,
@@ -86,7 +85,7 @@ public:
     for (std::vector<const PathDiagnostic*>::iterator I = Diags.begin(),
          E = Diags.end(); I != E; ++I) {
       const PathDiagnostic *PD = *I;
-      StringRef desc = PD->getDescription();
+      StringRef desc = PD->getShortDescription();
       SmallString<512> TmpStr;
       llvm::raw_svector_ostream Out(TmpStr);
       for (StringRef::iterator I=desc.begin(), E=desc.end(); I!=E; ++I) {
@@ -189,7 +188,7 @@ public:
       default:
 #define ANALYSIS_DIAGNOSTICS(NAME, CMDFLAG, DESC, CREATEFN, AUTOCREATE) \
         case PD_##NAME: CREATEFN(PathConsumers, OutDir, PP); break;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Analyses.def"
       }
     } else if (Opts.AnalysisDiagOpt == PD_TEXT) {
       // Create the text client even without a specified output file since
@@ -203,7 +202,7 @@ public:
       llvm_unreachable("Unknown store manager.");
 #define ANALYSIS_STORE(NAME, CMDFLAG, DESC, CREATEFN)           \
       case NAME##Model: CreateStoreMgr = CREATEFN; break;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Analyses.def"
     }
 
     switch (Opts.AnalysisConstraintsOpt) {
@@ -211,7 +210,7 @@ public:
       llvm_unreachable("Unknown store manager.");
 #define ANALYSIS_CONSTRAINTS(NAME, CMDFLAG, DESC, CREATEFN)     \
       case NAME##Model: CreateConstraintMgr = CREATEFN; break;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Analyses.def"
     }
   }
 
@@ -255,22 +254,7 @@ public:
                                   CreateStoreMgr,
                                   CreateConstraintMgr,
                                   checkerMgr.get(),
-                                  Opts.Config,
-                                  Opts.MaxNodes,
-                                  Opts.MaxLoop,
-                                  Opts.VisualizeEGDot,
-                                  Opts.VisualizeEGUbi,
-                                  Opts.AnalysisPurgeOpt,
-                                  Opts.EagerlyAssume,
-                                  Opts.TrimGraph,
-                                  Opts.UnoptimizedCFG,
-                                  Opts.CFGAddImplicitDtors,
-                                  Opts.EagerlyTrimEGraph,
-                                  Opts.IPAMode,
-                                  Opts.InlineMaxStackDepth,
-                                  Opts.InlineMaxFunctionSize,
-                                  Opts.InliningMode,
-                                  Opts.NoRetryExhausted));
+                                  Opts));
   }
 
   /// \brief Store the top level decls in the set to be processed later on.
@@ -363,6 +347,22 @@ void AnalysisConsumer::storeTopLevelDecls(DeclGroupRef DG) {
   }
 }
 
+static bool shouldSkipFunction(CallGraphNode *N,
+                               SmallPtrSet<CallGraphNode*,24> Visited) {
+  // We want to re-analyse the functions as top level in several cases:
+  // - The 'init' methods should be reanalyzed because
+  //   ObjCNonNilReturnValueChecker assumes that '[super init]' never returns
+  //   'nil' and unless we analyze the 'init' functions as top level, we will not
+  //   catch errors within defensive code.
+  // - We want to reanalyze all ObjC methods as top level to report Retain
+  //   Count naming convention errors more aggressively.
+  if (isa<ObjCMethodDecl>(N->getDecl()))
+    return false;
+
+  // Otherwise, if we visited the function before, do not reanalyze it.
+  return Visited.count(N);
+}
+
 void AnalysisConsumer::HandleDeclsGallGraph(const unsigned LocalTUDeclsSize) {
   // Otherwise, use the Callgraph to derive the order.
   // Build the Call Graph.
@@ -412,13 +412,13 @@ void AnalysisConsumer::HandleDeclsGallGraph(const unsigned LocalTUDeclsSize) {
     // Push the children into the queue.
     for (CallGraphNode::const_iterator CI = N->begin(),
          CE = N->end(); CI != CE; ++CI) {
-      if (!Visited.count(*CI))
+      if (!shouldSkipFunction(*CI, Visited))
         BFSQueue.push_back(*CI);
     }
 
     // Skip the functions which have been processed already or previously
     // inlined.
-    if (Visited.count(N))
+    if (shouldSkipFunction(N, Visited))
       continue;
 
     // Analyze the function.
@@ -426,7 +426,7 @@ void AnalysisConsumer::HandleDeclsGallGraph(const unsigned LocalTUDeclsSize) {
     Decl *D = N->getDecl();
     assert(D);
     HandleCode(D, ANALYSIS_PATH,
-               (Mgr->InliningMode == All ? 0 : &VisitedCallees));
+               (Mgr->options.InliningMode == All ? 0 : &VisitedCallees));
 
     // Add the visited callees to the global visited set.
     for (SetOfConstDecls::iterator I = VisitedCallees.begin(),
@@ -588,22 +588,22 @@ void AnalysisConsumer::ActionExprEngine(Decl *D, bool ObjCGCEnabled,
 
   // Set the graph auditor.
   OwningPtr<ExplodedNode::Auditor> Auditor;
-  if (Mgr->shouldVisualizeUbigraph()) {
+  if (Mgr->options.visualizeExplodedGraphWithUbiGraph) {
     Auditor.reset(CreateUbiViz());
     ExplodedNode::SetAuditor(Auditor.get());
   }
 
   // Execute the worklist algorithm.
   Eng.ExecuteWorkList(Mgr->getAnalysisDeclContextManager().getStackFrame(D),
-                      Mgr->getMaxNodes());
+                      Mgr->options.MaxNodes);
 
   // Release the auditor (if any) so that it doesn't monitor the graph
   // created BugReporter.
   ExplodedNode::SetAuditor(0);
 
   // Visualize the exploded graph.
-  if (Mgr->shouldVisualizeGraphviz())
-    Eng.ViewGraph(Mgr->shouldTrimGraph());
+  if (Mgr->options.visualizeExplodedGraphWithGraphViz)
+    Eng.ViewGraph(Mgr->options.TrimGraph);
 
   // Display warnings.
   Eng.getBugReporter().FlushReports();
