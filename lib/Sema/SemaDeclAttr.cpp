@@ -415,14 +415,17 @@ static void checkAttrArgsAreLockableObjs(Sema &S, Decl *D,
     }
 
     if (StringLiteral *StrLit = dyn_cast<StringLiteral>(ArgExp)) {
-      // Ignore empty strings without warnings
-      if (StrLit->getLength() == 0)
+      if (StrLit->getLength() == 0) {
+        // Pass empty strings to the analyzer without warnings.
+        Args.push_back(ArgExp);
         continue;
+      }
 
       // We allow constant strings to be used as a placeholder for expressions
       // that are not valid C++ syntax, but warn that they are ignored.
       S.Diag(Attr.getLoc(), diag::warn_thread_attribute_ignored) <<
         Attr.getName();
+      Args.push_back(ArgExp);
       continue;
     }
 
@@ -4146,20 +4149,50 @@ static void handleUuidAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "uuid";
 }
 
+static bool hasOtherInheritanceAttr(Decl *D, AttributeList::Kind Kind,
+    int& Existing) {
+  if (Kind != AttributeList::AT_SingleInheritance &&
+      D->hasAttr<SingleInheritanceAttr>()) {
+    Existing = 0;
+    return true;
+  }
+  else if (Kind != AttributeList::AT_MultipleInheritance &&
+      D->hasAttr<MultipleInheritanceAttr>()) {
+    Existing = 1;
+    return true;
+  }
+  else if (Kind != AttributeList::AT_VirtualInheritance &&
+      D->hasAttr<VirtualInheritanceAttr>()) {
+    Existing = 2;
+    return true;
+  }
+  return false;
+}
+
 static void handleInheritanceAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  if (S.LangOpts.MicrosoftExt) {
-    AttributeList::Kind Kind = Attr.getKind();
-    if (Kind == AttributeList::AT_SingleInheritance)
-      D->addAttr(
-          ::new (S.Context) SingleInheritanceAttr(Attr.getRange(), S.Context));
-    else if (Kind == AttributeList::AT_MultipleInheritance)
-      D->addAttr(
-          ::new (S.Context) MultipleInheritanceAttr(Attr.getRange(), S.Context));
-    else if (Kind == AttributeList::AT_VirtualInheritance)
-      D->addAttr(
-          ::new (S.Context) VirtualInheritanceAttr(Attr.getRange(), S.Context));
-  } else
+  if (!S.LangOpts.MicrosoftExt) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
+    return;
+  }
+
+  AttributeList::Kind Kind = Attr.getKind();
+
+  int Existing;
+  if (hasOtherInheritanceAttr(D->getCanonicalDecl(), Kind, Existing)) {
+      S.Diag(Attr.getLoc(), diag::warn_ms_inheritance_already_declared) << Existing;
+      return;
+  }
+
+  if (Kind == AttributeList::AT_SingleInheritance) {
+    D->addAttr(
+        ::new (S.Context) SingleInheritanceAttr(Attr.getRange(), S.Context));
+  } else if (Kind == AttributeList::AT_MultipleInheritance) {
+    D->addAttr(
+        ::new (S.Context) MultipleInheritanceAttr(Attr.getRange(), S.Context));
+  } else if (Kind == AttributeList::AT_VirtualInheritance) {
+    D->addAttr(
+        ::new (S.Context) VirtualInheritanceAttr(Attr.getRange(), S.Context));
+  }
 }
 
 static void handlePortabilityAttr(Sema &S, Decl *D, const AttributeList &Attr) {
