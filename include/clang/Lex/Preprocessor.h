@@ -331,8 +331,8 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// \c createPreprocessingRecord() prior to preprocessing.
   PreprocessingRecord *Record;
 
-  /// Whether currently in a system header
-  bool inSystemHeader;
+  /// Whether currently in a legacy header (standard C/ObjC/etc)
+  bool inLegacyHeader;
 
 private:  // Cached tokens state.
   typedef SmallVector<Token, 1> CachedTokensTy;
@@ -564,7 +564,8 @@ public:
   /// start lexing tokens from it instead of the current buffer.  Emit an error
   /// and don't enter the file on error.
   void EnterSourceFile(FileID CurFileID, const DirectoryLookup *Dir,
-                       SourceLocation Loc);
+                       SourceLocation Loc,
+                       Lexer::LegacyStatus Legacy = Lexer::LS_Unknown);
 
   /// EnterMacro - Add a Macro to the top of the include stack and start lexing
   /// tokens from it instead of the current buffer.  Args specifies the
@@ -1116,8 +1117,8 @@ public:
   /// \brief Return true if we're in the top-level file, not in a \#include.
   bool isInPrimaryFile() const;
 
-  /// isInSystemHeader - Return true if we're in a system header
-  bool isInSystemHeader() const { return inSystemHeader; }
+  /// isInSystemHeader - Return true if we're in a legacy header (standard C/ObjC/etc)
+  bool isInLegacyHeader() const { return inLegacyHeader; }
 
   /// ConcatenateIncludeName - Handle cases where the \#include name is expanded
   /// from a macro as multiple tokens, which need to be glued together.  This
@@ -1248,7 +1249,8 @@ private:
 
   /// EnterSourceFileWithLexer - Add a lexer to the top of the include stack and
   /// start lexing tokens from it instead of the current buffer.
-  void EnterSourceFileWithLexer(Lexer *TheLexer, const DirectoryLookup *Dir);
+  void EnterSourceFileWithLexer(Lexer *TheLexer, const DirectoryLookup *Dir,
+                                Lexer::LegacyStatus Legacy = Lexer::LS_Unknown);
 
   /// EnterSourceFileWithPTH - Add a lexer to the top of the include stack and
   /// start getting tokens from it using the PTH cache.

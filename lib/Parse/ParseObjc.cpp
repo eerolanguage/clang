@@ -264,7 +264,7 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                         EndProtoLoc);
     
     if (Tok.is(tok::l_brace) || 
-        (getLangOpts().Eero && !PP.isInSystemHeader() &&
+        (getLangOpts().Eero && !PP.isInLegacyHeader() &&
          (isVisibilitySpecifier(Tok, NextToken()) ||
           isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(CategoryType, tok::objc_private, AtLoc);
@@ -310,7 +310,7 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                      EndProtoLoc, attrs.getList());
 
   if (Tok.is(tok::l_brace) || 
-      (getLangOpts().Eero && !PP.isInSystemHeader() &&
+      (getLangOpts().Eero && !PP.isInLegacyHeader() &&
        (isVisibilitySpecifier(Tok, NextToken()) ||
         isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
     ParseObjCClassInstanceVariables(ClsType, tok::objc_protected, AtLoc);
@@ -407,7 +407,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
     
   while (1) {
     // Check for instance method (minus is optional)
-    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
         Tok.is(tok::identifier) && 
         (NextToken().isAtStartOfLine() || 
          NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
@@ -551,7 +551,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       // Parse all the comma separated declarators.
       ParsingDeclSpec DS(*this);
       ParseStructDeclaration(DS, Callback);
-      } while (getLangOpts().Eero && !PP.isInSystemHeader() &&
+      } while (getLangOpts().Eero && !PP.isInLegacyHeader() &&
                Tok.isAtStartOfLine() && 
                (isKnownToBeTypeSpecifier(Tok) || 
                 (Tok.is(tok::identifier) &&                  
@@ -943,7 +943,7 @@ ParsedType Parser::ParseObjCTypeName(ObjCDeclSpec &DS,
          context == Declarator::ObjCResultContext);
   assert((paramAttrs != 0) == (context == Declarator::ObjCParameterContext));
 
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
 
   assert((Tok.is(tok::l_paren) || isEero) && "expected (");
 
@@ -1081,7 +1081,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                                   bool MethodDefinition) {
   ParsingDeclRAIIObject PD(*this, ParsingDeclRAIIObject::NoParent);
 
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
 
   if (Tok.is(tok::code_completion)) {
     Actions.CodeCompleteObjCMethodDecl(getCurScope(), mType == tok::minus, 
@@ -1638,7 +1638,7 @@ bool Parser::ParseObjCProtocolQualifiers(DeclSpec &DS) {
 void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
                                              tok::ObjCKeywordKind visibility,
                                              SourceLocation atLoc) {
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
   assert((Tok.is(tok::l_brace) || isEero) && "expected {");
   SmallVector<Decl *, 32> AllIvarDecls;
     
@@ -1733,7 +1733,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
 
     if (Tok.is(tok::semi)) {
       ConsumeToken();
-    } else if (!getLangOpts().OptionalSemicolons && !PP.isInSystemHeader()) {
+    } else if (!getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader()) {
       Diag(Tok, diag::err_expected_semi_decl_list);
       // Skip to end of block or statement
       SkipUntil(tok::r_brace, true, true);
@@ -1930,7 +1930,7 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
   
     // if we have ivars
     if (Tok.is(tok::l_brace) ||
-        (getLangOpts().Eero && !PP.isInSystemHeader() &&
+        (getLangOpts().Eero && !PP.isInLegacyHeader() &&
          (isVisibilitySpecifier(Tok, NextToken()) ||
           isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(ObjCImpDecl, tok::objc_private, AtLoc);
@@ -2413,7 +2413,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
 
     SourceLocation ReturnLoc;
     ExprResult DefaultReturnExpr(ExprError());
-    if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
         Tok.is(tok::equal) && !Tok.isAtStartOfLine()) {
       ReturnLoc = PrevTokLocation;
       ConsumeToken(); // '='
@@ -2899,7 +2899,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
                                        ExprArg ReceiverExpr) {
   InMessageExpressionRAIIObject InMessage(*this, true);
 
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
 
   if (Tok.is(tok::code_completion)) {
     if (SuperLoc.isValid())

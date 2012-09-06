@@ -53,6 +53,16 @@ class Lexer : public PreprocessorLexer {
   SourceLocation FileLoc;        // Location for start of file.
   LangOptions LangOpts;          // LangOpts enabled by this language (cache).
   bool Is_PragmaLexer;           // True if lexer for _Pragma handling.
+
+
+  //===--------------------------------------------------------------------===//
+  // Context-specific lexing flags set by the preprocessor.
+  enum LegacyStatus {
+    LS_Unknown,
+    LS_True,
+    LS_False
+  };
+  LegacyStatus Legacy; // True if lexer should be run in legacy mode
   
   //===--------------------------------------------------------------------===//
   // Context-specific lexing flags set by the preprocessor.

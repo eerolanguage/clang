@@ -1976,7 +1976,7 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
       if (ObjCIvarDecl *IV = IFace->lookupInstanceVariable(II, ClassDeclared)) {
         if (IV->getAccessControl() != ObjCIvarDecl::Private ||
             declaresSameEntity(IFace, ClassDeclared)) {
-          if (!getLangOpts().Eero || PP.isInSystemHeader()) {
+          if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
             Diag(Loc, diag::warn_ivar_use_hidden) << IV->getDeclName();
           } else {
             Diag(Loc, diag::err_ivar_use_hidden) << IV->getDeclName();
@@ -4514,7 +4514,7 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
     ExprResult Result = MaybeConvertParenListExprToParenExpr(S, CastExpr);
     if (Result.isInvalid()) return ExprError();
     CastExpr = Result.take();
-  } else if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+  } else if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
     // Treat "(String)x" as "(String*)x"
     if (castType->isObjCObjectType()) { 
       castType = Context.getObjCObjectPointerType(castType);
@@ -5576,7 +5576,7 @@ Sema::CheckAssignmentConstraints(SourceLocation Loc,
 Sema::AssignConvertType
 Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
                                  CastKind &Kind) {
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
   QualType RHSType = RHS.get()->getType();
   QualType OrigLHSType = LHSType;
 
@@ -6654,7 +6654,7 @@ static void checkEnumComparison(Sema &S, SourceLocation Loc, ExprResult &LHS,
   QualType LHSStrippedType = LHS.get()->IgnoreParenImpCasts()->getType();
   QualType RHSStrippedType = RHS.get()->IgnoreParenImpCasts()->getType();
 
-  const bool isEero = S.getLangOpts().Eero && !S.PP.isInSystemHeader();
+  const bool isEero = S.getLangOpts().Eero && !S.PP.isInLegacyHeader();
   if (isEero && (LHSStrippedType->isEnumeralType() != 
                  RHSStrippedType->isEnumeralType())) {
     S.Diag(Loc, diag::err_typecheck_cond_incompatible_operands)
@@ -8575,7 +8575,7 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
   // Emit warnings for tricky precedence issues, e.g. "bitfield & 0x4 == 0"
   DiagnoseBinOpPrecedence(*this, Opc, TokLoc, LHSExpr, RHSExpr);
 
-  if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+  if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
     // NSRange literal
     if (Kind == tok::ellipsis) {
       return ActOnRangeBinOp(S, TokLoc, LHSExpr, RHSExpr);

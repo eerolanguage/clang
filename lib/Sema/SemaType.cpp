@@ -682,7 +682,7 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
         // value being declared, poison it as invalid so we don't get chains of
         // errors.
         declarator.setInvalidType(true);
-      } else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader()) {
+      } else if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader()) {
         S.Diag(DeclLoc, diag::err_eero_missing_type_specifier)
           << DS.getSourceRange();
         declarator.setInvalidType(true);

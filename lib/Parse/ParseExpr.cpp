@@ -272,7 +272,7 @@ ExprResult Parser::ParseConstantExpression(TypeCastState isTypeCast) {
 /// precedence of at least \p MinPrec.
 ExprResult
 Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
 
   prec::Level NextTokPrec = getBinOpPrecedence(Tok.getKind(),
                                                GreaterThanIsOperator,
@@ -472,7 +472,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
                                        isTypeCast);
   if (NotCastExpr) {
     Diag(Tok, diag::err_expected_expression);
-    if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader())
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
       Tok.setKind(tok::eof); // TODO: do something less harsh?
   }
   return Res;
@@ -675,7 +675,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
   NotCastExpr = false;
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
 
   // This handles all of cast-expression, unary-expression, postfix-expression,
   // and primary-expression.  We handle them together like this for efficiency
@@ -1107,7 +1107,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw___vector: {
     if (!getLangOpts().CPlusPlus) {
       Diag(Tok, diag::err_expected_expression);
-      if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader())
+      if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
         Tok.setKind(tok::eof); // TODO: do something less harsh?
       return ExprError();
     }
@@ -1388,7 +1388,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
   // Now that the primary-expression piece of the postfix-expression has been
   // parsed, see if there are any postfix-expression pieces here.
   SourceLocation Loc;
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
   while (1) {
     if (getLangOpts().OptionalSemicolons && 
         Tok.isAtStartOfLine() &&
@@ -2072,7 +2072,7 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
 
   // For Eero, if we have an identifier that is followed by an 
   // identifier or a colon, then this is probably a message send.
-  if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+  if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
       Tok.is(tok::identifier) &&
       (NextToken().is(tok::identifier) || NextToken().is(tok::colon))) {
     ExprType = SimpleExpr;

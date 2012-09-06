@@ -645,7 +645,7 @@ Corrected:
       }
     }
     
-    if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
         NextToken.is(tok::colonequal)) {
       return NameClassification::Unknown();
     }
@@ -4461,7 +4461,7 @@ void Sema::CheckShadow(Scope *S, VarDecl *D, const LookupResult& R) {
   // Return if warning is ignored.
   if (Diags.getDiagnosticLevel(diag::warn_decl_shadow, R.getNameLoc()) ==
         DiagnosticsEngine::Ignored)
-    if (!getLangOpts().Eero || PP.isInSystemHeader())
+    if (!getLangOpts().Eero || PP.isInLegacyHeader())
       return;
 
   // Don't diagnose declarations at file scope.
@@ -4528,7 +4528,7 @@ void Sema::CheckShadow(Scope *S, VarDecl *D, const LookupResult& R) {
   DeclarationName Name = R.getLookupName();
 
   // Emit warning and note.
-  if (!getLangOpts().Eero || PP.isInSystemHeader())
+  if (!getLangOpts().Eero || PP.isInLegacyHeader())
     Diag(R.getNameLoc(), diag::warn_decl_shadow) << Name << Kind << OldDC;
   else // an error for Eero
     Diag(R.getNameLoc(), diag::err_decl_shadow) << Name << Kind << OldDC;
@@ -4539,7 +4539,7 @@ void Sema::CheckShadow(Scope *S, VarDecl *D, const LookupResult& R) {
 void Sema::CheckShadow(Scope *S, VarDecl *D) {
   if (Diags.getDiagnosticLevel(diag::warn_decl_shadow, D->getLocation()) ==
         DiagnosticsEngine::Ignored)
-    if (!getLangOpts().Eero || PP.isInSystemHeader())
+    if (!getLangOpts().Eero || PP.isInLegacyHeader())
       return;
 
   LookupResult R(*this, D->getDeclName(), D->getLocation(),
@@ -4704,7 +4704,7 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
   }
 
   // Do some extra error checking for Eero
-  if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+  if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
     ObjCMethodDecl *CurMethod = getCurMethodDecl();
     if (CurMethod) {
       IdentifierInfo *II = NewVD->getIdentifier();
@@ -6494,7 +6494,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     SourceLocation InitLoc = Init->getLocStart();
     if (ActiveTemplateInstantiations.empty() &&
         DeducedType->getType()->isObjCIdType() &&
-        (!getLangOpts().Eero || PP.isInSystemHeader() ||
+        (!getLangOpts().Eero || PP.isInLegacyHeader() ||
          !findMacroSpelling(InitLoc, "nil"))) {
       SourceLocation Loc = DeducedType->getTypeLoc().getBeginLoc();
       Diag(Loc, diag::warn_auto_var_is_id)

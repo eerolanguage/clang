@@ -1286,6 +1286,7 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   StringRef Filename;
   SourceLocation End;
   SourceLocation CharEnd; // the end of this directive, in characters
+  Lexer::LegacyStatus Legacy = Lexer::LS_True;
   
   switch (FilenameTok.getKind()) {
   case tok::eod:
@@ -1308,6 +1309,20 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
     Filename = FilenameBuffer.str();
     CharEnd = getLocForEndOfToken(End);
     break;
+
+  case tok::char_constant:
+    if (getLangOpts().Eero && !inLegacyHeader) {
+      Legacy = Lexer::LS_False;
+      FilenameTok.setKind(tok::string_literal);
+      Filename = getSpelling(FilenameTok, FilenameBuffer);
+      SmallString<128> FilenameConvertedToStringLiteral = Filename;
+      FilenameConvertedToStringLiteral[0] = '"';
+      FilenameConvertedToStringLiteral[Filename.size()-1] = '"';
+      Filename = FilenameConvertedToStringLiteral;
+      End = FilenameTok.getLocation();
+      CharEnd = End.getLocWithOffset(Filename.size());
+      break;
+    }
   default:
     Diag(FilenameTok.getLocation(), diag::err_pp_expects_filename);
     DiscardUntilEndOfDirective();
@@ -1507,11 +1522,12 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   // position on the file where it will be included and after the expansions.
   if (IncludePos.isMacroID())
     IncludePos = SourceMgr.getExpansionRange(IncludePos).second;
+
   FileID FID = SourceMgr.createFileID(File, IncludePos, FileCharacter);
   assert(!FID.isInvalid() && "Expected valid file ID");
 
   // Finally, if all is good, enter the new file!
-  EnterSourceFile(FID, CurDir, FilenameTok.getLocation());
+  EnterSourceFile(FID, CurDir, FilenameTok.getLocation(), Legacy);
 }
 
 /// HandleIncludeNextDirective - Implements \#include_next.

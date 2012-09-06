@@ -173,7 +173,7 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
   }
 
   if (getLangOpts().OptionalSemicolons && 
-      (ExpectedTok == tok::semi) && !PP.isInSystemHeader()) {
+      (ExpectedTok == tok::semi) && !PP.isInLegacyHeader()) {
     if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
       return false;
     } else {
@@ -218,7 +218,7 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
     return false;
   }
 
-  if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader()) {
+  if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader()) {
     if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
       return false;
     } else {
@@ -307,7 +307,7 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, bool StopAtSemi,
         return true;
       }
       // For searches on semicolon, 
-      if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() &&
+      if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
           Tok.isNot(tok::eof) &&
           (StopAtSemi || Toks[i] == tok::semi)) {
         if (getLangOpts().OffSideRule) { // skip to next statement in cur block
@@ -729,7 +729,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     cutOffParsing();
     return DeclGroupPtrTy();
   case tok::kw_using:
-    if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
         GetLookAheadToken(1).is(tok::identifier) &&
         GetLookAheadToken(2).is(tok::identifier)) {
       const IdentifierInfo *II = NextToken().getIdentifierInfo();
@@ -815,7 +815,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
       
   default:
   dont_know:
-    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
         CurParsedObjCImpl) { // in an objc implementation
 
       // Check for instance method (minus is optional)
@@ -871,7 +871,7 @@ bool Parser::isDeclarationAfterDeclarator() {
 bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   assert(Declarator.isFunctionDeclarator() && "Isn't a function declarator");
   // Check for function definition or declaration when using off-side rule
-  if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     if (!Tok.isAtStartOfLine()) {
       Diag(Tok, diag::err_expected) << "newline";
       while (Tok.isNot(tok::eof) && !Tok.isAtStartOfLine()) // flush the rest
@@ -889,7 +889,7 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   
   // Handle K&R C argument lists: int X(f) int f; {}
   if (!getLangOpts().CPlusPlus &&
-      (!getLangOpts().Eero || PP.isInSystemHeader()) &&
+      (!getLangOpts().Eero || PP.isInLegacyHeader()) &&
       Declarator.getFunctionTypeInfo().isKNRPrototype()) 
     return isDeclarationSpecifier();
 
@@ -1032,7 +1032,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   if (FTI.isKNRPrototype())
     ParseKNRParamDeclarations(D);
 
-  if (getLangOpts().OffSideRule && !PP.isInSystemHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     if (Tok.isAtStartOfLine()) {
       SourceLocation FuncStartLoc = D.getDeclSpec().getSourceRange().getBegin();
       indentationPositions.push_back(Column(FuncStartLoc));

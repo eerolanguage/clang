@@ -695,7 +695,7 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
 
   bool CaseListIsErroneous = false;
 
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
 
   for (SwitchCase *SC = SS->getSwitchCaseList(); SC && !HasDependentValue;
        SC = SC->getNextSwitchCase()) {

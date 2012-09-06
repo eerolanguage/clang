@@ -82,7 +82,7 @@ ExprResult Sema::BuildObjCStringLiteral(SourceLocation AtLoc, StringLiteral *S){
     return true;
 
   // Eero: make empty string literals mutable, but only when in local scope
-  if (getLangOpts().Eero && !PP.isInSystemHeader() && 
+  if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
       S->getLength() == 0 && getCurScope() != TUScope) {
     IdentifierInfo *NSIdent = &Context.Idents.get("NSMutableString");
     NamedDecl *IF = LookupSingleName(TUScope, NSIdent, AtLoc, LookupOrdinaryName);
@@ -631,7 +631,7 @@ ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
 
   NSArrayDecl = 0; // TODO: disables ALL NSArray class search caching. Fix?
   NSAPI::NSClassIdKindKind arrayClassId;
-  if (!getLangOpts().Eero || PP.isInSystemHeader() || Elements.size() > 0) {
+  if (!getLangOpts().Eero || PP.isInLegacyHeader() || Elements.size() > 0) {
     arrayClassId = NSAPI::ClassId_NSArray;
   } else { // make empty array literals mutable
     arrayClassId = NSAPI::ClassId_NSMutableArray;
@@ -759,7 +759,7 @@ ExprResult Sema::BuildObjCDictionaryLiteral(SourceRange SR,
 
   NSDictionaryDecl = 0; // TODO: disables ALL NSDictionary class search caching. Fix?
   NSAPI::NSClassIdKindKind dictionaryClassId;
-  if (!getLangOpts().Eero || PP.isInSystemHeader() || NumElements > 0) {
+  if (!getLangOpts().Eero || PP.isInLegacyHeader() || NumElements > 0) {
     dictionaryClassId = NSAPI::ClassId_NSDictionary;
   } else { // make empty dictionary literals mutable
     dictionaryClassId = NSAPI::ClassId_NSMutableDictionary;

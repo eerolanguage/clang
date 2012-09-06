@@ -69,7 +69,8 @@ PreprocessorLexer *Preprocessor::getCurrentFileLexer() const {
 /// EnterSourceFile - Add a source file to the top of the include stack and
 /// start lexing tokens from it instead of the current buffer.
 void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
-                                   SourceLocation Loc) {
+                                   SourceLocation Loc,
+                                   Lexer::LegacyStatus Legacy) {
   assert(CurTokenLexer == 0 && "Cannot #include a file inside a macro!");
   ++NumEnteredSourceFiles;
 
@@ -101,14 +102,15 @@ void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
         CodeCompletionFileLoc.getLocWithOffset(CodeCompletionOffset);
   }
 
-  EnterSourceFileWithLexer(new Lexer(FID, InputFile, *this), CurDir);
+  EnterSourceFileWithLexer(new Lexer(FID, InputFile, *this), CurDir, Legacy);
   return;
 }
 
 /// EnterSourceFileWithLexer - Add a source file to the top of the include stack
 ///  and start lexing tokens from it instead of the current buffer.
 void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
-                                            const DirectoryLookup *CurDir) {
+                                            const DirectoryLookup *CurDir,
+                                            Lexer::LegacyStatus Legacy) {
 
   // Add the current lexer to the include stack.
   if (CurPPLexer || CurTokenLexer)
@@ -120,11 +122,16 @@ void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
   if (CurLexerKind != CLK_LexAfterModuleImport)
     CurLexerKind = CLK_Lexer;
 
-  // Update system header flag
+  // Set legacy status
+  if (Legacy != Lexer::LS_Unknown) {
+    CurLexer->Legacy = Legacy;
+  }
+
+  // Update legacy header flag
   if (!CurLexer->Is_PragmaLexer) {
-    inSystemHeader = 
-        (SourceMgr.getFileCharacteristic(CurLexer->getFileLoc()) !=
-         SrcMgr::C_User);
+    inLegacyHeader = (CurLexer->Legacy == Lexer::LS_True) ||
+                     (SourceMgr.getFileCharacteristic(CurLexer->getFileLoc()) !=
+                      SrcMgr::C_User);
   }
   
   // Notify the client, if desired, that we are in a new source file.
@@ -302,12 +309,13 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
     // We're done with the #included file.
     RemoveTopOfLexerStack();
 
-    // Update system header flag
+    // Update legacy header flag
     if (!isEndOfMacro) {
       if (IncludeMacroStack.empty()) { // back to primary file
-        inSystemHeader = false;
+        inLegacyHeader = false;
       } else if (CurLexer && !CurLexer->Is_PragmaLexer) {
-        inSystemHeader = 
+        inLegacyHeader =
+            (CurLexer->Legacy == Lexer::LS_True) ||
             (SourceMgr.getFileCharacteristic(CurLexer->getFileLoc()) !=
              SrcMgr::C_User);
       }

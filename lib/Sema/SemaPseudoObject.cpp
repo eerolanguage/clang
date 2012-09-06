@@ -884,7 +884,7 @@ Sema::ObjCSubscriptKind
   if (T->isIntegralOrEnumerationType())
     return OS_Array;
 
-  if (getLangOpts().Eero && !PP.isInSystemHeader()) {
+  if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
     ParsedType NSRangeType = getTypeName(PP.getIdentifierTable().get("NSRange"), 
                                          SourceLocation(), 
                                          getCurScope());
@@ -1081,7 +1081,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useAlternateMethod) {
 
   if (!AtIndexGetter) {
     if (!receiverIdType) {
-      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod) {
+      if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader() && !useAlternateMethod) {
         return findAtIndexGetter(true);
       }
       if (Res == Sema::OS_Range) {
@@ -1115,7 +1115,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useAlternateMethod) {
       S.Diag(AtIndexGetter->getLocation(), diag::note_method_declared_at) <<
         AtIndexGetter->getDeclName();
     }
-  } else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod) {
+  } else if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader() && !useAlternateMethod) {
     return findAtIndexGetter(true);
   }
   return true;
@@ -1227,7 +1227,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useAlternateMethod) {
   
   if (!AtIndexSetter) {
     if (!receiverIdType) {
-      if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod) {
+      if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader() && !useAlternateMethod) {
         return findAtIndexSetter(true);
       }
       S.Diag(BaseExpr->getExprLoc(), 
@@ -1275,7 +1275,7 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useAlternateMethod) {
         err = true;
       }
     }
-  else if (S.getLangOpts().Eero && !S.PP.isInSystemHeader() && !useAlternateMethod)
+  else if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader() && !useAlternateMethod)
     return findAtIndexSetter(true);
 
   return !err;

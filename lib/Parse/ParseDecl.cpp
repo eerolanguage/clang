@@ -1638,7 +1638,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
   bool TypeContainsAuto =
     D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_auto;
 
-  const bool isEero = getLangOpts().Eero && !PP.isInSystemHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
   const bool isColonEqual = isEero && Tok.is(tok::colonequal);
 
   if (isColonEqual && !TypeContainsAuto) {
@@ -2198,7 +2198,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     if (getLangOpts().OptionalSemicolons && 
         !firstPass && 
         Tok.isAtStartOfLine() && 
-        !PP.isInSystemHeader()) {
+        !PP.isInLegacyHeader()) {
       InsertToken(tok::semi); // not great, but most reliable way to do this
     }
 
@@ -2456,7 +2456,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw_decltype:
     case tok::identifier: {
       // Check for Eero ':=' local type infererence
-      if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+      if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
           Tok.is(tok::identifier) && NextToken().is(tok::colonequal)) {
         isInvalid = DS.SetTypeSpecType(DeclSpec::TST_auto, Loc, PrevSpec,
                                        DiagID);
@@ -3098,7 +3098,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   Actions.ActOnTagFinishDefinition(getCurScope(), TagDecl,
                                    T.getCloseLocation());
 
-  if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() && 
+  if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && 
       Tok.isAtStartOfLine())
     InsertToken(tok::semi); // TODO: revisit this, should avoid inserting semi
 }
@@ -3350,7 +3350,7 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
       PP.EnterToken(Tok);
       Tok.setKind(tok::semi);
     }
-  } else if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader() &&
+  } else if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
              Tok.isAtStartOfLine()) {
     TUK = (DS.isFriendSpecified() ? Sema::TUK_Friend : Sema::TUK_Declaration);
     InsertToken(tok::semi); // TODO: is there a way to avoid inserting a semi?  
@@ -3761,7 +3761,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
       return false;
     if (TryAltiVecVectorToken())
       return true;
-    if (getLangOpts().Eero && !PP.isInSystemHeader() &&
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
         NextToken().is(tok::colonequal))
       return true;
     // Fall through.
@@ -4466,7 +4466,7 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
       Diag(Tok, diag::err_expected_ident_lparen);
     D.SetIdentifier(0, Tok.getLocation());
     D.setInvalidType(true);
-    if (getLangOpts().OptionalSemicolons && !PP.isInSystemHeader())
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
       Tok.setKind(tok::eof); // gets stuck otherwise
   }
 
@@ -4479,7 +4479,7 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
     MaybeParseCXX0XAttributes(D);
 
   while (!getLangOpts().OptionalSemicolons || 
-         PP.isInSystemHeader() ||    
+         PP.isInLegacyHeader() ||    
          !Tok.isAtStartOfLine()) { 
     if (Tok.is(tok::l_paren)) {
       // Enter function-declaration scope, limiting any declarators to the
@@ -4808,7 +4808,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 /// Note that identifier-lists are only allowed for normal declarators, not for
 /// abstract-declarators.
 bool Parser::isFunctionDeclaratorIdentifierList() {
-  return !getLangOpts().CPlusPlus && (!getLangOpts().Eero || PP.isInSystemHeader())
+  return !getLangOpts().CPlusPlus && (!getLangOpts().Eero || PP.isInLegacyHeader())
          && Tok.is(tok::identifier)
          && !TryAltiVecVectorToken()
          // K&R identifier lists can't have typedefs as identifiers, per C99
