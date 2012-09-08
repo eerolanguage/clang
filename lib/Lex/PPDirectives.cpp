@@ -1313,16 +1313,15 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   case tok::char_constant:
     if (getLangOpts().Eero && !inLegacyHeader) {
       Legacy = Lexer::LS_False;
-      FilenameTok.setKind(tok::string_literal);
-      Filename = getSpelling(FilenameTok, FilenameBuffer);
-      SmallString<128> FilenameConvertedToStringLiteral = Filename;
-      FilenameConvertedToStringLiteral[0] = '"';
-      FilenameConvertedToStringLiteral[Filename.size()-1] = '"';
-      Filename = FilenameConvertedToStringLiteral;
+      FilenameBuffer = getSpelling(FilenameTok);
+      FilenameBuffer[0] = '"';
+      FilenameBuffer[FilenameBuffer.size()-1] = '"';
+      Filename = FilenameBuffer;
       End = FilenameTok.getLocation();
       CharEnd = End.getLocWithOffset(Filename.size());
       break;
     }
+
   default:
     Diag(FilenameTok.getLocation(), diag::err_pp_expects_filename);
     DiscardUntilEndOfDirective();
