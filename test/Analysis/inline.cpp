@@ -267,3 +267,61 @@ namespace OperatorNew {
     clang_analyzer_eval(obj->value == 42); // expected-warning{{UNKNOWN}}
   }
 }
+
+
+namespace VirtualWithSisterCasts {
+  // This entire set of tests exercises casts from sister classes and
+  // from classes outside the hierarchy, which can very much confuse
+  // code that uses DynamicTypeInfo or needs to construct CXXBaseObjectRegions.
+  // These examples used to cause crashes in +Asserts builds.
+  struct Parent {
+    virtual int foo();
+    int x;
+  };
+
+  struct A : Parent {
+    virtual int foo() { return 42; }
+  };
+
+  struct B : Parent {
+    virtual int foo();
+  };
+
+  struct Grandchild : public A {};
+
+  struct Unrelated {};
+
+  void testDowncast(Parent *b) {
+    A *a = (A *)(void *)b;
+    clang_analyzer_eval(a->foo() == 42); // expected-warning{{UNKNOWN}}
+
+    a->x = 42;
+    clang_analyzer_eval(a->x == 42); // expected-warning{{TRUE}}
+  }
+
+  void testRelated(B *b) {
+    A *a = (A *)(void *)b;
+    clang_analyzer_eval(a->foo() == 42); // expected-warning{{UNKNOWN}}
+
+    a->x = 42;
+    clang_analyzer_eval(a->x == 42); // expected-warning{{TRUE}}
+  }
+
+  void testUnrelated(Unrelated *b) {
+    A *a = (A *)(void *)b;
+    clang_analyzer_eval(a->foo() == 42); // expected-warning{{UNKNOWN}}
+
+    a->x = 42;
+    clang_analyzer_eval(a->x == 42); // expected-warning{{TRUE}}
+  }
+
+  void testCastViaNew(B *b) {
+    Grandchild *g = new (b) Grandchild();
+    // FIXME: We actually now have perfect type info because of 'new'.
+    // This should be TRUE.
+    clang_analyzer_eval(g->foo() == 42); // expected-warning{{UNKNOWN}}
+
+    g->x = 42;
+    clang_analyzer_eval(g->x == 42); // expected-warning{{TRUE}}
+  }
+}

@@ -23,6 +23,8 @@
 
 namespace clang {
 
+class TargetInfo;
+
 //===----------------------------------------------------------------------===//
 /// Common components of both fprintf and fscanf format strings.
 namespace analyze_format_string {
@@ -116,7 +118,7 @@ public:
     cArg,
     dArg,
     iArg,
-    IntArgBeg = cArg, IntArgEnd = iArg,
+    IntArgBeg = dArg, IntArgEnd = iArg,
 
     oArg,
     uArg,
@@ -189,7 +191,9 @@ public:
     return EndScanList ? EndScanList - Position : 1;
   }
 
+  bool isIntArg() const { return kind >= IntArgBeg && kind <= IntArgEnd; }
   bool isUIntArg() const { return kind >= UIntArgBeg && kind <= UIntArgEnd; }
+  bool isAnyIntArg() const { return kind >= IntArgBeg && kind <= UIntArgEnd; }
   const char *toString() const;
 
   bool isPrintfKind() const { return IsPrintf; }
@@ -348,9 +352,11 @@ public:
 
   bool usesPositionalArg() const { return UsesPositionalArg; }
 
-  bool hasValidLengthModifier() const;
+  bool hasValidLengthModifier(const TargetInfo &Target) const;
 
   bool hasStandardLengthModifier() const;
+
+  llvm::Optional<LengthModifier> getCorrectedLengthModifier() const;
 
   bool hasStandardConversionSpecifier(const LangOptions &LangOpt) const;
 
@@ -378,7 +384,6 @@ public:
     : ConversionSpecifier(true, pos, k) {}
 
   bool isObjCArg() const { return kind >= ObjCBeg && kind <= ObjCEnd; }
-  bool isIntArg() const { return kind >= IntArgBeg && kind <= IntArgEnd; }
   bool isDoubleArg() const { return kind >= DoubleArgBeg &&
                                     kind <= DoubleArgEnd; }
   unsigned getLength() const {

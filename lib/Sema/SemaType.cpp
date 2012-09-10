@@ -636,7 +636,7 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
     // "<proto1,proto2>" is an objc qualified ID with a missing id.
     if (DeclSpec::ProtocolQualifierListTy PQ = DS.getProtocolQualifiers()) {
       Result = Context.getObjCObjectType(Context.ObjCBuiltinIdTy,
-                                         (ObjCProtocolDecl**)PQ,
+                                         (ObjCProtocolDecl*const*)PQ,
                                          DS.getNumProtocolQualifiers());
       Result = Context.getObjCObjectPointerType(Result);
       break;
@@ -799,18 +799,18 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
 
         if (DS.getNumProtocolQualifiers())
           Result = Context.getObjCObjectType(Result,
-                                             (ObjCProtocolDecl**) PQ,
+                                             (ObjCProtocolDecl*const*) PQ,
                                              DS.getNumProtocolQualifiers());
       } else if (Result->isObjCIdType()) {
         // id<protocol-list>
         Result = Context.getObjCObjectType(Context.ObjCBuiltinIdTy,
-                                           (ObjCProtocolDecl**) PQ,
+                                           (ObjCProtocolDecl*const*) PQ,
                                            DS.getNumProtocolQualifiers());
         Result = Context.getObjCObjectPointerType(Result);
       } else if (Result->isObjCClassType()) {
         // Class<protocol-list>
         Result = Context.getObjCObjectType(Context.ObjCBuiltinClassTy,
-                                           (ObjCProtocolDecl**) PQ,
+                                           (ObjCProtocolDecl*const*) PQ,
                                            DS.getNumProtocolQualifiers());
         Result = Context.getObjCObjectPointerType(Result);
       } else {
@@ -1586,6 +1586,14 @@ QualType Sema::BuildMemberPointerType(QualType T, QualType Class,
     Diag(Loc, diag::err_mempointer_in_nonclass_type) << Class;
     return QualType();
   }
+
+  // In the Microsoft ABI, the class is allowed to be an incomplete
+  // type. In such cases, the compiler makes a worst-case assumption.
+  // We make no such assumption right now, so emit an error if the
+  // class isn't a complete type.
+  if (Context.getTargetInfo().getCXXABI() == CXXABI_Microsoft &&
+      RequireCompleteType(Loc, Class, diag::err_incomplete_type))
+    return QualType();
 
   return Context.getMemberPointerType(T, Class.getTypePtr());
 }

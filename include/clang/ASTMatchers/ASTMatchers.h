@@ -65,10 +65,11 @@ namespace ast_matchers {
 class BoundNodes {
 public:
   /// \brief Returns the AST node bound to \c ID.
+  ///
   /// Returns NULL if there was no node bound to \c ID or if there is a node but
   /// it cannot be converted to the specified type.
   template <typename T>
-  const T getNodeAs(StringRef ID) const {
+  const T *getNodeAs(StringRef ID) const {
     return MyBoundNodes.getNodeAs<T>(ID);
   }
 
@@ -76,11 +77,11 @@ public:
   /// @{
   template <typename T>
   const T *getDeclAs(StringRef ID) const {
-    return getNodeAs<T*>(ID);
+    return getNodeAs<T>(ID);
   }
   template <typename T>
   const T *getStmtAs(StringRef ID) const {
-    return getNodeAs<T*>(ID);
+    return getNodeAs<T>(ID);
   }
   /// @}
 
@@ -1107,11 +1108,11 @@ AST_MATCHER_P(CXXOperatorCallExpr,
 /// \brief Matches C++ classes that are directly or indirectly derived from
 /// a class matching \c Base.
 ///
-/// Note that a class is considered to be also derived from itself.
+/// Note that a class is not considered to be derived from itself.
 ///
-/// Example matches X, Y, Z, C (Base == hasName("X"))
+/// Example matches Y, Z, C (Base == hasName("X"))
 /// \code
-///   class X;                // A class is considered to be derived from itself
+///   class X;
 ///   class Y : public X {};  // directly derived
 ///   class Z : public Y {};  // indirectly derived
 ///   typedef X A;
@@ -1134,6 +1135,18 @@ AST_MATCHER_P(CXXRecordDecl, isDerivedFrom,
 inline internal::Matcher<CXXRecordDecl> isDerivedFrom(StringRef BaseName) {
   assert(!BaseName.empty());
   return isDerivedFrom(hasName(BaseName));
+}
+
+/// \brief Similar to \c isDerivedFrom(), but also matches classes that directly
+/// match \c Base.
+inline internal::Matcher<CXXRecordDecl> isA(internal::Matcher<NamedDecl> Base) {
+  return anyOf(Base, isDerivedFrom(Base));
+}
+
+/// \brief Overloaded method as shortcut for \c isA(hasName(...)).
+inline internal::Matcher<CXXRecordDecl> isA(StringRef BaseName) {
+  assert(!BaseName.empty());
+  return isA(hasName(BaseName));
 }
 
 /// \brief Matches AST nodes that have child AST nodes that match the
@@ -1177,7 +1190,6 @@ hasDescendant(const internal::Matcher<DescendantT> &DescendantMatcher) {
     internal::HasDescendantMatcher,
     DescendantT>(DescendantMatcher);
 }
-
 
 /// \brief Matches AST nodes that have child AST nodes that match the
 /// provided matcher.
@@ -1234,6 +1246,25 @@ forEachDescendant(
   return internal::ArgumentAdaptingMatcher<
     internal::ForEachDescendantMatcher,
     DescendantT>(DescendantMatcher);
+}
+
+/// \brief Matches AST nodes that have an ancestor that matches the provided
+/// matcher.
+///
+/// Given
+/// \code
+/// void f() { if (true) { int x = 42; } }
+/// void g() { for (;;) { int x = 43; } }
+/// \endcode
+/// \c expr(integerLiteral(hasAncsestor(ifStmt()))) matches \c 42, but not 43.
+///
+/// Usable as: Any Matcher
+template <typename AncestorT>
+internal::ArgumentAdaptingMatcher<internal::HasAncestorMatcher, AncestorT>
+hasAncestor(const internal::Matcher<AncestorT> &AncestorMatcher) {
+  return internal::ArgumentAdaptingMatcher<
+    internal::HasAncestorMatcher,
+    AncestorT>(AncestorMatcher);
 }
 
 /// \brief Matches if the provided matcher does not match.

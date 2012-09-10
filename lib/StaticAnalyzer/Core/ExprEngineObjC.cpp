@@ -192,8 +192,10 @@ void ExprEngine::VisitObjCMessage(const ObjCMessageExpr *ME,
         }
         
         // Generate a transition to non-Nil state.
-        if (notNilState != State)
+        if (notNilState != State) {
           Pred = Bldr.generateNode(currStmt, Pred, notNilState);
+          assert(Pred && "Should have cached out already!");
+        }
       }
     } else {
       // Check for special class methods.
@@ -245,7 +247,6 @@ void ExprEngine::VisitObjCMessage(const ObjCMessageExpr *ME,
       }
     }
 
-    // Evaluate the call.
     defaultEvalCall(Bldr, Pred, *UpdatedMsg);
   }
   

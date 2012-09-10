@@ -748,7 +748,7 @@ def warn_objc_property_attr_mutually_exclusive : Warning<
   "property attributes '%0' and '%1' are mutually exclusive">,
   InGroup<ReadOnlySetterAttrs>, DefaultIgnore;
 def warn_objc_missing_super_dealloc : Warning<
-  "method possibly missing a [super dealloc] call">,
+  "method possibly missing a [super %0] call">,
   InGroup<ObjCMissingSuperCalls>;
 def error_dealloc_bad_result_type : Error<
   "dealloc return type must be correctly specified as 'void' under ARC, "
@@ -1438,6 +1438,8 @@ def err_for_range_invalid: Error<
 def err_for_range_dereference : Error<
   "invalid range expression of type %0; did you mean to dereference it "
   "with '*'?">;
+def note_for_range_invalid_iterator : Note <
+  "in implicit call to 'operator%select{!=|*|++}0' for iterator of type %1">;
 def note_for_range_begin_end : Note<
   "selected '%select{begin|end}0' %select{function|template }1%2 with iterator type %3">;
 
@@ -1680,9 +1682,7 @@ def warn_objc_redundant_literal_use : Warning<
 
 def err_attr_tlsmodel_arg : Error<"tls_model must be \"global-dynamic\", "
   "\"local-dynamic\", \"initial-exec\" or \"local-exec\"">;
-def warn_ms_inheritance_already_declared : Warning<
-  "ignored since inheritance model was already declared as '"
-  "%select{single|multiple|virtual}0'">, InGroup<Microsoft>;
+
 def err_only_annotate_after_access_spec : Error<
   "access specifier can only have annotation attributes">;
 
@@ -2065,6 +2065,12 @@ def warn_ns_attribute_wrong_parameter_type : Warning<
   "%0 attribute only applies to %select{Objective-C object|pointer}1 "
   "parameters">,
   InGroup<IgnoredAttributes>;
+def warn_objc_requires_super_protocol : Warning<
+  "%0 attribute cannot be applied to %select{methods in protocols|dealloc}1">,
+  InGroup<DiagGroup<"requires-super-attribute">>;
+def note_protocol_decl : Note<
+  "protocol is declared here">;
+
 def err_ns_bridged_not_interface : Error<
   "parameter of 'ns_bridged' attribute does not name an Objective-C class">;
 
@@ -5424,6 +5430,10 @@ def warn_scanf_nonzero_width : Warning<
 def warn_printf_conversion_argument_type_mismatch : Warning<
   "format specifies type %0 but the argument has type %1">,
   InGroup<Format>;
+def warn_format_argument_needs_cast : Warning<
+  "values of type '%0' should not be used as format arguments; add an explicit "
+  "cast to %1 instead">,
+  InGroup<Format>;
 def warn_printf_positional_arg_exceeds_data_args : Warning <
   "data argument position '%0' exceeds the number of data arguments (%1)">,
   InGroup<Format>;
@@ -5476,6 +5486,7 @@ def warn_scanf_scanlist_incomplete : Warning<
   "no closing ']' for '%%[' in scanf format string">,
   InGroup<Format>;
 def note_format_string_defined : Note<"format string is defined here">;
+def note_format_fix_specifier : Note<"did you mean to use '%0'?">;
 def note_printf_c_str: Note<"did you mean to call the %0 method?">;
 
 def warn_null_arg : Warning<
