@@ -747,7 +747,7 @@ def error_property_implemented : Error<"property %0 is already implemented">;
 def warn_objc_property_attr_mutually_exclusive : Warning<
   "property attributes '%0' and '%1' are mutually exclusive">,
   InGroup<ReadOnlySetterAttrs>, DefaultIgnore;
-def warn_objc_missing_super_dealloc : Warning<
+def warn_objc_missing_super_call : Warning<
   "method possibly missing a [super %0] call">,
   InGroup<ObjCMissingSuperCalls>;
 def error_dealloc_bad_result_type : Error<
@@ -1874,14 +1874,6 @@ def warn_lock_exclusive_and_shared : Warning<
   InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
 def note_lock_exclusive_and_shared : Note<
   "the other lock of mutex '%0' is here">;
-def warn_variable_requires_lock : Warning<
-  "%select{reading|writing}2 variable '%0' requires locking "
-  "%select{'%1'|'%1' exclusively}2">,
-  InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
-def warn_var_deref_requires_lock : Warning<
-  "%select{reading|writing}2 the value pointed to by '%0' requires locking "
-  "%select{'%1'|'%1' exclusively}2">,
-  InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
 def warn_variable_requires_any_lock : Warning<
   "%select{reading|writing}1 variable '%0' requires locking "
   "%select{any mutex|any mutex exclusively}1">,
@@ -1890,9 +1882,6 @@ def warn_var_deref_requires_any_lock : Warning<
   "%select{reading|writing}1 the value pointed to by '%0' requires locking "
   "%select{any mutex|any mutex exclusively}1">,
   InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
-def warn_fun_requires_lock : Warning<
-  "calling function '%0' requires %select{shared|exclusive}2 lock on '%1'">,
-  InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
 def warn_fun_excludes_mutex : Warning<
   "cannot call function '%0' while mutex '%1' is locked">,
   InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
@@ -1900,6 +1889,32 @@ def warn_cannot_resolve_lock : Warning<
   "cannot resolve lock expression">,
   InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
 
+// Imprecise thread safety warnings
+def warn_variable_requires_lock : Warning<
+  "%select{reading|writing}2 variable '%0' requires locking "
+  "%select{'%1'|'%1' exclusively}2">,
+  InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
+def warn_var_deref_requires_lock : Warning<
+  "%select{reading|writing}2 the value pointed to by '%0' requires locking "
+  "%select{'%1'|'%1' exclusively}2">,
+  InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
+def warn_fun_requires_lock : Warning<
+  "calling function '%0' requires %select{shared|exclusive}2 lock on '%1'">,
+  InGroup<ThreadSafetyAnalysis>, DefaultIgnore;
+
+// Precise thread safety warnings
+def warn_variable_requires_lock_precise : Warning<
+  "%select{reading|writing}2 variable '%0' requires locking "
+  "%select{'%1'|'%1' exclusively}2">,
+  InGroup<ThreadSafetyPrecise>, DefaultIgnore;
+def warn_var_deref_requires_lock_precise : Warning<
+  "%select{reading|writing}2 the value pointed to by '%0' requires locking "
+  "%select{'%1'|'%1' exclusively}2">,
+  InGroup<ThreadSafetyPrecise>, DefaultIgnore;
+def warn_fun_requires_lock_precise : Warning<
+  "calling function '%0' requires %select{shared|exclusive}2 lock on '%1'">,
+  InGroup<ThreadSafetyPrecise>, DefaultIgnore;
+def note_found_mutex_near_match : Note<"found near match '%0'">;
 
 def warn_impcast_vector_scalar : Warning<
   "implicit conversion turns vector to scalar: %0 to %1">,
@@ -3600,11 +3615,6 @@ def err_typecheck_arc_assign_self_class_method : Error<
 def err_typecheck_arr_assign_enumeration : Error<
   "fast enumeration variables can't be modified in ARC by default; "
   "declare the variable __strong to allow this">;
-def warn_arc_non_pod_class_with_object_member : Warning<
-  "%0 cannot be shared between ARC and non-ARC "
-  "code; add a copy constructor, a copy assignment operator, and a destructor "
-  "to make it ABI-compatible">, InGroup<AutomaticReferenceCountingABI>,
-  DefaultIgnore;
 def warn_arc_retained_assign : Warning<
   "assigning retained object to %select{weak|unsafe_unretained}0 "
   "%select{property|variable}1"
@@ -3614,17 +3624,8 @@ def warn_arc_retained_property_assign : Warning<
   "assigning retained object to unsafe property"
   "; object will be released after assignment">,
   InGroup<ARCUnsafeRetainedAssign>;
-def warn_arc_trivial_member_function_with_object_member : Warning<
-  "%0 cannot be shared between ARC and non-ARC "
-  "code; add a non-trivial %select{copy constructor|copy assignment operator|"
-  "destructor}1 to make it ABI-compatible">, 
-  InGroup<AutomaticReferenceCountingABI>, DefaultIgnore;
 def err_arc_new_array_without_ownership : Error<
   "'new' cannot allocate an array of %0 with no explicit ownership">;
-def warn_err_new_delete_object_array : Warning<
-  "%select{allocating|destroying}0 an array of %1; this array must not "
-  "%select{be deleted in|have been allocated from}0 non-ARC code">,
-  InGroup<AutomaticReferenceCountingABI>, DefaultIgnore;
 def err_arc_autoreleasing_var : Error<
   "%select{__block variables|global variables|fields|ivars}0 cannot have "
   "__autoreleasing ownership">;
@@ -3947,6 +3948,8 @@ def ext_out_of_line_declaration : ExtWarn<
   "out-of-line declaration of a member must be a definition">,
   InGroup<OutOfLineDeclaration>, DefaultError;
 def warn_member_extra_qualification : Warning<
+  "extra qualification on member %0">, InGroup<Microsoft>;
+def err_member_extra_qualification : Error<
   "extra qualification on member %0">;
 def err_member_qualification : Error<
   "non-friend class member %0 cannot have a qualified name">;  
@@ -4954,6 +4957,9 @@ def err_atomic_builtin_pointer_size : Error<
   "type (%0 invalid)">;
 def err_atomic_op_needs_atomic : Error<
   "first argument to atomic operation must be a pointer to _Atomic "
+  "type (%0 invalid)">;
+def err_atomic_op_needs_non_const_atomic : Error<
+  "first argument to atomic operation must be a pointer to non-const _Atomic "
   "type (%0 invalid)">;
 def err_atomic_op_needs_trivial_copy : Error<
   "first argument to atomic operation must be a pointer to a trivially-copyable"

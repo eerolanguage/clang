@@ -293,6 +293,9 @@ public:
   /// of some kind.
   static bool isCallStmt(const Stmt *S);
 
+  /// \brief Returns the result type of a function, method declaration.
+  static QualType getDeclaredResultType(const Decl *D);
+
   // Iterator access to formal parameters and their types.
 private:
   typedef std::const_mem_fun_t<QualType, ParmVarDecl> get_type_fun;
@@ -549,6 +552,8 @@ public:
   }
 
   virtual const Expr *getCXXThisExpr() const;
+  
+  virtual RuntimeDefinition getRuntimeDefinition() const;
 
   virtual Kind getKind() const { return CE_CXXMember; }
 

@@ -29,6 +29,7 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/CanonicalType.h"
 #include "clang/AST/RawCommentList.h"
+#include "clang/AST/CommentCommandTraits.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
@@ -513,6 +514,8 @@ public:
   }
 
   void addComment(const RawComment &RC) {
+    assert(LangOpts.RetainCommentsFromSystemHeaders ||
+           !SourceMgr.isInSystemHeader(RC.getSourceRange().getBegin()));
     Comments.addComment(RC, BumpAlloc);
   }
 
@@ -528,6 +531,14 @@ public:
   /// Return parsed documentation comment attached to a given declaration.
   /// Returns NULL if no comment is attached.
   comments::FullComment *getCommentForDecl(const Decl *D) const;
+
+private:
+  mutable comments::CommandTraits CommentCommandTraits;
+
+public:
+  comments::CommandTraits &getCommentCommandTraits() const {
+    return CommentCommandTraits;
+  }
 
   /// \brief Retrieve the attributes for the given declaration.
   AttrVec& getDeclAttrs(const Decl *D);
@@ -1314,8 +1325,8 @@ public:
   /// for some targets.
   QualType getVaListTagType() const;
 
-  /// \brief Return a type with additional \c const, \c volatile, or \crestrict
-  /// qualifiers.
+  /// \brief Return a type with additional \c const, \c volatile, or
+  /// \c restrict qualifiers.
   QualType getCVRQualifiedType(QualType T, unsigned CVR) const {
     return getQualifiedType(T, Qualifiers::fromCVRMask(CVR));
   }
@@ -1745,8 +1756,8 @@ public:
   /// \brief Return a real floating point or a complex type (based on
   /// \p typeDomain/\p typeSize).
   ///
-  /// \arg typeDomain a real floating point or complex type.
-  /// \arg typeSize a real floating point or complex type.
+  /// \param typeDomain a real floating point or complex type.
+  /// \param typeSize a real floating point or complex type.
   QualType getFloatingTypeOfSizeWithinDomain(QualType typeSize,
                                              QualType typeDomain) const;
 

@@ -864,16 +864,12 @@ static void handleLockReturnedAttr(Sema &S, Decl *D,
 
   if (!checkAttributeNumArgs(S, Attr, 1))
     return;
-  Expr *Arg = Attr.getArg(0);
 
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
     S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
       << Attr.getName() << ThreadExpectedFunctionOrMethod;
     return;
   }
-
-  if (Arg->isTypeDependent())
-    return;
 
   // check that the argument is lockable object
   SmallVector<Expr*, 1> Args;

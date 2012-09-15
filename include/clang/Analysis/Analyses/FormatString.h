@@ -117,11 +117,14 @@ public:
       // C99 conversion specifiers.
     cArg,
     dArg,
+    DArg, // Apple extension
     iArg,
     IntArgBeg = dArg, IntArgEnd = iArg,
 
     oArg,
+    OArg, // Apple extension
     uArg,
+    UArg, // Apple extension
     xArg,
     XArg,
     UIntArgBeg = oArg, UIntArgEnd = XArg,
@@ -159,7 +162,7 @@ public:
     ScanfConvBeg = ScanListArg, ScanfConvEnd = ScanListArg
   };
 
-  ConversionSpecifier(bool isPrintf)
+  ConversionSpecifier(bool isPrintf = true)
     : IsPrintf(isPrintf), Position(0), EndScanList(0), kind(InvalidSpecifier) {}
 
   ConversionSpecifier(bool isPrintf, const char *pos, Kind k)
@@ -197,6 +200,8 @@ public:
   const char *toString() const;
 
   bool isPrintfKind() const { return IsPrintf; }
+  
+  llvm::Optional<ConversionSpecifier> getStandardSpecifier() const;
 
 protected:
   bool IsPrintf;
@@ -628,10 +633,12 @@ public:
 };
 
 bool ParsePrintfString(FormatStringHandler &H,
-                       const char *beg, const char *end, const LangOptions &LO);
+                       const char *beg, const char *end, const LangOptions &LO,
+                       const TargetInfo &Target);
 
 bool ParseScanfString(FormatStringHandler &H,
-                      const char *beg, const char *end, const LangOptions &LO);
+                      const char *beg, const char *end, const LangOptions &LO,
+                      const TargetInfo &Target);
 
 } // end analyze_format_string namespace
 } // end clang namespace
