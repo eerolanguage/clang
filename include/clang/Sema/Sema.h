@@ -1657,7 +1657,7 @@ public:
   /// \brief Checks availability of the function depending on the current
   /// function context.Inside an unavailable function,unavailability is ignored.
   ///
-  /// \returns true if \arg FD is unavailable and current context is inside
+  /// \returns true if \p FD is unavailable and current context is inside
   /// an available function, false otherwise.
   bool isFunctionConsideredUnavailable(FunctionDecl *FD);
 
@@ -5346,6 +5346,8 @@ public:
   enum TemplateDeductionResult {
     /// \brief Template argument deduction was successful.
     TDK_Success = 0,
+    /// \brief The declaration was invalid; do nothing.
+    TDK_Invalid,
     /// \brief Template argument deduction exceeded the maximum template
     /// instantiation depth (which has already been diagnosed).
     TDK_InstantiationDepth,
@@ -6116,7 +6118,7 @@ public:
 
   /// Ensure attributes are consistent with type.
   /// \param [in, out] Attributes The attributes to check; they will
-  /// be modified to be consistent with \arg PropertyTy.
+  /// be modified to be consistent with \p PropertyTy.
   void CheckObjCPropertyAttributes(Decl *PropertyPtrTy,
                                    SourceLocation Loc,
                                    unsigned &Attributes,
@@ -6848,6 +6850,7 @@ public:
   /// might create an obvious retain cycle.
   void checkRetainCycles(ObjCMessageExpr *msg);
   void checkRetainCycles(Expr *receiver, Expr *argument);
+  void checkRetainCycles(VarDecl *Var, Expr *Init);
 
   /// checkUnsafeAssigns - Check whether +1 expr is being assigned
   /// to weak/__unsafe_unretained type.

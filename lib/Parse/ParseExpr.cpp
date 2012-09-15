@@ -769,7 +769,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
         IdentifierInfo *II = Tok.getIdentifierInfo();
         // Build up the mapping of revertable type traits, for future use.
         if (RevertableTypeTraits.empty()) {
-#define RTT_JOIN2(X) X
 #define RTT_JOIN(X,Y) X##Y
 #define REVERTABLE_TYPE_TRAIT(Name)                         \
           RevertableTypeTraits[PP.getIdentifierInfo(#Name)] \
@@ -792,7 +791,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
           REVERTABLE_TYPE_TRAIT(__is_unsigned);
           REVERTABLE_TYPE_TRAIT(__is_void);
 #undef REVERTABLE_TYPE_TRAIT
-#undef RTT_JOIN2
 #undef RTT_JOIN
           }
 

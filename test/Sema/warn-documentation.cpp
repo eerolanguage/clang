@@ -371,6 +371,27 @@ using test_tparam14 = test_tparam13<T, int>;
 template<typename T>
 using test_tparam15 = test_tparam13<T, int>;
 
+
+/// Aaa
+/// \deprecated Bbb
+void test_deprecated_1(int a);
+
+// We don't want \deprecated to warn about empty paragraph.  It is fine to use
+// \deprecated by itself without explanations.
+
+/// Aaa
+/// \deprecated
+void test_deprecated_2(int a);
+
+
+/// \invariant aaa
+void test_invariant_1(int a);
+
+// expected-warning@+1 {{empty paragraph passed to '\invariant' command}}
+/// \invariant
+void test_invariant_2(int a);
+
+
 // no-warning
 /// \returns Aaa
 int test_returns_right_decl_1(int);
@@ -760,4 +781,9 @@ inline void test_nocrash6()
   Blah.
 */
 typedef const struct test_nocrash7 * test_nocrash8;
+
+// We used to crash on this.
+
+/// aaa \unknown aaa \unknown aaa
+int test_nocrash9;
 
