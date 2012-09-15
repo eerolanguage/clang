@@ -917,9 +917,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   // We broke out of the while loop because we found a '}' or EOF.
   if (getLangOpts().OffSideRule && !indentationPositions.empty()) {
     indentationPositions.pop_back();
-    if (Tok.is(tok::eof)) { // exit compound body 
-      InsertTokenAndKeepNewline(tok::r_brace); // TODO: get rid of this
-    } else if (Tok.is(tok::r_brace)) {
+    if (Tok.is(tok::r_brace)) {
       Diag(Tok, diag::err_not_allowed) << "'}'";
     }
   }
