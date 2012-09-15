@@ -357,12 +357,31 @@ namespace clang {
   /// \brief RAII class that helps handle the parsing of an open/close delimiter
   /// pair, such as braces { ... } or parentheses ( ... ).
   class BalancedDelimiterTracker : public GreaterThanIsOperatorScope {
+  public:
+      enum TokenLocMode { UseSameLineTokLocs, UseKNRTokLocs };
+  private:
     Parser& P;
     tok::TokenKind Kind, Close;
     SourceLocation (Parser::*Consumer)();
     SourceLocation LOpen, LClose;
-    bool optional; // for Eero optional delimiters
-    bool ignored;  // for Eero ignored delimiters
+
+    // For Eero optional and ignored delimeters
+    //
+    bool optional;
+    bool ignored;
+    TokenLocMode tokLocMode;
+    SourceLocation getOpenLocForMode() {
+      switch (tokLocMode) {
+        case UseSameLineTokLocs: return P.Tok.getLocation();
+        case UseKNRTokLocs: return P.PrevTokLocation;
+      }
+    }
+    SourceLocation getCloseLocForMode() {
+      switch (tokLocMode) {
+        case UseSameLineTokLocs: return P.PrevTokLocation;
+        case UseKNRTokLocs: return P.Tok.getLocation();
+      }
+    }
     
     unsigned short &getDepth() {
       static unsigned short FixedCountOfOne = 1;
@@ -414,8 +433,15 @@ namespace clang {
       }      
     }
 
-    void setOptional() { optional = true; } // for Eero optional delimiters
-    void setIgnored()  { ignored = true; }  // for Eero ignored delimiters
+    // for Eero optional and ignored delimiters
+    void setOptional(TokenLocMode mode = UseSameLineTokLocs) {
+      optional = true;
+      tokLocMode = mode;
+    }
+    void setIgnored(TokenLocMode mode = UseSameLineTokLocs) {
+      ignored = true;
+      tokLocMode = mode;
+    }
     bool isOptional()  { return optional; } //
     bool isIgnored()   { return ignored; } //
     
@@ -424,10 +450,16 @@ namespace clang {
     SourceRange getRange() const { return SourceRange(LOpen, LClose); }
     
     bool consumeOpen() {
-      if (ignored) 
+      if (ignored) {
+        LOpen = getOpenLocForMode();
         return false;
-      if (!P.Tok.is(Kind))
+      }
+      if (!P.Tok.is(Kind)) {
+        if (optional) {
+          LOpen = getOpenLocForMode();
+        }
         return true;
+      }
 
       optional = false; // the closing delim is no longer optional
       
@@ -443,8 +475,10 @@ namespace clang {
                           const char *Msg = "",
                           tok::TokenKind SkipToTok = tok::unknown);
     bool consumeClose() {
-      if (optional || ignored) 
+      if (optional || ignored) {
+        LClose = getCloseLocForMode();
         return false;
+      }
       if (P.Tok.is(Close)) {
         LClose = (P.*Consumer)();
         return false;

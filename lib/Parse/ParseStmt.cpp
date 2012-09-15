@@ -205,6 +205,9 @@ Retry:
       SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
       DeclGroupPtrTy Decl = ParseDeclaration(Stmts, Declarator::BlockContext,
                                              DeclEnd, Attrs);
+      if (isEero) {
+        DeclEnd = PrevTokLocation;
+      }
       return Actions.ActOnDeclStmt(Decl, DeclStart, DeclEnd);
     }
 
@@ -767,19 +770,21 @@ bool Parser::IsValidIndentation(unsigned short column) {
 /// consume the '}' at the end of the block.  It does not manipulate the scope
 /// stack.
 StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
-    if (Tok.isAtStartOfLine()) {
-      InsertToken(tok::l_brace);
-    } else {
-      Diag(Tok, diag::err_expected) << "newline";
-      return ParseStatement(); // TODO: flush the rest of the line instead?
-    }
-  }
   PrettyStackTraceLoc CrashInfo(PP.getSourceManager(),
                                 Tok.getLocation(),
                                 "in compound statement ('{}')");
   InMessageExpressionRAIIObject InMessage(*this, false);
   BalancedDelimiterTracker T(*this, tok::l_brace);
+
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+    if (Tok.isAtStartOfLine()) {
+      T.setIgnored(BalancedDelimiterTracker::UseKNRTokLocs);
+    } else {
+      Diag(Tok, diag::err_expected) << "newline";
+      return ParseStatement(); // TODO: flush the rest of the line instead?
+    }
+  }
+
   if (T.consumeOpen())
     return StmtError();
 
@@ -844,7 +849,6 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
         } else if (column < indentationPositions.back() &&
                    IsValidIndentation(column)) {
           // block has been "dedented" to a previous level
-          InsertToken(tok::r_brace);
           break;
         } else {
           Diag(Tok, diag::err_ambiguous_indentation);
@@ -914,12 +918,12 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   if (getLangOpts().OffSideRule && !indentationPositions.empty()) {
     indentationPositions.pop_back();
     if (Tok.is(tok::eof)) { // exit compound body 
-      InsertToken(tok::r_brace);
-    } else if (Tok.getLength() != 0) { // if not an inserted right brace
+      InsertTokenAndKeepNewline(tok::r_brace); // TODO: get rid of this
+    } else if (Tok.is(tok::r_brace)) {
       Diag(Tok, diag::err_not_allowed) << "'}'";
     }
   }
-  if (Tok.isNot(tok::r_brace)) {
+  if (Tok.isNot(tok::r_brace) && !T.isIgnored()) {
     Diag(Tok, diag::err_expected_rbrace);
     Diag(T.getOpenLocation(), diag::note_matching) << "{";
     // Recover by creating a compound statement with what we parsed so far,

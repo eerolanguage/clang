@@ -1143,9 +1143,16 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     if (getLangOpts().ObjC2)
       MaybeParseGNUAttributes(methodAttrs);
 
+    SourceLocation EndLoc;
+    if (!isEero || (Tok.is(tok::semi) && !Tok.isAtStartOfLine())) {
+      EndLoc = Tok.getLocation();
+    } else {
+      EndLoc = PrevTokLocation;
+    }
+
     Selector Sel = PP.getSelectorTable().getNullarySelector(SelIdent);
     Decl *Result
-         = Actions.ActOnMethodDeclaration(getCurScope(), mLoc, Tok.getLocation(),
+         = Actions.ActOnMethodDeclaration(getCurScope(), mLoc, EndLoc,
                                           mType, DSRet, ReturnType, 
                                           selLoc, Sel, 0, 
                                           CParamInfo.data(), CParamInfo.size(),
@@ -1376,6 +1383,13 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   // If attributes exist after the method, parse them.
   if (getLangOpts().ObjC2)
     MaybeParseGNUAttributes(methodAttrs);
+
+  SourceLocation EndLoc;
+  if (!isEero || (Tok.is(tok::semi) && !Tok.isAtStartOfLine())) {
+    EndLoc = Tok.getLocation();
+  } else {
+    EndLoc = PrevTokLocation;
+  }
   
   if (KeyIdents.size() == 0)
     return 0;
@@ -1383,7 +1397,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   Selector Sel = PP.getSelectorTable().getSelector(KeyIdents.size(),
                                                    &KeyIdents[0]);
   Decl *Result
-       = Actions.ActOnMethodDeclaration(getCurScope(), mLoc, Tok.getLocation(),
+       = Actions.ActOnMethodDeclaration(getCurScope(), mLoc, EndLoc,
                                         mType, DSRet, ReturnType, 
                                         KeyLocs, Sel, &ArgInfos[0], 
                                         CParamInfo.data(), CParamInfo.size(),
@@ -1443,12 +1457,19 @@ Parser::ParseOptionalMethodDecl(SourceLocation mLoc,
         KeyIdents.erase(KeyIdents.begin() + i);
         ArgInfos.erase(ArgInfos.begin() + i);
         KeyLocs.erase(KeyLocs.begin() + i);
-             
+
+        SourceLocation EndLoc;
+        if (Tok.is(tok::semi) && !Tok.isAtStartOfLine()) {
+          EndLoc = Tok.getLocation();
+        } else {
+          EndLoc = PrevTokLocation;
+        }
+
         Selector PartialSel = PP.getSelectorTable().getSelector(KeyIdents.size(),
                                                    &KeyIdents[0]);
 
         Decl *OptDecl = Actions.ActOnMethodDeclaration(
-                                      getCurScope(), mLoc, Tok.getLocation(),
+                                      getCurScope(), mLoc, EndLoc,
                                       mType, DSRet, ReturnType, 
                                       KeyLocs, PartialSel, &ArgInfos[0], 
                                       CParamInfo.data(), CParamInfo.size(),
@@ -2269,7 +2290,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
         SourceLocation RParenLoc;
         // Inject a right paren if the left was
         if (getLangOpts().Eero && l_paren_inserted)
-          InsertToken(tok::r_paren); 
+          InsertTokenAndIgnoreNewline(tok::r_paren);
 
         if (Tok.is(tok::r_paren))
           RParenLoc = ConsumeParen();
@@ -3057,7 +3078,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
   }
 
   SourceLocation RBracLoc = !isEero ? ConsumeBracket()  // consume ']'
-                                    : Tok.getLocation();
+                                    : PrevTokLocation;
 
   unsigned nKeys = KeyIdents.size();
   if (nKeys == 0) {

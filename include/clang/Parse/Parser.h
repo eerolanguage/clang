@@ -709,11 +709,42 @@ private:
   //===--------------------------------------------------------------------===//
   // Eero convenience methods
 
-  void InsertToken(const tok::TokenKind tokenKind) {
+  // If current token is at the start of a new line, put this
+  // token before it on a new line, keeping both newlines.
+  //
+  void InsertTokenAndKeepNewline(const tok::TokenKind tokenKind) {
     PP.EnterToken(Tok);
     Tok.setKind(tokenKind);
     Tok.setLength(0);
     Tok.setIdentifierInfo(0);
+  }
+
+  // If current token is at the start of a new line, put this
+  // token in front of it on the same line.
+  //
+  void InsertToken(const tok::TokenKind tokenKind) {
+
+    const bool HasLeadingSpace = Tok.hasLeadingSpace();
+    const bool IsAtStartOfLine = Tok.isAtStartOfLine();
+    
+    Tok.clearFlag(Token::LeadingSpace);
+    Tok.clearFlag(Token::StartOfLine);
+    
+    InsertTokenAndKeepNewline(tokenKind);
+
+    Tok.setFlagValue(Token::LeadingSpace, HasLeadingSpace);
+    Tok.setFlagValue(Token::StartOfLine, IsAtStartOfLine);
+  }
+
+  // If current token is at the start of a new line, put this token
+  // on the previous line.
+  //
+  void InsertTokenAndIgnoreNewline(const tok::TokenKind tokenKind) {
+
+    InsertTokenAndKeepNewline(tokenKind);
+    Tok.clearFlag(Token::LeadingSpace);
+    Tok.clearFlag(Token::StartOfLine);
+    Tok.setLocation(PrevTokLocation);
   }
 
   unsigned Column(const SourceLocation& Loc) {

@@ -2195,7 +2195,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 
     SourceLocation Loc = Tok.getLocation();
 
-    if (getLangOpts().OptionalSemicolons && 
+    if (getLangOpts().OptionalSemicolons &&
+        Tok.isNot(tok::semi) &&
         !firstPass && 
         Tok.isAtStartOfLine() && 
         !PP.isInLegacyHeader()) {
@@ -3100,7 +3101,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
 
   if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && 
       Tok.isAtStartOfLine())
-    InsertToken(tok::semi); // TODO: revisit this, should avoid inserting semi
+    InsertTokenAndIgnoreNewline(tok::semi); // TODO: revisit this, should avoid inserting semi
 }
 
 /// ParseEnumSpecifier
@@ -3353,7 +3354,7 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
   } else if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
              Tok.isAtStartOfLine()) {
     TUK = (DS.isFriendSpecified() ? Sema::TUK_Friend : Sema::TUK_Declaration);
-    InsertToken(tok::semi); // TODO: is there a way to avoid inserting a semi?  
+    InsertTokenAndIgnoreNewline(tok::semi); // TODO: is there a way to avoid inserting a semi?
   } else {
     TUK = Sema::TUK_Reference;
   }
@@ -4544,7 +4545,7 @@ void Parser::ParseParenDeclarator(Declarator &D) {
       Tok.setKind(tok::r_paren);   // make the '|' a r_paren
     } else {
       InsertToken(tok::pipe);
-      InsertToken(tok::r_paren);
+      InsertTokenAndIgnoreNewline(tok::r_paren);
     }
     Tok.setLength(SavedTokLen);  // restore original length (used by Decl)
   }
