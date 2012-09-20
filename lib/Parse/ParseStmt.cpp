@@ -669,7 +669,7 @@ StmtResult Parser::ParseDefaultStatement() {
     ColonLoc = ConsumeToken();
 
   } else if (getLangOpts().Eero) { // colons are optional
-    // do nothing    
+    ColonLoc = PrevTokLocation;
   // Treat "default;" as a typo for "default:".
   } else if (Tok.is(tok::semi)) {
     ColonLoc = ConsumeToken();
@@ -846,7 +846,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
           // do nothing since block has been indented further to the right
         } else if (!newScope && column == indentationPositions.back()) {
           // do nothing since no change in indentation level
-        } else if (column < indentationPositions.back() &&
+        } else if (!newScope && column < indentationPositions.back() &&
                    IsValidIndentation(column)) {
           // block has been "dedented" to a previous level
           break;
