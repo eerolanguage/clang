@@ -580,7 +580,7 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
       ColonLoc = ConsumeToken();
 
     } else if (getLangOpts().Eero) { // colons are optional
-      // do nothing
+      ColonLoc = PrevTokLocation;
     // Treat "case blah;" as a typo for "case blah:".
     } else if (Tok.is(tok::semi)) {
       ColonLoc = ConsumeToken();
