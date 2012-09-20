@@ -187,8 +187,8 @@ typedef std::pair<llvm::PointerUnion<const TemplateTypeParmType*, NamedDecl*>,
 
 /// Sema - This implements semantic analysis and AST building for C.
 class Sema {
-  Sema(const Sema&);           // DO NOT IMPLEMENT
-  void operator=(const Sema&); // DO NOT IMPLEMENT
+  Sema(const Sema &) LLVM_DELETED_FUNCTION;
+  void operator=(const Sema &) LLVM_DELETED_FUNCTION;
   mutable const TargetAttributesSema* TheTargetAttributesSema;
 public:
   typedef OpaquePtr<DeclGroupRef> DeclGroupPtrTy;
@@ -1280,6 +1280,7 @@ public:
                                      MultiTemplateParamsArg TemplateParamLists,
                                      bool &AddToScope);
   bool AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD);
+  void checkVoidParamDecl(ParmVarDecl *Param);
 
   bool CheckConstexprFunctionDecl(const FunctionDecl *FD);
   bool CheckConstexprFunctionBody(const FunctionDecl *FD, Stmt *Body);
@@ -4092,7 +4093,8 @@ public:
 
   /// \brief Create a new lambda closure type.
   CXXRecordDecl *createLambdaClosureType(SourceRange IntroducerRange,
-                                         bool KnownDependent = false);
+                                         TypeSourceInfo *Info,
+                                         bool KnownDependent);
 
   /// \brief Start the definition of a lambda expression.
   CXXMethodDecl *startLambdaDefinition(CXXRecordDecl *Class,
@@ -4401,7 +4403,7 @@ public:
                                      SourceLocation RParenLoc,
                                      bool Failed);
 
-  FriendDecl *CheckFriendTypeDecl(SourceLocation Loc,
+  FriendDecl *CheckFriendTypeDecl(SourceLocation LocStart,
                                   SourceLocation FriendLoc,
                                   TypeSourceInfo *TSInfo);
   Decl *ActOnFriendTypeDecl(Scope *S, const DeclSpec &DS,
@@ -5783,10 +5785,10 @@ public:
     bool CheckInstantiationDepth(SourceLocation PointOfInstantiation,
                                  SourceRange InstantiationRange);
 
-    InstantiatingTemplate(const InstantiatingTemplate&); // not implemented
+    InstantiatingTemplate(const InstantiatingTemplate&) LLVM_DELETED_FUNCTION;
 
     InstantiatingTemplate&
-    operator=(const InstantiatingTemplate&); // not implemented
+    operator=(const InstantiatingTemplate&) LLVM_DELETED_FUNCTION;
   };
 
   void PrintInstantiationStack();

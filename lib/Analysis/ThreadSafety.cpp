@@ -1794,9 +1794,12 @@ void BuildLockset::warnIfMutexHeld(const NamedDecl *D, Expr* Exp,
   }
 
   LockData* LDat = FSet.findLock(Analyzer->FactMan, Mutex);
-  if (LDat)
-    Analyzer->Handler.handleFunExcludesLock(D->getName(), Mutex.toString(),
+  if (LDat) {
+    std::string DeclName = D->getNameAsString();
+    StringRef   DeclNameSR (DeclName);
+    Analyzer->Handler.handleFunExcludesLock(DeclNameSR, Mutex.toString(),
                                             Exp->getExprLoc());
+  }
 }
 
 
@@ -2370,6 +2373,20 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
                        false);
     }
   }
+
+
+  // Check to make sure that the exit block is reachable
+  bool ExitUnreachable = true;
+  for (CFGBlock::const_pred_iterator PI = CFGraph->getExit().pred_begin(),
+       PE  = CFGraph->getExit().pred_end(); PI != PE; ++PI) {
+    if (!(*PI)->hasNoReturnElement()) {
+      ExitUnreachable = false;
+      break;
+    }
+  }
+  // Skip the final check if the exit block is unreachable.
+  if (ExitUnreachable)
+    return;
 
   CFGBlockInfo *Initial = &BlockInfo[CFGraph->getEntry().getBlockID()];
   CFGBlockInfo *Final   = &BlockInfo[CFGraph->getExit().getBlockID()];

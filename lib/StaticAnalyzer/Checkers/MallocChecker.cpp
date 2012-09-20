@@ -442,6 +442,9 @@ bool MallocChecker::isFreeFunction(const FunctionDecl *FD, ASTContext &C) const 
 }
 
 void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
+  if (C.wasInlined)
+    return;
+  
   const FunctionDecl *FD = C.getCalleeDecl(CE);
   if (!FD)
     return;
@@ -739,7 +742,7 @@ bool MallocChecker::SummarizeRegion(raw_ostream &os,
                                     const MemRegion *MR) {
   switch (MR->getKind()) {
   case MemRegion::FunctionTextRegionKind: {
-    const FunctionDecl *FD = cast<FunctionTextRegion>(MR)->getDecl();
+    const NamedDecl *FD = cast<FunctionTextRegion>(MR)->getDecl();
     if (FD)
       os << "the address of the function '" << *FD << '\'';
     else

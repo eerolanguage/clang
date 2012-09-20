@@ -4301,6 +4301,45 @@ static void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
   }
 }
 
+static void DiagnoseOutOfRangeComparison(Sema &S, BinaryOperator *E,
+                                         Expr *lit, Expr *other,
+                                         llvm::APSInt Value,
+                                         bool rhsLiteral) {
+  BinaryOperatorKind op = E->getOpcode();
+  QualType OtherT = other->getType();
+  const Type *OtherPtrT = S.Context.getCanonicalType(OtherT).getTypePtr();
+  const Type *LitPtrT = S.Context.getCanonicalType(lit->getType()).getTypePtr();
+  if (OtherPtrT == LitPtrT)
+    return;
+  assert((OtherT->isIntegerType() && LitPtrT->isIntegerType())
+         && "comparison with non-integer type");
+  IntRange OtherRange = IntRange::forValueOfType(S.Context, OtherT);
+  IntRange LitRange = GetExprRange(S.Context, lit);
+  if (OtherRange.Width >= LitRange.Width)
+    return;
+  std::string PrettySourceValue = Value.toString(10);
+  bool IsTrue = true;
+  if (op == BO_EQ)
+    IsTrue = false;
+  else if (op == BO_NE)
+    IsTrue = true;
+  else if (rhsLiteral) {
+    if (op == BO_GT || op == BO_GE)
+      IsTrue = !LitRange.NonNegative;
+    else // op == BO_LT || op == BO_LE
+      IsTrue = LitRange.NonNegative;
+  }
+  else {
+    if (op == BO_LT || op == BO_LE)
+      IsTrue = !LitRange.NonNegative;
+    else // op == BO_GT || op == BO_GE
+      IsTrue = LitRange.NonNegative;
+  }
+  S.Diag(E->getOperatorLoc(), diag::warn_outof_range_compare)
+  << PrettySourceValue << other->getType() << IsTrue
+  << E->getLHS()->getSourceRange() << E->getRHS()->getSourceRange();
+}
+
 /// Analyze the operands of the given comparison.  Implements the
 /// fallback case from AnalyzeComparison.
 static void AnalyzeImpConvsInComparison(Sema &S, BinaryOperator *E) {
@@ -4316,20 +4355,43 @@ static void AnalyzeComparison(Sema &S, BinaryOperator *E) {
   QualType T = E->getLHS()->getType();
   assert(S.Context.hasSameUnqualifiedType(T, E->getRHS()->getType())
          && "comparison with mismatched types");
+  if (E->isValueDependent())
+    return AnalyzeImpConvsInComparison(S, E);
 
+  Expr *LHS = E->getLHS()->IgnoreParenImpCasts();
+  Expr *RHS = E->getRHS()->IgnoreParenImpCasts();
+  
+  bool IsComparisonConstant = false;
+  
+  // Check that an integer constant comparison results in a value
+  // of 'true' or 'false'.
+  if (T->isIntegralType(S.Context)) {
+    llvm::APSInt RHSValue;
+    bool IsRHSIntegralLiteral = 
+      RHS->isIntegerConstantExpr(RHSValue, S.Context);
+    llvm::APSInt LHSValue;
+    bool IsLHSIntegralLiteral = 
+      LHS->isIntegerConstantExpr(LHSValue, S.Context);
+    if (IsRHSIntegralLiteral && !IsLHSIntegralLiteral)
+        DiagnoseOutOfRangeComparison(S, E, RHS, LHS, RHSValue, true);
+    else if (!IsRHSIntegralLiteral && IsLHSIntegralLiteral)
+      DiagnoseOutOfRangeComparison(S, E, LHS, RHS, LHSValue, false);
+    else
+      IsComparisonConstant = 
+        (IsRHSIntegralLiteral && IsLHSIntegralLiteral);
+  }
+  else if (!T->hasUnsignedIntegerRepresentation())
+    IsComparisonConstant = E->isIntegerConstantExpr(S.Context);
+  
   // We don't do anything special if this isn't an unsigned integral
   // comparison:  we're only interested in integral comparisons, and
   // signed comparisons only happen in cases we don't care to warn about.
   //
   // We also don't care about value-dependent expressions or expressions
   // whose result is a constant.
-  if (!T->hasUnsignedIntegerRepresentation()
-      || E->isValueDependent() || E->isIntegerConstantExpr(S.Context))
+  if (!T->hasUnsignedIntegerRepresentation() || IsComparisonConstant)
     return AnalyzeImpConvsInComparison(S, E);
-
-  Expr *LHS = E->getLHS()->IgnoreParenImpCasts();
-  Expr *RHS = E->getRHS()->IgnoreParenImpCasts();
-
+  
   // Check to see if one of the (unmodified) operands is of different
   // signedness.
   Expr *signedOperand, *unsignedOperand;
@@ -5429,6 +5491,24 @@ static Expr *findCapturingExpr(Sema &S, Expr *e, RetainCycleOwner &owner) {
   assert(owner.Variable && owner.Loc.isValid());
 
   e = e->IgnoreParenCasts();
+
+  // Look through [^{...} copy] and Block_copy(^{...}).
+  if (ObjCMessageExpr *ME = dyn_cast<ObjCMessageExpr>(e)) {
+    Selector Cmd = ME->getSelector();
+    if (Cmd.isUnarySelector() && Cmd.getNameForSlot(0) == "copy") {
+      e = ME->getInstanceReceiver();
+      if (!e)
+        return 0;
+      e = e->IgnoreParenCasts();
+    }
+  } else if (CallExpr *CE = dyn_cast<CallExpr>(e)) {
+    if (CE->getNumArgs() == 1) {
+      FunctionDecl *Fn = dyn_cast_or_null<FunctionDecl>(CE->getCalleeDecl());
+      if (Fn && Fn->getIdentifier()->isStr("_Block_copy"))
+        e = CE->getArg(0)->IgnoreParenCasts();
+    }
+  }
+  
   BlockExpr *block = dyn_cast<BlockExpr>(e);
   if (!block || !block->getBlockDecl()->capturesVariable(owner.Variable))
     return 0;

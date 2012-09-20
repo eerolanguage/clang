@@ -214,6 +214,17 @@ def err_expected_semi_after_static_assert : Error<
   "expected ';' after static_assert">;
 def err_expected_semi_for : Error<"expected ';' in 'for' statement specifier">;
 def err_expected_colon_after : Error<"expected ':' after %0">;
+def warn_missing_selector_name : Warning<
+  "%0 used as the name of the previous parameter rather than as part "
+  "of the selector">,
+  InGroup<DiagGroup<"missing-selector-name">>;
+def note_missing_selector_name : Note<
+  "introduce a parameter name to make %0 part of the selector">;
+def note_force_empty_selector_name : Note<
+  "or insert whitespace before ':' to use %0 as parameter name "
+  "and have an empty entry in the selector">;
+def note_missing_argument_name : Note<
+  "did you mean to use %0 as the selector name instead of %1">;
 def err_label_end_of_compound_statement : Error<
   "label at end of compound statement: expected statement">;
 def err_address_of_label_outside_fn : Error<

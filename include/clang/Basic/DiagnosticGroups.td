@@ -196,6 +196,7 @@ def SizeofArrayArgument : DiagGroup<"sizeof-array-argument">;
 def StringPlusInt : DiagGroup<"string-plus-int">;
 def StrncatSize : DiagGroup<"strncat-size">;
 def TautologicalCompare : DiagGroup<"tautological-compare">;
+def TautologicalOutofRangeCompare : DiagGroup<"tautological-constant-out-of-range-compare">;
 def HeaderHygiene : DiagGroup<"header-hygiene">;
 def DuplicateDeclSpecifier : DiagGroup<"duplicate-decl-specifier">;
 
@@ -284,6 +285,7 @@ def VexingParse : DiagGroup<"vexing-parse">;
 def VLA : DiagGroup<"vla">;
 def VolatileRegisterVar : DiagGroup<"volatile-register-var">;
 def Visibility : DiagGroup<"visibility">;
+def ZeroLengthArray : DiagGroup<"zero-length-array">;
 
 // GCC calls -Wdeprecated-writable-strings -Wwrite-strings.
 def GCCWriteStrings : DiagGroup<"write-strings" , [DeprecatedWritableStr]>;
@@ -431,7 +433,7 @@ def C11 : DiagGroup<"c11-extensions">;
 def C99 : DiagGroup<"c99-extensions">;
 
 // A warning group for warnings about GCC extensions.
-def GNU : DiagGroup<"gnu", [GNUDesignator, VLA]>;
+def GNU : DiagGroup<"gnu", [GNUDesignator, VLA, ZeroLengthArray]>;
 // A warning group for warnings about code that clang accepts but gcc doesn't.
 def GccCompat : DiagGroup<"gcc-compat">;
 

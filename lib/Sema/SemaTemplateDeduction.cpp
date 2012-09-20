@@ -2791,7 +2791,7 @@ ResolveOverloadForDeduction(Sema &S, TemplateParameterList *TemplateParams,
       
       // Otherwise, see if we can resolve a function type 
       FunctionDecl *Specialization = 0;
-      TemplateDeductionInfo Info(S.Context, Ovl->getNameLoc());
+      TemplateDeductionInfo Info(Ovl->getNameLoc());
       if (S.DeduceTemplateArguments(FunTmpl, &ExplicitTemplateArgs,
                                     Specialization, Info))
         continue;
@@ -2822,7 +2822,7 @@ ResolveOverloadForDeduction(Sema &S, TemplateParameterList *TemplateParams,
     // So we do not reject deductions which were made elsewhere.
     SmallVector<DeducedTemplateArgument, 8>
       Deduced(TemplateParams->size());
-    TemplateDeductionInfo Info(S.Context, Ovl->getNameLoc());
+    TemplateDeductionInfo Info(Ovl->getNameLoc());
     Sema::TemplateDeductionResult Result
       = DeduceTemplateArgumentsByTypeMatch(S, TemplateParams, ParamType,
                                            ArgType, Info, Deduced, TDF);
@@ -3586,7 +3586,7 @@ Sema::DeduceAutoType(TypeSourceInfo *Type, Expr *&Init,
   QualType InitType = Init->getType();
   unsigned TDF = 0;
 
-  TemplateDeductionInfo Info(Context, Loc);
+  TemplateDeductionInfo Info(Loc);
 
   InitListExpr *InitList = dyn_cast<InitListExpr>(Init);
   if (InitList) {
@@ -3651,26 +3651,23 @@ MarkUsedTemplateParameters(ASTContext &Ctx, QualType T,
                            llvm::SmallBitVector &Deduced);
 
 /// \brief If this is a non-static member function,
-static void MaybeAddImplicitObjectParameterType(ASTContext &Context,
+static void AddImplicitObjectParameterType(ASTContext &Context,
                                                 CXXMethodDecl *Method,
                                  SmallVectorImpl<QualType> &ArgTypes) {
-  if (Method->isStatic())
-    return;
-
-  // C++ [over.match.funcs]p4:
+  // C++11 [temp.func.order]p3:
+  //   [...] The new parameter is of type "reference to cv A," where cv are
+  //   the cv-qualifiers of the function template (if any) and A is
+  //   the class of which the function template is a member.
   //
-  //   For non-static member functions, the type of the implicit
-  //   object parameter is
-  //     - "lvalue reference to cv X" for functions declared without a
-  //       ref-qualifier or with the & ref-qualifier
-  //     - "rvalue reference to cv X" for functions declared with the
-  //       && ref-qualifier
-  //
-  // FIXME: We don't have ref-qualifiers yet, so we don't do that part.
+  // The standard doesn't say explicitly, but we pick the appropriate kind of
+  // reference type based on [over.match.funcs]p4.
   QualType ArgTy = Context.getTypeDeclType(Method->getParent());
   ArgTy = Context.getQualifiedType(ArgTy,
                         Qualifiers::fromCVRMask(Method->getTypeQualifiers()));
-  ArgTy = Context.getLValueReferenceType(ArgTy);
+  if (Method->getRefQualifier() == RQ_RValue)
+    ArgTy = Context.getRValueReferenceType(ArgTy);
+  else
+    ArgTy = Context.getLValueReferenceType(ArgTy);
   ArgTypes.push_back(ArgTy);
 }
 
@@ -3696,7 +3693,7 @@ static bool isAtLeastAsSpecializedAs(Sema &S,
   // C++0x [temp.deduct.partial]p3:
   //   The types used to determine the ordering depend on the context in which
   //   the partial ordering is done:
-  TemplateDeductionInfo Info(S.Context, Loc);
+  TemplateDeductionInfo Info(Loc);
   CXXMethodDecl *Method1 = 0;
   CXXMethodDecl *Method2 = 0;
   bool IsNonStatic2 = false;
@@ -3711,7 +3708,7 @@ static bool isAtLeastAsSpecializedAs(Sema &S,
     IsNonStatic1 = Method1 && !Method1->isStatic();
     IsNonStatic2 = Method2 && !Method2->isStatic();
 
-    // C++0x [temp.func.order]p3:
+    // C++11 [temp.func.order]p3:
     //   [...] If only one of the function templates is a non-static
     //   member, that function template is considered to have a new
     //   first parameter inserted in its function parameter list. The
@@ -3719,22 +3716,25 @@ static bool isAtLeastAsSpecializedAs(Sema &S,
     //   the cv-qualifiers of the function template (if any) and A is
     //   the class of which the function template is a member.
     //
+    // Note that we interpret this to mean "if one of the function
+    // templates is a non-static member and the other is a non-member";
+    // otherwise, the ordering rules for static functions against non-static
+    // functions don't make any sense.
+    //
     // C++98/03 doesn't have this provision, so instead we drop the
-    // first argument of the free function or static member, which
-    // seems to match existing practice.
+    // first argument of the free function, which seems to match
+    // existing practice.
     SmallVector<QualType, 4> Args1;
-    unsigned Skip1 = !S.getLangOpts().CPlusPlus0x &&
-      IsNonStatic2 && !IsNonStatic1;
-    if (S.getLangOpts().CPlusPlus0x && IsNonStatic1 && !IsNonStatic2)
-      MaybeAddImplicitObjectParameterType(S.Context, Method1, Args1);
+    unsigned Skip1 = !S.getLangOpts().CPlusPlus0x && IsNonStatic2 && !Method1;
+    if (S.getLangOpts().CPlusPlus0x && IsNonStatic1 && !Method2)
+      AddImplicitObjectParameterType(S.Context, Method1, Args1);
     Args1.insert(Args1.end(),
                  Proto1->arg_type_begin() + Skip1, Proto1->arg_type_end());
 
     SmallVector<QualType, 4> Args2;
-    Skip2 = !S.getLangOpts().CPlusPlus0x &&
-      IsNonStatic1 && !IsNonStatic2;
-    if (S.getLangOpts().CPlusPlus0x && IsNonStatic2 && !IsNonStatic1)
-      MaybeAddImplicitObjectParameterType(S.Context, Method2, Args2);
+    Skip2 = !S.getLangOpts().CPlusPlus0x && IsNonStatic1 && !Method2;
+    if (S.getLangOpts().CPlusPlus0x && IsNonStatic2 && !Method1)
+      AddImplicitObjectParameterType(S.Context, Method2, Args2);
     Args2.insert(Args2.end(),
                  Proto2->arg_type_begin() + Skip2, Proto2->arg_type_end());
 
@@ -4132,7 +4132,7 @@ Sema::getMoreSpecializedPartialSpecialization(
   // template partial specialization's template arguments, for
   // example.
   SmallVector<DeducedTemplateArgument, 4> Deduced;
-  TemplateDeductionInfo Info(Context, Loc);
+  TemplateDeductionInfo Info(Loc);
 
   QualType PT1 = PS1->getInjectedSpecializationType();
   QualType PT2 = PS2->getInjectedSpecializationType();
