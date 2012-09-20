@@ -841,7 +841,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
           // do nothing since block has been indented further to the right
         } else if (!newScope && column == indentationPositions.back()) {
           // do nothing since no change in indentation level
-        } else if (column < indentationPositions.back() &&
+        } else if (!newScope && column < indentationPositions.back() &&
                    IsValidIndentation(column)) {
           // block has been "dedented" to a previous level
           InsertToken(tok::r_brace);
