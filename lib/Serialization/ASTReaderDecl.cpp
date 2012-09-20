@@ -37,7 +37,6 @@ namespace clang {
   class ASTDeclReader : public DeclVisitor<ASTDeclReader, void> {
     ASTReader &Reader;
     ModuleFile &F;
-    llvm::BitstreamCursor &Cursor;
     const DeclID ThisDeclID;
     const unsigned RawLocation;
     typedef ASTReader::RecordData RecordData;
@@ -116,7 +115,7 @@ namespace clang {
       GlobalDeclID FirstID;
       mutable bool Owning;
       
-      RedeclarableResult &operator=(RedeclarableResult&); // DO NOT IMPLEMENT
+      void operator=(RedeclarableResult &) LLVM_DELETED_FUNCTION;
       
     public:
       RedeclarableResult(ASTReader &Reader, GlobalDeclID FirstID)
@@ -162,7 +161,7 @@ namespace clang {
       NamedDecl *Existing;
       mutable bool AddResult;
       
-      FindExistingResult &operator=(FindExistingResult&); // DO NOT IMPLEMENT
+      void operator=(FindExistingResult&) LLVM_DELETED_FUNCTION;
       
     public:
       FindExistingResult(ASTReader &Reader)
@@ -194,10 +193,10 @@ namespace clang {
     
   public:
     ASTDeclReader(ASTReader &Reader, ModuleFile &F,
-                  llvm::BitstreamCursor &Cursor, DeclID thisDeclID,
+                  DeclID thisDeclID,
                   unsigned RawLocation,
                   const RecordData &Record, unsigned &Idx)
-      : Reader(Reader), F(F), Cursor(Cursor), ThisDeclID(thisDeclID),
+      : Reader(Reader), F(F), ThisDeclID(thisDeclID),
         RawLocation(RawLocation), Record(Record), Idx(Idx),
         TypeIDForTypeDecl(0) { }
 
@@ -1137,6 +1136,7 @@ void ASTDeclReader::ReadCXXDefinitionData(
     Lambda.Captures 
       = (Capture*)Reader.Context.Allocate(sizeof(Capture)*Lambda.NumCaptures);
     Capture *ToCapture = Lambda.Captures;
+    Lambda.MethodTyInfo = GetTypeSourceInfo(Record, Idx);
     for (unsigned I = 0, N = Lambda.NumCaptures; I != N; ++I) {
       SourceLocation Loc = ReadSourceLocation(Record, Idx);
       bool IsImplicit = Record[Idx++];
@@ -1157,7 +1157,8 @@ void ASTDeclReader::VisitCXXRecordDecl(CXXRecordDecl *D) {
     // allocate the appropriate DefinitionData structure.
     bool IsLambda = Record[Idx++];
     if (IsLambda)
-      D->DefinitionData = new (C) CXXRecordDecl::LambdaDefinitionData(D, false);
+      D->DefinitionData = new (C) CXXRecordDecl::LambdaDefinitionData(D, 0,
+                                                                      false);
     else
       D->DefinitionData = new (C) struct CXXRecordDecl::DefinitionData(D);
     
@@ -1910,7 +1911,7 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
   RecordData Record;
   unsigned Code = DeclsCursor.ReadCode();
   unsigned Idx = 0;
-  ASTDeclReader Reader(*this, *Loc.F, DeclsCursor, ID, RawLocation, Record,Idx);
+  ASTDeclReader Reader(*this, *Loc.F, ID, RawLocation, Record,Idx);
 
   Decl *D = 0;
   switch ((DeclCode)DeclsCursor.ReadRecord(Code, Record)) {
@@ -2167,7 +2168,7 @@ void ASTReader::loadDeclUpdateRecords(serialization::DeclID ID, Decl *D) {
       assert(RecCode == DECL_UPDATES && "Expected DECL_UPDATES record!");
       
       unsigned Idx = 0;
-      ASTDeclReader Reader(*this, *F, Cursor, ID, 0, Record, Idx);
+      ASTDeclReader Reader(*this, *F, ID, 0, Record, Idx);
       Reader.UpdateDecl(D, *F, Record);
     }
   }

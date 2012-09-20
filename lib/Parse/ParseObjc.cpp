@@ -19,6 +19,7 @@
 #include "clang/Sema/Scope.h"
 #include "clang/AST/ASTContext.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "clang/AST/ASTConsumer.h"
 using namespace clang;
@@ -1176,7 +1177,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   // For Eero: support for optional method parameters
   bool isOptional = false;
   llvm::SmallVector<bool, 12> IsParamOptionalFlags;
-  llvm::SmallVector<UnqualifiedId, 12> ArgIds;
+  llvm::SmallVector<UnqualifiedIdHolder, 12> ArgIds;
   llvm::SmallVector<ExprResult, 12> DefaultExprs;
   BalancedDelimiterTracker T(*this, tok::l_square);
   T.setOptional();
@@ -1285,9 +1286,9 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
             DefaultExprs.push_back(ExprError());
           }
         }
-        UnqualifiedId ArgName;
-        ArgName.setIdentifier(ArgInfo.Name, ArgInfo.NameLoc);
-        ArgIds.push_back(ArgName);
+        UnqualifiedIdHolder ArgName;
+        ArgName.get().setIdentifier(ArgInfo.Name, ArgInfo.NameLoc);
+        ArgIds.push_back(ArgName); // list takes ownership of the identifier via copy constructor
       }
       if (isOptional) {
         T.consumeClose(); // ']'
@@ -1336,6 +1337,14 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     SelIdent = ParseObjCSelectorPiece(selLoc);
     if (!SelIdent && Tok.isNot(tok::colon))
       break;
+    if (!SelIdent) {
+      SourceLocation ColonLoc = Tok.getLocation();
+      if (PP.getLocForEndOfToken(ArgInfo.NameLoc) == ColonLoc) {
+        Diag(ArgInfo.NameLoc, diag::warn_missing_selector_name) << ArgInfo.Name;
+        Diag(ArgInfo.NameLoc, diag::note_missing_selector_name) << ArgInfo.Name;
+        Diag(ColonLoc, diag::note_force_empty_selector_name) << ArgInfo.Name;
+      }
+    }
     // We have a selector or a colon, continue parsing.
   }
 
@@ -1432,7 +1441,7 @@ Parser::ParseOptionalMethodDecl(SourceLocation mLoc,
                                 SmallVector<IdentifierInfo *, 12> &KeyIdents,
                                 SmallVector<Sema::ObjCArgInfo, 12> &ArgInfos,
                                 SmallVector<SourceLocation, 12> &KeyLocs,
-                                llvm::SmallVector<UnqualifiedId, 12> &ArgIds,
+                                llvm::SmallVector<UnqualifiedIdHolder, 12> &ArgIds,
                                 llvm::SmallVector<ExprResult, 12> &DefaultExprs) {
 
   unsigned OptionalParamsCount = 0;
@@ -1495,7 +1504,7 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
                                  Selector Sel,
                                  ParsedType ReturnType,
                                  llvm::SmallVector<bool, 12> &IsParamOptionalFlags,
-                                 llvm::SmallVector<UnqualifiedId, 12> &ArgIds,
+                                 llvm::SmallVector<UnqualifiedIdHolder, 12> &ArgIds,
                                  llvm::SmallVector<ExprResult, 12> &DefaultExprs) {
   // "self" identifier, for generated method body message
   UnqualifiedId SelfName;
@@ -1519,15 +1528,15 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
   for (unsigned i = 0, j = 0; i < ArgIds.size(); i++) {
     if (!doneReplacingThisPass && 
         IsParamOptionalFlags[i] && 
-        ArgIds[i].isValid()) {
-      ArgIds[i].clear(); // "consume" the default parameter name
+        ArgIds[i].get().isValid()) {
+      ArgIds[i].get().clear(); // "consume" the default parameter name
       doneReplacingThisPass = true;
     }
-    if (ArgIds[i].isValid()) { // use the parameter variable name
+    if (ArgIds[i].get().isValid()) { // use the parameter variable name
       ArgExprs.push_back(
           Actions.ActOnIdExpression(getCurScope(), 
                                     EmptyScopeSpec, SourceLocation(),
-                                    ArgIds[i], false, false, 0).take());
+                                    ArgIds[i].get(), false, false, 0).take());
     } else { // use the parameter default expression
       ExprResult DefaultExpr = DefaultExprs[j++];
       if (!DefaultExpr.isInvalid())

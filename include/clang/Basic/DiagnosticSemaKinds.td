@@ -20,17 +20,6 @@ def warn_variables_not_in_loop_body : Warning<
   "used in loop condition not modified in loop body">,
   InGroup<DiagGroup<"loop-analysis">>, DefaultIgnore;
 
-def warn_identical_enum_values : Warning<
-  "all elements of %0 are initialized with literals to value %1">,
-  InGroup<DiagGroup<"unique-enum">>;
-def note_identical_enum_values : Note<
-  "initialize the last element with the previous element to silence "
-  "this warning">;
-def warn_duplicate_enum_values : Warning<
-  "element %0 has been implicitly assigned %1 which another element has "
-  "been assigned">, InGroup<DiagGroup<"duplicate-enum">>, DefaultIgnore;
-def note_duplicate_element : Note<"element %0 also has value %1">;
-
 // Constant expressions
 def err_expr_not_ice : Error<
   "expression is not an %select{integer|integral}0 constant expression">;
@@ -422,7 +411,7 @@ def err_statically_allocated_object : Error<
   "interface type cannot be statically allocated">;
 def err_object_cannot_be_passed_returned_by_value : Error<
   "interface type %1 cannot be %select{returned|passed}0 by value"
-  "; did you forget * in %1">;
+  "; did you forget * in %1?">;
 def err_parameters_retval_cannot_have_fp16_type : Error<
   "%select{parameters|function return value}0 cannot have __fp16 type; did you forget * ?">;
 def warn_enum_value_overflow : Warning<"overflow in enumeration value">;
@@ -819,13 +808,15 @@ def err_tagless_friend_type_template : Error<
 def err_no_matching_local_friend : Error<
   "no matching function found in local scope">;
 def err_no_matching_local_friend_suggest : Error<
-  "no matching function %0 found in local scope; did you mean %2">;
+  "no matching function %0 found in local scope; did you mean %2?">;
 def err_partial_specialization_friend : Error<
   "partial specialization cannot be declared as a friend">;
 def err_qualified_friend_def : Error<
   "friend function definition cannot be qualified with '%0'">;
 def err_friend_def_in_local_class : Error<
   "friend function cannot be defined in a local class">;
+def err_friend_not_first_in_declaration : Error<
+  "'friend' must appear first in a non-function declaration">;
   
 def err_abstract_type_in_decl : Error<
   "%select{return|parameter|variable|field|ivar}0 type %1 is an abstract class">;
@@ -3305,7 +3296,7 @@ def err_typecheck_invalid_restrict_not_pointer_noarg : Error<
 def err_typecheck_invalid_restrict_invalid_pointee : Error<
   "pointer to function type %0 may not be 'restrict' qualified">;
 def ext_typecheck_zero_array_size : Extension<
-  "zero size arrays are an extension">;
+  "zero size arrays are an extension">, InGroup<ZeroLengthArray>;
 def err_typecheck_zero_array_size : Error<
   "zero-length arrays are not permitted in C++">;
 def warn_typecheck_zero_static_array_size : Warning<
@@ -4087,6 +4078,9 @@ def warn_mixed_sign_comparison : Warning<
 def warn_lunsigned_always_true_comparison : Warning<
   "comparison of unsigned%select{| enum}2 expression %0 is always %1">,
   InGroup<TautologicalCompare>;
+def warn_outof_range_compare : Warning<
+  "comparison of literal %0 with expression of type %1 is always "
+  "%select{false|true}2">, InGroup<TautologicalOutofRangeCompare>;
 def warn_runsigned_always_true_comparison : Warning<
   "comparison of %0 unsigned%select{| enum}2 expression is always %1">,
   InGroup<TautologicalCompare>;
