@@ -1677,7 +1677,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
 
   BalancedDelimiterTracker T(*this, tok::l_brace);
   if (isEero)
-    T.setOptional();
+    T.setOptional(BalancedDelimiterTracker::UseKNRTokLocs);
   T.consumeOpen();
 
   // While we still have something to read, read the instance variables.
