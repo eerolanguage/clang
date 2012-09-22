@@ -358,7 +358,7 @@ namespace clang {
   /// pair, such as braces { ... } or parentheses ( ... ).
   class BalancedDelimiterTracker : public GreaterThanIsOperatorScope {
   public:
-      enum TokenLocMode { UseSameLineTokLocs, UseKNRTokLocs };
+      enum TokenLocMode { UseSameLineTokLocs, UseSplitLineTokLocs };
   private:
     Parser& P;
     tok::TokenKind Kind, Close;
@@ -373,13 +373,13 @@ namespace clang {
     SourceLocation getOpenLocForMode() {
       switch (tokLocMode) {
         case UseSameLineTokLocs: return P.Tok.getLocation();
-        case UseKNRTokLocs: return P.PrevTokLocation;
+        case UseSplitLineTokLocs: return P.PrevTokLocation;
       }
     }
     SourceLocation getCloseLocForMode() {
       switch (tokLocMode) {
         case UseSameLineTokLocs: return P.PrevTokLocation;
-        case UseKNRTokLocs: return P.Tok.getLocation();
+        case UseSplitLineTokLocs: return P.PrevTokLocation;
       }
     }
     

@@ -778,7 +778,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
   if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     if (Tok.isAtStartOfLine()) {
-      T.setIgnored(BalancedDelimiterTracker::UseKNRTokLocs);
+      T.setIgnored(BalancedDelimiterTracker::UseSplitLineTokLocs);
     } else {
       Diag(Tok, diag::err_expected) << "newline";
       return ParseStatement(); // TODO: flush the rest of the line instead?
