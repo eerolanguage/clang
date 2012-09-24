@@ -184,7 +184,10 @@ private:
   // Cache of the "ipa-always-inline-size" setting.
   // \sa getAlwaysInlineSize
   llvm::Optional<unsigned> AlwaysInlineSize;
-  
+
+  /// \sa shouldPruneNullReturnPaths
+  llvm::Optional<bool> PruneNullReturnPaths;
+
   /// Interprets an option's string value as a boolean.
   ///
   /// Accepts the strings "true" and "false".
@@ -226,11 +229,25 @@ public:
   /// accepts the values "true" and "false".
   bool mayInlineTemplateFunctions() const;
 
+  /// Returns whether or not paths that go through null returns should be
+  /// suppressed.
+  ///
+  /// This is a heuristic for avoiding bug reports with paths that go through
+  /// inlined functions that are more defensive than their callers.
+  ///
+  /// This is controlled by the 'suppress-null-return-paths' config option,
+  /// which accepts the values "true" and "false".
+  bool shouldPruneNullReturnPaths() const;
+
   // Returns the size of the functions (in basic blocks), which should be
   // considered to be small enough to always inline.
   //
   // This is controlled by "ipa-always-inline-size" analyzer-config option.
   unsigned getAlwaysInlineSize() const;
+  
+  /// Returns true if the analyzer engine should synthesize fake bodies
+  /// for well-known functions.
+  bool shouldSynthesizeBodies() const;
 
 public:
   AnalyzerOptions() : CXXMemberInliningMode() {

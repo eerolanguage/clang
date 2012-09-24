@@ -64,6 +64,7 @@ void beginNoWarnOnWrites() EXCLUSIVE_LOCK_FUNCTION("*");
 void endNoWarnOnWrites()   UNLOCK_FUNCTION("*");
 
 
+// For testing handling of smart pointers.
 template<class T>
 class SmartPtr {
 public:
@@ -78,6 +79,15 @@ public:
 private:
   T* ptr_;
 };
+
+
+// For testing destructor calls and cleanup.
+class MyString {
+public:
+  MyString(const char* s);
+  ~MyString();
+};
+
 
 
 Mutex sls_mu;
@@ -1655,6 +1665,8 @@ void bar() {
 };  // end namespace FunctionAttrTest
 
 
+namespace TryLockTest {
+
 struct TestTryLock {
   Mutex mu;
   int a GUARDED_BY(mu);
@@ -1751,7 +1763,35 @@ struct TestTryLock {
       b = !b;
     }
   }
+
+  // Test merge of exclusive trylock
+  void foo11() {
+   if (cond) {
+     if (!mu.TryLock())
+       return;
+   }
+   else {
+     mu.Lock();
+   }
+   a = 10;
+   mu.Unlock();
+  }
+
+  // Test merge of shared trylock
+  void foo12() {
+   if (cond) {
+     if (!mu.ReaderTryLock())
+       return;
+   }
+   else {
+     mu.ReaderLock();
+   }
+   int i = a;
+   mu.Unlock();
+  }
 };  // end TestTrylock
+
+} // end namespace TrylockTest
 
 
 namespace TestTemplateAttributeInstantiation {
@@ -3220,12 +3260,6 @@ void Base::bar(Inner* i) {
 
 namespace TrylockWithCleanups {
 
-class MyString {
-public:
-  MyString(const char* s);
-  ~MyString();
-};
-
 struct Foo {
   Mutex mu_;
   int a GUARDED_BY(mu_);
@@ -3430,6 +3464,7 @@ public:
 };
 
 void exitNow() __attribute__((noreturn));
+void exitDestruct(const MyString& ms) __attribute__((noreturn));
 
 Mutex fatalmu_;
 
@@ -3452,4 +3487,40 @@ void test3() EXCLUSIVE_LOCKS_REQUIRED(fatalmu_) {
   }
 }
 
+void test4() EXCLUSIVE_LOCKS_REQUIRED(fatalmu_) {
+  exitDestruct("foo");
+}
+
 }   // end namespace UnreachableExitTest
+
+
+namespace VirtualMethodCanonicalizationTest {
+
+class Base {
+public:
+  virtual Mutex* getMutex() = 0;
+};
+
+class Base2 : public Base {
+public:
+  Mutex* getMutex();
+};
+
+class Base3 : public Base2 {
+public:
+  Mutex* getMutex();
+};
+
+class Derived : public Base3 {
+public:
+  Mutex* getMutex();  // overrides Base::getMutex()
+};
+
+void baseFun(Base *b) EXCLUSIVE_LOCKS_REQUIRED(b->getMutex()) { }
+
+void derivedFun(Derived *d) EXCLUSIVE_LOCKS_REQUIRED(d->getMutex()) {
+  baseFun(d);
+}
+
+}  // end namespace VirtualMethodCanonicalizationTest
+
