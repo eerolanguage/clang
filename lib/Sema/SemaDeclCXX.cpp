@@ -373,10 +373,10 @@ void Sema::CheckExtraCXXDefaultArguments(Declarator &D) {
   }
 }
 
-// MergeCXXFunctionDecl - Merge two declarations of the same C++
-// function, once we already know that they have the same
-// type. Subroutine of MergeFunctionDecl. Returns true if there was an
-// error, false otherwise.
+/// MergeCXXFunctionDecl - Merge two declarations of the same C++
+/// function, once we already know that they have the same
+/// type. Subroutine of MergeFunctionDecl. Returns true if there was an
+/// error, false otherwise.
 bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
                                 Scope *S) {
   bool Invalid = false;
@@ -1717,7 +1717,7 @@ namespace {
           unsigned diag = VD->getType()->isReferenceType()
               ? diag::warn_reference_field_is_uninit
               : diag::warn_field_is_uninit;
-          S.Diag(ME->getExprLoc(), diag);
+          S.Diag(ME->getExprLoc(), diag) << ME->getMemberNameInfo().getName();
           return;
         }
       }
@@ -3838,6 +3838,11 @@ void Sema::CheckCompletedCXXClass(CXXRecordDecl *Record) {
     if (!dtor || (!dtor->isVirtual() && dtor->getAccess() == AS_public))
       Diag(dtor ? dtor->getLocation() : Record->getLocation(),
            diag::warn_non_virtual_dtor) << Context.getRecordType(Record);
+  }
+
+  if (Record->isAbstract() && Record->hasAttr<FinalAttr>()) {
+    Diag(Record->getLocation(), diag::warn_abstract_final_class);
+    DiagnoseAbstractType(Record);
   }
 
   // See if a method overloads virtual methods in a base

@@ -90,6 +90,14 @@ bool AnalyzerOptions::mayInlineObjCMethod() const {
   return *ObjCInliningMode;
 }
 
+bool AnalyzerOptions::shouldPruneNullReturnPaths() const {
+  if (!PruneNullReturnPaths.hasValue())
+    const_cast<llvm::Optional<bool> &>(PruneNullReturnPaths) =
+      getBooleanOption("suppress-null-return-paths", /*Default=*/true);
+
+  return *PruneNullReturnPaths;
+}
+
 int AnalyzerOptions::getOptionAsInteger(StringRef Name, int DefaultVal) const {
   std::string OptStr = Config.lookup(Name);
   if (OptStr.empty())
@@ -110,4 +118,8 @@ unsigned AnalyzerOptions::getAlwaysInlineSize() const {
   }
 
   return AlwaysInlineSize.getValue();
+}
+
+bool AnalyzerOptions::shouldSynthesizeBodies() const {
+  return getBooleanOption("faux-bodies", true);
 }

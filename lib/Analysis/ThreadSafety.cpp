@@ -226,8 +226,21 @@ private:
     return NodeVec.size()-1;
   }
 
-  unsigned makeMCall(unsigned NumArgs, const NamedDecl *D) {
-    NodeVec.push_back(SExprNode(EOP_MCall, NumArgs, D));
+  // Grab the very first declaration of virtual method D
+  const CXXMethodDecl* getFirstVirtualDecl(const CXXMethodDecl *D) {
+    while (true) {
+      D = D->getCanonicalDecl();
+      CXXMethodDecl::method_iterator I = D->begin_overridden_methods(),
+                                     E = D->end_overridden_methods();
+      if (I == E)
+        return D;  // Method does not override anything
+      D = *I;      // FIXME: this does not work with multiple inheritance.
+    }
+    return 0;
+  }
+
+  unsigned makeMCall(unsigned NumArgs, const CXXMethodDecl *D) {
+    NodeVec.push_back(SExprNode(EOP_MCall, NumArgs, getFirstVirtualDecl(D)));
     return NodeVec.size()-1;
   }
 
@@ -328,8 +341,7 @@ private:
         return buildSExpr(CMCE->getImplicitObjectArgument(), CallCtx, NDeref);
       }
       unsigned NumCallArgs = CMCE->getNumArgs();
-      unsigned Root =
-        makeMCall(NumCallArgs, CMCE->getMethodDecl()->getCanonicalDecl());
+      unsigned Root = makeMCall(NumCallArgs, CMCE->getMethodDecl());
       unsigned Sz = buildSExpr(CMCE->getImplicitObjectArgument(), CallCtx);
       Expr** CallArgs = CMCE->getArgs();
       for (unsigned i = 0; i < NumCallArgs; ++i) {
@@ -880,6 +892,7 @@ struct CFGBlockInfo {
   SourceLocation EntryLoc;      // Location of first statement in block
   SourceLocation ExitLoc;       // Location of last statement in block.
   unsigned EntryIndex;          // Used to replay contexts later
+  bool Reachable;               // Is this block reachable?
 
   const FactSet &getSet(CFGBlockSide Side) const {
     return Side == CBS_Entry ? EntrySet : ExitSet;
@@ -890,7 +903,7 @@ struct CFGBlockInfo {
 
 private:
   CFGBlockInfo(LocalVarContext EmptyCtx)
-    : EntryContext(EmptyCtx), ExitContext(EmptyCtx)
+    : EntryContext(EmptyCtx), ExitContext(EmptyCtx), Reachable(false)
   { }
 
 public:
@@ -1669,7 +1682,7 @@ void ThreadSafetyAnalyzer::getEdgeLockset(FactSet& Result,
       case attr::SharedTrylockFunction: {
         SharedTrylockFunctionAttr *A =
           cast<SharedTrylockFunctionAttr>(Attr);
-        getMutexIDs(ExclusiveLocksToAdd, A, Exp, FunDecl,
+        getMutexIDs(SharedLocksToAdd, A, Exp, FunDecl,
                     PredBlock, CurrBlock, A->getSuccessValue(), Negate);
         break;
       }
@@ -2171,6 +2184,9 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   PostOrderCFGView *SortedGraph = AC.getAnalysis<PostOrderCFGView>();
   PostOrderCFGView::CFGBlockSet VisitedBlocks(CFGraph);
 
+  // Mark entry block as reachable
+  BlockInfo[CFGraph->getEntry().getBlockID()].Reachable = true;
+
   // Compute SSA names for local variables
   LocalVarMap.traverseCFG(CFGraph, SortedGraph, BlockInfo);
 
@@ -2258,9 +2274,15 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
       if (*PI == 0 || !VisitedBlocks.alreadySet(*PI))
         continue;
 
+      int PrevBlockID = (*PI)->getBlockID();
+      CFGBlockInfo *PrevBlockInfo = &BlockInfo[PrevBlockID];
+
       // Ignore edges from blocks that can't return.
-      if ((*PI)->hasNoReturnElement())
+      if ((*PI)->hasNoReturnElement() || !PrevBlockInfo->Reachable)
         continue;
+
+      // Okay, we can reach this block from the entry.
+      CurrBlockInfo->Reachable = true;
 
       // If the previous block ended in a 'continue' or 'break' statement, then
       // a difference in locksets is probably due to a bug in that block, rather
@@ -2273,8 +2295,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
         }
       }
 
-      int PrevBlockID = (*PI)->getBlockID();
-      CFGBlockInfo *PrevBlockInfo = &BlockInfo[PrevBlockID];
+
       FactSet PrevLockset;
       getEdgeLockset(PrevLockset, PrevBlockInfo->ExitSet, *PI, CurrBlock);
 
@@ -2287,6 +2308,10 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
                          LEK_LockedSomePredecessors);
       }
     }
+
+    // Skip rest of block if it's not reachable.
+    if (!CurrBlockInfo->Reachable)
+      continue;
 
     // Process continue and break blocks. Assume that the lockset for the
     // resulting block is unaffected by any discrepancies in them.
@@ -2374,22 +2399,12 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
     }
   }
 
-
-  // Check to make sure that the exit block is reachable
-  bool ExitUnreachable = true;
-  for (CFGBlock::const_pred_iterator PI = CFGraph->getExit().pred_begin(),
-       PE  = CFGraph->getExit().pred_end(); PI != PE; ++PI) {
-    if (!(*PI)->hasNoReturnElement()) {
-      ExitUnreachable = false;
-      break;
-    }
-  }
-  // Skip the final check if the exit block is unreachable.
-  if (ExitUnreachable)
-    return;
-
   CFGBlockInfo *Initial = &BlockInfo[CFGraph->getEntry().getBlockID()];
   CFGBlockInfo *Final   = &BlockInfo[CFGraph->getExit().getBlockID()];
+
+  // Skip the final check if the exit block is unreachable.
+  if (!Final->Reachable)
+    return;
 
   // FIXME: Should we call this function for all blocks which exit the function?
   intersectAndWarn(Initial->EntrySet, Final->ExitSet,

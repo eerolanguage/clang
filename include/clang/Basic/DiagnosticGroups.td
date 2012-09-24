@@ -49,6 +49,7 @@ def DefaultArgSpecialMember : DiagGroup<"default-arg-special-member">;
 def GNUDesignator : DiagGroup<"gnu-designator">;
 
 def DeleteNonVirtualDtor : DiagGroup<"delete-non-virtual-dtor">;
+def AbstractFinalClass : DiagGroup<"abstract-final-class">;
 
 def DeprecatedDeclarations : DiagGroup<"deprecated-declarations">;
 def DeprecatedWritableStr : DiagGroup<"deprecated-writable-strings">;
@@ -60,9 +61,14 @@ def DeprecatedImplementations :DiagGroup<"deprecated-implementations">;
 def : DiagGroup<"disabled-optimization">;
 def : DiagGroup<"discard-qual">;
 def : DiagGroup<"div-by-zero">;
+
 def DocumentationHTML : DiagGroup<"documentation-html">;
 def DocumentationPedantic : DiagGroup<"documentation-pedantic">;
-def Documentation : DiagGroup<"documentation", [DocumentationHTML]>;
+def DocumentationDeprecatedSync : DiagGroup<"documentation-deprecated-sync">;
+def Documentation : DiagGroup<"documentation",
+                              [DocumentationHTML,
+                               DocumentationDeprecatedSync]>;
+
 def EmptyBody : DiagGroup<"empty-body">;
 def ExtraTokens : DiagGroup<"extra-tokens">;
 def CXX11ExtraSemi : DiagGroup<"c++11-extra-semi">;
@@ -195,8 +201,9 @@ def : DiagGroup<"synth">;
 def SizeofArrayArgument : DiagGroup<"sizeof-array-argument">;
 def StringPlusInt : DiagGroup<"string-plus-int">;
 def StrncatSize : DiagGroup<"strncat-size">;
-def TautologicalCompare : DiagGroup<"tautological-compare">;
-def TautologicalOutofRangeCompare : DiagGroup<"tautological-constant-out-of-range-compare">;
+def TautologicalOutOfRangeCompare : DiagGroup<"tautological-constant-out-of-range-compare">;
+def TautologicalCompare : DiagGroup<"tautological-compare",
+                                    [TautologicalOutOfRangeCompare]>;
 def HeaderHygiene : DiagGroup<"header-hygiene">;
 def DuplicateDeclSpecifier : DiagGroup<"duplicate-decl-specifier">;
 

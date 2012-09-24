@@ -1198,10 +1198,19 @@ Sema::SemaBuiltinAtomicOverloaded(ExprResult TheCallResult) {
   // concrete integer type we should convert to is.
   unsigned NewBuiltinID = BuiltinIndices[BuiltinIndex][SizeIndex];
   const char *NewBuiltinName = Context.BuiltinInfo.GetName(NewBuiltinID);
-  IdentifierInfo *NewBuiltinII = PP.getIdentifierInfo(NewBuiltinName);
-  FunctionDecl *NewBuiltinDecl =
-    cast<FunctionDecl>(LazilyCreateBuiltin(NewBuiltinII, NewBuiltinID,
-                                           TUScope, false, DRE->getLocStart()));
+  FunctionDecl *NewBuiltinDecl;
+  if (NewBuiltinID == BuiltinID)
+    NewBuiltinDecl = FDecl;
+  else {
+    // Perform builtin lookup to avoid redeclaring it.
+    DeclarationName DN(&Context.Idents.get(NewBuiltinName));
+    LookupResult Res(*this, DN, DRE->getLocStart(), LookupOrdinaryName);
+    LookupName(Res, TUScope, /*AllowBuiltinCreation=*/true);
+    assert(Res.getFoundDecl());
+    NewBuiltinDecl = dyn_cast<FunctionDecl>(Res.getFoundDecl());
+    if (NewBuiltinDecl == 0)
+      return ExprError();
+  }
 
   // The first argument --- the pointer --- has a fixed type; we
   // deduce the types of the rest of the arguments accordingly.  Walk
@@ -4302,41 +4311,40 @@ static void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
 }
 
 static void DiagnoseOutOfRangeComparison(Sema &S, BinaryOperator *E,
-                                         Expr *lit, Expr *other,
+                                         Expr *Constant, Expr *Other,
                                          llvm::APSInt Value,
-                                         bool rhsLiteral) {
+                                         bool RhsConstant) {
   BinaryOperatorKind op = E->getOpcode();
-  QualType OtherT = other->getType();
-  const Type *OtherPtrT = S.Context.getCanonicalType(OtherT).getTypePtr();
-  const Type *LitPtrT = S.Context.getCanonicalType(lit->getType()).getTypePtr();
-  if (OtherPtrT == LitPtrT)
+  QualType OtherT = Other->getType();
+  QualType ConstantT = Constant->getType();
+  if (S.Context.hasSameUnqualifiedType(OtherT, ConstantT))
     return;
-  assert((OtherT->isIntegerType() && LitPtrT->isIntegerType())
+  assert((OtherT->isIntegerType() && ConstantT->isIntegerType())
          && "comparison with non-integer type");
+  // FIXME. handle cases for signedness to catch (signed char)N == 200
   IntRange OtherRange = IntRange::forValueOfType(S.Context, OtherT);
-  IntRange LitRange = GetExprRange(S.Context, lit);
+  IntRange LitRange = GetValueRange(S.Context, Value, Value.getBitWidth());
   if (OtherRange.Width >= LitRange.Width)
     return;
-  std::string PrettySourceValue = Value.toString(10);
   bool IsTrue = true;
   if (op == BO_EQ)
     IsTrue = false;
   else if (op == BO_NE)
     IsTrue = true;
-  else if (rhsLiteral) {
+  else if (RhsConstant) {
     if (op == BO_GT || op == BO_GE)
       IsTrue = !LitRange.NonNegative;
     else // op == BO_LT || op == BO_LE
       IsTrue = LitRange.NonNegative;
-  }
-  else {
+  } else {
     if (op == BO_LT || op == BO_LE)
       IsTrue = !LitRange.NonNegative;
     else // op == BO_GT || op == BO_GE
       IsTrue = LitRange.NonNegative;
   }
-  S.Diag(E->getOperatorLoc(), diag::warn_outof_range_compare)
-  << PrettySourceValue << other->getType() << IsTrue
+  SmallString<16> PrettySourceValue(Value.toString(10));
+  S.Diag(E->getOperatorLoc(), diag::warn_out_of_range_compare)
+  << PrettySourceValue << OtherT << IsTrue
   << E->getLHS()->getSourceRange() << E->getRHS()->getSourceRange();
 }
 
@@ -4363,7 +4371,7 @@ static void AnalyzeComparison(Sema &S, BinaryOperator *E) {
   
   bool IsComparisonConstant = false;
   
-  // Check that an integer constant comparison results in a value
+  // Check whether an integer constant comparison results in a value
   // of 'true' or 'false'.
   if (T->isIntegralType(S.Context)) {
     llvm::APSInt RHSValue;
@@ -4379,9 +4387,8 @@ static void AnalyzeComparison(Sema &S, BinaryOperator *E) {
     else
       IsComparisonConstant = 
         (IsRHSIntegralLiteral && IsLHSIntegralLiteral);
-  }
-  else if (!T->hasUnsignedIntegerRepresentation())
-    IsComparisonConstant = E->isIntegerConstantExpr(S.Context);
+  } else if (!T->hasUnsignedIntegerRepresentation())
+      IsComparisonConstant = E->isIntegerConstantExpr(S.Context);
   
   // We don't do anything special if this isn't an unsigned integral
   // comparison:  we're only interested in integral comparisons, and
