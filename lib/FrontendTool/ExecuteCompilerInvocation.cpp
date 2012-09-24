@@ -80,6 +80,7 @@ static FrontendAction *CreateFrontendBaseAction(CompilerInstance &CI) {
 
   case RewriteMacros:          return new RewriteMacrosAction();
   case RewriteObjC:            return new RewriteObjCAction();
+  case RewriteEeroToObjC:      return new RewriteEeroToObjCAction();
   case RewriteTest:            return new RewriteTestAction();
   case RunAnalysis:            return new ento::AnalysisAction();
   case MigrateSource:          return new arcmt::MigrateSourceAction();

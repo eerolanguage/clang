@@ -106,6 +106,7 @@ bool types::isOnlyAcceptedByClang(ID Id) {
   case TY_LLVM_BC:
   case TY_RewrittenObjC:
   case TY_RewrittenLegacyObjC:
+  case TY_RewrittenEeroToObjC:
     return true;
   }
 }

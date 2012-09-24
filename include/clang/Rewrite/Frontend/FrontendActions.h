@@ -63,6 +63,12 @@ protected:
                                          StringRef InFile);
 };
 
+class RewriteEeroToObjCAction : public ASTFrontendAction {
+protected:
+  virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
+                                         StringRef InFile);
+};
+
 class RewriteMacrosAction : public PreprocessorFrontendAction {
 protected:
   void ExecuteAction();

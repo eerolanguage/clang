@@ -3,6 +3,7 @@ add_clang_library(clangRewriteFrontend
   FrontendActions.cpp
   HTMLPrint.cpp
   InclusionRewriter.cpp
+  RewriteEeroToObjC.cpp
   RewriteMacros.cpp
   RewriteModernObjC.cpp
   RewriteObjC.cpp

@@ -460,6 +460,7 @@ static const char *getActionName(frontend::ActionKind Kind) {
   case frontend::PrintPreprocessedInput: return "-E";
   case frontend::RewriteMacros:          return "-rewrite-macros";
   case frontend::RewriteObjC:            return "-rewrite-objc";
+  case frontend::RewriteEeroToObjC:      return "-rewrite-eero-to-objc";
   case frontend::RewriteTest:            return "-rewrite-test";
   case frontend::RunAnalysis:            return "-analyze";
   case frontend::MigrateSource:          return "-migrate";
@@ -1526,6 +1527,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       Opts.ProgramAction = frontend::RewriteMacros; break;
     case OPT_rewrite_objc:
       Opts.ProgramAction = frontend::RewriteObjC; break;
+    case OPT_rewrite_eero_to_objc:
+      Opts.ProgramAction = frontend::RewriteEeroToObjC; break;
     case OPT_rewrite_test:
       Opts.ProgramAction = frontend::RewriteTest; break;
     case OPT_analyze:
@@ -2359,7 +2362,8 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   ParseHeaderSearchArgs(Res.getHeaderSearchOpts(), *Args);
   if (DashX != IK_AST && DashX != IK_LLVM_IR) {
     ParseLangArgs(*Res.getLangOpts(), *Args, DashX, Diags);
-    if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC)
+    if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC ||
+        Res.getFrontendOpts().ProgramAction == frontend::RewriteEeroToObjC)
       Res.getLangOpts()->ObjCExceptions = 1;
   }
   // FIXME: ParsePreprocessorArgs uses the FileManager to read the contents of

@@ -37,6 +37,13 @@ ASTConsumer *CreateModernObjCRewriter(const std::string &InFile,
                                 const LangOptions &LOpts,
                                 bool SilenceRewriteMacroWarning);
 
+// Translate Eero source code to standard Objective-C
+ASTConsumer *CreateEeroToObjCRewriter(const std::string &InFile,
+                                      raw_ostream *OS,
+                                      DiagnosticsEngine &Diags,
+                                      const LangOptions &LOpts,
+                                      bool SilenceRewriteMacroWarning);
+
 /// CreateHTMLPrinter - Create an AST consumer which rewrites source code to
 /// HTML with syntax highlighting suitable for viewing in a web-browser.
 ASTConsumer *CreateHTMLPrinter(raw_ostream *OS, Preprocessor &PP,
