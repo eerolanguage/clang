@@ -3616,7 +3616,7 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
       result = ActOnInstanceMessage(S,
                                     LHSExpr, 
                                     Sel,
-                                    TokLoc, TokLoc, TokLoc,
+                                    LHSExpr->getLocStart(), TokLoc, RHSExpr->getLocEnd(),
                                     MultiExprArg(&RHSExpr, 1));
       if (invert) {
         result = CreateBuiltinUnaryOp(TokLoc, UO_LNot, result.take());
