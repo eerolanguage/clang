@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Lex/Lexer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/AST/DeclCXX.h"
@@ -70,7 +71,19 @@ namespace  {
 
     void PrintExpr(Expr *E) {
       if (E)
-        Visit(E);
+        if (Policy.DoNotExpandMacros &&
+            Policy.SourceMgr &&
+            E->getLocStart().isMacroID()) {
+          const SourceLocation& ExansionLoc =
+              Policy.SourceMgr->getExpansionLoc(E->getLocStart());
+          SmallVector<char, 64> buffer;
+          OS << Lexer::getSpelling(ExansionLoc,
+                                   buffer,
+                                   *Policy.SourceMgr,
+                                   Policy.LangOpts);
+        }
+        else
+          Visit(E);
       else
         OS << "<null expr>";
     }

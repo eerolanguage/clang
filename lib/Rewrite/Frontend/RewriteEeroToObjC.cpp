@@ -199,7 +199,7 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext &C) {
 
   if (Diags.hasErrorOccurred())
     return;
-
+  
   Visitor.Initialize();
 
   Visitor.TraverseDecl(C.getTranslationUnitDecl());
@@ -646,6 +646,8 @@ void TranslatorVisitor::Initialize() {
   SM = &(TheRewriter.getSourceMgr());
   LangOpts = &(TheRewriter.getLangOpts());
   Policy = new PrintingPolicy(*LangOpts);
+  Policy->DoNotExpandMacros = true;
+  Policy->SourceMgr = SM;
 }
 
 //------------------------------------------------------------------------------------------------
@@ -669,22 +671,25 @@ void TranslatorVisitor::Finalize() {
 //
 string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) {
 
-  string stringBuf = TheRewriter.ConvertToString(S);
+  string stringBuf;
+  llvm::raw_string_ostream stringStream(stringBuf);
+  S->printPretty(stringStream, 0, *Policy);
+  string str = stringStream.str();
 
   // Get rid of the extra newline the pretty printer adds
   //
-  if (*(stringBuf.end() - 1) == '\n') {
-    stringBuf.erase(stringBuf.end() - 1);
+  if (*(str.end() - 1) == '\n') {
+    str.erase(str.end() - 1);
   }
 
   // Normalize trailing ';'s
   //
   if (mode == NORMALIZE_SEMICOLONS) {
-    stringBuf.erase(remove(stringBuf.begin(), stringBuf.end(), ';'), stringBuf.end());
-    stringBuf += ';';
+    str.erase(remove(str.begin(), str.end(), ';'), str.end());
+    str += ';';
   }
 
-  return stringBuf;
+  return str;
 }
 
 //------------------------------------------------------------------------------------------------

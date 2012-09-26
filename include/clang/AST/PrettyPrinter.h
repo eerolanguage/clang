@@ -39,7 +39,7 @@ struct PrintingPolicy {
       SuppressUnwrittenScope(false), SuppressInitializers(false),
       ConstantArraySizeAsWritten(false), AnonymousTagLocations(true),
       SuppressStrongLifetime(false), Bool(LO.Bool),
-      TerseOutput(false), DumpSourceManager(0) { }
+      TerseOutput(false), DoNotExpandMacros(false), DumpSourceManager(0), SourceMgr(0) { }
 
   /// \brief What language we're printing.
   LangOptions LangOpts;
@@ -140,12 +140,20 @@ struct PrintingPolicy {
   /// declarations inside namespaces etc.  Effectively, this should print
   /// only the requested declaration.
   unsigned TerseOutput : 1;
+   
+  /// \brief Leave macros unexpanded.
+  ///
+  bool DoNotExpandMacros : 1;
 
   /// \brief If we are "dumping" rather than "pretty-printing", this points to
   /// a SourceManager which will be used to dump SourceLocations. Dumping
   /// involves printing the internal details of the AST and pretty-printing
   /// involves printing something similar to source code.
   SourceManager *DumpSourceManager;
+
+  /// \brief If "pretty-printing" and wish to print unexpanded macros, the
+  /// SourceManager instance must be made available to this object.
+  SourceManager *SourceMgr;
 };
 
 } // end namespace clang
