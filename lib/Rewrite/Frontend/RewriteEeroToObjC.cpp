@@ -3,19 +3,9 @@
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/AST/AST.h"
 #include "clang/AST/ASTConsumer.h"
-#include "clang/AST/ParentMap.h"
-#include "clang/AST/Comment.h"
 #include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/Basic/SourceManager.h"
-#include "clang/Basic/IdentifierTable.h"
-#include "clang/Basic/Diagnostic.h"
 #include "clang/Lex/Lexer.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/OwningPtr.h"
-#include "llvm/ADT/DenseSet.h"
 
 using namespace std;
 using namespace clang;
