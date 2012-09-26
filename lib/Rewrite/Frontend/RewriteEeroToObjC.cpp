@@ -29,7 +29,7 @@ namespace {
   {
     //---------------------------------------------------------------------------------------------
     public:
-      TranslatorVisitor(Rewriter &R) : TheRewriter(R)   {}
+      TranslatorVisitor(Rewriter &R) : TheRewriter(R) {}
 
       void Initialize();
       void Finalize();
@@ -69,18 +69,22 @@ namespace {
 
       int GetTokenLength(SourceLocation Loc);
 
+      SourceRange GetRange(SourceLocation LocStart, SourceLocation LocEnd);
+      SourceRange GetRange(SourceRange LocRange);
+      SourceRange GetRange(Stmt *S);
+
       void MoveLocToNextLine(SourceLocation &Loc);
       void MoveLocToEndOfLine(SourceLocation &Loc);
 
-      bool CheckForChar(const SourceLocation StartLoc,
-                        const SourceLocation EndLoc,
+      bool CheckForChar(const SourceLocation LocStart,
+                        const SourceLocation LocEnd,
                         const char c);
 
-      void AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation StartLoc,
-                                           const SourceLocation EndLoc);
+      void AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation LocStart,
+                                           const SourceLocation LocEnd);
                                                             
-      void AddAtToAccessSpecIfNeeded(const SourceLocation StartLoc,
-                                     const SourceLocation EndLoc);
+      void AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
+                                     const SourceLocation LocEnd);
 
       void DeferredInsertText(SourceLocation, string);
       void DeferredInsertTextAfterToken(SourceLocation, string);
@@ -89,8 +93,8 @@ namespace {
     //---------------------------------------------------------------------------------------------
     private:
       Rewriter &TheRewriter;
+      LangOptions LangOpts;
       SourceManager *SM;
-      const LangOptions *LangOpts;
       PrintingPolicy *Policy;
       
       // Set of strings to insert after all other rewriting is done
@@ -119,11 +123,9 @@ namespace {
       Rewriter Rewrite;
       DiagnosticsEngine &Diags;
       const LangOptions &LangOpts;
-  //    ASTContext *Context;
       SourceManager *SM;
-  //    TranslationUnitDecl *TUDecl;
+
       FileID MainFileID;
-      const char *MainFileStart, *MainFileEnd;
       string InFileName;
       raw_ostream* OutFile;
 
@@ -178,15 +180,8 @@ void RewriteEeroToObjC::InitializeCommon(ASTContext &context) {
 
   puts("----- InitializeCommon -----");
 
-//  Context = &context;
   SM = &(context.getSourceManager());
-//  TUDecl = context.getTranslationUnitDecl();
-
-  // Get the ID and start/end of the main file.
   MainFileID = SM->getMainFileID();
-  const llvm::MemoryBuffer *MainBuf = SM->getBuffer(MainFileID);
-  MainFileStart = MainBuf->getBufferStart();
-  MainFileEnd = MainBuf->getBufferEnd();
 
   Rewrite.setSourceMgr(*SM, context.getLangOpts());
 }
@@ -276,10 +271,10 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
 //
 void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl *ClassDecl) {
 
-  const SourceLocation StartLoc = ClassDecl->getAtStartLoc();
-  const SourceLocation EndLoc = ClassDecl->getLocEnd();
+  const SourceLocation LocStart = ClassDecl->getAtStartLoc();
+  const SourceLocation LocEnd = ClassDecl->getLocEnd();
 
-  AddAtToIfImpEndKeywordsIfNeeded(StartLoc, EndLoc);
+  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
   
   SourceLocation CurrentLoc;
 
@@ -389,7 +384,7 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl *Method) {
   // Make sure we handle generated methods with optional params -- don't overwrite
   //
   if (PreviousMethodLoc.isInvalid() || LocStart != PreviousMethodLoc) {
-    TheRewriter.ReplaceText(SourceRange(LocStart,LocEnd), resultStr);
+    TheRewriter.ReplaceText(GetRange(LocStart,LocEnd), resultStr);
   } else {
 //    TheRewriter.InsertText(LocStart, resultStr + "\n", false, true);
     resultStr += "\n";
@@ -402,10 +397,10 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl *Method) {
 //
 void TranslatorVisitor::RewriteImplementationDecl(ObjCImplementationDecl *ImpDecl) {
 
-  const SourceLocation StartLoc = ImpDecl->getAtStartLoc();
-  const SourceLocation EndLoc = ImpDecl->getLocEnd();
+  const SourceLocation LocStart = ImpDecl->getAtStartLoc();
+  const SourceLocation LocEnd = ImpDecl->getLocEnd();
 
-  AddAtToIfImpEndKeywordsIfNeeded(StartLoc, EndLoc);
+  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
 
   RewriteInstanceVariables(ImpDecl->ivar_begin(),
                            ImpDecl->ivar_end(),
@@ -460,7 +455,7 @@ void TranslatorVisitor::RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterato
       ivarStr += " ";
       ivarStr += I->getNameAsString();
       ivarStr += ";";
-      TheRewriter.ReplaceText(I->getSourceRange(), ivarStr);
+      TheRewriter.ReplaceText(GetRange(I->getSourceRange()), ivarStr);
 
       const SourceLocation loc = I->getLocEnd();
       const int len = GetTokenLength(loc);
@@ -508,7 +503,7 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
 //    printf("STMT: %s\n", GetStatementString(S).c_str());
     string Str = GetStatementString(S);
     if (!Str.empty()) {
-      TheRewriter.ReplaceText(S->getSourceRange(), GetStatementString(S));
+      TheRewriter.ReplaceText(GetRange(S), GetStatementString(S));
     }
   }
 }
@@ -531,8 +526,7 @@ void TranslatorVisitor::RewriteIfStatement(IfStmt* S) {
   condStr += GetStatementString(S->getCond(), DO_NOT_MODIFY_SEMICOLONS);
   condStr += ") {";
   
-  const SourceRange &CondRange = S->getCond()->getSourceRange();
-  TheRewriter.ReplaceText(CondRange, condStr);
+  TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
   
   if (Stmt *ElseStmt = S->getElse()) {
     DeferredInsertText(S->getElseLoc(), "} ");
@@ -561,9 +555,9 @@ void TranslatorVisitor::RewriteForStatement(ForStmt* S) {
   incStr += ')';
   incStr += " {";
   
-  TheRewriter.ReplaceText(SourceRange(S->getLParenLoc(), S->getInit()->getLocEnd()), initStr);
-  TheRewriter.ReplaceText(S->getCond()->getSourceRange(), condStr);
-  TheRewriter.ReplaceText(SourceRange(S->getInc()->getLocStart(), S->getRParenLoc()), incStr);
+  TheRewriter.ReplaceText(GetRange(S->getLParenLoc(), S->getInit()->getLocEnd()), initStr);
+  TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
+  TheRewriter.ReplaceText(GetRange(S->getInc()->getLocStart(), S->getRParenLoc()), incStr);
   
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }
@@ -580,7 +574,7 @@ void TranslatorVisitor::RewriteSwitchStatement(SwitchStmt* S) {
   }
   
   condStr += " {";
-  TheRewriter.ReplaceText(SourceRange(S->getCond()->getSourceRange()), condStr);
+  TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }
@@ -589,7 +583,7 @@ void TranslatorVisitor::RewriteSwitchStatement(SwitchStmt* S) {
 //
 void TranslatorVisitor::RewriteCaseStatement(CaseStmt* S) {
   
-  const SourceRange range(S->getCaseLoc(), S->getColonLoc());
+  const SourceRange range = GetRange(S->getCaseLoc(), S->getColonLoc());
   string CaseStr = "case ";
   CaseStr += GetStatementString(S->getLHS(), DO_NOT_MODIFY_SEMICOLONS);
 
@@ -617,7 +611,7 @@ void TranslatorVisitor::RewriteCaseStatement(CaseStmt* S) {
 //
 void TranslatorVisitor::RewriteDefaultStatement(DefaultStmt* S) {
   
-  const SourceRange range(S->getDefaultLoc(), S->getColonLoc());
+  const SourceRange range = GetRange(S->getDefaultLoc(), S->getColonLoc());
   string DefaultStr = "default: {";
 
   TheRewriter.ReplaceText(range, DefaultStr);
@@ -633,7 +627,7 @@ void TranslatorVisitor::RewriteBreakStatement(BreakStmt* S) {
   std::string bufferStr(startBuf, sizeof("break") - 1);
 
   if (bufferStr == "break") { // regular break statement
-    TheRewriter.ReplaceText(S->getSourceRange(), GetStatementString(S));
+    TheRewriter.ReplaceText(GetRange(S), GetStatementString(S));
 
   } else { // inserted break
     DeferredInsertTextAtEndOfLine(S->getBreakLoc(), "\nbreak;");
@@ -643,9 +637,11 @@ void TranslatorVisitor::RewriteBreakStatement(BreakStmt* S) {
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::Initialize() {
+
   SM = &(TheRewriter.getSourceMgr());
-  LangOpts = &(TheRewriter.getLangOpts());
-  Policy = new PrintingPolicy(*LangOpts);
+  LangOpts = TheRewriter.getLangOpts();
+
+  Policy = new PrintingPolicy(LangOpts);
   Policy->DoNotExpandMacros = true;
   Policy->SourceMgr = SM;
 }
@@ -717,7 +713,34 @@ void TranslatorVisitor::DeferredInsertTextAtEndOfLine(SourceLocation Loc, string
 //------------------------------------------------------------------------------------------------
 //
 int TranslatorVisitor::GetTokenLength(SourceLocation Loc) {
-    return Lexer::MeasureTokenLength(Loc, *SM, *LangOpts);
+    return Lexer::MeasureTokenLength(Loc, *SM, LangOpts);
+}
+
+//------------------------------------------------------------------------------------------------
+//
+SourceRange TranslatorVisitor::GetRange(SourceLocation LocStart, SourceLocation LocEnd) {
+
+  if (LocStart.isMacroID()) {
+    LocStart = SM->getExpansionLoc(LocStart);
+  }  
+
+  if (LocEnd.isMacroID()) {
+    LocEnd = SM->getExpansionLoc(LocEnd);
+  }  
+
+  return SourceRange(LocStart, LocEnd);
+}
+
+//------------------------------------------------------------------------------------------------
+//
+SourceRange TranslatorVisitor::GetRange(SourceRange LocRange) {
+  return GetRange(LocRange.getBegin(), LocRange.getEnd());
+}
+
+//------------------------------------------------------------------------------------------------
+//
+SourceRange TranslatorVisitor::GetRange(Stmt *S) {
+  return GetRange(S->getSourceRange());
 }
 
 //------------------------------------------------------------------------------------------------
@@ -742,13 +765,13 @@ void TranslatorVisitor::MoveLocToEndOfLine(SourceLocation &Loc) {
 
 //------------------------------------------------------------------------------------------------
 //
-bool TranslatorVisitor::CheckForChar(const SourceLocation StartLoc,
-                                     const SourceLocation EndLoc,
+bool TranslatorVisitor::CheckForChar(const SourceLocation LocStart,
+                                     const SourceLocation LocEnd,
                                      const char c) {
 
   // String buffer for searche
-  const char *startBuf = SM->getCharacterData(StartLoc);
-  const char *endBuf = SM->getCharacterData(EndLoc);
+  const char *startBuf = SM->getCharacterData(LocStart);
+  const char *endBuf = SM->getCharacterData(LocEnd);
   std::string bufferStr(startBuf, endBuf-startBuf);
 
   const size_t pos = bufferStr.rfind(c);
@@ -761,28 +784,28 @@ bool TranslatorVisitor::CheckForChar(const SourceLocation StartLoc,
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation StartLoc,
-                                                        const SourceLocation EndLoc) {
+void TranslatorVisitor::AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation LocStart,
+                                                        const SourceLocation LocEnd) {
   // Add '@'s to beginning and end keywords, if needed
   //
-  const char *startBuf = SM->getCharacterData(StartLoc);
+  const char *startBuf = SM->getCharacterData(LocStart);
   if (startBuf[0] != '@') {
-    DeferredInsertText(StartLoc, "@");
+    DeferredInsertText(LocStart, "@");
   }
-  const char *endBuf = SM->getCharacterData(EndLoc);
+  const char *endBuf = SM->getCharacterData(LocEnd);
   if (endBuf[0] != '@') {
-    DeferredInsertText(EndLoc, "@");
+    DeferredInsertText(LocEnd, "@");
   }
 }
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation StartLoc,
-                                                  const SourceLocation EndLoc) {
+void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
+                                                  const SourceLocation LocEnd) {
   // String buffer for searches
   //
-  const char *startBuf = SM->getCharacterData(StartLoc);
-  const char *endBuf = SM->getCharacterData(EndLoc);
+  const char *startBuf = SM->getCharacterData(LocStart);
+  const char *endBuf = SM->getCharacterData(LocEnd);
   std::string bufferStr(startBuf, endBuf-startBuf);
 
   const char* keyword[] = { "private", "protected", "public", "package" };
@@ -794,7 +817,7 @@ void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation StartLoc,
     const size_t pos = bufferStr.rfind(keyword[i]);
     if (pos != std::string::npos) {
       if (pos == 0 || bufferStr[pos-1] != '@') {
-        DeferredInsertText(StartLoc.getLocWithOffset(pos), "@");
+        DeferredInsertText(LocStart.getLocWithOffset(pos), "@");
       }
     }
   }
