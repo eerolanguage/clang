@@ -73,7 +73,7 @@ namespace  {
       if (E)
         if (Policy.DoNotExpandMacros &&
             Policy.SourceMgr &&
-            E->getLocStart().isMacroID()) {
+            E->getLocStart().isMacroID() && E->getLocEnd().isMacroID()) {
           const SourceLocation& ExansionLoc =
               Policy.SourceMgr->getExpansionLoc(E->getLocStart());
           SmallVector<char, 64> buffer;
