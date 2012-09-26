@@ -371,16 +371,30 @@ namespace clang {
     bool ignored;
     TokenLocMode tokLocMode;
     SourceLocation getOpenLocForMode() {
+      SourceLocation Loc;
       switch (tokLocMode) {
-        case UseSameLineTokLocs: return P.Tok.getLocation();
-        case UseSplitLineTokLocs: return P.PrevTokLocation;
+        case UseSameLineTokLocs:
+          Loc = P.Tok.getLocation();
+          break;
+        case UseSplitLineTokLocs:
+          Loc = P.PrevTokLocation;
+          break;
       }
+      if (Loc.isMacroID())
+        Loc = P.PP.getSourceManager().getExpansionLoc(Loc);
+      return Loc;
     }
     SourceLocation getCloseLocForMode() {
+      SourceLocation Loc;
       switch (tokLocMode) {
-        case UseSameLineTokLocs: return P.PrevTokLocation;
-        case UseSplitLineTokLocs: return P.PrevTokLocation;
+        case UseSameLineTokLocs:
+        case UseSplitLineTokLocs:
+          Loc = P.PrevTokLocation;
+          break;
       }
+      if (Loc.isMacroID())
+        Loc = P.PP.getSourceManager().getExpansionLoc(Loc);
+      return Loc;
     }
     
     unsigned short &getDepth() {

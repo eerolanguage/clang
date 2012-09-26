@@ -720,10 +720,15 @@ private:
   // token before it on a new line, keeping both newlines.
   //
   void InsertTokenAndKeepNewline(const tok::TokenKind tokenKind) {
+    SourceLocation Loc = Tok.getLocation();
+    if (Loc.isMacroID()) {
+      Loc = PP.getSourceManager().getExpansionLoc(Loc);
+    }
     PP.EnterToken(Tok);
     Tok.setKind(tokenKind);
     Tok.setLength(0);
     Tok.setIdentifierInfo(0);
+    Tok.setLocation(Loc);
   }
 
   // If current token is at the start of a new line, put this
@@ -751,7 +756,12 @@ private:
     InsertTokenAndKeepNewline(tokenKind);
     Tok.clearFlag(Token::LeadingSpace);
     Tok.clearFlag(Token::StartOfLine);
-    Tok.setLocation(PrevTokLocation);
+
+    SourceLocation Loc = PrevTokLocation;
+    if (Loc.isMacroID()) {
+      Loc = PP.getSourceManager().getExpansionLoc(Loc);
+    }
+    Tok.setLocation(Loc);
   }
 
   unsigned Column(const SourceLocation& Loc) {
