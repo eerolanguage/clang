@@ -2194,8 +2194,13 @@ Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
   }
 
   // The operand is surrounded with parentheses.
-  if (!getLangOpts().Eero)
+  if (!getLangOpts().Eero) {
     ConsumeParen();  // '('
+  } else if (Tok.isAtStartOfLine()) {
+    Diag(PrevTokLocation, diag::err_expected) <<
+        "expression after synchronized keyword (found newline)";
+    return StmtError();
+  }
   ExprResult operand(ParseExpression());
 
   if (Tok.is(tok::r_paren)) {
