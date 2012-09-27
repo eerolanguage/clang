@@ -429,24 +429,23 @@ void TranslatorVisitor::RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterato
                                                  ObjCInterfaceDecl::ivar_iterator E,
                                                  SourceLocation LBraceLoc,
                                                  SourceLocation RBraceLoc) {
-  if (I != E) {
+  bool addCurlyBraces = false;
+  SourceLocation SearchLoc = LBraceLoc;
 
-    // Look for relevant curly braces
-    //
-    bool addCurlyBraces = false;
-    if (RBraceLoc.isInvalid()) {
-      addCurlyBraces = !CheckForChar(LBraceLoc, I->getLocStart(), '{');
-    } else {
-      const char* buf = SM->getCharacterData(LBraceLoc);
-      addCurlyBraces = (buf[0] != '{');
-    }
+  for (bool first = true; I != E; I++) {
 
-    if (addCurlyBraces) {
-      DeferredInsertTextAfterToken(LBraceLoc, " {");
-    }
+    if (!I->getSynthesize()) { // ignore synthesized ivars
 
-    SourceLocation SearchLoc = LBraceLoc;
-    do {
+      if (first) { // look for relevant curly braces
+        if (RBraceLoc.isInvalid()) {
+          addCurlyBraces = !CheckForChar(LBraceLoc, I->getLocStart(), '{');
+        } else {
+          const char* buf = SM->getCharacterData(LBraceLoc);
+          addCurlyBraces = (buf[0] != '{');
+        }
+        first = false;
+      }
+
       // Look for access control specifier preceding this var
       //
       AddAtToAccessSpecIfNeeded(SearchLoc, I->getLocStart());
@@ -460,17 +459,17 @@ void TranslatorVisitor::RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterato
       const SourceLocation loc = I->getLocEnd();
       const int len = GetTokenLength(loc);
       SearchLoc = loc.getLocWithOffset(len);
-
-      ++I;
-    } while (I != E);
-
-    if (addCurlyBraces) {
-      // Instead of using the RBraceLoc, just skip to the next line after the
-      // last ivar declaration.
-      //
-      MoveLocToNextLine(SearchLoc);
-      DeferredInsertText(SearchLoc, "}");
     }
+  }
+
+  if (addCurlyBraces) {
+    DeferredInsertTextAfterToken(LBraceLoc, " {");
+
+    // Instead of using the RBraceLoc, just skip to the next line after the
+    // last ivar declaration.
+    //
+    MoveLocToNextLine(SearchLoc);
+    DeferredInsertText(SearchLoc, "}");
   }
 }
 
