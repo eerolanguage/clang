@@ -2053,7 +2053,7 @@ bool Lexer::SaveBCPLComment(Token &Result, const char *CurPtr) {
   Spelling += "*/";    // add suffix.
 
   Result.setKind(tok::comment);
-  PP->CreateString(&Spelling[0], Spelling.size(), Result,
+  PP->CreateString(Spelling, Result,
                    Result.getLocation(), Result.getLocation());
   return true;
 }

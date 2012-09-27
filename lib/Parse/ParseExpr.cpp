@@ -1256,6 +1256,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw___is_class:
   case tok::kw___is_empty:
   case tok::kw___is_enum:
+  case tok::kw___is_interface_class:
   case tok::kw___is_literal:
   case tok::kw___is_arithmetic:
   case tok::kw___is_integral:
@@ -1813,7 +1814,8 @@ ExprResult Parser::ParseUnaryExprOrTypeTraitExpression() {
   if (OpTok.is(tok::kw_alignof) || OpTok.is(tok::kw__Alignof))
     Diag(OpTok, diag::warn_cxx98_compat_alignof);
 
-  EnterExpressionEvaluationContext Unevaluated(Actions, Sema::Unevaluated);
+  EnterExpressionEvaluationContext Unevaluated(Actions, Sema::Unevaluated,
+                                               Sema::ReuseLambdaContextDecl);
 
   bool isCastExpr;
   ParsedType CastTy;

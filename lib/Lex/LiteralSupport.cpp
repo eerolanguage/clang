@@ -786,26 +786,39 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   }
 }
 
+static bool alwaysFitsInto64Bits(unsigned Radix, unsigned NumDigits) {
+  switch (Radix) {
+  case 2:
+    return NumDigits <= 64;
+  case 8:
+    return NumDigits <= 64 / 3; // Digits are groups of 3 bits.
+  case 10:
+    return NumDigits <= 19; // floor(log10(2^64))
+  case 16:
+    return NumDigits <= 64 / 4; // Digits are groups of 4 bits.
+  default:
+    llvm_unreachable("impossible Radix");
+  }
+}
 
 /// GetIntegerValue - Convert this numeric literal value to an APInt that
 /// matches Val's input width.  If there is an overflow, set Val to the low bits
 /// of the result and return true.  Otherwise, return false.
 bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
+  const LangOptions& Features(PP.getLangOpts());
+
   // Fast path: Compute a conservative bound on the maximum number of
   // bits per digit in this radix. If we can't possibly overflow a
   // uint64 based on that bound then do the simple conversion to
   // integer. This avoids the expensive overflow checking below, and
   // handles the common cases that matter (small decimal integers and
   // hex/octal values which don't overflow).
-  unsigned MaxBitsPerDigit = 1;
-  while ((1U << MaxBitsPerDigit) < radix)
-    MaxBitsPerDigit += 1;
-  const LangOptions& Features(PP.getLangOpts());
-  if ((SuffixBegin - DigitsBegin) * MaxBitsPerDigit <= 64) {
+  const unsigned NumDigits = SuffixBegin - DigitsBegin;
+  if (alwaysFitsInto64Bits(radix, NumDigits)) {
     uint64_t N = 0;
-    for (s = DigitsBegin; s != SuffixBegin; ++s)
-      if (!Features.UnderscoresInNumerals || *s != '_')
-        N = N*radix + HexDigitValue(*s);
+    for (const char *Ptr = DigitsBegin; Ptr != SuffixBegin; ++Ptr)
+      if (!Features.UnderscoresInNumerals || *Ptr != '_')
+        N = N * radix + HexDigitValue(*Ptr);
 
     // This will truncate the value to Val's input width. Simply check
     // for overflow by comparing.
@@ -814,19 +827,19 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
   }
 
   Val = 0;
-  s = DigitsBegin;
+  const char *Ptr = DigitsBegin;
 
   llvm::APInt RadixVal(Val.getBitWidth(), radix);
   llvm::APInt CharVal(Val.getBitWidth(), 0);
   llvm::APInt OldVal = Val;
 
   bool OverflowOccurred = false;
-  while (s < SuffixBegin) {
-    if (Features.UnderscoresInNumerals && *s == '_') {
+  while (Ptr < SuffixBegin) {
+    if (Features.UnderscoresInNumerals && *Ptr == '_') {
       s++;
       continue;
     }
-    unsigned C = HexDigitValue(*s++);
+    unsigned C = HexDigitValue(*Ptr++);
 
     // If this letter is out of bound for this radix, reject it.
     assert(C < radix && "NumericLiteralParser ctor should have rejected this");

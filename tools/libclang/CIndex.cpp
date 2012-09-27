@@ -1327,7 +1327,12 @@ bool CursorVisitor::VisitTemplateArgumentLoc(const TemplateArgumentLoc &TAL) {
     if (Expr *E = TAL.getSourceDeclExpression())
       return Visit(MakeCXCursor(E, StmtParent, TU, RegionOfInterest));
     return false;
-      
+
+  case TemplateArgument::NullPtr:
+    if (Expr *E = TAL.getSourceNullPtrExpression())
+      return Visit(MakeCXCursor(E, StmtParent, TU, RegionOfInterest));
+    return false;
+
   case TemplateArgument::Expression:
     if (Expr *E = TAL.getSourceExpression())
       return Visit(MakeCXCursor(E, StmtParent, TU, RegionOfInterest));
@@ -2712,7 +2717,8 @@ static void clang_saveTranslationUnit_Impl(void *UserData) {
   if (CXXIdx->isOptEnabled(CXGlobalOpt_ThreadBackgroundPriorityForIndexing))
     setThreadBackgroundPriority();
 
-  STUI->result = static_cast<ASTUnit *>(STUI->TU->TUData)->Save(STUI->FileName);
+  bool hadError = static_cast<ASTUnit *>(STUI->TU->TUData)->Save(STUI->FileName);
+  STUI->result = hadError ? CXSaveError_Unknown : CXSaveError_None;
 }
 
 int clang_saveTranslationUnit(CXTranslationUnit TU, const char *FileName,

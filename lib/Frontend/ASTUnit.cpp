@@ -2256,7 +2256,6 @@ void AugmentedCodeCompleteConsumer::ProcessCodeCompleteResults(Sema &S,
     
     // Adjust priority based on similar type classes.
     unsigned Priority = C->Priority;
-    CXCursorKind CursorKind = C->Kind;
     CodeCompletionString *Completion = C->Completion;
     if (!Context.getPreferredType().isNull()) {
       if (C->Kind == CXCursor_MacroDefinition) {
@@ -2290,12 +2289,11 @@ void AugmentedCodeCompleteConsumer::ProcessCodeCompleteResults(Sema &S,
       CodeCompletionBuilder Builder(getAllocator(), getCodeCompletionTUInfo(),
                                     CCP_CodePattern, C->Availability);
       Builder.AddTypedTextChunk(C->Completion->getTypedText());
-      CursorKind = CXCursor_NotImplemented;
       Priority = CCP_CodePattern;
       Completion = Builder.TakeString();
     }
     
-    AllResults.push_back(Result(Completion, Priority, CursorKind, 
+    AllResults.push_back(Result(Completion, Priority, C->Kind,
                                 C->Availability));
   }
   
@@ -2475,7 +2473,7 @@ void ASTUnit::CodeComplete(StringRef File, unsigned Line, unsigned Column,
   checkAndSanitizeDiags(StoredDiagnostics, getSourceManager());
 }
 
-CXSaveError ASTUnit::Save(StringRef File) {
+bool ASTUnit::Save(StringRef File) {
   // Write to a temporary file and later rename it to the actual file, to avoid
   // possible race conditions.
   SmallString<128> TempPath;
@@ -2484,7 +2482,7 @@ CXSaveError ASTUnit::Save(StringRef File) {
   int fd;
   if (llvm::sys::fs::unique_file(TempPath.str(), fd, TempPath,
                                  /*makeAbsolute=*/false))
-    return CXSaveError_Unknown;
+    return true;
 
   // FIXME: Can we somehow regenerate the stat cache here, or do we need to 
   // unconditionally create a stat cache when we parse the file?
@@ -2494,16 +2492,16 @@ CXSaveError ASTUnit::Save(StringRef File) {
   Out.close();
   if (Out.has_error()) {
     Out.clear_error();
-    return CXSaveError_Unknown;
+    return true;
   }
 
   if (llvm::sys::fs::rename(TempPath.str(), File)) {
     bool exists;
     llvm::sys::fs::remove(TempPath.str(), exists);
-    return CXSaveError_Unknown;
+    return true;
   }
 
-  return CXSaveError_None;
+  return false;
 }
 
 bool ASTUnit::serialize(raw_ostream &OS) {
