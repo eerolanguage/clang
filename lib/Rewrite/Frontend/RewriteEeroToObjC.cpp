@@ -12,161 +12,163 @@ using namespace clang;
 
 namespace {
 
-  //-----------------------------------------------------------------------------------------------
-  // TranslatorVisitor
-  //-----------------------------------------------------------------------------------------------
-  class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor>
-  {
-    //---------------------------------------------------------------------------------------------
-    public:
-      TranslatorVisitor(Rewriter &R) : TheRewriter(R) {}
+//-----------------------------------------------------------------------------------------------
+// TranslatorVisitor
+//-----------------------------------------------------------------------------------------------
+class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
-      void Initialize();
-      void Finalize();
+  //---------------------------------------------------------------------------------------------
+  public:
+    TranslatorVisitor(Rewriter& R) : TheRewriter(R) {}
 
-      // Inherited from RecursiveASTVisitor
-      //
-      bool VisitDecl(Decl *D);
-      bool VisitStmt(Stmt *S);
+    void Initialize();
+    void Finalize();
 
-      bool shouldVisitImplicitCode() const { return false; }
+    // Inherited from RecursiveASTVisitor
+    //
+    bool VisitDecl(Decl* D);
+    bool VisitStmt(Stmt* S);
 
-    //---------------------------------------------------------------------------------------------
-    protected:
+    bool shouldVisitImplicitCode() const {
+      return false;
+    }
 
-      void RewriteInterfaceDecl(ObjCInterfaceDecl *ClassDecl);
-      void RewriteMethodDeclaration(ObjCMethodDecl *Method);
-      void RewriteImplementationDecl(ObjCImplementationDecl *ImpDecl);
-      
-      void RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterator Begin,
-                                    ObjCInterfaceDecl::ivar_iterator End,
-                                    SourceLocation LBraceLoc,
-                                    SourceLocation RBraceLoc);
+  //---------------------------------------------------------------------------------------------
+  protected:
 
-      void RewriteStatement(Stmt* S);
-      void RewriteCompoundStatement(CompoundStmt* S);
-      void RewriteIfStatement(IfStmt* S);
-      void RewriteForStatement(ForStmt* S);
-      void RewriteSwitchStatement(SwitchStmt* S);
-      void RewriteCaseStatement(CaseStmt* S);
-      void RewriteDefaultStatement(DefaultStmt* S);
-      void RewriteBreakStatement(BreakStmt *S);
+    void RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl);
+    void RewriteMethodDeclaration(ObjCMethodDecl* Method);
+    void RewriteImplementationDecl(ObjCImplementationDecl* ImpDecl);
 
-      enum StatementStringMode { NORMALIZE_SEMICOLONS, DO_NOT_MODIFY_SEMICOLONS };
+    void RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterator Begin,
+                                  ObjCInterfaceDecl::ivar_iterator End,
+                                  SourceLocation LBraceLoc,
+                                  SourceLocation RBraceLoc);
 
-      string GetStatementString(Stmt* S,
-                                StatementStringMode mode = NORMALIZE_SEMICOLONS);
+    void RewriteStatement(Stmt* S);
+    void RewriteCompoundStatement(CompoundStmt* S);
+    void RewriteIfStatement(IfStmt* S);
+    void RewriteForStatement(ForStmt* S);
+    void RewriteSwitchStatement(SwitchStmt* S);
+    void RewriteCaseStatement(CaseStmt* S);
+    void RewriteDefaultStatement(DefaultStmt* S);
+    void RewriteBreakStatement(BreakStmt* S);
 
-      int GetTokenLength(SourceLocation Loc);
+    enum StatementStringMode { NORMALIZE_SEMICOLONS, DO_NOT_MODIFY_SEMICOLONS };
 
-      SourceRange GetRange(SourceLocation LocStart, SourceLocation LocEnd);
-      SourceRange GetRange(SourceRange LocRange);
-      SourceRange GetRange(Stmt *S);
+    string GetStatementString(Stmt* S,
+                              StatementStringMode mode = NORMALIZE_SEMICOLONS);
 
-      void MoveLocToNextLine(SourceLocation &Loc);
-      void MoveLocToEndOfLine(SourceLocation &Loc);
+    int GetTokenLength(SourceLocation Loc);
 
-      bool CheckForChar(const SourceLocation LocStart,
-                        const SourceLocation LocEnd,
-                        const char c);
+    SourceRange GetRange(SourceLocation LocStart, SourceLocation LocEnd);
+    SourceRange GetRange(SourceRange LocRange);
+    SourceRange GetRange(Stmt* S);
 
-      void AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation LocStart,
-                                           const SourceLocation LocEnd);
-                                                            
-      void AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
-                                     const SourceLocation LocEnd);
+    void MoveLocToNextLine(SourceLocation& Loc);
+    void MoveLocToEndOfLine(SourceLocation& Loc);
 
-      void DeferredInsertText(SourceLocation, string);
-      void DeferredInsertTextAfterToken(SourceLocation, string);
-      void DeferredInsertTextAtEndOfLine(SourceLocation, string);
+    bool CheckForChar(const SourceLocation LocStart,
+                      const SourceLocation LocEnd,
+                      const char c);
 
-    //---------------------------------------------------------------------------------------------
-    private:
-      Rewriter &TheRewriter;
-      LangOptions LangOpts;
-      SourceManager *SM;
-      PrintingPolicy *Policy;
-      
-      // Set of strings to insert after all other rewriting is done
-      //
-      struct StringInsertion {
-        string Str;
-        SourceLocation Loc;
-        bool InsertAfterToken;
-      };
-      deque<StringInsertion> StringInsertions;
+    void AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation LocStart,
+                                         const SourceLocation LocEnd);
 
-      // Used to handle generation of methods with optional parameters. Helps
-      // avoid overwriting.
-      //
-      SourceLocation PreviousMethodLoc;
-  };
+    void AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
+                                   const SourceLocation LocEnd);
 
-  //-----------------------------------------------------------------------------------------------
-  // RewriteEeroToObjC
-  //-----------------------------------------------------------------------------------------------
-  class RewriteEeroToObjC : public ASTConsumer {
+    void DeferredInsertText(SourceLocation, string);
+    void DeferredInsertTextAfterToken(SourceLocation, string);
+    void DeferredInsertTextAtEndOfLine(SourceLocation, string);
 
-    //---------------------------------------------------------------------------------------------
-    protected:
-          
-      Rewriter Rewrite;
-      DiagnosticsEngine &Diags;
-      const LangOptions &LangOpts;
-      SourceManager *SM;
+  //---------------------------------------------------------------------------------------------
+  private:
+    Rewriter& TheRewriter;
+    LangOptions LangOpts;
+    SourceManager* SM;
+    PrintingPolicy* Policy;
 
-      FileID MainFileID;
-      string InFileName;
-      raw_ostream* OutFile;
-
-      bool SilenceRewriteMacroWarning;
-      unsigned RewriteFailedDiag;
-     
-      void InitializeCommon(ASTContext &context);
-      
-      TranslatorVisitor Visitor;
-
-    //---------------------------------------------------------------------------------------------
-    public:
-
-      RewriteEeroToObjC(string inFile, raw_ostream *OS,
-                  DiagnosticsEngine &D, const LangOptions &LOpts,
-                  bool silenceMacroWarn);
-      
-      ~RewriteEeroToObjC() {}
-      
-      virtual void HandleTranslationUnit(ASTContext &C);
-
-      virtual void Initialize(ASTContext &context);
+    // Set of strings to insert after all other rewriting is done
+    //
+    struct StringInsertion {
+      string Str;
+      SourceLocation Loc;
+      bool InsertAfterToken;
     };
+    deque<StringInsertion> StringInsertions;
+
+    // Used to handle generation of methods with optional parameters. Helps
+    // avoid overwriting.
+    //
+    SourceLocation PreviousMethodLoc;
+};
+
+//-----------------------------------------------------------------------------------------------
+// RewriteEeroToObjC
+//-----------------------------------------------------------------------------------------------
+class RewriteEeroToObjC : public ASTConsumer {
+
+  //---------------------------------------------------------------------------------------------
+  protected:
+
+    Rewriter Rewrite;
+    DiagnosticsEngine& Diags;
+    const LangOptions& LangOpts;
+    SourceManager* SM;
+
+    FileID MainFileID;
+    string InFileName;
+    raw_ostream* OutFile;
+
+    bool SilenceRewriteMacroWarning;
+    unsigned RewriteFailedDiag;
+
+    void InitializeCommon(ASTContext& context);
+
+    TranslatorVisitor Visitor;
+
+  //---------------------------------------------------------------------------------------------
+  public:
+
+    RewriteEeroToObjC(string inFile, raw_ostream* OS,
+                      DiagnosticsEngine& D, const LangOptions& LOpts,
+                      bool silenceMacroWarn);
+
+    ~RewriteEeroToObjC() {}
+
+    virtual void HandleTranslationUnit(ASTContext& C);
+
+    virtual void Initialize(ASTContext& context);
+};
 }  // namespace clang
 
 
 //------------------------------------------------------------------------------------------------
 //
 RewriteEeroToObjC::RewriteEeroToObjC(string inFile, raw_ostream* OS,
-                         DiagnosticsEngine &D, const LangOptions &LOpts,
-                         bool silenceMacroWarn)
-      : Diags(D), LangOpts(LOpts), InFileName(inFile), OutFile(OS),
-        SilenceRewriteMacroWarning(silenceMacroWarn), Visitor(Rewrite) {
+                                     DiagnosticsEngine& D, const LangOptions& LOpts,
+                                     bool silenceMacroWarn)
+  : Diags(D), LangOpts(LOpts), InFileName(inFile), OutFile(OS),
+    SilenceRewriteMacroWarning(silenceMacroWarn), Visitor(Rewrite) {
 
   RewriteFailedDiag = Diags.getCustomDiagID(DiagnosticsEngine::Warning,
-               "rewriting sub-expression within a macro (may not be correct)");
+                      "rewriting sub-expression within a macro (may not be correct)");
 }
 
 //------------------------------------------------------------------------------------------------
 //
-ASTConsumer *clang::CreateEeroToObjCRewriter(const string& InFile,
-                                             raw_ostream* OS,
-                                             DiagnosticsEngine &Diags,
-                                             const LangOptions &LOpts,
-                                             bool SilenceRewriteMacroWarning) {
-    return new RewriteEeroToObjC(InFile, OS, Diags, LOpts, SilenceRewriteMacroWarning);
+ASTConsumer* clang::CreateEeroToObjCRewriter(const string& InFile,
+    raw_ostream* OS,
+    DiagnosticsEngine& Diags,
+    const LangOptions& LOpts,
+    bool SilenceRewriteMacroWarning) {
+  return new RewriteEeroToObjC(InFile, OS, Diags, LOpts, SilenceRewriteMacroWarning);
 }
 
 //------------------------------------------------------------------------------------------------
 //
-void RewriteEeroToObjC::InitializeCommon(ASTContext &context) {
+void RewriteEeroToObjC::InitializeCommon(ASTContext& context) {
 
   puts("----- InitializeCommon -----");
 
@@ -178,13 +180,14 @@ void RewriteEeroToObjC::InitializeCommon(ASTContext &context) {
 
 //------------------------------------------------------------------------------------------------
 //
-void RewriteEeroToObjC::HandleTranslationUnit(ASTContext &C) {
+void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
 
   puts("----- HandleTranslationUnit -----");
 
-  if (Diags.hasErrorOccurred())
+  if (Diags.hasErrorOccurred()) {
     return;
-  
+  }
+
   Visitor.Initialize();
 
   Visitor.TraverseDecl(C.getTranslationUnitDecl());
@@ -194,7 +197,7 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext &C) {
   // Get the buffer corresponding to MainFileID.  If we haven't changed it, then
   // we are done.
   //
-  const RewriteBuffer *RewriteBuf = Rewrite.getRewriteBufferFor(MainFileID);
+  const RewriteBuffer* RewriteBuf = Rewrite.getRewriteBufferFor(MainFileID);
   if (RewriteBuf) {
     *OutFile << string(RewriteBuf->begin(), RewriteBuf->end());
   } else {
@@ -207,7 +210,7 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext &C) {
 
 //------------------------------------------------------------------------------------------------
 //
-void RewriteEeroToObjC::Initialize(ASTContext &context) {
+void RewriteEeroToObjC::Initialize(ASTContext& context) {
   InitializeCommon(context);
 }
 
@@ -218,7 +221,7 @@ void RewriteEeroToObjC::Initialize(ASTContext &context) {
 
 //------------------------------------------------------------------------------------------------
 //
-bool TranslatorVisitor::VisitDecl(Decl *D) {
+bool TranslatorVisitor::VisitDecl(Decl* D) {
 
   // Skip all headers. We only want to translate the primary source file.
   //
@@ -226,13 +229,13 @@ bool TranslatorVisitor::VisitDecl(Decl *D) {
     return true;
   }
 
-  if (ObjCInterfaceDecl *IFD = dyn_cast_or_null<ObjCInterfaceDecl>(D)) {
+  if (ObjCInterfaceDecl* IFD = dyn_cast_or_null<ObjCInterfaceDecl>(D)) {
     RewriteInterfaceDecl(IFD);
 
-  } else if (ObjCImplementationDecl *IMPD = dyn_cast_or_null<ObjCImplementationDecl>(D)) {
+  } else if (ObjCImplementationDecl* IMPD = dyn_cast_or_null<ObjCImplementationDecl>(D)) {
     RewriteImplementationDecl(IMPD);
   }
-  
+
   return true;
 }
 
@@ -250,7 +253,7 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
   // get multiple visits for a single statement (it apparently gets called for each
   // expression).
   //
-  if (CompoundStmt *CS = dyn_cast_or_null<CompoundStmt>(S)) {
+  if (CompoundStmt* CS = dyn_cast_or_null<CompoundStmt>(S)) {
     RewriteCompoundStatement(CS);
   }
 
@@ -259,13 +262,13 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl *ClassDecl) {
+void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl) {
 
   const SourceLocation LocStart = ClassDecl->getAtStartLoc();
   const SourceLocation LocEnd = ClassDecl->getLocEnd();
 
   AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
-  
+
   SourceLocation CurrentLoc;
 
   // Rewrite superclass name, since it might have an implicit prefix
@@ -275,12 +278,12 @@ void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl *ClassDecl) {
     const SourceLocation loc = ClassDecl->getSuperClassLoc();
     const int len = GetTokenLength(loc);
     TheRewriter.ReplaceText(loc, len, SuperClassDecl->getName());
-    CurrentLoc = loc.getLocWithOffset(len+1);
+    CurrentLoc = loc.getLocWithOffset(len + 1);
   }
 
   // Rewrite protocol names as well, since they might have implicit prefixes
   //
-  const ObjCList<ObjCProtocolDecl> &Protocols = ClassDecl->getReferencedProtocols();
+  const ObjCList<ObjCProtocolDecl>& Protocols = ClassDecl->getReferencedProtocols();
   ObjCInterfaceDecl::protocol_loc_iterator LI = ClassDecl->protocol_loc_begin();
   for (ObjCList<ObjCProtocolDecl>::iterator I = Protocols.begin(),
        E = Protocols.end(); I != E; ++I) {
@@ -315,12 +318,15 @@ void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl *ClassDecl) {
 }
 
 
-void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl *Method) {
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
 
   // When method is a synthesized one, such as a getter/setter there is
   // nothing to rewrite.
-  if (Method->isImplicit())
+  if (Method->isImplicit()) {
     return;
+  }
 
   SourceLocation LocStart = Method->getLocStart();
   SourceLocation LocEnd   = Method->getDeclaratorEndLoc();
@@ -359,7 +365,7 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl *Method) {
   if (Method->param_begin() == Method->param_end()) {
     resultStr += name;
   }
-  
+
   if (Method->isVariadic()) {
     resultStr += ", ...";
   }
@@ -374,7 +380,7 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl *Method) {
   // Make sure we handle generated methods with optional params -- don't overwrite
   //
   if (PreviousMethodLoc.isInvalid() || LocStart != PreviousMethodLoc) {
-    TheRewriter.ReplaceText(GetRange(LocStart,LocEnd), resultStr);
+    TheRewriter.ReplaceText(GetRange(LocStart, LocEnd), resultStr);
   } else {
 //    TheRewriter.InsertText(LocStart, resultStr + "\n", false, true);
     resultStr += "\n";
@@ -385,7 +391,7 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl *Method) {
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::RewriteImplementationDecl(ObjCImplementationDecl *ImpDecl) {
+void TranslatorVisitor::RewriteImplementationDecl(ObjCImplementationDecl* ImpDecl) {
 
   const SourceLocation LocStart = ImpDecl->getAtStartLoc();
   const SourceLocation LocEnd = ImpDecl->getLocEnd();
@@ -400,14 +406,14 @@ void TranslatorVisitor::RewriteImplementationDecl(ObjCImplementationDecl *ImpDec
   for (ObjCImplementationDecl::instmeth_iterator I = ImpDecl->instmeth_begin(),
        E = ImpDecl->instmeth_end();
        I != E; ++I) {
-    ObjCMethodDecl *OMD = *I;
+    ObjCMethodDecl* OMD = *I;
     RewriteMethodDeclaration(OMD);
   }
 
   for (ObjCImplementationDecl::classmeth_iterator I = ImpDecl->classmeth_begin(),
        E = ImpDecl->classmeth_end();
        I != E; ++I) {
-    ObjCMethodDecl *OMD = *I;
+    ObjCMethodDecl* OMD = *I;
     RewriteMethodDeclaration(OMD);
   }
 }
@@ -427,7 +433,7 @@ void TranslatorVisitor::RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterato
     if (RBraceLoc.isInvalid()) {
       addCurlyBraces = !CheckForChar(LBraceLoc, I->getLocStart(), '{');
     } else {
-      const char *buf = SM->getCharacterData(LBraceLoc);
+      const char* buf = SM->getCharacterData(LBraceLoc);
       addCurlyBraces = (buf[0] != '{');
     }
 
@@ -453,7 +459,7 @@ void TranslatorVisitor::RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterato
 
       ++I;
     } while (I != E);
-    
+
     if (addCurlyBraces) {
       // Instead of using the RBraceLoc, just skip to the next line after the
       // last ivar declaration.
@@ -468,25 +474,25 @@ void TranslatorVisitor::RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterato
 //
 void TranslatorVisitor::RewriteStatement(Stmt* S) {
 
-  if (CompoundStmt *CS = dyn_cast_or_null<CompoundStmt>(S)) {
+  if (CompoundStmt* CS = dyn_cast_or_null<CompoundStmt>(S)) {
     RewriteCompoundStatement(CS);
 
-  } else if (IfStmt *IS = dyn_cast_or_null<IfStmt>(S)) {
+  } else if (IfStmt* IS = dyn_cast_or_null<IfStmt>(S)) {
     RewriteIfStatement(IS);
 
-  } else if (ForStmt *FS = dyn_cast_or_null<ForStmt>(S)) {
+  } else if (ForStmt* FS = dyn_cast_or_null<ForStmt>(S)) {
     RewriteForStatement(FS);
 
-  } else if (SwitchStmt *SS = dyn_cast_or_null<SwitchStmt>(S)) {
+  } else if (SwitchStmt* SS = dyn_cast_or_null<SwitchStmt>(S)) {
     RewriteSwitchStatement(SS);
 
-  } else if (CaseStmt *SCS = dyn_cast_or_null<CaseStmt>(S)) {
+  } else if (CaseStmt* SCS = dyn_cast_or_null<CaseStmt>(S)) {
     RewriteCaseStatement(SCS);
 
-  } else if (DefaultStmt *SDS = dyn_cast_or_null<DefaultStmt>(S)) {
+  } else if (DefaultStmt* SDS = dyn_cast_or_null<DefaultStmt>(S)) {
     RewriteDefaultStatement(SDS);
 
-  } else if (BreakStmt *SBS = dyn_cast_or_null<BreakStmt>(S)) {
+  } else if (BreakStmt* SBS = dyn_cast_or_null<BreakStmt>(S)) {
     RewriteBreakStatement(SBS);
 
   } else {
@@ -503,9 +509,9 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
 void TranslatorVisitor::RewriteCompoundStatement(CompoundStmt* S) {
 
   for (CompoundStmt::const_body_iterator BI = S->body_begin(),
-                                          E = S->body_end(); BI != E; ++BI) {
+       E = S->body_end(); BI != E; ++BI) {
     RewriteStatement(*BI);
-  }  
+  }
 }
 
 //------------------------------------------------------------------------------------------------
@@ -515,16 +521,16 @@ void TranslatorVisitor::RewriteIfStatement(IfStmt* S) {
   string condStr = "(";
   condStr += GetStatementString(S->getCond(), DO_NOT_MODIFY_SEMICOLONS);
   condStr += ") {";
-  
+
   TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
-  
-  if (Stmt *ElseStmt = S->getElse()) {
+
+  if (Stmt* ElseStmt = S->getElse()) {
     DeferredInsertText(S->getElseLoc(), "} ");
-    
-    if (IfStmt *ElseIfStmt = dyn_cast_or_null<IfStmt>(ElseStmt)) {
+
+    if (IfStmt* ElseIfStmt = dyn_cast_or_null<IfStmt>(ElseStmt)) {
       RewriteIfStatement(ElseIfStmt);
     } else {
-      DeferredInsertText(S->getElseLoc().getLocWithOffset(sizeof("else")-1), " {");
+      DeferredInsertText(S->getElseLoc().getLocWithOffset(sizeof("else") - 1), " {");
       DeferredInsertTextAtEndOfLine(ElseStmt->getLocEnd(), "\n}");
     }
   } else {
@@ -544,25 +550,25 @@ void TranslatorVisitor::RewriteForStatement(ForStmt* S) {
   string incStr = GetStatementString(S->getInc(), DO_NOT_MODIFY_SEMICOLONS);
   incStr += ')';
   incStr += " {";
-  
+
   TheRewriter.ReplaceText(GetRange(S->getLParenLoc(), S->getInit()->getLocEnd()), initStr);
   TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
   TheRewriter.ReplaceText(GetRange(S->getInc()->getLocStart(), S->getRParenLoc()), incStr);
-  
+
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }
 
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::RewriteSwitchStatement(SwitchStmt* S) {
-  
+
   string condStr = GetStatementString(S->getCond());
-  
+
   if (condStr[0] != '(') {
     condStr = '(' + condStr;
     condStr += ')';
   }
-  
+
   condStr += " {";
   TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
 
@@ -572,7 +578,7 @@ void TranslatorVisitor::RewriteSwitchStatement(SwitchStmt* S) {
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::RewriteCaseStatement(CaseStmt* S) {
-  
+
   const SourceRange range = GetRange(S->getCaseLoc(), S->getColonLoc());
   string CaseStr = "case ";
   CaseStr += GetStatementString(S->getLHS(), DO_NOT_MODIFY_SEMICOLONS);
@@ -584,8 +590,8 @@ void TranslatorVisitor::RewriteCaseStatement(CaseStmt* S) {
 
   CaseStr += ": ";
 
-  if (Stmt *SubStmt = S->getSubStmt()) {
-    if (CaseStmt *SCS = dyn_cast_or_null<CaseStmt>(SubStmt)) {
+  if (Stmt* SubStmt = S->getSubStmt()) {
+    if (CaseStmt* SCS = dyn_cast_or_null<CaseStmt>(SubStmt)) {
       TheRewriter.ReplaceText(range, CaseStr);
       RewriteCaseStatement(SCS);
       DeferredInsertText(SCS->getLocStart(), "\n");
@@ -600,7 +606,7 @@ void TranslatorVisitor::RewriteCaseStatement(CaseStmt* S) {
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::RewriteDefaultStatement(DefaultStmt* S) {
-  
+
   const SourceRange range = GetRange(S->getDefaultLoc(), S->getColonLoc());
   string DefaultStr = "default: {";
 
@@ -613,7 +619,7 @@ void TranslatorVisitor::RewriteDefaultStatement(DefaultStmt* S) {
 //
 void TranslatorVisitor::RewriteBreakStatement(BreakStmt* S) {
 
-  const char *startBuf = SM->getCharacterData(S->getBreakLoc());
+  const char* startBuf = SM->getCharacterData(S->getBreakLoc());
   std::string bufferStr(startBuf, sizeof("break") - 1);
 
   if (bufferStr == "break") { // regular break statement
@@ -703,7 +709,7 @@ void TranslatorVisitor::DeferredInsertTextAtEndOfLine(SourceLocation Loc, string
 //------------------------------------------------------------------------------------------------
 //
 int TranslatorVisitor::GetTokenLength(SourceLocation Loc) {
-    return Lexer::MeasureTokenLength(Loc, *SM, LangOpts);
+  return Lexer::MeasureTokenLength(Loc, *SM, LangOpts);
 }
 
 //------------------------------------------------------------------------------------------------
@@ -712,11 +718,11 @@ SourceRange TranslatorVisitor::GetRange(SourceLocation LocStart, SourceLocation 
 
   if (LocStart.isMacroID()) {
     LocStart = SM->getExpansionLoc(LocStart);
-  }  
+  }
 
   if (LocEnd.isMacroID()) {
     LocEnd = SM->getExpansionLoc(LocEnd);
-  }  
+  }
 
   return SourceRange(LocStart, LocEnd);
 }
@@ -729,13 +735,13 @@ SourceRange TranslatorVisitor::GetRange(SourceRange LocRange) {
 
 //------------------------------------------------------------------------------------------------
 //
-SourceRange TranslatorVisitor::GetRange(Stmt *S) {
+SourceRange TranslatorVisitor::GetRange(Stmt* S) {
   return GetRange(S->getSourceRange());
 }
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::MoveLocToNextLine(SourceLocation &Loc) {
+void TranslatorVisitor::MoveLocToNextLine(SourceLocation& Loc) {
   const unsigned LocLineNumber = SM->getSpellingLineNumber(Loc);
   while (SM->getSpellingLineNumber(Loc) == LocLineNumber) {
     Loc = Loc.getLocWithOffset(1);
@@ -744,7 +750,7 @@ void TranslatorVisitor::MoveLocToNextLine(SourceLocation &Loc) {
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::MoveLocToEndOfLine(SourceLocation &Loc) {
+void TranslatorVisitor::MoveLocToEndOfLine(SourceLocation& Loc) {
   const unsigned LocLineNumber = SM->getSpellingLineNumber(Loc);
   SourceLocation NewLoc = Loc;
   while (SM->getSpellingLineNumber(NewLoc) == LocLineNumber) {
@@ -760,9 +766,9 @@ bool TranslatorVisitor::CheckForChar(const SourceLocation LocStart,
                                      const char c) {
 
   // String buffer for searche
-  const char *startBuf = SM->getCharacterData(LocStart);
-  const char *endBuf = SM->getCharacterData(LocEnd);
-  std::string bufferStr(startBuf, endBuf-startBuf);
+  const char* startBuf = SM->getCharacterData(LocStart);
+  const char* endBuf = SM->getCharacterData(LocEnd);
+  std::string bufferStr(startBuf, endBuf - startBuf);
 
   const size_t pos = bufferStr.rfind(c);
   if (pos != std::string::npos) {
@@ -775,14 +781,14 @@ bool TranslatorVisitor::CheckForChar(const SourceLocation LocStart,
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation LocStart,
-                                                        const SourceLocation LocEnd) {
+    const SourceLocation LocEnd) {
   // Add '@'s to beginning and end keywords, if needed
   //
-  const char *startBuf = SM->getCharacterData(LocStart);
+  const char* startBuf = SM->getCharacterData(LocStart);
   if (startBuf[0] != '@') {
     DeferredInsertText(LocStart, "@");
   }
-  const char *endBuf = SM->getCharacterData(LocEnd);
+  const char* endBuf = SM->getCharacterData(LocEnd);
   if (endBuf[0] != '@') {
     DeferredInsertText(LocEnd, "@");
   }
@@ -791,12 +797,12 @@ void TranslatorVisitor::AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation Loc
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
-                                                  const SourceLocation LocEnd) {
+    const SourceLocation LocEnd) {
   // String buffer for searches
   //
-  const char *startBuf = SM->getCharacterData(LocStart);
-  const char *endBuf = SM->getCharacterData(LocEnd);
-  std::string bufferStr(startBuf, endBuf-startBuf);
+  const char* startBuf = SM->getCharacterData(LocStart);
+  const char* endBuf = SM->getCharacterData(LocEnd);
+  std::string bufferStr(startBuf, endBuf - startBuf);
 
   const char* keyword[] = { "private", "protected", "public", "package" };
   const size_t count = sizeof(keyword) / sizeof(const char*);
@@ -806,7 +812,7 @@ void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
   for (size_t i = 0; i < count; i++) {
     const size_t pos = bufferStr.rfind(keyword[i]);
     if (pos != std::string::npos) {
-      if (pos == 0 || bufferStr[pos-1] != '@') {
+      if (pos == 0 || bufferStr[pos - 1] != '@') {
         DeferredInsertText(LocStart.getLocWithOffset(pos), "@");
       }
     }
