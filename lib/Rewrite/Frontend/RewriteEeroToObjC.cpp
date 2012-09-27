@@ -45,6 +45,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
                                   SourceLocation LBraceLoc,
                                   SourceLocation RBraceLoc);
 
+    void RewriteProperty(ObjCPropertyDecl* P, SourceLocation& PreviousAtLoc);
+
     void RewriteStatement(Stmt* S);
     void RewriteCompoundStatement(CompoundStmt* S);
     void RewriteIfStatement(IfStmt* S);
@@ -67,6 +69,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
     void MoveLocToNextLine(SourceLocation& Loc);
     void MoveLocToEndOfLine(SourceLocation& Loc);
+    void MoveLocToBeginningOfLine(SourceLocation& Loc);
 
     bool CheckForChar(const SourceLocation LocStart,
                       const SourceLocation LocEnd,
@@ -299,9 +302,10 @@ void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl) {
                            CurrentLoc,
                            SourceLocation());
 
+  SourceLocation AtPropertyLocation;
   for (ObjCInterfaceDecl::prop_iterator I = ClassDecl->prop_begin(),
        E = ClassDecl->prop_end(); I != E; ++I) {
-//    RewriteProperty(*I);
+    RewriteProperty(*I, AtPropertyLocation);
   }
 
   for (ObjCInterfaceDecl::instmeth_iterator
@@ -468,6 +472,97 @@ void TranslatorVisitor::RewriteInstanceVariables(ObjCInterfaceDecl::ivar_iterato
       DeferredInsertText(SearchLoc, "}");
     }
   }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
+                                        SourceLocation& PreviousAtLoc) {
+
+  struct Attribute {
+    ObjCPropertyDecl::PropertyAttributeKind kind;
+    const char* keyword;
+  };
+
+  static const Attribute Attributes[] = {
+    {ObjCPropertyDecl::OBJC_PR_readonly,  "readonly"},
+    {ObjCPropertyDecl::OBJC_PR_assign,    "assign"},
+    {ObjCPropertyDecl::OBJC_PR_readwrite, "readwrite"},
+    {ObjCPropertyDecl::OBJC_PR_retain,    "retain"},
+    {ObjCPropertyDecl::OBJC_PR_strong,    "strong"},
+    {ObjCPropertyDecl::OBJC_PR_copy,      "copy"},
+    {ObjCPropertyDecl::OBJC_PR_nonatomic, "nonatomic"},
+    {ObjCPropertyDecl::OBJC_PR_atomic,    "atomic"},
+  };
+
+  string str;
+
+  if (PDecl->getPropertyImplementation() == ObjCPropertyDecl::Required) {
+    str += "@required\n";
+  } else if (PDecl->getPropertyImplementation() == ObjCPropertyDecl::Optional) {
+    str += "@optional\n";
+  }
+
+  str += "@property ";
+
+  if (PDecl->getPropertyAttributes() != ObjCPropertyDecl::OBJC_PR_noattr) {
+
+    str += '(';
+
+    bool first = true;
+
+    for (size_t i = 0; i < sizeof(Attributes) / sizeof(Attribute); i++) {
+      if (PDecl->getPropertyAttributes() & Attributes[i].kind) {
+        if (first) {
+          first = false;
+        } else {
+          str += ", ";
+        }
+        str += Attributes[i].keyword;
+      }
+    }
+
+    if (PDecl->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_getter) {
+      if (first) {
+        first = false;
+      } else {
+        str += ", ";
+      }
+      str += "getter = ";
+      str += PDecl->getGetterName().getAsString();
+    }
+
+    if (PDecl->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_setter) {
+      if (first) {
+        first = false;
+      } else {
+        str += ", ";
+      }
+      str += "setter = ";
+      str += PDecl->getSetterName().getAsString();
+    }
+
+    str += ") ";
+  }
+
+  str += PDecl->getType().getAsString(*Policy);
+  str += ' ';
+  str += PDecl->getNameAsString();
+
+  const SourceLocation& AtLoc = PDecl->getAtLoc();
+  const SourceLocation LocEnd = PDecl->getLocEnd();
+  SourceLocation Loc;
+
+  if (PreviousAtLoc.isInvalid() || AtLoc != PreviousAtLoc) {
+    Loc = AtLoc;
+  } else {
+    Loc = PDecl->getLocation();
+    MoveLocToBeginningOfLine(Loc); // we don't have the type loc
+  }
+
+  TheRewriter.ReplaceText(GetRange(Loc, LocEnd), str);
+
+  PreviousAtLoc = AtLoc;
 }
 
 //------------------------------------------------------------------------------------------------
@@ -756,6 +851,17 @@ void TranslatorVisitor::MoveLocToEndOfLine(SourceLocation& Loc) {
   while (SM->getSpellingLineNumber(NewLoc) == LocLineNumber) {
     Loc = NewLoc;
     NewLoc = NewLoc.getLocWithOffset(1);
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::MoveLocToBeginningOfLine(SourceLocation& Loc) {
+  const unsigned LocLineNumber = SM->getSpellingLineNumber(Loc);
+  SourceLocation NewLoc = Loc;
+  while (SM->getSpellingLineNumber(NewLoc) == LocLineNumber) {
+    Loc = NewLoc;
+    NewLoc = NewLoc.getLocWithOffset(-1);
   }
 }
 
