@@ -288,7 +288,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
       
   case TemplateArgument::Type:
     return Context.IsStructurallyEquivalent(Arg1.getAsType(), Arg2.getAsType());
-      
+
   case TemplateArgument::Integral:
     if (!Context.IsStructurallyEquivalent(Arg1.getIntegralType(), 
                                           Arg2.getIntegralType()))
@@ -297,10 +297,11 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
     return llvm::APSInt::isSameValue(Arg1.getAsIntegral(), Arg2.getAsIntegral());
       
   case TemplateArgument::Declaration:
-    if (!Arg1.getAsDecl() || !Arg2.getAsDecl())
-      return !Arg1.getAsDecl() && !Arg2.getAsDecl();
     return Context.IsStructurallyEquivalent(Arg1.getAsDecl(), Arg2.getAsDecl());
-      
+
+  case TemplateArgument::NullPtr:
+    return true; // FIXME: Is this correct?
+
   case TemplateArgument::Template:
     return IsStructurallyEquivalent(Context, 
                                     Arg1.getAsTemplate(), 
@@ -1482,9 +1483,7 @@ ASTNodeImporter::VisitFunctionNoProtoType(const FunctionNoProtoType *T) {
                                                         T->getExtInfo());
 }
 
-static QualType importFunctionProtoType(ASTImporter &Importer,
-                                        const FunctionProtoType *T,
-                                        bool importExceptionSpecDecls) {
+QualType ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
   QualType ToResultType = Importer.Import(T->getResultType());
   if (ToResultType.isNull())
     return QualType();
@@ -1522,27 +1521,15 @@ static QualType importFunctionProtoType(ASTImporter &Importer,
   ToEPI.NumExceptions = ExceptionTypes.size();
   ToEPI.Exceptions = ExceptionTypes.data();
   ToEPI.ConsumedArguments = FromEPI.ConsumedArguments;
-
-  if (importExceptionSpecDecls) {
-    ToEPI.ExceptionSpecType = FromEPI.ExceptionSpecType;
-    ToEPI.NoexceptExpr = Importer.Import(FromEPI.NoexceptExpr);
-    ToEPI.ExceptionSpecDecl = cast_or_null<FunctionDecl>(
+  ToEPI.ExceptionSpecType = FromEPI.ExceptionSpecType;
+  ToEPI.NoexceptExpr = Importer.Import(FromEPI.NoexceptExpr);
+  ToEPI.ExceptionSpecDecl = cast_or_null<FunctionDecl>(
                                 Importer.Import(FromEPI.ExceptionSpecDecl));
-    ToEPI.ExceptionSpecTemplate = cast_or_null<FunctionDecl>(
+  ToEPI.ExceptionSpecTemplate = cast_or_null<FunctionDecl>(
                                 Importer.Import(FromEPI.ExceptionSpecTemplate));
-  }
 
   return Importer.getToContext().getFunctionType(ToResultType, ArgTypes.data(),
                                                  ArgTypes.size(), ToEPI);
-}
-
-QualType ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
-  // FunctionProtoType::ExtProtoInfo's ExceptionSpecDecl can point to the
-  // FunctionDecl that we are importing this FunctionProtoType for.
-  // Update it in ASTNodeImporter::VisitFunctionDecl after the FunctionDecl has
-  // been created.
-  return importFunctionProtoType(Importer, T,
-                                 /*importExceptionSpecDecls=*/false);
 }
 
 QualType ASTNodeImporter::VisitParenType(const ParenType *T) {
@@ -1990,11 +1977,20 @@ ASTNodeImporter::ImportTemplateArgument(const TemplateArgument &From) {
     return TemplateArgument(From, ToType);
   }
 
-  case TemplateArgument::Declaration:
-    if (Decl *To = Importer.Import(From.getAsDecl()))
-      return TemplateArgument(To);
+  case TemplateArgument::Declaration: {
+    ValueDecl *FromD = From.getAsDecl();
+    if (ValueDecl *To = cast_or_null<ValueDecl>(Importer.Import(FromD)))
+      return TemplateArgument(To, From.isDeclForReferenceParam());
     return TemplateArgument();
-      
+  }
+
+  case TemplateArgument::NullPtr: {
+    QualType ToType = Importer.Import(From.getNullPtrType());
+    if (ToType.isNull())
+      return TemplateArgument();
+    return TemplateArgument(ToType, /*isNullPtr*/true);
+  }
+
   case TemplateArgument::Template: {
     TemplateName ToTemplate = Importer.Import(From.getAsTemplate());
     if (ToTemplate.isNull())
@@ -2520,8 +2516,30 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   // Import additional name location/type info.
   ImportDeclarationNameLoc(D->getNameInfo(), NameInfo);
 
+  QualType FromTy = D->getType();
+  bool usedDifferentExceptionSpec = false;
+
+  if (const FunctionProtoType *
+        FromFPT = D->getType()->getAs<FunctionProtoType>()) {
+    FunctionProtoType::ExtProtoInfo FromEPI = FromFPT->getExtProtoInfo();
+    // FunctionProtoType::ExtProtoInfo's ExceptionSpecDecl can point to the
+    // FunctionDecl that we are importing the FunctionProtoType for.
+    // To avoid an infinite recursion when importing, create the FunctionDecl
+    // with a simplified function type and update it afterwards.
+    if (FromEPI.ExceptionSpecDecl || FromEPI.ExceptionSpecTemplate ||
+        FromEPI.NoexceptExpr) {
+      FunctionProtoType::ExtProtoInfo DefaultEPI;
+      FromTy = Importer.getFromContext().getFunctionType(
+                            FromFPT->getResultType(),
+                            FromFPT->arg_type_begin(),
+                            FromFPT->arg_type_end() - FromFPT->arg_type_begin(),
+                            DefaultEPI);
+      usedDifferentExceptionSpec = true;
+    }
+  }
+
   // Import the type.
-  QualType T = Importer.Import(D->getType());
+  QualType T = Importer.Import(FromTy);
   if (T.isNull())
     return 0;
   
@@ -2601,14 +2619,12 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   }
   ToFunction->setParams(Parameters);
 
-  // Update FunctionProtoType::ExtProtoInfo.
-  if (const FunctionProtoType *
-        FromFPT = D->getType()->getAs<FunctionProtoType>()) {
-    FunctionProtoType::ExtProtoInfo FromEPI = FromFPT->getExtProtoInfo();
-    if (FromEPI.ExceptionSpecDecl || FromEPI.ExceptionSpecTemplate) {
-      ToFunction->setType(importFunctionProtoType(Importer, FromFPT,
-                                            /*importExceptionSpecDecls=*/true));
-    }
+  if (usedDifferentExceptionSpec) {
+    // Update FunctionProtoType::ExtProtoInfo.
+    QualType T = Importer.Import(D->getType());
+    if (T.isNull())
+      return 0;
+    ToFunction->setType(T);
   }
 
   // FIXME: Other bits to merge?

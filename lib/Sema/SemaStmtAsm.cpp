@@ -392,7 +392,7 @@ static bool isSimpleMSAsm(std::vector<std::vector<StringRef> > Pieces,
   return true;
 }
 
-// Break the AsmSting into pieces (i.e., mnemonic and operands).
+// Break the AsmString into pieces (i.e., mnemonic and operands).
 static void buildMSAsmPieces(StringRef Asm, std::vector<StringRef> &Pieces) {
   std::pair<StringRef,StringRef> Split = Asm.split(' ');
 
@@ -415,8 +415,10 @@ static void buildMSAsmPieces(std::vector<std::string> &AsmStrings,
 }
 
 // Build the individual assembly instruction(s) and place them in the AsmStrings
-// vector.  These strings are fed to the AsmParser.
-static void buildMSAsmStrings(Sema &SemaRef, ArrayRef<Token> AsmToks,
+// vector.  These strings are fed to the AsmParser.  Returns true on error.
+static bool buildMSAsmStrings(Sema &SemaRef,
+                              SourceLocation AsmLoc,
+                              ArrayRef<Token> AsmToks,
                               std::vector<std::string> &AsmStrings,
                      std::vector<std::pair<unsigned,unsigned> > &AsmTokRanges) {
   assert (!AsmToks.empty() && "Didn't expect an empty AsmToks!");
@@ -424,8 +426,9 @@ static void buildMSAsmStrings(Sema &SemaRef, ArrayRef<Token> AsmToks,
   SmallString<512> Asm;
   unsigned startTok = 0;
   for (unsigned i = 0, e = AsmToks.size(); i < e; ++i) {
-    bool isNewAsm = i == 0 || AsmToks[i].isAtStartOfLine() ||
-      AsmToks[i].is(tok::kw_asm);
+    bool isNewAsm = ((i == 0) ||
+                     AsmToks[i].isAtStartOfLine() ||
+                     AsmToks[i].is(tok::kw_asm));
 
     if (isNewAsm) {
       if (i) {
@@ -436,7 +439,10 @@ static void buildMSAsmStrings(Sema &SemaRef, ArrayRef<Token> AsmToks,
       }
       if (AsmToks[i].is(tok::kw_asm)) {
         i++; // Skip __asm
-        assert (i != e && "Expected another token");
+        if (i == e) {
+          SemaRef.Diag(AsmLoc, diag::err_asm_empty);
+          return true;
+        }
       }
     }
 
@@ -448,6 +454,8 @@ static void buildMSAsmStrings(Sema &SemaRef, ArrayRef<Token> AsmToks,
   }
   AsmStrings.push_back(Asm.str());
   AsmTokRanges.push_back(std::make_pair(startTok, AsmToks.size()-1));
+
+  return false;
 }
 
 #define DEF_SIMPLE_MSASM(STR)                                                \
@@ -481,7 +489,8 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc, SourceLocation LBraceLoc,
 
   std::vector<std::string> AsmStrings;
   std::vector<std::pair<unsigned,unsigned> > AsmTokRanges;
-  buildMSAsmStrings(*this, AsmToks, AsmStrings, AsmTokRanges);
+  if (buildMSAsmStrings(*this, AsmLoc, AsmToks, AsmStrings, AsmTokRanges))
+    return StmtError();
 
   std::vector<std::vector<StringRef> > Pieces(AsmStrings.size());
   buildMSAsmPieces(AsmStrings, Pieces);
@@ -558,7 +567,7 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc, SourceLocation LBraceLoc,
     if (HadError) { DEF_SIMPLE_MSASM(EmptyAsmStr); return Owned(NS); }
 
     // Get the instruction descriptor.
-    llvm::MCInst Inst = Instrs[0];
+    llvm::MCInst Inst = Instrs.back();
     const llvm::MCInstrInfo *MII = TheTarget->createMCInstrInfo();
     const llvm::MCInstrDesc &Desc = MII->get(Inst.getOpcode());
     llvm::MCInstPrinter *IP =
@@ -573,8 +582,8 @@ StmtResult Sema::ActOnMSAsmStmt(SourceLocation AsmLoc, SourceLocation LBraceLoc,
       // FIXME: The getMCInstOperandNum() function does not work with tied 
       // operands or custom converters.
       unsigned NumMCOperands;
-      unsigned MCIdx = TargetParser->getMCInstOperandNum(Kind, Inst, Operands,
-                                                         i, NumMCOperands);
+      unsigned MCIdx = TargetParser->getMCInstOperandNum(Kind, Operands, i,
+                                                         NumMCOperands);
       assert (NumMCOperands && "Expected at least 1 MCOperand!");
 
       for (unsigned j = MCIdx, e = MCIdx + NumMCOperands; j != e; ++j) {

@@ -68,8 +68,8 @@ public:
                                   const Token &IncludeTok,
                                   StringRef FileName,
                                   bool IsAngled,
+                                  CharSourceRange FilenameRange,
                                   const FileEntry *File,
-                                  SourceLocation EndLoc,
                                   StringRef SearchPath,
                                   StringRef RelativePath) {
     bool isImport = (IncludeTok.is(tok::identifier) &&
@@ -538,6 +538,8 @@ static void clang_indexTranslationUnit_Impl(void *UserData) {
   ASTUnit *Unit = static_cast<ASTUnit *>(TU->TUData);
   if (!Unit)
     return;
+
+  ASTUnit::ConcurrencyCheck Check(*Unit);
 
   FileManager &FileMgr = Unit->getFileManager();
 

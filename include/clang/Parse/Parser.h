@@ -942,9 +942,9 @@ private:
   /// any member function declarations or definitions that need to be
   /// parsed after the corresponding top-level class is complete.
   struct ParsingClass {
-    ParsingClass(Decl *TagOrTemplate, bool TopLevelClass)
+    ParsingClass(Decl *TagOrTemplate, bool TopLevelClass, bool IsInterface)
       : TopLevelClass(TopLevelClass), TemplateScope(false),
-        TagOrTemplate(TagOrTemplate) { }
+        IsInterface(IsInterface), TagOrTemplate(TagOrTemplate) { }
 
     /// \brief Whether this is a "top-level" class, meaning that it is
     /// not nested within another class.
@@ -954,6 +954,9 @@ private:
     /// scope. When true, TagOrTemplate is a template declaration;
     /// othewise, it is a tag declaration.
     bool TemplateScope : 1;
+
+    /// \brief Whether this class is an __interface.
+    bool IsInterface : 1;
 
     /// \brief The class or class template whose definition we are parsing.
     Decl *TagOrTemplate;
@@ -981,9 +984,10 @@ private:
     Sema::ParsingClassState State;
 
   public:
-    ParsingClassDefinition(Parser &P, Decl *TagOrTemplate, bool TopLevelClass)
+    ParsingClassDefinition(Parser &P, Decl *TagOrTemplate, bool TopLevelClass,
+                           bool IsInterface)
       : P(P), Popped(false),
-        State(P.PushParsingClass(TagOrTemplate, TopLevelClass)) {
+        State(P.PushParsingClass(TagOrTemplate, TopLevelClass, IsInterface)) {
     }
 
     /// \brief Pop this class of the stack.
@@ -1071,7 +1075,7 @@ private:
   void LateTemplateParser(const FunctionDecl *FD);
 
   Sema::ParsingClassState
-  PushParsingClass(Decl *TagOrTemplate, bool TopLevelClass);
+  PushParsingClass(Decl *TagOrTemplate, bool TopLevelClass, bool IsInterface);
   void DeallocateParsedClasses(ParsingClass *Class);
   void PopParsingClass(Sema::ParsingClassState);
 
@@ -2013,7 +2017,7 @@ private:
   VirtSpecifiers::Specifier isCXX0XVirtSpecifier() const {
     return isCXX0XVirtSpecifier(Tok);
   }
-  void ParseOptionalCXX0XVirtSpecifierSeq(VirtSpecifiers &VS);
+  void ParseOptionalCXX0XVirtSpecifierSeq(VirtSpecifiers &VS, bool IsInterface);
 
   bool isCXX0XFinalKeyword() const;
 
