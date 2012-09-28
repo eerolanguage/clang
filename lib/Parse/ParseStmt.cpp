@@ -1536,7 +1536,23 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     }
   } else {
     ProhibitAttributes(attrs);
+
+    // Prevent "for in" from looking like a message pass
+    //
+    if (isEero && Tok.is(tok::identifier) &&
+        NextToken().is(tok::identifier) &&
+        NextToken().getIdentifierInfo() == ObjCTypeQuals[objc_in]) {
+      Token InsertedSemi(NextToken());
+      InsertedSemi.setKind(tok::semi);
+      InsertedSemi.setLength(0);
+      PP.EnterToken(InsertedSemi);
+    }
+
     Value = ParseExpression();
+
+    if (isEero && Tok.is(tok::semi) && !Tok.getLength()) {
+      ConsumeToken();
+    }
 
     ForEach = isTokIdentifier_in();
 
