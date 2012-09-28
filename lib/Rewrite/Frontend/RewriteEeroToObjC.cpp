@@ -637,17 +637,30 @@ void TranslatorVisitor::RewriteIfStatement(IfStmt* S) {
 void TranslatorVisitor::RewriteForStatement(ForStmt* S) {
 
   string initStr = "(";
-  initStr += GetStatementString(S->getInit(), DO_NOT_MODIFY_SEMICOLONS);
 
-  string condStr = GetStatementString(S->getCond(), DO_NOT_MODIFY_SEMICOLONS);
+  Stmt* initStmt = S->getInit();
+  SourceLocation InitEnd = Lexer::getLocForEndOfToken(initStmt->getLocEnd(), 0, *SM, LangOpts);
+  StatementStringMode SemiMode = (*SM->getCharacterData(InitEnd) == ';') ?
+                                     DO_NOT_MODIFY_SEMICOLONS : NORMALIZE_SEMICOLONS;
 
-  string incStr = GetStatementString(S->getInc(), DO_NOT_MODIFY_SEMICOLONS);
+  initStr += GetStatementString(initStmt, SemiMode);
+
+  Stmt* condStmt = S->getCond();
+  SourceLocation CondEnd = Lexer::getLocForEndOfToken(condStmt->getLocEnd(), 0, *SM, LangOpts);
+  SemiMode = (*SM->getCharacterData(CondEnd) == ';') ?
+                 DO_NOT_MODIFY_SEMICOLONS : NORMALIZE_SEMICOLONS;
+
+  string condStr = GetStatementString(condStmt, SemiMode);
+
+  Stmt* incStmt = S->getInc();
+  string incStr = GetStatementString(incStmt, DO_NOT_MODIFY_SEMICOLONS);
   incStr += ')';
+
   incStr += " {";
 
-  TheRewriter.ReplaceText(GetRange(S->getLParenLoc(), S->getInit()->getLocEnd()), initStr);
-  TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
-  TheRewriter.ReplaceText(GetRange(S->getInc()->getLocStart(), S->getRParenLoc()), incStr);
+  TheRewriter.ReplaceText(GetRange(S->getLParenLoc(), initStmt->getLocEnd()), initStr);
+  TheRewriter.ReplaceText(GetRange(condStmt), condStr);
+  TheRewriter.ReplaceText(GetRange(incStmt->getLocStart(), S->getRParenLoc()), incStr);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }
