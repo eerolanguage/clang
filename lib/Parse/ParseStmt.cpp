@@ -1688,8 +1688,10 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   // If we have an NSRange expression after the "in"
   if (ForEach && isCollectionAnNSRange)
     return Actions.ActOnForNSRangeStmt(ForLoc, 
+                                       T.getOpenLocation(),
                                        FirstPart.take(), 
                                        Collection.take(), 
+                                       T.getCloseLocation(),
                                        Body.take());
   if (ForEach)
    return Actions.FinishObjCForCollectionStmt(ForEachStmt.take(),

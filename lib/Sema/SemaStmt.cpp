@@ -1588,8 +1588,10 @@ Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
 /// Eero: "for <int> i in <NSRange>" loop
 StmtResult 
 Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
-                          Stmt *First, 
+                          SourceLocation LParenLoc,
+                          Stmt *First,
                           Expr* Second, 
+                          SourceLocation RParenLoc,
                           Stmt *Body) {
 
   if (First == 0 || Second == 0)
@@ -1598,8 +1600,10 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
   QualType FirstType;
   bool hasDeclaration;
   Expr* varExpr = 0;
+  VarDecl *VD = 0;
 
-  if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
+  DeclStmt *DS = dyn_cast<DeclStmt>(First);
+  if (DS) {
     if (!DS->isSingleDecl())
       return StmtError(Diag((*DS->decl_begin())->getLocation(),
                        diag::err_toomany_element_decls));
@@ -1612,7 +1616,7 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
     // declare identifiers for objects having storage class 'auto' or
     // 'register'.
 
-    VarDecl *VD = cast<VarDecl>(D);
+    VD = cast<VarDecl>(D);
     if (VD->isLocalVarDecl() && !VD->hasLocalStorage())
       return StmtError(Diag(VD->getLocation(), diag::err_non_variable_decl_in_for));
 
@@ -1665,19 +1669,26 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
                                            beginExpr.get(),
                                            lengthExpr.take());
 
-  ExprResult assignExpr = CreateBuiltinBinOp(First->getLocStart(),
-                                             BO_Assign,
-                                             varExpr,
-                                             beginExpr.take());
-  Stmt* initStmt; 
+  Stmt* initStmt;
   if (hasDeclaration) {
-    Stmt* statements[2] = { First, assignExpr.take() };
-    initStmt = new (Context) CompoundStmt(Context,
-                                          statements,
-                                          2,
-                                          SourceLocation(),
-                                          SourceLocation());
+    Expr* init = beginExpr.take();
+
+    ExprResult initExpr = ActOnInitList(First->getLocStart(),
+                                        MultiExprArg(&init, 1),
+                                        First->getLocEnd());
+
+    AddInitializerToDecl(VD, initExpr.take(), false, false);
+    DeclGroupPtrTy DeclGroup = DeclGroupPtrTy::make(DS->getDeclGroup());
+    StmtResult R = ActOnDeclStmt(DeclGroup,
+                                 First->getLocStart(),
+                                 First->getLocEnd());
+    initStmt = R.take();
+
   } else {
+    ExprResult assignExpr = CreateBuiltinBinOp(First->getLocStart(),
+                                               BO_Assign,
+                                               varExpr,
+                                               beginExpr.take());
     initStmt = assignExpr.take();
   }
 
@@ -1693,7 +1704,7 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
   return Owned(new (Context) ForStmt(Context, initStmt, 
                                      condExpr.take(), 0, 
                                      incrExpr.take(), Body, ForLoc, 
-                                     First->getLocStart(), Second->getLocEnd()));
+                                     LParenLoc, RParenLoc));
 }
 
 /// Finish building a variable declaration for a for-range statement.
