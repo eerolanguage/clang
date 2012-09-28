@@ -1631,7 +1631,6 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
 
   CheckForLoopConditionalStatement(*this, Second, 0, Body);
 
-  DiagnoseUnusedExprResult(First);
   DiagnoseUnusedExprResult(Body);
 
   if (isa<NullStmt>(Body))
