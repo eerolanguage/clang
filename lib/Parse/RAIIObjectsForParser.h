@@ -377,7 +377,7 @@ namespace clang {
           Loc = P.Tok.getLocation();
           break;
         case UseSplitLineTokLocs:
-          Loc = P.PrevTokLocation;
+          Loc = P.PP.getLocForEndOfToken(P.PrevTokLocation);
           break;
       }
       if (Loc.isMacroID())
@@ -389,7 +389,7 @@ namespace clang {
       switch (tokLocMode) {
         case UseSameLineTokLocs:
         case UseSplitLineTokLocs:
-          Loc = P.PrevTokLocation;
+          Loc = P.PP.getLocForEndOfToken(P.PrevTokLocation);
           break;
       }
       if (Loc.isMacroID())

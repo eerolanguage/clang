@@ -757,7 +757,7 @@ private:
     Tok.clearFlag(Token::LeadingSpace);
     Tok.clearFlag(Token::StartOfLine);
 
-    SourceLocation Loc = PrevTokLocation;
+    SourceLocation Loc = PP.getLocForEndOfToken(PrevTokLocation);
     if (Loc.isMacroID()) {
       Loc = PP.getSourceManager().getExpansionLoc(Loc);
     }
