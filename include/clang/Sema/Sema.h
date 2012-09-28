@@ -2579,6 +2579,7 @@ public:
   StmtResult ActOnForNSRangeStmt(SourceLocation ForLoc,
                                  SourceLocation LParenLoc,
                                  Stmt *First, 
+                                 SourceLocation InLoc,
                                  Expr* Second, 
                                  SourceLocation RParenLoc,
                                  Stmt *Body);  

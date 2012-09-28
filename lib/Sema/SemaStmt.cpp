@@ -1590,6 +1590,7 @@ StmtResult
 Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
                           SourceLocation LParenLoc,
                           Stmt *First,
+                          SourceLocation InLoc,
                           Expr* Second, 
                           SourceLocation RParenLoc,
                           Stmt *Body) {
@@ -1599,7 +1600,7 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
 
   QualType FirstType;
   bool hasDeclaration;
-  Expr* varExpr = 0;
+  Expr* InitVarExpr = 0;
   VarDecl *VD = 0;
 
   DeclStmt *DS = dyn_cast<DeclStmt>(First);
@@ -1621,17 +1622,29 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
       return StmtError(Diag(VD->getLocation(), diag::err_non_variable_decl_in_for));
 
     ValueDecl *valDecl = cast<ValueDecl>(D);
-    varExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, SourceLocation()).take();
+    InitVarExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, First->getLocStart()).take();
 
   } else {
-    varExpr = cast<Expr>(First);
-    if (!varExpr->isTypeDependent() && !varExpr->isLValue())
+    InitVarExpr = cast<Expr>(First);
+    if (!InitVarExpr->isTypeDependent() && !InitVarExpr->isLValue())
       return StmtError(Diag(First->getLocStart(), diag::err_selector_element_not_lvalue)
                          << First->getSourceRange());
 
     hasDeclaration = false;
     FirstType = static_cast<Expr*>(First)->getType();
   }
+  
+  DeclRefExpr *declRefExpr = dyn_cast<DeclRefExpr>(InitVarExpr);
+
+  ExprResult CondVarExpr = BuildDeclRefExpr(declRefExpr->getDecl(),
+                                            FirstType,
+                                            VK_LValue,
+                                            InLoc);
+
+  ExprResult IncVarExpr = BuildDeclRefExpr(declRefExpr->getDecl(),
+                                           FirstType,
+                                           VK_LValue,
+                                           Second->getLocStart());
 
   CheckForLoopConditionalStatement(*this, Second, 0, Body);
 
@@ -1646,59 +1659,59 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
   // Begin loop at <NSRange>.location
   CXXScopeSpec SS;
   UnqualifiedId Name;
-  Name.setIdentifier(&(PP.getIdentifierTable().get("location")), Second->getLocStart());
-  ExprResult beginExpr = ActOnMemberAccessExpr(getCurScope(), 
+  Name.setIdentifier(&(PP.getIdentifierTable().get("location")),First->getLocEnd());
+  ExprResult beginExpr = ActOnMemberAccessExpr(getCurScope(),
                                                Second, 
-                                               Second->getLocStart(), 
+                                               SourceLocation(), 
                                                tok::period, 
                                                SS, SourceLocation(), 
                                                Name, 0, false);
 
   // End loop at <NSRange>.location + <NSRange>.length
-  Name.setIdentifier(&(PP.getIdentifierTable().get("length")), Second->getLocStart());
+  Name.setIdentifier(&(PP.getIdentifierTable().get("length")), InLoc);
   ExprResult lengthExpr = ActOnMemberAccessExpr(getCurScope(),
                                                 Second, 
-                                                Second->getLocStart(), 
+                                                SourceLocation(), 
                                                 tok::period, 
                                                 SS, SourceLocation(),
                                                 Name, 0, false);
 
-  ExprResult endExpr =  CreateBuiltinBinOp(First->getLocStart(),
+  ExprResult endExpr =  CreateBuiltinBinOp(SourceLocation(),
                                            BO_Add,
                                            beginExpr.get(),
                                            lengthExpr.take());
+  endExpr = ActOnParenExpr(InLoc,
+                           PP.getLocForEndOfToken(InLoc, 1),
+                           endExpr.take());
 
   Stmt* initStmt;
+
   if (hasDeclaration) {
     Expr* init = beginExpr.take();
-
     ExprResult initExpr = ActOnInitList(First->getLocStart(),
                                         MultiExprArg(&init, 1),
                                         First->getLocEnd());
 
     AddInitializerToDecl(VD, initExpr.take(), false, false);
     DeclGroupPtrTy DeclGroup = DeclGroupPtrTy::make(DS->getDeclGroup());
-    StmtResult R = ActOnDeclStmt(DeclGroup,
-                                 First->getLocStart(),
-                                 First->getLocEnd());
-    initStmt = R.take();
-
+    initStmt = ActOnDeclStmt(DeclGroup,
+                             First->getLocStart(),
+                             First->getLocEnd()).take();
   } else {
-    ExprResult assignExpr = CreateBuiltinBinOp(First->getLocStart(),
-                                               BO_Assign,
-                                               varExpr,
-                                               beginExpr.take());
-    initStmt = assignExpr.take();
+    initStmt = CreateBuiltinBinOp(SourceLocation(),
+                                  BO_Assign,
+                                  InitVarExpr,
+                                  beginExpr.take()).take();
   }
 
   ExprResult condExpr = CreateBuiltinBinOp(SourceLocation(),
                                            BO_LT,
-                                           varExpr,
+                                           CondVarExpr.get(),
                                            endExpr.take() );
 
-  ExprResult incrExpr = CreateBuiltinUnaryOp(SourceLocation(),
+  ExprResult incrExpr = CreateBuiltinUnaryOp(Second->getLocStart(),
                                              UO_PostInc,
-                                             varExpr );
+                                             IncVarExpr.take() );
 
   return Owned(new (Context) ForStmt(Context, initStmt, 
                                      condExpr.take(), 0, 

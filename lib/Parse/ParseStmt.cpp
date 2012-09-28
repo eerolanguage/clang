@@ -1427,6 +1427,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   SourceLocation ForLoc = ConsumeToken();  // eat the 'for'.
 
   const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  SourceLocation InLoc;
 
   if (Tok.isNot(tok::l_paren) && !isEero) {
     Diag(Tok, diag::err_expected_lparen_after) << "for";
@@ -1523,6 +1524,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     } else if ((ForEach = isTokIdentifier_in())) {
       Actions.ActOnForEachDeclStmt(DG);
       // ObjC: for (id x in expr)
+      InLoc = Tok.getLocation();
       ConsumeToken(); // consume 'in'
 
       if (Tok.is(tok::code_completion)) {
@@ -1567,6 +1569,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     if (Tok.is(tok::semi)) {
       ConsumeToken();
     } else if (ForEach) {
+      InLoc = Tok.getLocation();
       ConsumeToken(); // consume 'in'
 
       if (Tok.is(tok::code_completion)) {
@@ -1706,6 +1709,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     return Actions.ActOnForNSRangeStmt(ForLoc, 
                                        T.getOpenLocation(),
                                        FirstPart.take(), 
+                                       InLoc,
                                        Collection.take(), 
                                        T.getCloseLocation(),
                                        Body.take());
