@@ -1512,7 +1512,8 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
                                                DeclEnd, attrs, false,
                                                MightBeForRangeStmt ?
                                                  &ForRangeInit : 0);
-    FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, Tok.getLocation());
+    FirstPart = Actions.ActOnDeclStmt(DG, DeclStart,
+                                      isEero ? PrevTokLocation : Tok.getLocation());
 
     if (ForRangeInit.ParsedForRangeDecl()) {
       Diag(ForRangeInit.ColonLoc, getLangOpts().CPlusPlus0x ?

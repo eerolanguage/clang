@@ -1622,7 +1622,7 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
       return StmtError(Diag(VD->getLocation(), diag::err_non_variable_decl_in_for));
 
     ValueDecl *valDecl = cast<ValueDecl>(D);
-    InitVarExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, First->getLocStart()).take();
+    InitVarExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, First->getLocEnd()).take();
 
   } else {
     InitVarExpr = cast<Expr>(First);
@@ -1687,12 +1687,8 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
   Stmt* initStmt;
 
   if (hasDeclaration) {
-    Expr* init = beginExpr.take();
-    ExprResult initExpr = ActOnInitList(First->getLocStart(),
-                                        MultiExprArg(&init, 1),
-                                        First->getLocEnd());
+    AddInitializerToDecl(VD, beginExpr.take(), false, false);
 
-    AddInitializerToDecl(VD, initExpr.take(), false, false);
     DeclGroupPtrTy DeclGroup = DeclGroupPtrTy::make(DS->getDeclGroup());
     initStmt = ActOnDeclStmt(DeclGroup,
                              First->getLocStart(),
