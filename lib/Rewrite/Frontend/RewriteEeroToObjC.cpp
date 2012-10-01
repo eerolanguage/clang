@@ -12,6 +12,8 @@ using namespace clang;
 
 namespace {
 
+class TranslatorPrinterHelper;
+
 //-----------------------------------------------------------------------------------------------
 // TranslatorVisitor
 //-----------------------------------------------------------------------------------------------
@@ -19,7 +21,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
   //---------------------------------------------------------------------------------------------
   public:
-    TranslatorVisitor(Rewriter& R) : TheRewriter(R) {}
+    TranslatorVisitor(Rewriter& R) :
+      TheRewriter(R), SM(0), Policy(0), TheSystemPrinterHelper(0) {}
 
     void Initialize();
     void Finalize();
@@ -56,10 +59,16 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteDefaultStatement(DefaultStmt* S);
     void RewriteBreakStatement(BreakStmt* S);
 
-    enum StatementStringMode { NORMALIZE_SEMICOLONS, DO_NOT_MODIFY_SEMICOLONS };
+    enum StatementStringMode {
+        ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT,
+        REMOVE_TRAILING_SEMICOLON,
+        DO_NOT_MODIFY_TRAILING_SEMICOLON
+    };
 
     string GetStatementString(Stmt* S,
-                              StatementStringMode mode = NORMALIZE_SEMICOLONS);
+                              StatementStringMode mode = ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT);
+
+    void StripTrailingSemicolon(string& str);
 
     int GetTokenLength(SourceLocation Loc);
 
@@ -91,6 +100,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     LangOptions LangOpts;
     SourceManager* SM;
     PrintingPolicy* Policy;
+    TranslatorPrinterHelper* TheSystemPrinterHelper;
 
     // Set of strings to insert after all other rewriting is done
     //
@@ -144,6 +154,50 @@ class RewriteEeroToObjC : public ASTConsumer {
 
     virtual void Initialize(ASTContext& context);
 };
+
+//------------------------------------------------------------------------------------------------
+// TranslatorPrinterHelper
+//------------------------------------------------------------------------------------------------
+
+class TranslatorPrinterHelper : public PrinterHelper {
+  public:
+    TranslatorPrinterHelper(PrintingPolicy* P) : Policy(P) {}
+    virtual ~TranslatorPrinterHelper() {}
+
+  protected:
+    virtual bool handledStmt(Stmt* E, raw_ostream& OS) {
+
+      // If this is an ObjC object subscript expression with an
+      // NSRange key, print the generated message expression.
+      //
+      if (PseudoObjectExpr* P =
+              dyn_cast_or_null<PseudoObjectExpr>(E)) {
+
+        if (ObjCSubscriptRefExpr* S =
+                dyn_cast_or_null<ObjCSubscriptRefExpr>(P->getSyntacticForm())) {
+
+          if (S->getKeyExpr()->getType().getAsString(*Policy) == "NSRange") {
+
+            if (ObjCMessageExpr* M =
+                    dyn_cast_or_null<ObjCMessageExpr>(P->getResultExpr())) {
+
+              string stringBuf;
+              llvm::raw_string_ostream stringStream(stringBuf);
+              M->printPretty(stringStream, 0, *Policy);
+              OS << stringStream.str();
+
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+  private:
+    PrintingPolicy* Policy;
+};
+
 }  // namespace clang
 
 
@@ -210,13 +264,11 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
   OutFile->flush();
 }
 
-
 //------------------------------------------------------------------------------------------------
 //
 void RewriteEeroToObjC::Initialize(ASTContext& context) {
   InitializeCommon(context);
 }
-
 
 //------------------------------------------------------------------------------------------------
 // TranslatorVisitor
@@ -321,7 +373,6 @@ void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl) {
   }
 }
 
-
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
@@ -386,7 +437,6 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
   if (PreviousMethodLoc.isInvalid() || LocStart != PreviousMethodLoc) {
     TheRewriter.ReplaceText(GetRange(LocStart, LocEnd), resultStr);
   } else {
-//    TheRewriter.InsertText(LocStart, resultStr + "\n", false, true);
     resultStr += "\n";
     DeferredInsertText(LocStart, resultStr);
   }
@@ -613,7 +663,7 @@ void TranslatorVisitor::RewriteCompoundStatement(CompoundStmt* S) {
 void TranslatorVisitor::RewriteIfStatement(IfStmt* S) {
 
   string condStr = "(";
-  condStr += GetStatementString(S->getCond(), DO_NOT_MODIFY_SEMICOLONS);
+  condStr += GetStatementString(S->getCond(), REMOVE_TRAILING_SEMICOLON);
   condStr += ") {";
 
   TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
@@ -640,20 +690,21 @@ void TranslatorVisitor::RewriteForStatement(ForStmt* S) {
 
   Stmt* initStmt = S->getInit();
   SourceLocation InitEnd = Lexer::getLocForEndOfToken(initStmt->getLocEnd(), 0, *SM, LangOpts);
-  StatementStringMode SemiMode = (*SM->getCharacterData(InitEnd) == ';') ?
-                                     DO_NOT_MODIFY_SEMICOLONS : NORMALIZE_SEMICOLONS;
+  StatementStringMode SemiMode =
+      (*SM->getCharacterData(InitEnd) == ';') ?
+          REMOVE_TRAILING_SEMICOLON : ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT;
 
   initStr += GetStatementString(initStmt, SemiMode);
 
   Stmt* condStmt = S->getCond();
   SourceLocation CondEnd = Lexer::getLocForEndOfToken(condStmt->getLocEnd(), 0, *SM, LangOpts);
   SemiMode = (*SM->getCharacterData(CondEnd) == ';') ?
-                 DO_NOT_MODIFY_SEMICOLONS : NORMALIZE_SEMICOLONS;
+                 REMOVE_TRAILING_SEMICOLON : ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT;
 
   string condStr = GetStatementString(condStmt, SemiMode);
 
   Stmt* incStmt = S->getInc();
-  string incStr = GetStatementString(incStmt, DO_NOT_MODIFY_SEMICOLONS);
+  string incStr = GetStatementString(incStmt, REMOVE_TRAILING_SEMICOLON);
   incStr += ')';
 
   incStr += " {";
@@ -688,11 +739,11 @@ void TranslatorVisitor::RewriteCaseStatement(CaseStmt* S) {
 
   const SourceRange range = GetRange(S->getCaseLoc(), S->getColonLoc());
   string CaseStr = "case ";
-  CaseStr += GetStatementString(S->getLHS(), DO_NOT_MODIFY_SEMICOLONS);
+  CaseStr += GetStatementString(S->getLHS(), DO_NOT_MODIFY_TRAILING_SEMICOLON);
 
   if (Expr* RHS = S->getRHS()) {
     CaseStr += " ... ";
-    CaseStr += GetStatementString(RHS, DO_NOT_MODIFY_SEMICOLONS);
+    CaseStr += GetStatementString(RHS, DO_NOT_MODIFY_TRAILING_SEMICOLON);
   }
 
   CaseStr += ": ";
@@ -747,6 +798,9 @@ void TranslatorVisitor::Initialize() {
   Policy = new PrintingPolicy(LangOpts);
   Policy->DoNotExpandMacros = true;
   Policy->SourceMgr = SM;
+
+  TheSystemPrinterHelper = new TranslatorPrinterHelper(Policy);
+  SystemPrinterHelper::set(TheSystemPrinterHelper);
 }
 
 //------------------------------------------------------------------------------------------------
@@ -764,6 +818,9 @@ void TranslatorVisitor::Finalize() {
 
     StringInsertions.pop_front();
   }
+  
+  SystemPrinterHelper::set(0);
+  delete TheSystemPrinterHelper;
 }
 
 //------------------------------------------------------------------------------------------------
@@ -772,6 +829,9 @@ string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) 
 
   string stringBuf;
   llvm::raw_string_ostream stringStream(stringBuf);
+  
+//  TranslatorPrinterHelper helper(Policy);
+  
   S->printPretty(stringStream, 0, *Policy);
   string str = stringStream.str();
 
@@ -781,10 +841,13 @@ string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) 
     str.erase(str.end() - 1);
   }
 
-  // Normalize trailing ';'s
-  //
-  if (mode == NORMALIZE_SEMICOLONS) {
-    str.erase(remove(str.begin(), str.end(), ';'), str.end());
+  // Handle trailing ';'s
+
+  if (mode != DO_NOT_MODIFY_TRAILING_SEMICOLON) {
+    StripTrailingSemicolon(str);
+  }
+
+  if (mode == ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT) {
     str += ';';
   }
 
@@ -793,24 +856,8 @@ string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) 
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::DeferredInsertText(SourceLocation Loc, string Str) {
-  StringInsertion insertion = { Str, Loc, false };
-  StringInsertions.push_back(insertion);
-}
-
-//------------------------------------------------------------------------------------------------
-//
-void TranslatorVisitor::DeferredInsertTextAfterToken(SourceLocation Loc, string Str) {
-  StringInsertion insertion = { Str, Loc, true };
-  StringInsertions.push_back(insertion);
-}
-
-//------------------------------------------------------------------------------------------------
-//
-void TranslatorVisitor::DeferredInsertTextAtEndOfLine(SourceLocation Loc, string Str) {
-  SourceLocation NewLoc = Loc;
-  MoveLocToEndOfLine(NewLoc);
-  DeferredInsertText(NewLoc, Str);
+void TranslatorVisitor::StripTrailingSemicolon(string& str) {
+      str.erase(remove(str.begin(), str.end(), ';'), str.end());
 }
 
 //------------------------------------------------------------------------------------------------
@@ -818,6 +865,7 @@ void TranslatorVisitor::DeferredInsertTextAtEndOfLine(SourceLocation Loc, string
 int TranslatorVisitor::GetTokenLength(SourceLocation Loc) {
   return Lexer::MeasureTokenLength(Loc, *SM, LangOpts);
 }
+
 
 //------------------------------------------------------------------------------------------------
 //
@@ -936,4 +984,28 @@ void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
     }
   }
 }
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::DeferredInsertText(SourceLocation Loc, string Str) {
+  StringInsertion insertion = { Str, Loc, false };
+  StringInsertions.push_back(insertion);
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::DeferredInsertTextAfterToken(SourceLocation Loc, string Str) {
+  StringInsertion insertion = { Str, Loc, true };
+  StringInsertions.push_back(insertion);
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::DeferredInsertTextAtEndOfLine(SourceLocation Loc, string Str) {
+  SourceLocation NewLoc = Loc;
+  MoveLocToEndOfLine(NewLoc);
+  DeferredInsertText(NewLoc, Str);
+}
+
+
 
