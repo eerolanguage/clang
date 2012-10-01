@@ -161,41 +161,79 @@ class RewriteEeroToObjC : public ASTConsumer {
 
 class TranslatorPrinterHelper : public PrinterHelper {
   public:
-    TranslatorPrinterHelper(PrintingPolicy* P) : Policy(P) {}
+    TranslatorPrinterHelper(PrintingPolicy& P, SourceManager& S)
+        : Policy(P), SM(S) {}
     virtual ~TranslatorPrinterHelper() {}
 
   protected:
     virtual bool handledStmt(Stmt* E, raw_ostream& OS) {
 
-      // If this is an ObjC object subscript expression with an
-      // NSRange key, print the generated message expression.
-      //
       if (PseudoObjectExpr* P =
               dyn_cast_or_null<PseudoObjectExpr>(E)) {
-
-        if (ObjCSubscriptRefExpr* S =
-                dyn_cast_or_null<ObjCSubscriptRefExpr>(P->getSyntacticForm())) {
-
-          if (S->getKeyExpr()->getType().getAsString(*Policy) == "NSRange") {
-
-            if (ObjCMessageExpr* M =
-                    dyn_cast_or_null<ObjCMessageExpr>(P->getResultExpr())) {
-
-              string stringBuf;
-              llvm::raw_string_ostream stringStream(stringBuf);
-              M->printPretty(stringStream, 0, *Policy);
-              OS << stringStream.str();
-
-              return true;
-            }
-          }
-        }
+        return HandlePseudoObjectExpr(P, OS);
       }
+
+      if (E->getLocStart().isMacroID() && E->getLocEnd().isMacroID()) {
+        return HandleMacroExpr(E, OS);
+      }
+      
       return false;
     }
 
+  bool HandlePseudoObjectExpr(PseudoObjectExpr* E, raw_ostream& OS) {
+
+    // If this is an ObjC object subscript expression with an
+    // NSRange key, print the generated message expression.
+    //
+    if (ObjCSubscriptRefExpr* S =
+            dyn_cast_or_null<ObjCSubscriptRefExpr>(E->getSyntacticForm())) {
+
+      if (S->getKeyExpr()->getType().getAsString(Policy) == "NSRange") {
+
+        if (ObjCMessageExpr* M =
+                dyn_cast_or_null<ObjCMessageExpr>(E->getResultExpr())) {
+
+          string stringBuf;
+          llvm::raw_string_ostream stringStream(stringBuf);
+          M->printPretty(stringStream, 0, Policy);
+          OS << stringStream.str();
+
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool HandleMacroExpr(Stmt* E, raw_ostream& OS) {
+
+    // If this is a single (contiguous) macro, print the macro name itself
+    // instead of what it is defined as
+    //
+    const SourceLocation& LocStart = E->getLocStart();
+    const SourceLocation& LocEnd = E->getLocEnd();
+
+    if (Lexer::isAtStartOfMacroExpansion(LocStart, SM, Policy.LangOpts) &&
+        Lexer::isAtEndOfMacroExpansion(LocEnd, SM, Policy.LangOpts)) {
+
+      const SourceLocation& ExpansionLocStart = SM.getExpansionLoc(LocStart);
+      const SourceLocation& ExpansionLocEnd = SM.getExpansionLoc(LocEnd);
+
+      if (ExpansionLocEnd == ExpansionLocStart) {
+        SmallVector<char, 64> buffer;
+        OS << Lexer::getSpelling(ExpansionLocStart,
+                                 buffer,
+                                 SM,
+                                 Policy.LangOpts);
+        return true;
+      }
+    }
+    return false;
+  }
+
   private:
-    PrintingPolicy* Policy;
+    PrintingPolicy& Policy;
+    SourceManager& SM;
 };
 
 }  // namespace clang
@@ -794,12 +832,9 @@ void TranslatorVisitor::Initialize() {
 
   SM = &(TheRewriter.getSourceMgr());
   LangOpts = TheRewriter.getLangOpts();
-
   Policy = new PrintingPolicy(LangOpts);
-  Policy->DoNotExpandMacros = true;
-  Policy->SourceMgr = SM;
 
-  TheSystemPrinterHelper = new TranslatorPrinterHelper(Policy);
+  TheSystemPrinterHelper = new TranslatorPrinterHelper(*Policy, *SM);
   SystemPrinterHelper::set(TheSystemPrinterHelper);
 }
 
