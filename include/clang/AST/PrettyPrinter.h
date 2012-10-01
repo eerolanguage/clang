@@ -29,6 +29,19 @@ public:
   virtual bool handledStmt(Stmt* E, raw_ostream& OS) = 0;
 };
 
+class SystemPrinterHelper {
+public:
+  static void set(PrinterHelper* H) {
+    assert(!(H && Helper) && "System PrinterHelper already set!");
+    Helper = H;
+  }
+  static PrinterHelper* get() { return Helper; }
+private:
+  SystemPrinterHelper() {}
+  ~SystemPrinterHelper() {}
+  static PrinterHelper* Helper;
+};
+
 /// \brief Describes how types, statements, expressions, and
 /// declarations should be printed.
 struct PrintingPolicy {

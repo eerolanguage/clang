@@ -1863,6 +1863,10 @@ void Stmt::printPretty(raw_ostream &OS,
     return;
   }
 
+  if (!Helper) {
+    Helper = SystemPrinterHelper::get();
+  }
+
   StmtPrinter P(OS, Helper, Policy, Indentation);
   P.Visit(const_cast<Stmt*>(this));
 }
@@ -1873,3 +1877,7 @@ void Stmt::printPretty(raw_ostream &OS,
 
 // Implement virtual destructor.
 PrinterHelper::~PrinterHelper() {}
+
+// Init (clear) the system-wide helper
+PrinterHelper* SystemPrinterHelper::Helper = 0;
+
