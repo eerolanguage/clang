@@ -1170,6 +1170,55 @@ void CommentASTToXMLConverter::visitFullComment(const FullComment *C) {
     visit(Parts.Returns);
     Result << "</ResultDiscussion>";
   }
+  
+  if (DI->ThisDecl->hasAttrs()) {
+    const AttrVec &Attrs = DI->ThisDecl->getAttrs();
+    for (unsigned i = 0, e = Attrs.size(); i != e; i++) {
+      const AvailabilityAttr *AA = dyn_cast<AvailabilityAttr>(Attrs[i]);
+      if (!AA)
+        continue;
+
+      // 'availability' attribute.
+      Result << "<Availability";
+      StringRef Distribution;
+      if (AA->getPlatform()) {
+        Distribution = AvailabilityAttr::getPrettyPlatformName(
+                                        AA->getPlatform()->getName());
+        if (Distribution.empty())
+          Distribution = AA->getPlatform()->getName();
+      }
+      Result << " distribution=\"" << Distribution << "\">";
+      VersionTuple IntroducedInVersion = AA->getIntroduced();
+      if (!IntroducedInVersion.empty()) {
+        Result << "<IntroducedInVersion>"
+               << IntroducedInVersion.getAsString()
+               << "</IntroducedInVersion>";
+      }
+      VersionTuple DeprecatedInVersion = AA->getDeprecated();
+      if (!DeprecatedInVersion.empty()) {
+        Result << "<DeprecatedInVersion>"
+               << DeprecatedInVersion.getAsString()
+               << "</DeprecatedInVersion>";
+      }
+      VersionTuple RemovedAfterVersion = AA->getObsoleted();
+      if (!RemovedAfterVersion.empty()) {
+        Result << "<RemovedAfterVersion>"
+               << RemovedAfterVersion.getAsString()
+               << "</RemovedAfterVersion>";
+      }
+      // 'deprecated' attribute.
+      StringRef DeprecationSummary = AA->getMessage();
+      if (!DeprecationSummary.empty()) {
+        Result << " <DeprecationSummary>"
+               << DeprecationSummary
+               << "</DeprecationSummary>";
+      }
+      // 'unavailable' attribute.
+      if (AA->getUnavailable())
+        Result << "<Unavailable>true</Unavailable>";
+      Result << "</Availability>";
+    }
+  }
 
   {
     bool StartTagEmitted = false;

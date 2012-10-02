@@ -43,22 +43,6 @@
 using namespace clang;
 using namespace sema;
 
-FunctionScopeInfo::~FunctionScopeInfo() { }
-
-void FunctionScopeInfo::Clear() {
-  HasBranchProtectedScope = false;
-  HasBranchIntoScope = false;
-  HasIndirectGoto = false;
-  
-  SwitchStack.clear();
-  Returns.clear();
-  ErrorTrap.reset();
-  PossiblyUnreachableDiags.clear();
-}
-
-BlockScopeInfo::~BlockScopeInfo() { }
-LambdaScopeInfo::~LambdaScopeInfo() { }
-
 PrintingPolicy Sema::getPrintingPolicy(const ASTContext &Context,
                                        const Preprocessor &PP) {
   PrintingPolicy Policy = Context.getPrintingPolicy();

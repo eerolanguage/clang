@@ -1,4 +1,4 @@
-//=- IvarInvalidationChecker.cpp - -*- C++ ----*-==//
+//=- IvarInvalidationChecker.cpp - -*- C++ -------------------------------*-==//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,10 +13,12 @@
 //           __attribute__((annotate("objc_instance_variable_invalidator")));
 //  all the "ivalidatable" instance variables of this class should be
 //  invalidated. We call an instance variable ivalidatable if it is an object of
-//  a class which contains an invalidation method.
-//
-//  Note, this checker currently only checks if an ivar was accessed by the
-//  method, we do not currently support any deeper invalidation checking.
+//  a class which contains an invalidation method. There could be multiple
+//  methods annotated with such annotations per class, either one can be used
+//  to invalidate the ivar. An ivar or property are considered to be
+//  invalidated if they are being assigned 'nil' or an invalidation method has
+//  been called on them. An invalidation method should either invalidate all
+//  the ivars or call another invalidation method (on self).
 //
 //===----------------------------------------------------------------------===//
 
@@ -36,51 +38,142 @@ namespace {
 class IvarInvalidationChecker :
   public Checker<check::ASTDecl<ObjCMethodDecl> > {
 
-  typedef llvm::DenseMap<const ObjCIvarDecl*, bool> IvarSet;
+  typedef llvm::DenseSet<const ObjCMethodDecl*> MethodSet;
   typedef llvm::DenseMap<const ObjCMethodDecl*,
                          const ObjCIvarDecl*> MethToIvarMapTy;
   typedef llvm::DenseMap<const ObjCPropertyDecl*,
                          const ObjCIvarDecl*> PropToIvarMapTy;
+  typedef llvm::DenseMap<const ObjCIvarDecl*,
+                         const ObjCPropertyDecl*> IvarToPropMapTy;
+
+
+  struct IvarInfo {
+    /// Has the ivar been invalidated?
+    bool IsInvalidated;
+
+    /// The methods which can be used to invalidate the ivar.
+    MethodSet InvalidationMethods;
+
+    IvarInfo() : IsInvalidated(false) {}
+    void addInvalidationMethod(const ObjCMethodDecl *MD) {
+      InvalidationMethods.insert(MD);
+    }
+
+    bool needsInvalidation() const {
+      return !InvalidationMethods.empty();
+    }
+
+    void markInvalidated() {
+      IsInvalidated = true;
+    }
+
+    bool markInvalidated(const ObjCMethodDecl *MD) {
+      if (IsInvalidated)
+        return true;
+      for (MethodSet::iterator I = InvalidationMethods.begin(),
+          E = InvalidationMethods.end(); I != E; ++I) {
+        if (*I == MD) {
+          IsInvalidated = true;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    bool isInvalidated() const {
+      return IsInvalidated;
+    }
+  };
+
+  typedef llvm::DenseMap<const ObjCIvarDecl*, IvarInfo> IvarSet;
 
   /// Statement visitor, which walks the method body and flags the ivars
   /// referenced in it (either directly or via property).
   class MethodCrawler : public ConstStmtVisitor<MethodCrawler> {
-
     /// The set of Ivars which need to be invalidated.
     IvarSet &IVars;
 
-    /// Property setter to ivar mapping.
-    MethToIvarMapTy &PropertySetterToIvarMap;
+    /// Flag is set as the result of a message send to another
+    /// invalidation method.
+    bool &CalledAnotherInvalidationMethod;
 
-    // Property to ivar mapping.
-    PropToIvarMapTy &PropertyToIvarMap;
+    /// Property setter to ivar mapping.
+    const MethToIvarMapTy &PropertySetterToIvarMap;
+
+    /// Property getter to ivar mapping.
+    const MethToIvarMapTy &PropertyGetterToIvarMap;
+
+    /// Property to ivar mapping.
+    const PropToIvarMapTy &PropertyToIvarMap;
+
+    /// The invalidation method being currently processed.
+    const ObjCMethodDecl *InvalidationMethod;
+
+    ASTContext &Ctx;
+
+    /// Peel off parens, casts, OpaqueValueExpr, and PseudoObjectExpr.
+    const Expr *peel(const Expr *E) const;
+
+    /// Does this expression represent zero: '0'?
+    bool isZero(const Expr *E) const;
+
+    /// Mark the given ivar as invalidated.
+    void markInvalidated(const ObjCIvarDecl *Iv);
+
+    /// Checks if IvarRef refers to the tracked IVar, if yes, marks it as
+    /// invalidated.
+    void checkObjCIvarRefExpr(const ObjCIvarRefExpr *IvarRef);
+
+    /// Checks if ObjCPropertyRefExpr refers to the tracked IVar, if yes, marks
+    /// it as invalidated.
+    void checkObjCPropertyRefExpr(const ObjCPropertyRefExpr *PA);
+
+    /// Checks if ObjCMessageExpr refers to (is a getter for) the tracked IVar,
+    /// if yes, marks it as invalidated.
+    void checkObjCMessageExpr(const ObjCMessageExpr *ME);
+
+    /// Checks if the Expr refers to an ivar, if yes, marks it as invalidated.
+    void check(const Expr *E);
 
   public:
-    MethodCrawler(const ObjCInterfaceDecl *InID,
-                  IvarSet &InIVars, MethToIvarMapTy &InPropertySetterToIvarMap,
-                  PropToIvarMapTy &InPropertyToIvarMap)
+    MethodCrawler(IvarSet &InIVars,
+                  bool &InCalledAnotherInvalidationMethod,
+                  const MethToIvarMapTy &InPropertySetterToIvarMap,
+                  const MethToIvarMapTy &InPropertyGetterToIvarMap,
+                  const PropToIvarMapTy &InPropertyToIvarMap,
+                  ASTContext &InCtx)
     : IVars(InIVars),
+      CalledAnotherInvalidationMethod(InCalledAnotherInvalidationMethod),
       PropertySetterToIvarMap(InPropertySetterToIvarMap),
-      PropertyToIvarMap(InPropertyToIvarMap) {}
+      PropertyGetterToIvarMap(InPropertyGetterToIvarMap),
+      PropertyToIvarMap(InPropertyToIvarMap),
+      InvalidationMethod(0),
+      Ctx(InCtx) {}
 
     void VisitStmt(const Stmt *S) { VisitChildren(S); }
 
-    void VisitObjCIvarRefExpr(const ObjCIvarRefExpr *IvarRef);
+    void VisitBinaryOperator(const BinaryOperator *BO);
 
     void VisitObjCMessageExpr(const ObjCMessageExpr *ME);
 
-    void VisitObjCPropertyRefExpr(const ObjCPropertyRefExpr *PA);
-
     void VisitChildren(const Stmt *S) {
-      for (Stmt::const_child_range I = S->children(); I; ++I)
+      for (Stmt::const_child_range I = S->children(); I; ++I) {
         if (*I)
           this->Visit(*I);
+        if (CalledAnotherInvalidationMethod)
+          return;
+      }
     }
   };
 
   /// Check if the any of the methods inside the interface are annotated with
-  /// the invalidation annotation.
-  bool containsInvalidationMethod(const ObjCContainerDecl *D) const;
+  /// the invalidation annotation, update the IvarInfo accordingly.
+  static void containsInvalidationMethod(const ObjCContainerDecl *D,
+                                         IvarInfo &Out);
+
+  /// Check if ivar should be tracked and add to TrackedIvars if positive.
+  /// Returns true if ivar should be tracked.
+  static bool trackIvar(const ObjCIvarDecl *Iv, IvarSet &TrackedIvars);
 
   /// Given the property declaration, and the list of tracked ivars, finds
   /// the ivar backing the property when possible. Returns '0' when no such
@@ -88,7 +181,7 @@ class IvarInvalidationChecker :
   static const ObjCIvarDecl *findPropertyBackingIvar(
       const ObjCPropertyDecl *Prop,
       const ObjCInterfaceDecl *InterfaceD,
-      IvarSet TrackedIvars);
+      IvarSet &TrackedIvars);
 
 public:
   void checkASTDecl(const ObjCMethodDecl *D, AnalysisManager& Mgr,
@@ -97,7 +190,7 @@ public:
   // TODO: We are currently ignoring the ivars coming from class extensions.
 };
 
-bool isInvalidationMethod(const ObjCMethodDecl *M) {
+static bool isInvalidationMethod(const ObjCMethodDecl *M) {
   for (specific_attr_iterator<AnnotateAttr>
        AI = M->specific_attr_begin<AnnotateAttr>(),
        AE = M->specific_attr_end<AnnotateAttr>(); AI != AE; ++AI) {
@@ -108,13 +201,13 @@ bool isInvalidationMethod(const ObjCMethodDecl *M) {
   return false;
 }
 
-bool IvarInvalidationChecker::containsInvalidationMethod (
-    const ObjCContainerDecl *D) const {
+void IvarInvalidationChecker::containsInvalidationMethod(
+    const ObjCContainerDecl *D, IvarInfo &OutInfo) {
 
   // TODO: Cache the results.
 
   if (!D)
-    return false;
+    return;
 
   // Check all methods.
   for (ObjCContainerDecl::method_iterator
@@ -122,7 +215,8 @@ bool IvarInvalidationChecker::containsInvalidationMethod (
       E = D->meth_end(); I != E; ++I) {
       const ObjCMethodDecl *MDI = *I;
       if (isInvalidationMethod(MDI))
-        return true;
+        OutInfo.addInvalidationMethod(
+                               cast<ObjCMethodDecl>(MDI->getCanonicalDecl()));
   }
 
   // If interface, check all parent protocols and super.
@@ -132,10 +226,10 @@ bool IvarInvalidationChecker::containsInvalidationMethod (
     for (ObjCInterfaceDecl::protocol_iterator
         I = InterfaceD->protocol_begin(),
         E = InterfaceD->protocol_end(); I != E; ++I) {
-      if (containsInvalidationMethod(*I))
-        return true;
+      containsInvalidationMethod(*I, OutInfo);
     }
-    return containsInvalidationMethod(InterfaceD->getSuperClass());
+    containsInvalidationMethod(InterfaceD->getSuperClass(), OutInfo);
+    return;
   }
 
   // If protocol, check all parent protocols.
@@ -143,25 +237,47 @@ bool IvarInvalidationChecker::containsInvalidationMethod (
     for (ObjCInterfaceDecl::protocol_iterator
         I = ProtD->protocol_begin(),
         E = ProtD->protocol_end(); I != E; ++I) {
-      if (containsInvalidationMethod(*I))
-        return true;
+      containsInvalidationMethod(*I, OutInfo);
     }
-    return false;
+    return;
   }
 
   llvm_unreachable("One of the casts above should have succeeded.");
 }
 
+bool IvarInvalidationChecker::trackIvar(const ObjCIvarDecl *Iv,
+                                        IvarSet &TrackedIvars) {
+  QualType IvQTy = Iv->getType();
+  const ObjCObjectPointerType *IvTy = IvQTy->getAs<ObjCObjectPointerType>();
+  if (!IvTy)
+    return false;
+  const ObjCInterfaceDecl *IvInterf = IvTy->getInterfaceDecl();
+
+  IvarInfo Info;
+  containsInvalidationMethod(IvInterf, Info);
+  if (Info.needsInvalidation()) {
+    TrackedIvars[cast<ObjCIvarDecl>(Iv->getCanonicalDecl())] = Info;
+    return true;
+  }
+  return false;
+}
+
 const ObjCIvarDecl *IvarInvalidationChecker::findPropertyBackingIvar(
                         const ObjCPropertyDecl *Prop,
                         const ObjCInterfaceDecl *InterfaceD,
-                        IvarSet TrackedIvars) {
+                        IvarSet &TrackedIvars) {
   const ObjCIvarDecl *IvarD = 0;
 
   // Lookup for the synthesized case.
   IvarD = Prop->getPropertyIvarDecl();
-  if (IvarD)
-    return IvarD;
+  if (IvarD) {
+    if (TrackedIvars.count(IvarD)) {
+      return IvarD;
+    }
+    // If the ivar is synthesized we still want to track it.
+    if (trackIvar(IvarD, TrackedIvars))
+      return IvarD;
+  }
 
   // Lookup IVars named "_PropName"or "PropName" among the tracked Ivars.
   StringRef PropName = Prop->getIdentifier()->getName();
@@ -202,19 +318,15 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCMethodDecl *D,
       II = InterfaceD->ivar_begin(),
       IE = InterfaceD->ivar_end(); II != IE; ++II) {
     const ObjCIvarDecl *Iv = *II;
-    QualType IvQTy = Iv->getType();
-    const ObjCObjectPointerType *IvTy = IvQTy->getAs<ObjCObjectPointerType>();
-    if (!IvTy)
-      continue;
-    const ObjCInterfaceDecl *IvInterf = IvTy->getInterfaceDecl();
-    if (containsInvalidationMethod(IvInterf))
-      Ivars[cast<ObjCIvarDecl>(Iv->getCanonicalDecl())] = false;
+    trackIvar(Iv, Ivars);
   }
 
-  // Construct Property/Property Setter to Ivar maps to assist checking if an
+  // Construct Property/Property Accessor to Ivar maps to assist checking if an
   // ivar which is backing a property has been reset.
   MethToIvarMapTy PropSetterToIvarMap;
+  MethToIvarMapTy PropGetterToIvarMap;
   PropToIvarMapTy PropertyToIvarMap;
+  IvarToPropMapTy IvarToPopertyMap;
   for (ObjCInterfaceDecl::prop_iterator
       I = InterfaceD->prop_begin(),
       E = InterfaceD->prop_end(); I != E; ++I) {
@@ -224,28 +336,42 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCMethodDecl *D,
     if (!ID) {
       continue;
     }
-    // Find the setter.
-    const ObjCMethodDecl *SetterD = PD->getSetterMethodDecl();
-    // If we don't know the setter, do not track this ivar.
-    if (!SetterD)
-      continue;
 
     // Store the mappings.
     PD = cast<ObjCPropertyDecl>(PD->getCanonicalDecl());
-    SetterD = cast<ObjCMethodDecl>(SetterD->getCanonicalDecl());
     PropertyToIvarMap[PD] = ID;
-    PropSetterToIvarMap[SetterD] = ID;
+    IvarToPopertyMap[ID] = PD;
+
+    // Find the setter and the getter.
+    const ObjCMethodDecl *SetterD = PD->getSetterMethodDecl();
+    if (SetterD) {
+      SetterD = cast<ObjCMethodDecl>(SetterD->getCanonicalDecl());
+      PropSetterToIvarMap[SetterD] = ID;
+    }
+
+    const ObjCMethodDecl *GetterD = PD->getGetterMethodDecl();
+    if (GetterD) {
+      GetterD = cast<ObjCMethodDecl>(GetterD->getCanonicalDecl());
+      PropGetterToIvarMap[GetterD] = ID;
+    }
   }
 
 
-  // Check which ivars have been accessed by the method.
-  // We assume that if ivar was at least accessed, it was not forgotten.
-  MethodCrawler(InterfaceD, Ivars,
-                PropSetterToIvarMap, PropertyToIvarMap).VisitStmt(D->getBody());
+  // Check which ivars have been invalidated in the method body.
+  bool CalledAnotherInvalidationMethod = false;
+  MethodCrawler(Ivars,
+                CalledAnotherInvalidationMethod,
+                PropSetterToIvarMap,
+                PropGetterToIvarMap,
+                PropertyToIvarMap,
+                BR.getContext()).VisitStmt(D->getBody());
+
+  if (CalledAnotherInvalidationMethod)
+    return;
 
   // Warn on the ivars that were not accessed by the method.
   for (IvarSet::const_iterator I = Ivars.begin(), E = Ivars.end(); I != E; ++I){
-    if (I->second == false) {
+    if (!I->second.isInvalidated()) {
       const ObjCIvarDecl *IvarDecl = I->first;
 
       PathDiagnosticLocation IvarDecLocation =
@@ -254,8 +380,17 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCMethodDecl *D,
 
       SmallString<128> sbuf;
       llvm::raw_svector_ostream os(sbuf);
-      os << "Instance variable "<< IvarDecl->getName()
-         << " needs to be invalidated";
+
+      // Construct the warning message.
+      if (IvarDecl->getSynthesize()) {
+        const ObjCPropertyDecl *PD = IvarToPopertyMap[IvarDecl];
+        assert(PD &&
+               "Do we synthesize ivars for something other than properties?");
+        os << "Property "<< PD->getName() << " needs to be invalidated";
+      } else {
+        os << "Instance variable "<< IvarDecl->getName()
+             << " needs to be invalidated";
+      }
 
       BR.EmitBasicReport(D,
           "Incomplete invalidation",
@@ -265,38 +400,56 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCMethodDecl *D,
   }
 }
 
-/// Handle the case when an ivar is directly accessed.
-void IvarInvalidationChecker::MethodCrawler::VisitObjCIvarRefExpr(
-    const ObjCIvarRefExpr *IvarRef) {
-  const Decl *D = IvarRef->getDecl();
-  if (D)
-    IVars[cast<ObjCIvarDecl>(D->getCanonicalDecl())] = true;
-  VisitStmt(IvarRef);
+void IvarInvalidationChecker::MethodCrawler::markInvalidated(
+    const ObjCIvarDecl *Iv) {
+  IvarSet::iterator I = IVars.find(Iv);
+  if (I != IVars.end()) {
+    // If InvalidationMethod is present, we are processing the message send and
+    // should ensure we are invalidating with the appropriate method,
+    // otherwise, we are processing setting to 'nil'.
+    if (InvalidationMethod)
+      I->second.markInvalidated(InvalidationMethod);
+    else
+      I->second.markInvalidated();
+  }
 }
 
+const Expr *IvarInvalidationChecker::MethodCrawler::peel(const Expr *E) const {
+  E = E->IgnoreParenCasts();
+  if (const PseudoObjectExpr *POE = dyn_cast<PseudoObjectExpr>(E))
+    E = POE->getSyntacticForm()->IgnoreParenCasts();
+  if (const OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(E))
+    E = OVE->getSourceExpr()->IgnoreParenCasts();
+  return E;
+}
 
-/// Handle the case when the property backing ivar is set via a direct call
-/// to the setter.
-void IvarInvalidationChecker::MethodCrawler::VisitObjCMessageExpr(
+void IvarInvalidationChecker::MethodCrawler::checkObjCIvarRefExpr(
+    const ObjCIvarRefExpr *IvarRef) {
+  if (const Decl *D = IvarRef->getDecl())
+    markInvalidated(cast<ObjCIvarDecl>(D->getCanonicalDecl()));
+}
+
+void IvarInvalidationChecker::MethodCrawler::checkObjCMessageExpr(
     const ObjCMessageExpr *ME) {
   const ObjCMethodDecl *MD = ME->getMethodDecl();
   if (MD) {
     MD = cast<ObjCMethodDecl>(MD->getCanonicalDecl());
-    IVars[PropertySetterToIvarMap[MD]] = true;
+    MethToIvarMapTy::const_iterator IvI = PropertyGetterToIvarMap.find(MD);
+    if (IvI != PropertyGetterToIvarMap.end())
+      markInvalidated(IvI->second);
   }
-  VisitStmt(ME);
 }
 
-/// Handle the case when the property backing ivar is set via the dot syntax.
-void IvarInvalidationChecker::MethodCrawler::VisitObjCPropertyRefExpr(
+void IvarInvalidationChecker::MethodCrawler::checkObjCPropertyRefExpr(
     const ObjCPropertyRefExpr *PA) {
 
   if (PA->isExplicitProperty()) {
     const ObjCPropertyDecl *PD = PA->getExplicitProperty();
     if (PD) {
       PD = cast<ObjCPropertyDecl>(PD->getCanonicalDecl());
-      IVars[PropertyToIvarMap[PD]] = true;
-      VisitStmt(PA);
+      PropToIvarMapTy::const_iterator IvI = PropertyToIvarMap.find(PD);
+      if (IvI != PropertyToIvarMap.end())
+        markInvalidated(IvI->second);
       return;
     }
   }
@@ -305,12 +458,85 @@ void IvarInvalidationChecker::MethodCrawler::VisitObjCPropertyRefExpr(
     const ObjCMethodDecl *MD = PA->getImplicitPropertySetter();
     if (MD) {
       MD = cast<ObjCMethodDecl>(MD->getCanonicalDecl());
-      IVars[PropertySetterToIvarMap[MD]] = true;
-      VisitStmt(PA);
+      MethToIvarMapTy::const_iterator IvI =PropertyGetterToIvarMap.find(MD);
+      if (IvI != PropertyGetterToIvarMap.end())
+        markInvalidated(IvI->second);
       return;
     }
   }
-  VisitStmt(PA);
+}
+
+bool IvarInvalidationChecker::MethodCrawler::isZero(const Expr *E) const {
+  E = peel(E);
+
+  return (E->isNullPointerConstant(Ctx, Expr::NPC_ValueDependentIsNotNull)
+           != Expr::NPCK_NotNull);
+}
+
+void IvarInvalidationChecker::MethodCrawler::check(const Expr *E) {
+  E = peel(E);
+
+  if (const ObjCIvarRefExpr *IvarRef = dyn_cast<ObjCIvarRefExpr>(E)) {
+    checkObjCIvarRefExpr(IvarRef);
+    return;
+  }
+
+  if (const ObjCPropertyRefExpr *PropRef = dyn_cast<ObjCPropertyRefExpr>(E)) {
+    checkObjCPropertyRefExpr(PropRef);
+    return;
+  }
+
+  if (const ObjCMessageExpr *MsgExpr = dyn_cast<ObjCMessageExpr>(E)) {
+    checkObjCMessageExpr(MsgExpr);
+    return;
+  }
+}
+
+void IvarInvalidationChecker::MethodCrawler::VisitBinaryOperator(
+    const BinaryOperator *BO) {
+  VisitStmt(BO);
+
+  if (BO->getOpcode() != BO_Assign)
+    return;
+
+  // Do we assign zero?
+  if (!isZero(BO->getRHS()))
+    return;
+
+  // Check the variable we are assigning to.
+  check(BO->getLHS());
+}
+
+void IvarInvalidationChecker::MethodCrawler::VisitObjCMessageExpr(
+    const ObjCMessageExpr *ME) {
+  const ObjCMethodDecl *MD = ME->getMethodDecl();
+  const Expr *Receiver = ME->getInstanceReceiver();
+
+  // Stop if we are calling '[self invalidate]'.
+  if (Receiver && isInvalidationMethod(MD))
+    if (Receiver->isObjCSelfExpr()) {
+      CalledAnotherInvalidationMethod = true;
+      return;
+    }
+
+  // Check if we call a setter and set the property to 'nil'.
+  if (MD && (ME->getNumArgs() == 1) && isZero(ME->getArg(0))) {
+    MD = cast<ObjCMethodDecl>(MD->getCanonicalDecl());
+    MethToIvarMapTy::const_iterator IvI = PropertySetterToIvarMap.find(MD);
+    if (IvI != PropertySetterToIvarMap.end()) {
+      markInvalidated(IvI->second);
+      return;
+    }
+  }
+
+  // Check if we call the 'invalidation' routine on the ivar.
+  if (Receiver) {
+    InvalidationMethod = MD;
+    check(Receiver->IgnoreParenCasts());
+    InvalidationMethod = 0;
+  }
+
+  VisitStmt(ME);
 }
 }
 
