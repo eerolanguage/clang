@@ -720,22 +720,16 @@ private:
   // token before it on a new line, keeping both newlines.
   //
   void InsertTokenAndKeepNewline(const tok::TokenKind tokenKind) {
-    SourceLocation Loc = Tok.getLocation();
-    if (Loc.isMacroID()) {
-      Loc = PP.getSourceManager().getExpansionLoc(Loc);
-    }
     PP.EnterToken(Tok);
     Tok.setKind(tokenKind);
     Tok.setLength(0);
     Tok.setIdentifierInfo(0);
-    Tok.setLocation(Loc);
   }
 
   // If current token is at the start of a new line, put this
   // token in front of it on the same line.
   //
   void InsertToken(const tok::TokenKind tokenKind) {
-
     const bool HasLeadingSpace = Tok.hasLeadingSpace();
     const bool IsAtStartOfLine = Tok.isAtStartOfLine();
     
@@ -752,16 +746,11 @@ private:
   // on the previous line.
   //
   void InsertTokenAndIgnoreNewline(const tok::TokenKind tokenKind) {
-
     InsertTokenAndKeepNewline(tokenKind);
+
+    Tok.setLocation(PP.getLocForEndOfToken(PrevTokLocation));
     Tok.clearFlag(Token::LeadingSpace);
     Tok.clearFlag(Token::StartOfLine);
-
-    SourceLocation Loc = PP.getLocForEndOfToken(PrevTokLocation);
-    if (Loc.isMacroID()) {
-      Loc = PP.getSourceManager().getExpansionLoc(Loc);
-    }
-    Tok.setLocation(Loc);
   }
 
   unsigned Column(const SourceLocation& Loc) {

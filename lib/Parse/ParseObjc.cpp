@@ -1145,10 +1145,12 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       MaybeParseGNUAttributes(methodAttrs);
 
     SourceLocation EndLoc;
-    if (!isEero || (Tok.is(tok::semi) && !Tok.isAtStartOfLine())) {
+    if (!isEero) {
       EndLoc = Tok.getLocation();
+    } else if (Tok.is(tok::semi) && !Tok.isAtStartOfLine()) {
+      EndLoc = ConsumeToken(); // the semicolon at the end of the line
     } else {
-      EndLoc = PrevTokLocation;
+      EndLoc = PP.getLocForEndOfToken(PrevTokLocation);
     }
 
     Selector Sel = PP.getSelectorTable().getNullarySelector(SelIdent);
@@ -1224,6 +1226,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     // Eero supports default argument-variable names
     if (isEero && (Tok.isAtStartOfLine() || 
                    Tok.is(tok::comma) ||  
+                   Tok.is(tok::semi) ||
                    (isOptional && Tok.is(tok::r_square)) ||
                    (MethodDefinition && Tok.is(tok::equal) && 
                     (ArgInfos.size() > 0)))) { // can't be first param
@@ -1394,10 +1397,12 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     MaybeParseGNUAttributes(methodAttrs);
 
   SourceLocation EndLoc;
-  if (!isEero || (Tok.is(tok::semi) && !Tok.isAtStartOfLine())) {
+  if (!isEero) {
     EndLoc = Tok.getLocation();
+  } else if (Tok.is(tok::semi) && !Tok.isAtStartOfLine()) {
+    EndLoc = ConsumeToken(); // the semicolon at the end of the line
   } else {
-    EndLoc = PrevTokLocation;
+    EndLoc = PP.getLocForEndOfToken(PrevTokLocation);
   }
   
   if (KeyIdents.size() == 0)
@@ -1469,9 +1474,9 @@ Parser::ParseOptionalMethodDecl(SourceLocation mLoc,
 
         SourceLocation EndLoc;
         if (Tok.is(tok::semi) && !Tok.isAtStartOfLine()) {
-          EndLoc = Tok.getLocation();
+          EndLoc = ConsumeToken(); // the semicolon at the end of the line
         } else {
-          EndLoc = PrevTokLocation;
+          EndLoc = PP.getLocForEndOfToken(PrevTokLocation);
         }
 
         Selector PartialSel = PP.getSelectorTable().getSelector(KeyIdents.size(),

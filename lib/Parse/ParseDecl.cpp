@@ -2200,7 +2200,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         !firstPass && 
         Tok.isAtStartOfLine() && 
         !PP.isInLegacyHeader()) {
-      InsertToken(tok::semi); // not great, but most reliable way to do this
+      InsertTokenAndIgnoreNewline(tok::semi); // not great, but most reliable way to do this
     }
 
     if (firstPass)
