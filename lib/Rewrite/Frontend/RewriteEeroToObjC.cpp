@@ -864,17 +864,13 @@ string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) 
 
   string stringBuf;
   llvm::raw_string_ostream stringStream(stringBuf);
-  
-//  TranslatorPrinterHelper helper(Policy);
-  
+
   S->printPretty(stringStream, 0, *Policy);
   string str = stringStream.str();
 
   // Get rid of the extra newline the pretty printer adds
   //
-  if (*(str.end() - 1) == '\n') {
-    str.erase(str.end() - 1);
-  }
+  str.erase(str.find_last_not_of(" \n") + 1);
 
   // Handle trailing ';'s
 
@@ -892,7 +888,7 @@ string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) 
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::StripTrailingSemicolon(string& str) {
-      str.erase(remove(str.begin(), str.end(), ';'), str.end());
+  str.erase(str.find_last_not_of(" ;") + 1);
 }
 
 //------------------------------------------------------------------------------------------------
