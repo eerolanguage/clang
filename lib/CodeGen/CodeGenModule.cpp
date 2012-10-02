@@ -202,6 +202,12 @@ llvm::MDNode *CodeGenModule::getTBAAInfoForVTablePtr() {
   return TBAA->getTBAAInfoForVTablePtr();
 }
 
+llvm::MDNode *CodeGenModule::getTBAAStructInfo(QualType QTy) {
+  if (!TBAA)
+    return 0;
+  return TBAA->getTBAAStructInfo(QTy);
+}
+
 void CodeGenModule::DecorateInstruction(llvm::Instruction *Inst,
                                         llvm::MDNode *TBAAInfo) {
   Inst->setMetadata(llvm::LLVMContext::MD_tbaa, TBAAInfo);
@@ -581,6 +587,10 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
 
   if (isa<CXXConstructorDecl>(D) || isa<CXXDestructorDecl>(D))
     F->setUnnamedAddr(true);
+
+  if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(D))
+    if (MD->isVirtual())
+      F->setUnnamedAddr(true);
 
   if (LangOpts.getStackProtector() == LangOptions::SSPOn)
     F->addFnAttr(llvm::Attribute::StackProtect);

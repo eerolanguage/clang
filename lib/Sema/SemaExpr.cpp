@@ -1425,6 +1425,15 @@ Sema::BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
 
   MarkDeclRefReferenced(E);
 
+  if (getLangOpts().ObjCARCWeak && isa<VarDecl>(D) &&
+      Ty.getObjCLifetime() == Qualifiers::OCL_Weak) {
+    DiagnosticsEngine::Level Level =
+      Diags.getDiagnosticLevel(diag::warn_arc_repeated_use_of_weak,
+                               E->getLocStart());
+    if (Level != DiagnosticsEngine::Ignored)
+      getCurFunction()->recordUseOfWeak(E);
+  }
+
   // Just in case we're building an illegal pointer-to-member.
   FieldDecl *FD = dyn_cast<FieldDecl>(D);
   if (FD && FD->isBitField())
@@ -1986,9 +1995,22 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
       ObjCMethodFamily MF = CurMethod->getMethodFamily();
       if (MF != OMF_init && MF != OMF_dealloc && MF != OMF_finalize)
         Diag(Loc, diag::warn_direct_ivar_access) << IV->getDeclName();
-      return Owned(new (Context)
-                   ObjCIvarRefExpr(IV, IV->getType(), Loc,
-                                   SelfExpr.take(), true, true));
+
+      ObjCIvarRefExpr *Result = new (Context) ObjCIvarRefExpr(IV, IV->getType(),
+                                                              Loc,
+                                                              SelfExpr.take(),
+                                                              true, true);
+
+      if (getLangOpts().ObjCAutoRefCount) {
+        if (IV->getType().getObjCLifetime() == Qualifiers::OCL_Weak) {
+          DiagnosticsEngine::Level Level =
+            Diags.getDiagnosticLevel(diag::warn_arc_repeated_use_of_weak, Loc);
+          if (Level != DiagnosticsEngine::Ignored)
+            getCurFunction()->recordUseOfWeak(Result);
+        }
+      }
+      
+      return Owned(Result);
     }
   } else if (CurMethod->isInstanceMethod()) {
     // We should warn if a local variable hides an ivar.
@@ -7771,6 +7793,19 @@ QualType Sema::CheckAssignmentOperands(Expr *LHSExpr, ExprResult &RHS,
         const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(InnerLHS);
         if (!DRE || DRE->getDecl()->hasAttr<BlocksAttr>())
           checkRetainCycles(LHSExpr, RHS.get());
+
+        // It is safe to assign a weak reference into a strong variable.
+        // Although this code can still have problems:
+        //   id x = self.weakProp;
+        //   id y = self.weakProp;
+        // we do not warn to warn spuriously when 'x' and 'y' are on separate
+        // paths through the function. This should be revisited if
+        // -Wrepeated-use-of-weak is made flow-sensitive.
+        DiagnosticsEngine::Level Level =
+          Diags.getDiagnosticLevel(diag::warn_arc_repeated_use_of_weak,
+                                   RHS.get()->getLocStart());
+        if (Level != DiagnosticsEngine::Ignored)
+          getCurFunction()->markSafeWeakUse(RHS.get());
 
       } else if (getLangOpts().ObjCAutoRefCount) {
         checkUnsafeExprAssigns(Loc, LHSExpr, RHS.get());

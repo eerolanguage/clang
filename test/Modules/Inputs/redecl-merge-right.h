@@ -83,6 +83,19 @@ template<typename T> class Vector {
 public:
   void push_back(const T&);
 };
+
+template<typename T> class List;
+template<> class List<bool> {
+public:
+  void push_back(int);
+};
+
+namespace N {
+  template<typename T> class Set {
+  public:
+    void insert(T);
+  };
+}
 #endif
 
 int ONE;

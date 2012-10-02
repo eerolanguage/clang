@@ -1312,10 +1312,12 @@ ASTDeclReader::VisitRedeclarableTemplateDecl(RedeclarableTemplateDecl *D) {
         D->setMemberSpecialization();
     }
   }
-     
+
   VisitTemplateDecl(D);
   D->IdentifierNamespace = Record[Idx++];
-  
+
+  mergeRedeclarable(D, Redecl);
+
   return Redecl;
 }
 
@@ -1395,14 +1397,17 @@ void ASTDeclReader::VisitClassTemplateSpecializationDecl(
                                                      TemplArgs.size());
   D->PointOfInstantiation = ReadSourceLocation(Record, Idx);
   D->SpecializationKind = (TemplateSpecializationKind)Record[Idx++];
-  
-  if (D->isCanonicalDecl()) { // It's kept in the folding set.
+
+  bool writtenAsCanonicalDecl = Record[Idx++];
+  if (writtenAsCanonicalDecl) {
     ClassTemplateDecl *CanonPattern = ReadDeclAs<ClassTemplateDecl>(Record,Idx);
-    if (ClassTemplatePartialSpecializationDecl *Partial
-                       = dyn_cast<ClassTemplatePartialSpecializationDecl>(D)) {
-      CanonPattern->getCommonPtr()->PartialSpecializations.InsertNode(Partial);
-    } else {
-      CanonPattern->getCommonPtr()->Specializations.InsertNode(D);
+    if (D->isCanonicalDecl()) { // It's kept in the folding set.
+      if (ClassTemplatePartialSpecializationDecl *Partial
+                        = dyn_cast<ClassTemplatePartialSpecializationDecl>(D)) {
+  CanonPattern->getCommonPtr()->PartialSpecializations.GetOrInsertNode(Partial);
+      } else {
+        CanonPattern->getCommonPtr()->Specializations.GetOrInsertNode(D);
+      }
     }
   }
 }
@@ -1744,7 +1749,7 @@ static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
     return (FuncX->getLinkage() == FuncY->getLinkage()) &&
       FuncX->getASTContext().hasSameType(FuncX->getType(), FuncY->getType());
   }
-  
+
   // Variables with the same type and linkage match.
   if (VarDecl *VarX = dyn_cast<VarDecl>(X)) {
     VarDecl *VarY = cast<VarDecl>(Y);
@@ -1757,7 +1762,11 @@ static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
     NamespaceDecl *NamespaceY = cast<NamespaceDecl>(Y);
     return NamespaceX->isInline() == NamespaceY->isInline();
   }
-      
+
+  // Identical template names and kinds match.
+  if (isa<TemplateDecl>(X))
+    return true;
+
   // FIXME: Many other cases to implement.
   return false;
 }
@@ -2293,7 +2302,7 @@ void ASTReader::loadPendingDeclChain(serialization::GlobalDeclID ID) {
   }
   MergedDeclsMap::iterator MergedPos = combineStoredMergedDecls(CanonDecl, ID);
   if (MergedPos != MergedDecls.end())
-    SearchDecls.append(MergedPos->second.begin(), MergedPos->second.end());  
+    SearchDecls.append(MergedPos->second.begin(), MergedPos->second.end());
   
   // Build up the list of redeclarations.
   RedeclChainVisitor Visitor(*this, SearchDecls, RedeclsDeserialized, CanonID);

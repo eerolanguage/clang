@@ -3405,7 +3405,6 @@ static bool RebuildDeclaratorInCurrentInstantiation(Sema &S, Declarator &D,
   switch (DS.getTypeSpecType()) {
   case DeclSpec::TST_typename:
   case DeclSpec::TST_typeofType:
-  case DeclSpec::TST_decltype:
   case DeclSpec::TST_underlyingType:
   case DeclSpec::TST_atomic: {
     // Grab the type from the parser.
@@ -3429,6 +3428,7 @@ static bool RebuildDeclaratorInCurrentInstantiation(Sema &S, Declarator &D,
     break;
   }
 
+  case DeclSpec::TST_decltype:
   case DeclSpec::TST_typeofExpr: {
     Expr *E = DS.getRepAsExpr();
     ExprResult Result = S.RebuildExprInCurrentInstantiation(E);
@@ -6313,28 +6313,12 @@ namespace {
       }
     }
 
-    // Sometimes, the expression passed in lacks the casts that are used
-    // to determine which DeclRefExpr's to check.  Assume that the casts
-    // are present and continue visiting the expression.
-    void HandleExpr(Expr *E) {
-      // Skip checking T a = a where T is not a record or reference type.
-      // Doing so is a way to silence uninitialized warnings.
-      if (isRecordType || isReferenceType)
-        if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E))
-          HandleDeclRefExpr(DRE);
-
-      if (ConditionalOperator *CO = dyn_cast<ConditionalOperator>(E)) {
-        HandleValue(CO->getTrueExpr());
-        HandleValue(CO->getFalseExpr());
-      }
-
-      Visit(E);
-    }
-
     // For most expressions, the cast is directly above the DeclRefExpr.
     // For conditional operators, the cast can be outside the conditional
     // operator if both expressions are DeclRefExpr's.
     void HandleValue(Expr *E) {
+      if (isReferenceType)
+        return;
       E = E->IgnoreParenImpCasts();
       if (DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(E)) {
         HandleDeclRefExpr(DRE);
@@ -6345,6 +6329,13 @@ namespace {
         HandleValue(CO->getTrueExpr());
         HandleValue(CO->getFalseExpr());
       }
+    }
+
+    // Reference types are handled here since all uses of references are
+    // bad, not just r-value uses.
+    void VisitDeclRefExpr(DeclRefExpr *E) {
+      if (isReferenceType)
+        HandleDeclRefExpr(E);
     }
 
     void VisitImplicitCastExpr(ImplicitCastExpr *E) {
@@ -6393,11 +6384,28 @@ namespace {
                               << DRE->getSourceRange());
     }
   };
-}
 
-/// CheckSelfReference - Warns if OrigDecl is used in expression E.
-void Sema::CheckSelfReference(Decl* OrigDecl, Expr *E) {
-  SelfReferenceChecker(*this, OrigDecl).HandleExpr(E);
+  /// CheckSelfReference - Warns if OrigDecl is used in expression E.
+  static void CheckSelfReference(Sema &S, Decl* OrigDecl, Expr *E,
+                                 bool DirectInit) {
+    // Parameters arguments are occassionially constructed with itself,
+    // for instance, in recursive functions.  Skip them.
+    if (isa<ParmVarDecl>(OrigDecl))
+      return;
+
+    E = E->IgnoreParens();
+
+    // Skip checking T a = a where T is not a record or reference type.
+    // Doing so is a way to silence uninitialized warnings.
+    if (!DirectInit && !cast<VarDecl>(OrigDecl)->getType()->isRecordType())
+      if (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(E))
+        if (ICE->getCastKind() == CK_LValueToRValue)
+          if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+            if (DRE->getDecl() == OrigDecl)
+              return;
+
+    SelfReferenceChecker(S, OrigDecl).Visit(E);
+  }
 }
 
 /// AddInitializerToDecl - Adds the initializer Init to the
@@ -6433,15 +6441,6 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     RealDecl->setInvalidDecl();
     return;
   }
-
-  // Check for self-references within variable initializers.
-  // Variables declared within a function/method body (except for references)
-  // are handled by a dataflow analysis.
-  // Record types initialized by initializer list are handled here.
-  // Initialization by constructors are handled in TryConstructorInitialization.
-  if ((!VDecl->hasLocalStorage() || VDecl->getType()->isReferenceType()) &&
-      (isa<InitListExpr>(Init) || !VDecl->getType()->isRecordType()))
-    CheckSelfReference(RealDecl, Init);
 
   ParenListExpr *CXXDirectInit = dyn_cast<ParenListExpr>(Init);
 
@@ -6630,6 +6629,14 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     Init = Result.takeAs<Expr>();
   }
 
+  // Check for self-references within variable initializers.
+  // Variables declared within a function/method body (except for references)
+  // are handled by a dataflow analysis.
+  if (!VDecl->hasLocalStorage() || VDecl->getType()->isRecordType() ||
+      VDecl->getType()->isReferenceType()) {
+    CheckSelfReference(*this, RealDecl, Init, DirectInit);
+  }
+
   // If the type changed, it means we had an incomplete type that was
   // completed by the initializer. For example:
   //   int ary[] = { 1, 3, 5 };
@@ -6645,6 +6652,21 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
 
     if (VDecl->hasAttr<BlocksAttr>())
       checkRetainCycles(VDecl, Init);
+
+    // It is safe to assign a weak reference into a strong variable.
+    // Although this code can still have problems:
+    //   id x = self.weakProp;
+    //   id y = self.weakProp;
+    // we do not warn to warn spuriously when 'x' and 'y' are on separate
+    // paths through the function. This should be revisited if
+    // -Wrepeated-use-of-weak is made flow-sensitive.
+    if (VDecl->getType().getObjCLifetime() == Qualifiers::OCL_Strong) {
+      DiagnosticsEngine::Level Level =
+        Diags.getDiagnosticLevel(diag::warn_arc_repeated_use_of_weak,
+                                 Init->getLocStart());
+      if (Level != DiagnosticsEngine::Ignored)
+        getCurFunction()->markSafeWeakUse(Init);
+    }
   }
 
   Init = MaybeCreateExprWithCleanups(Init);
@@ -7308,7 +7330,7 @@ void Sema::ActOnDocumentableDecls(Decl **Group, unsigned NumDecls) {
     // the lookahead in the lexer: we've consumed the semicolon and looked
     // ahead through comments.
     for (unsigned i = 0; i != NumDecls; ++i)
-      Context.getCommentForDecl(Group[i]);
+      Context.getCommentForDecl(Group[i], &PP);
   }
 }
 
