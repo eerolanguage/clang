@@ -2491,7 +2491,16 @@ Decl *Parser::ParseObjCMethodDefinition() {
       StmtResult DefaultReturnStmt = 
           Actions.ActOnReturnStmt(ReturnLoc, DefaultReturnExpr.take());
       StmtVector Stmts;
-      Stmts.push_back(FnBody.release());
+      if (clang::CompoundStmt *CStmt =
+              dyn_cast_or_null<clang::CompoundStmt>(FnBody.get())) {
+        for (clang::CompoundStmt::body_iterator BI = CStmt->body_begin(),
+                                                 E = CStmt->body_end();
+             BI != E; ++BI) {
+          Stmts.push_back(*BI);
+        }
+      } else {
+        Stmts.push_back(FnBody.release());
+      }
       Stmts.push_back(DefaultReturnStmt.release());
       FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyEndLoc, 
                                          Stmts, false);
