@@ -468,6 +468,23 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
   } else {
     resultStr += " {";
     DeferredInsertTextAtEndOfLine(Method->getLocEnd(), "\n}");
+
+    // Handle default return values
+    //
+    CompoundStmt* compoundBody = Method->getCompoundBody();
+    if (compoundBody && (compoundBody->size() > 1)) {
+      if (ReturnStmt* lastReturnStmt =
+              dyn_cast_or_null<ReturnStmt>(compoundBody->body_back())) {
+        Stmt* firstStmt = *(compoundBody->body_begin());
+        if (firstStmt &&
+            (lastReturnStmt->getLocStart() < firstStmt->getLocStart())) {
+          resultStr += " //";
+          string returnStr = "\n";
+          returnStr += GetStatementString(lastReturnStmt);
+          DeferredInsertText(compoundBody->getRBracLoc(), returnStr);
+        }
+      }
+    }
   }
 
   // Make sure we handle generated methods with optional params -- don't overwrite
