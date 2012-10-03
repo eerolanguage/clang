@@ -417,12 +417,20 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
 
   // When method is a synthesized one, such as a getter/setter there is
   // nothing to rewrite.
+  //
   if (Method->isImplicit()) {
     return;
   }
 
   SourceLocation LocStart = Method->getLocStart();
-  SourceLocation LocEnd   = Method->getDeclaratorEndLoc();
+  SourceLocation LocEnd = Method->getDeclaratorEndLoc();
+
+  // Determine whether it's not a compiler-generated method (resulting from
+  // optional parameters).
+  //
+  const bool isNotCompilerGenerated =
+      (PreviousMethodLoc.isInvalid() || LocStart != PreviousMethodLoc);
+  PreviousMethodLoc = LocStart;
 
   string resultStr;
 
@@ -467,8 +475,9 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
     resultStr += ";";
   } else {
     resultStr += " {";
-    DeferredInsertTextAtEndOfLine(Method->getLocEnd(), "\n}");
-
+    if (isNotCompilerGenerated) {
+      DeferredInsertTextAtEndOfLine(Method->getLocEnd(), "\n}");
+    }
     // Handle default return values
     //
     CompoundStmt* compoundBody = Method->getCompoundBody();
@@ -487,15 +496,19 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
     }
   }
 
-  // Make sure we handle generated methods with optional params -- don't overwrite
+  // Handle generated methods with optional params -- don't overwrite
   //
-  if (PreviousMethodLoc.isInvalid() || LocStart != PreviousMethodLoc) {
+  if (isNotCompilerGenerated) {
     TheRewriter.ReplaceText(GetRange(LocStart, LocEnd), resultStr);
   } else {
+    if (Method->isThisDeclarationADefinition()) {
+      resultStr += "\n  ";
+      resultStr += GetStatementString(Method->getBody());
+      resultStr += "\n  }\n";
+    }
     resultStr += "\n";
     DeferredInsertText(LocStart, resultStr);
   }
-  PreviousMethodLoc = LocStart;
 }
 
 //------------------------------------------------------------------------------------------------
