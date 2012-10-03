@@ -1960,7 +1960,10 @@ private:
   void ParseGNUAttributeArgs(IdentifierInfo *AttrName,
                              SourceLocation AttrNameLoc,
                              ParsedAttributes &Attrs,
-                             SourceLocation *EndLoc);
+                             SourceLocation *EndLoc,
+                             IdentifierInfo *ScopeName,
+                             SourceLocation ScopeLoc,
+                             AttributeList::Syntax Syntax);
 
   void MaybeParseCXX0XAttributes(Declarator &D) {
     if (getLangOpts().CPlusPlus0x && isCXX11AttributeSpecifier()) {
@@ -1990,6 +1993,7 @@ private:
                                     SourceLocation *EndLoc = 0);
   void ParseCXX11Attributes(ParsedAttributesWithRange &attrs,
                             SourceLocation *EndLoc = 0);
+
   IdentifierInfo *TryParseCXX11AttributeIdentifier(SourceLocation &Loc);
 
   void MaybeParseMicrosoftAttributes(ParsedAttributes &attrs,

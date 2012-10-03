@@ -1435,6 +1435,8 @@ void ASTWriter::WriteSourceManagerBlock(SourceManager &SourceMgr,
        I != N; ++I) {
     // Get this source location entry.
     const SrcMgr::SLocEntry *SLoc = &SourceMgr.getLocalSLocEntry(I);
+    FileID FID = FileID::get(I);
+    assert(&SourceMgr.getSLocEntry(FID) == SLoc);
 
     // Record the offset of this source-location entry.
     SLocEntryOffsets.push_back(Stream.GetCurrentBitNo());
@@ -1475,7 +1477,7 @@ void ASTWriter::WriteSourceManagerBlock(SourceManager &SourceMgr,
         Record.push_back(Content->BufferOverridden);
         Record.push_back(File.NumCreatedFIDs);
         
-        FileDeclIDsTy::iterator FDI = FileDeclIDs.find(SLoc);
+        FileDeclIDsTy::iterator FDI = FileDeclIDs.find(FID);
         if (FDI != FileDeclIDs.end()) {
           Record.push_back(FDI->second->FirstDeclIndex);
           Record.push_back(FDI->second->DeclIDs.size());
@@ -1805,6 +1807,7 @@ void ASTWriter::WritePreprocessorDetail(PreprocessingRecord &PPRec) {
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32)); // filename length
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // in quotes
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 2)); // kind
+    Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // imported module
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));
     InclusionAbbrev = Stream.EmitAbbrev(Abbrev);
   }
@@ -1847,6 +1850,7 @@ void ASTWriter::WritePreprocessorDetail(PreprocessingRecord &PPRec) {
       Record.push_back(ID->getFileName().size());
       Record.push_back(ID->wasInQuotes());
       Record.push_back(static_cast<unsigned>(ID->getKind()));
+      Record.push_back(ID->importedModule());
       SmallString<64> Buffer;
       Buffer += ID->getFileName();
       // Check that the FileEntry is not null because it was not resolved and
@@ -2249,9 +2253,11 @@ void ASTWriter::WriteFileDeclIDsMap() {
 
   BitCodeAbbrev *Abbrev = new BitCodeAbbrev();
   Abbrev->Add(BitCodeAbbrevOp(FILE_SORTED_DECLS));
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));
   unsigned AbbrevCode = Stream.EmitAbbrev(Abbrev);
   Record.push_back(FILE_SORTED_DECLS);
+  Record.push_back(FileSortedIDs.size());
   Stream.EmitRecordWithBlob(AbbrevCode, Record, data(FileSortedIDs));
 }
 
@@ -3950,10 +3956,9 @@ void ASTWriter::associateDeclWithFile(const Decl *D, DeclID ID) {
   llvm::tie(FID, Offset) = SM.getDecomposedLoc(FileLoc);
   if (FID.isInvalid())
     return;
-  const SrcMgr::SLocEntry *Entry = &SM.getSLocEntry(FID);
-  assert(Entry->isFile());
+  assert(SM.getSLocEntry(FID).isFile());
 
-  DeclIDInFileInfo *&Info = FileDeclIDs[Entry];
+  DeclIDInFileInfo *&Info = FileDeclIDs[FID];
   if (!Info)
     Info = new DeclIDInFileInfo();
 

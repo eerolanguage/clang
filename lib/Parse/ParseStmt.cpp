@@ -773,9 +773,13 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   PrettyStackTraceLoc CrashInfo(PP.getSourceManager(),
                                 Tok.getLocation(),
                                 "in compound statement ('{}')");
+
+  // Record the state of the FP_CONTRACT pragma, restore on leaving the
+  // compound statement.
+  Sema::FPContractStateRAII SaveFPContractState(Actions);
+
   InMessageExpressionRAIIObject InMessage(*this, false);
   BalancedDelimiterTracker T(*this, tok::l_brace);
-
   if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     if (Tok.isAtStartOfLine()) {
       T.setIgnored(BalancedDelimiterTracker::UseSplitLineTokLocs);
@@ -784,7 +788,6 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       return ParseStatement(); // TODO: flush the rest of the line instead?
     }
   }
-
   if (T.consumeOpen())
     return StmtError();
 

@@ -2777,6 +2777,45 @@ SourceLocation ASTUnit::getStartOfMainFileID() {
   return SourceMgr->getLocForStartOfFile(FID);
 }
 
+std::pair<PreprocessingRecord::iterator, PreprocessingRecord::iterator>
+ASTUnit::getLocalPreprocessingEntities() const {
+  if (isMainFileAST()) {
+    serialization::ModuleFile &
+      Mod = Reader->getModuleManager().getPrimaryModule();
+    return Reader->getModulePreprocessedEntities(Mod);
+  }
+
+  if (PreprocessingRecord *PPRec = PP->getPreprocessingRecord())
+    return std::make_pair(PPRec->local_begin(), PPRec->local_end());
+
+  return std::make_pair(PreprocessingRecord::iterator(),
+                        PreprocessingRecord::iterator());
+}
+
+bool ASTUnit::visitLocalTopLevelDecls(void *context, DeclVisitorFn Fn) {
+  if (isMainFileAST()) {
+    serialization::ModuleFile &
+      Mod = Reader->getModuleManager().getPrimaryModule();
+    ASTReader::ModuleDeclIterator MDI, MDE;
+    llvm::tie(MDI, MDE) = Reader->getModuleFileLevelDecls(Mod);
+    for (; MDI != MDE; ++MDI) {
+      if (!Fn(context, *MDI))
+        return false;
+    }
+
+    return true;
+  }
+
+  for (ASTUnit::top_level_iterator TL = top_level_begin(),
+                                TLEnd = top_level_end();
+         TL != TLEnd; ++TL) {
+    if (!Fn(context, *TL))
+      return false;
+  }
+
+  return true;
+}
+
 void ASTUnit::PreambleData::countLines() const {
   NumLines = 0;
   if (empty())

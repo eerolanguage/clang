@@ -495,9 +495,8 @@ void Sema::checkCall(NamedDecl *FDecl, Expr **Args,
                      SourceLocation Loc,
                      SourceRange Range,
                      VariadicCallType CallType) {
-  // FIXME: This mechanism should be abstracted to be less fragile and
-  // more efficient. For example, just map function ids to custom
-  // handlers.
+  if (CurContext->isDependentContext())
+    return;
 
   // Printf and scanf checking.
   bool HandledFormatString = false;
@@ -5511,8 +5510,12 @@ static Expr *findCapturingExpr(Sema &S, Expr *e, RetainCycleOwner &owner) {
   } else if (CallExpr *CE = dyn_cast<CallExpr>(e)) {
     if (CE->getNumArgs() == 1) {
       FunctionDecl *Fn = dyn_cast_or_null<FunctionDecl>(CE->getCalleeDecl());
-      if (Fn && Fn->getIdentifier()->isStr("_Block_copy"))
-        e = CE->getArg(0)->IgnoreParenCasts();
+      if (Fn) {
+        const IdentifierInfo *FnI = Fn->getIdentifier();
+        if (FnI && FnI->isStr("_Block_copy")) {
+          e = CE->getArg(0)->IgnoreParenCasts();
+        }
+      }
     }
   }
   
