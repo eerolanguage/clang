@@ -2487,12 +2487,13 @@ Decl *Parser::ParseObjCMethodDefinition() {
                                          MultiStmtArg(), false);
 
     if (!DefaultReturnExpr.isInvalid()) {
+      SourceLocation BodyEndLoc = FnBody.get()->getLocEnd();
       StmtResult DefaultReturnStmt = 
           Actions.ActOnReturnStmt(ReturnLoc, DefaultReturnExpr.take());
       StmtVector Stmts;
       Stmts.push_back(FnBody.release());
       Stmts.push_back(DefaultReturnStmt.release());
-      FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyStartLoc, 
+      FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyEndLoc, 
                                          Stmts, false);
     }
       
