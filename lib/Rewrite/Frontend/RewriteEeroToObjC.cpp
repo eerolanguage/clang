@@ -38,6 +38,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
   //---------------------------------------------------------------------------------------------
   protected:
+  
+    void RewriteImportsAndIncludes();
 
     void RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl);
     void RewriteMethodDeclaration(ObjCMethodDecl* Method);
@@ -351,6 +353,39 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
   }
 
   return true;
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteImportsAndIncludes() {
+
+  const FileID MainFileID = SM->getMainFileID();
+  const StringRef MainBuf = SM->getBufferData(MainFileID);
+  const SourceLocation& LocStart = SM->getLocForStartOfFile(MainFileID);
+
+  vector<size_t> changelist;
+
+  const char* macros[] = { "#import", "#include" };
+  const size_t macrosCount = sizeof(macros)/sizeof(const char*);
+  
+  for (size_t i = 0; i < macrosCount; i++) {
+    size_t pos = 0;
+    while ((pos = MainBuf.find(macros[i], pos)) != StringRef::npos) {
+
+      pos = MainBuf.find_first_of("\"'", pos);
+
+      if (pos != StringRef::npos && MainBuf[pos] == '\'') {
+        changelist.push_back(pos);
+        pos = MainBuf.find('\'', ++pos);
+        changelist.push_back(pos);
+      }
+    }
+  }
+
+  while (!changelist.empty()) {
+    TheRewriter.ReplaceText(LocStart.getLocWithOffset(changelist.back()), 1, "\"");
+    changelist.pop_back();
+  }  
 }
 
 //------------------------------------------------------------------------------------------------
@@ -871,6 +906,8 @@ void TranslatorVisitor::Initialize() {
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::Finalize() {
+
+  RewriteImportsAndIncludes();
 
   while (!StringInsertions.empty()) {
     StringInsertion insertion = StringInsertions.front();
