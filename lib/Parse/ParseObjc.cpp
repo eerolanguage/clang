@@ -2455,8 +2455,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
     ExprResult DefaultReturnExpr(ExprError());
     if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
         Tok.is(tok::equal) && !Tok.isAtStartOfLine()) {
-      ReturnLoc = PrevTokLocation;
-      ConsumeToken(); // '='
+      ReturnLoc = ConsumeToken(); // '='
       DefaultReturnExpr = ParseAssignmentExpression();
     }
       
