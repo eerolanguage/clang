@@ -1,4 +1,5 @@
 #include <deque>
+#include <set>
 #include "clang/Rewrite/Frontend/ASTConsumers.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/AST/AST.h"
@@ -121,6 +122,11 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     // avoid overwriting.
     //
     SourceLocation PreviousMethodLoc;
+
+    // Track block bodies for special handling, since Locs are messed up.
+    //
+    set<CompoundStmt*> BlockBodies;
+
 };
 
 //-----------------------------------------------------------------------------------------------
@@ -191,6 +197,10 @@ class TranslatorPrinterHelper : public PrinterHelper {
         return HandleObjCDictionaryLiteral(DL, OS);
       }
       
+      if (BlockExpr* BE = dyn_cast_or_null<BlockExpr>(E)) {
+        return HandleBlockExpr(BE, OS);
+      }
+      
       return false;
     }
 
@@ -207,11 +217,7 @@ class TranslatorPrinterHelper : public PrinterHelper {
         if (ObjCMessageExpr* M =
                 dyn_cast_or_null<ObjCMessageExpr>(E->getResultExpr())) {
 
-          string stringBuf;
-          llvm::raw_string_ostream stringStream(stringBuf);
-          M->printPretty(stringStream, 0, Policy);
-          OS << stringStream.str();
-
+          M->printPretty(OS, 0, Policy);
           return true;
         }
       }
@@ -260,6 +266,47 @@ class TranslatorPrinterHelper : public PrinterHelper {
     }
     return false;
   }
+
+  bool HandleBlockExpr(BlockExpr* E, raw_ostream& OS) {
+    BlockDecl *BD = E->getBlockDecl();
+    OS << "^";
+
+    const FunctionType *AFT = E->getFunctionType();
+
+    if (isa<FunctionNoProtoType>(AFT)) {
+      OS << "()";
+    } else if (!BD->param_empty() || cast<FunctionProtoType>(AFT)->isVariadic()) {
+      OS << '(';
+      std::string ParamStr;
+      for (BlockDecl::param_iterator AI = BD->param_begin(),
+           E = BD->param_end(); AI != E; ++AI) {
+        if (AI != BD->param_begin()) OS << ", ";
+        ParamStr = (*AI)->getNameAsString();
+        (*AI)->getType().getAsStringInternal(ParamStr, Policy);
+        OS << ParamStr;
+      }
+
+      const FunctionProtoType *FT = cast<FunctionProtoType>(AFT);
+      if (FT->isVariadic()) {
+        if (!BD->param_empty()) OS << ", ";
+        OS << "...";
+      }
+      OS << ") ";
+    }
+    
+    // Print out the block's body as well
+    //
+    string stringBuf;
+    llvm::raw_string_ostream stringStream(stringBuf);
+
+    E->getBody()->printPretty(stringStream, 0, Policy);
+    string str = stringStream.str();
+    str.erase(str.find_last_not_of(" \n") + 1); // strip trailing newline    
+    OS << str;
+    
+    return true;
+  }
+
 
   private:
     PrintingPolicy& Policy;
@@ -380,7 +427,16 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
   // expression).
   //
   if (CompoundStmt* CS = dyn_cast_or_null<CompoundStmt>(S)) {
-    RewriteCompoundStatement(CS);
+    if (BlockBodies.find(CS) == BlockBodies.end()) { // don't rewrite marked block bodies
+      RewriteCompoundStatement(CS);
+    }
+  }
+
+  // Blocks need special handling, since the locations appear to get munged. Clang's
+  // AST printer exhibits the problem as well.
+  //
+  else if (BlockExpr* BE = dyn_cast_or_null<BlockExpr>(S)) {
+    BlockBodies.insert(dyn_cast<CompoundStmt>(BE->getBody())); // mark this stmt to be ignored
   }
 
   return true;
