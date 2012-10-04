@@ -55,6 +55,9 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
     void RewriteProperty(ObjCPropertyDecl* P, SourceLocation& PreviousAtLoc);
 
+    void RewriteCategoryDecl(ObjCCategoryDecl* CatDecl);
+    void RewriteCategoryImplDecl(ObjCCategoryImplDecl* CatDecl);
+  
     void RewriteStatement(Stmt* S);
     void RewriteCompoundStatement(CompoundStmt* S);
     void RewriteIfStatement(IfStmt* S);
@@ -404,6 +407,12 @@ bool TranslatorVisitor::VisitDecl(Decl* D) {
 
   } else if (ObjCImplementationDecl* IMPD = dyn_cast_or_null<ObjCImplementationDecl>(D)) {
     RewriteImplementationDecl(IMPD);
+
+  } else if (ObjCCategoryDecl* CD = dyn_cast_or_null<ObjCCategoryDecl>(D)) {
+    RewriteCategoryDecl(CD);
+
+  } else if (ObjCCategoryImplDecl* CID = dyn_cast_or_null<ObjCCategoryImplDecl>(D)) {
+    RewriteCategoryImplDecl(CID);
 
   } else if (FunctionDecl* FD = dyn_cast_or_null<FunctionDecl>(D)) {
     RewriteFunctionDecl(FD);
@@ -817,6 +826,96 @@ void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
   TheRewriter.ReplaceText(GetRange(Loc, LocEnd), str);
 
   PreviousAtLoc = AtLoc;
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteCategoryDecl(ObjCCategoryDecl* CatDecl) {
+
+  const SourceLocation LocStart = CatDecl->getAtStartLoc();
+  const SourceLocation LocEnd = CatDecl->getLocEnd();
+
+  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
+
+  // Rewrite class name, since it might have an implicit prefix
+  //
+  const SourceLocation& ClassNameLocStart =
+      Lexer::getLocForEndOfToken(CatDecl->getLocStart(), 0, *SM, LangOpts);
+
+  const SourceLocation& ClassNameLocEnd =
+      CatDecl->getCategoryNameLoc().getLocWithOffset(-1);
+
+  const SourceRange& ClassNameRange =
+      GetRange(ClassNameLocStart, ClassNameLocEnd);
+
+  string str = " ";
+  str += CatDecl->getClassInterface()->getName();
+  str += " (";
+  
+  TheRewriter.ReplaceText(ClassNameRange, str);
+
+  SourceLocation AtPropertyLocation;
+  for (ObjCInterfaceDecl::prop_iterator I = CatDecl->prop_begin(),
+       E = CatDecl->prop_end(); I != E; ++I) {
+    RewriteProperty(*I, AtPropertyLocation);
+  }
+
+  for (ObjCInterfaceDecl::instmeth_iterator
+       I = CatDecl->instmeth_begin(), E = CatDecl->instmeth_end();
+       I != E; ++I) {
+    RewriteMethodDeclaration(*I);
+  }
+
+  for (ObjCInterfaceDecl::classmeth_iterator
+       I = CatDecl->classmeth_begin(), E = CatDecl->classmeth_end();
+       I != E; ++I) {
+    RewriteMethodDeclaration(*I);
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteCategoryImplDecl(ObjCCategoryImplDecl* CatDecl) {
+
+  const SourceLocation LocStart = CatDecl->getAtStartLoc();
+  const SourceLocation LocEnd = CatDecl->getLocEnd();
+
+  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
+
+  // Rewrite class name, since it might have an implicit prefix
+  //
+  const SourceLocation& ClassNameLocStart =
+      Lexer::getLocForEndOfToken(CatDecl->getLocStart(), 0, *SM, LangOpts);
+
+  const SourceLocation& ClassNameLocEnd =
+      CatDecl->getCategoryNameLoc().getLocWithOffset(-1);
+
+  const SourceRange& ClassNameRange =
+      GetRange(ClassNameLocStart, ClassNameLocEnd);
+
+  string str = " ";
+  str += CatDecl->getClassInterface()->getName();
+  str += " (";
+  
+  TheRewriter.ReplaceText(ClassNameRange, str);
+
+  SourceLocation AtPropertyLocation;
+  for (ObjCCategoryImplDecl::prop_iterator I = CatDecl->prop_begin(),
+       E = CatDecl->prop_end(); I != E; ++I) {
+    RewriteProperty(*I, AtPropertyLocation);
+  }
+
+  for (ObjCCategoryImplDecl::instmeth_iterator
+       I = CatDecl->instmeth_begin(), E = CatDecl->instmeth_end();
+       I != E; ++I) {
+    RewriteMethodDeclaration(*I);
+  }
+
+  for (ObjCCategoryImplDecl::classmeth_iterator
+       I = CatDecl->classmeth_begin(), E = CatDecl->classmeth_end();
+       I != E; ++I) {
+    RewriteMethodDeclaration(*I);
+  }
 }
 
 //------------------------------------------------------------------------------------------------
