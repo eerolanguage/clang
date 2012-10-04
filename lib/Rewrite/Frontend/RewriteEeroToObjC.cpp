@@ -59,6 +59,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteIfStatement(IfStmt* S);
     void RewriteForStatement(ForStmt* S);
     void RewriteWhileStatement(WhileStmt* S);
+    void RewriteDoStatement(DoStmt* S);
     void RewriteSwitchStatement(SwitchStmt* S);
     void RewriteCaseStatement(CaseStmt* S);
     void RewriteDefaultStatement(DefaultStmt* S);
@@ -778,6 +779,9 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
   } else if (WhileStmt* WS = dyn_cast_or_null<WhileStmt>(S)) {
     RewriteWhileStatement(WS);
 
+  } else if (DoStmt* DWS = dyn_cast_or_null<DoStmt>(S)) {
+    RewriteDoStatement(DWS);
+
   } else if (SwitchStmt* SS = dyn_cast_or_null<SwitchStmt>(S)) {
     RewriteSwitchStatement(SS);
 
@@ -878,6 +882,24 @@ void TranslatorVisitor::RewriteWhileStatement(WhileStmt* S) {
   TheRewriter.ReplaceText(GetRange(S->getCond()), condStr);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteDoStatement(DoStmt* S) {
+
+  CompoundStmt* body = dyn_cast<CompoundStmt>(S->getBody());
+  DeferredInsertText(body->getLBracLoc(), " {");
+  DeferredInsertText(S->getWhileLoc(), "} ");
+
+  string condStr = " (";
+  condStr += GetStatementString(S->getCond(), REMOVE_TRAILING_SEMICOLON);
+  condStr += ");";
+
+  const SourceLocation& LParenLoc =
+      Lexer::getLocForEndOfToken(S->getWhileLoc(), 0, *SM, LangOpts);
+
+  TheRewriter.ReplaceText(GetRange(LParenLoc, S->getRParenLoc()), condStr);
 }
 
 //------------------------------------------------------------------------------------------------
