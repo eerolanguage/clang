@@ -178,6 +178,14 @@ class TranslatorPrinterHelper : public PrinterHelper {
       if (E->getLocStart().isMacroID() && E->getLocEnd().isMacroID()) {
         return HandleMacroExpr(E, OS);
       }
+
+      if (ObjCArrayLiteral* AL = dyn_cast_or_null<ObjCArrayLiteral>(E)) {
+        return HandleObjCArrayLiteral(AL, OS);
+      }
+
+      if (ObjCDictionaryLiteral* DL = dyn_cast_or_null<ObjCDictionaryLiteral>(E)) {
+        return HandleObjCDictionaryLiteral(DL, OS);
+      }
       
       return false;
     }
@@ -229,6 +237,22 @@ class TranslatorPrinterHelper : public PrinterHelper {
                                  Policy.LangOpts);
         return true;
       }
+    }
+    return false;
+  }
+
+  bool HandleObjCArrayLiteral(ObjCArrayLiteral* E, raw_ostream& OS) {
+    if (E->getNumElements() == 0) {
+      OS << "[NSMutableArray new]";
+      return true;
+    }
+    return false;
+  }
+
+  bool HandleObjCDictionaryLiteral(ObjCDictionaryLiteral* E, raw_ostream& OS) {
+    if (E->getNumElements() == 0) {
+      OS << "[NSMutableDictionary new]";
+      return true;
     }
     return false;
   }
