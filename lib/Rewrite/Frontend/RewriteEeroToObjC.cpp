@@ -396,7 +396,7 @@ void TranslatorVisitor::RewriteImportsAndIncludes() {
     size_t pos = 0;
     while ((pos = MainBuf.find(macros[i], pos)) != StringRef::npos) {
 
-      pos = MainBuf.find_first_of("\"'", pos);
+      pos = MainBuf.find_first_of("<\"'", pos);
 
       if (pos != StringRef::npos && MainBuf[pos] == '\'') {
         changelist.push_back(pos);
