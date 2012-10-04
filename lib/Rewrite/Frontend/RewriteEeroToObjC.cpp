@@ -41,6 +41,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
   
     void RewriteImportsAndIncludes();
 
+    void RewriteFunctionDecl(FunctionDecl* Function);
+
     void RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl);
     void RewriteMethodDeclaration(ObjCMethodDecl* Method);
     void RewriteImplementationDecl(ObjCImplementationDecl* ImpDecl);
@@ -353,6 +355,9 @@ bool TranslatorVisitor::VisitDecl(Decl* D) {
 
   } else if (ObjCImplementationDecl* IMPD = dyn_cast_or_null<ObjCImplementationDecl>(D)) {
     RewriteImplementationDecl(IMPD);
+
+  } else if (FunctionDecl* FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    RewriteFunctionDecl(FD);
   }
 
   return true;
@@ -410,6 +415,21 @@ void TranslatorVisitor::RewriteImportsAndIncludes() {
     TheRewriter.ReplaceText(LocStart.getLocWithOffset(changelist.back()), 1, "\"");
     changelist.pop_back();
   }  
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteFunctionDecl(FunctionDecl* Function) {
+
+  const SourceLocation& LocEnd = Function->getSourceRange().getEnd();
+
+  if (Function->isThisDeclarationADefinition()) {
+    CompoundStmt* body = dyn_cast<CompoundStmt>(Function->getBody());
+    DeferredInsertText(body->getLBracLoc(), " {");
+    DeferredInsertText(LocEnd, "\n}");
+  } else {
+    DeferredInsertTextAfterToken(LocEnd, ";");
+  }
 }
 
 //------------------------------------------------------------------------------------------------
