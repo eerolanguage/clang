@@ -1070,7 +1070,7 @@ void TranslatorVisitor::RewriteDoStatement(DoStmt* S) {
 //
 void TranslatorVisitor::RewriteSwitchStatement(SwitchStmt* S) {
 
-  string condStr = GetStatementString(S->getCond());
+  string condStr = GetStatementString(S->getCond(), REMOVE_TRAILING_SEMICOLON);
 
   if (condStr[0] != '(') {
     condStr = '(' + condStr;
