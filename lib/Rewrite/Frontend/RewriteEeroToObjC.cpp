@@ -57,6 +57,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
     void RewriteCategoryDecl(ObjCCategoryDecl* CatDecl);
     void RewriteCategoryImplDecl(ObjCCategoryImplDecl* CatDecl);
+
+    void RewriteTopLevelDecl(Decl* D);
   
     void RewriteStatement(Stmt* S);
     void RewriteCompoundStatement(CompoundStmt* S);
@@ -152,8 +154,6 @@ class RewriteEeroToObjC : public ASTConsumer {
     bool SilenceRewriteMacroWarning;
     unsigned RewriteFailedDiag;
 
-    void InitializeCommon(ASTContext& context);
-
     TranslatorVisitor Visitor;
 
   //---------------------------------------------------------------------------------------------
@@ -165,9 +165,9 @@ class RewriteEeroToObjC : public ASTConsumer {
 
     ~RewriteEeroToObjC() {}
 
-    virtual void HandleTranslationUnit(ASTContext& C);
-
     virtual void Initialize(ASTContext& context);
+
+    virtual void HandleTranslationUnit(ASTContext& C);
 };
 
 //------------------------------------------------------------------------------------------------
@@ -343,18 +343,6 @@ ASTConsumer* clang::CreateEeroToObjCRewriter(const string& InFile,
 
 //------------------------------------------------------------------------------------------------
 //
-void RewriteEeroToObjC::InitializeCommon(ASTContext& context) {
-
-  puts("----- InitializeCommon -----");
-
-  SM = &(context.getSourceManager());
-  MainFileID = SM->getMainFileID();
-
-  Rewrite.setSourceMgr(*SM, context.getLangOpts());
-}
-
-//------------------------------------------------------------------------------------------------
-//
 void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
 
   puts("----- HandleTranslationUnit -----");
@@ -362,8 +350,6 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
   if (Diags.hasErrorOccurred()) {
     return;
   }
-
-  Visitor.Initialize();
 
   Visitor.TraverseDecl(C.getTranslationUnitDecl());
 
@@ -385,7 +371,15 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
 //------------------------------------------------------------------------------------------------
 //
 void RewriteEeroToObjC::Initialize(ASTContext& context) {
-  InitializeCommon(context);
+
+  puts("----- Initialize -----");
+
+  SM = &(context.getSourceManager());
+  MainFileID = SM->getMainFileID();
+
+  Rewrite.setSourceMgr(*SM, context.getLangOpts());
+  
+  Visitor.Initialize();
 }
 
 //------------------------------------------------------------------------------------------------
@@ -416,6 +410,9 @@ bool TranslatorVisitor::VisitDecl(Decl* D) {
 
   } else if (FunctionDecl* FD = dyn_cast_or_null<FunctionDecl>(D)) {
     RewriteFunctionDecl(FD);
+
+  } else if (D->getDeclContext()->isTranslationUnit()) {
+    RewriteTopLevelDecl(D);
   }
 
   return true;
@@ -439,12 +436,11 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
     if (BlockBodies.find(CS) == BlockBodies.end()) { // don't rewrite marked block bodies
       RewriteCompoundStatement(CS);
     }
-  }
 
   // Blocks need special handling, since the locations appear to get munged. Clang's
   // AST printer exhibits the problem as well.
   //
-  else if (BlockExpr* BE = dyn_cast_or_null<BlockExpr>(S)) {
+  } else if (BlockExpr* BE = dyn_cast_or_null<BlockExpr>(S)) {
     BlockBodies.insert(dyn_cast<CompoundStmt>(BE->getBody())); // mark this stmt to be ignored
   }
 
@@ -766,7 +762,7 @@ void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
     str += "@optional\n";
   }
 
-  str += "@property ";
+  str += "\r@property ";
 
   if (PDecl->getPropertyAttributes() != ObjCPropertyDecl::OBJC_PR_noattr) {
 
@@ -811,6 +807,7 @@ void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
   str += PDecl->getType().getAsString(*Policy);
   str += ' ';
   str += PDecl->getNameAsString();
+  str += ';';
 
   const SourceLocation& AtLoc = PDecl->getAtLoc();
   const SourceLocation LocEnd = PDecl->getLocEnd();
@@ -916,6 +913,18 @@ void TranslatorVisitor::RewriteCategoryImplDecl(ObjCCategoryImplDecl* CatDecl) {
        I != E; ++I) {
     RewriteMethodDeclaration(*I);
   }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteTopLevelDecl(Decl* D) {
+  string stringBuf;
+  llvm::raw_string_ostream stringStream(stringBuf);
+  D->print(stringStream, *Policy);
+  string str = stringStream.str();
+  str += ';';
+
+  TheRewriter.ReplaceText(D->getSourceRange(), str);
 }
 
 //------------------------------------------------------------------------------------------------
