@@ -632,7 +632,7 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
           resultStr += " //";
           string returnStr = "\n";
           returnStr += GetStatementString(lastReturnStmt);
-          DeferredInsertText(compoundBody->getRBracLoc(), returnStr);
+          DeferredInsertTextAtEndOfLine(compoundBody->getRBracLoc(), returnStr);
         }
       }
     }
