@@ -348,14 +348,22 @@ StmtResult
 Sema::AddBreakToCaseOrDefaultBlock(Stmt *SubStmt) {
   SourceRange sourceRange = SubStmt->getSourceRange();
   BreakStmt *breakStmt = new (Context) BreakStmt(sourceRange.getEnd());
-  Stmt *Statements[] = { SubStmt, breakStmt };
-  CompoundStmt *SubStmtWithBreak = 
-      new (Context) CompoundStmt(Context, 
-                                 Statements, 
-                                 2, // statement body + inserted break
-                                 sourceRange.getBegin(),
-                                 sourceRange.getEnd());
-  return SubStmtWithBreak;
+
+  SmallVector<Stmt*, 32> Stmts;
+  if (clang::CompoundStmt *CStmt =
+          dyn_cast_or_null<clang::CompoundStmt>(SubStmt)) {
+    for (clang::CompoundStmt::body_iterator BI = CStmt->body_begin(),
+                                             E = CStmt->body_end();
+         BI != E; ++BI) {
+      Stmts.push_back(*BI);
+    }
+  } else {
+    Stmts.push_back(SubStmt);
+  }
+  Stmts.push_back(breakStmt);
+  return ActOnCompoundStmt(sourceRange.getBegin(),
+                           sourceRange.getEnd(),
+                           Stmts, false);
 }
 
 StmtResult
