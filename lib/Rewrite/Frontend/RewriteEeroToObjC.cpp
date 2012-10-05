@@ -64,6 +64,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteCompoundStatement(CompoundStmt* S);
     void RewriteIfStatement(IfStmt* S);
     void RewriteForStatement(ForStmt* S);
+    void RewriteForCollectionStatement(ObjCForCollectionStmt* S);
     void RewriteWhileStatement(WhileStmt* S);
     void RewriteDoStatement(DoStmt* S);
     void RewriteSwitchStatement(SwitchStmt* S);
@@ -940,6 +941,9 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
   } else if (ForStmt* FS = dyn_cast_or_null<ForStmt>(S)) {
     RewriteForStatement(FS);
 
+  } else if (ObjCForCollectionStmt* FCS = dyn_cast_or_null<ObjCForCollectionStmt>(S)) {
+    RewriteForCollectionStatement(FCS);
+
   } else if (WhileStmt* WS = dyn_cast_or_null<WhileStmt>(S)) {
     RewriteWhileStatement(WS);
 
@@ -1031,6 +1035,26 @@ void TranslatorVisitor::RewriteForStatement(ForStmt* S) {
   TheRewriter.ReplaceText(GetRange(S->getLParenLoc(), initStmt->getLocEnd()), initStr);
   TheRewriter.ReplaceText(GetRange(condStmt), condStr);
   TheRewriter.ReplaceText(GetRange(incStmt->getLocStart(), S->getRParenLoc()), incStr);
+
+  DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteForCollectionStatement(ObjCForCollectionStmt* S) {
+
+  string str = "for (";
+
+  if (DeclStmt *DS = dyn_cast<DeclStmt>(S->getElement())) {
+    str += GetStatementString(DS, REMOVE_TRAILING_SEMICOLON);
+  } else {
+    str += GetStatementString(S->getElement(), REMOVE_TRAILING_SEMICOLON);
+  }
+  str += " in ";
+  str += GetStatementString(S->getCollection(), REMOVE_TRAILING_SEMICOLON);
+  str += ") {";
+
+  TheRewriter.ReplaceText(GetRange(S->getForLoc(), S->getRParenLoc()), str);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }
