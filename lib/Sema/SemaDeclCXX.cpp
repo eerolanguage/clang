@@ -5399,7 +5399,47 @@ Decl *Sema::ActOnConversionDeclarator(CXXConversionDecl *Conversion) {
 // Namespace Handling
 //===----------------------------------------------------------------------===//
 
+/// \brief Diagnose a mismatch in 'inline' qualifiers when a namespace is
+/// reopened.
+static void DiagnoseNamespaceInlineMismatch(Sema &S, SourceLocation KeywordLoc,
+                                            SourceLocation Loc,
+                                            IdentifierInfo *II, bool *IsInline,
+                                            NamespaceDecl *PrevNS) {
+  assert(*IsInline != PrevNS->isInline());
 
+  // HACK: Work around a bug in libstdc++4.6's <atomic>, where
+  // std::__atomic[0,1,2] are defined as non-inline namespaces, then reopened as
+  // inline namespaces, with the intention of bringing names into namespace std.
+  //
+  // We support this just well enough to get that case working; this is not
+  // sufficient to support reopening namespaces as inline in general.
+  if (*IsInline && II && II->getName().startswith("__atomic") &&
+      S.getSourceManager().isInSystemHeader(Loc)) {
+    // Mark all prior declarations of the namespace as inline.
+    for (NamespaceDecl *NS = PrevNS->getMostRecentDecl(); NS;
+         NS = NS->getPreviousDecl())
+      NS->setInline(*IsInline);
+    // Patch up the lookup table for the containing namespace. This isn't really
+    // correct, but it's good enough for this particular case.
+    for (DeclContext::decl_iterator I = PrevNS->decls_begin(),
+                                    E = PrevNS->decls_end(); I != E; ++I)
+      if (NamedDecl *ND = dyn_cast<NamedDecl>(*I))
+        PrevNS->getParent()->makeDeclVisibleInContext(ND);
+    return;
+  }
+
+  if (PrevNS->isInline())
+    // The user probably just forgot the 'inline', so suggest that it
+    // be added back.
+    S.Diag(Loc, diag::warn_inline_namespace_reopened_noninline)
+      << FixItHint::CreateInsertion(KeywordLoc, "inline ");
+  else
+    S.Diag(Loc, diag::err_inline_namespace_mismatch)
+      << IsInline;
+
+  S.Diag(PrevNS->getLocation(), diag::note_previous_definition);
+  *IsInline = PrevNS->isInline();
+}
 
 /// ActOnStartNamespaceDef - This is called at the start of a namespace
 /// definition.
@@ -5449,21 +5489,9 @@ Decl *Sema::ActOnStartNamespaceDef(Scope *NamespcScope,
     
     if (PrevNS) {
       // This is an extended namespace definition.
-      if (IsInline != PrevNS->isInline()) {
-        // inline-ness must match
-        if (PrevNS->isInline()) {
-          // The user probably just forgot the 'inline', so suggest that it
-          // be added back.
-          Diag(Loc, diag::warn_inline_namespace_reopened_noninline)
-            << FixItHint::CreateInsertion(NamespaceLoc, "inline ");
-        } else {
-          Diag(Loc, diag::err_inline_namespace_mismatch)
-            << IsInline;
-        }
-        Diag(PrevNS->getLocation(), diag::note_previous_definition);
-        
-        IsInline = PrevNS->isInline();
-      }      
+      if (IsInline != PrevNS->isInline())
+        DiagnoseNamespaceInlineMismatch(*this, NamespaceLoc, Loc, II,
+                                        &IsInline, PrevNS);
     } else if (PrevDecl) {
       // This is an invalid name redefinition.
       Diag(Loc, diag::err_redefinition_different_kind)
@@ -5494,15 +5522,9 @@ Decl *Sema::ActOnStartNamespaceDef(Scope *NamespcScope,
       PrevNS = ND->getAnonymousNamespace();
     }
 
-    if (PrevNS && IsInline != PrevNS->isInline()) {
-      // inline-ness must match
-      Diag(Loc, diag::err_inline_namespace_mismatch)
-        << IsInline;
-      Diag(PrevNS->getLocation(), diag::note_previous_definition);
-      
-      // Recover by ignoring the new namespace's inline status.
-      IsInline = PrevNS->isInline();
-    }
+    if (PrevNS && IsInline != PrevNS->isInline())
+      DiagnoseNamespaceInlineMismatch(*this, NamespaceLoc, NamespaceLoc, II,
+                                      &IsInline, PrevNS);
   }
   
   NamespaceDecl *Namespc = NamespaceDecl::Create(Context, CurContext, IsInline,

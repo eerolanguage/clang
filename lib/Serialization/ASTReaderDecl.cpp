@@ -320,7 +320,12 @@ void ASTDeclReader::Visit(Decl *D) {
     ID->TypeForDecl = Reader.GetType(TypeIDForTypeDecl).getTypePtrOrNull();
   } else if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
     // FunctionDecl's body was written last after all other Stmts/Exprs.
-    if (Record[Idx++])
+    // We only read it if FD doesn't already have a body (e.g., from another
+    // module).
+    // FIXME: Also consider = default and = delete.
+    // FIXME: Can we diagnose ODR violations somehow?
+    if (Record[Idx++] &&
+        (!Reader.getContext().getLangOpts().Modules || !FD->hasBody()))
       FD->setLazyBody(GetCurrentCursorOffset());
   } else if (D->isTemplateParameter()) {
     // If we have a fully initialized template parameter, we can now
@@ -1776,13 +1781,13 @@ ASTDeclReader::FindExistingResult::~FindExistingResult() {
   if (!AddResult || Existing)
     return;
   
-  DeclContext *DC = New->getLexicalDeclContext();
-  if (DC->isTranslationUnit() && Reader.SemaObj) {
-    if (Reader.SemaObj->IdResolver.tryAddTopLevelDecl(New, New->getDeclName()))
-      Reader.RedeclsAddedToAST.insert(New);
-  } else if (DC->isNamespace()) {
-    DC->addDecl(New);
-    Reader.RedeclsAddedToAST.insert(New);
+  if (New->getDeclContext()->getRedeclContext()->isTranslationUnit()
+      && Reader.SemaObj) {
+    Reader.SemaObj->IdResolver.tryAddTopLevelDecl(New, New->getDeclName());
+  } else {
+    DeclContext *DC = New->getLexicalDeclContext();
+    if (DC->isNamespace())
+      DC->addDecl(New);
   }
 }
 
@@ -2157,13 +2162,7 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
   // AST consumer might need to know about, queue it.
   // We don't pass it to the consumer immediately because we may be in recursive
   // loading, and some declarations may still be initializing.
-  if (getContext().getLangOpts().Modules) {
-    if (RedeclsAddedToAST.count(D)) {
-      RedeclsAddedToAST.erase(D);
-      if (isConsumerInterestedIn(D))
-        InterestingDecls.push_back(D);
-    }
-  } else if (isConsumerInterestedIn(D))
+  if (isConsumerInterestedIn(D))
     InterestingDecls.push_back(D);
 
   return D;
@@ -2512,61 +2511,4 @@ void ASTDeclReader::UpdateDecl(Decl *D, ModuleFile &ModuleFile,
       break;
     }
   }
-}
-
-/// \brief Return a template specialization of ND (should be a TemplateDecl)
-///  that matches FD or TD.
-static NamedDecl* findMatchingSpecialization(FunctionDecl* FD,
-                                             ClassTemplateSpecializationDecl*TD,
-                                             NamedDecl* ND) {
-  TemplateDecl* Templt = dyn_cast<TemplateDecl>(ND);
-  if (!Templt) return 0;
-  if (FD) {
-    FunctionTemplateDecl* FTD = dyn_cast<FunctionTemplateDecl>(Templt);
-    if (!FTD) return 0;
-    const TemplateArgumentList* TmpltArgs = FD->getTemplateSpecializationArgs();
-    assert(TmpltArgs || "Template without arguments");
-    void* InsertionPoint;
-    return FTD->findSpecialization(TmpltArgs->data(), TmpltArgs->size(),
-                                   InsertionPoint);
-  } else {
-    ClassTemplateDecl* CTD = dyn_cast<ClassTemplateDecl>(Templt);
-    if (!CTD) return 0;
-    const TemplateArgumentList& TmpltArgs = TD->getTemplateArgs();
-    void* InsertionPoint;
-    return CTD->findSpecialization(TmpltArgs.data(), TmpltArgs.size(),
-                                   InsertionPoint);
-  }
-  return 0;
-}
-
-/// \brief Find out whether an instantiation (outside the module) already exists
-bool ASTReader::needPendingInstantiation(ValueDecl* D) const {
-  DeclContext *DC = D->getDeclContext()->getRedeclContext();
-  DeclarationName Name = D->getDeclName();
-  assert(Name && "unnamed template");
-
-  FunctionDecl* FD = dyn_cast<FunctionDecl>(D);
-  ClassTemplateSpecializationDecl* CD
-    = FD ? 0 : dyn_cast<ClassTemplateSpecializationDecl>(D);
-
-  NamedDecl* FoundSpecialization = 0;
-  if (DC->isTranslationUnit() && SemaObj) {
-    IdentifierResolver &IdResolver = SemaObj->IdResolver;
-    for (IdentifierResolver::iterator I = IdResolver.begin(Name), 
-           IEnd = IdResolver.end();
-         I != IEnd && !FoundSpecialization; ++I)
-      FoundSpecialization = findMatchingSpecialization(FD, CD, *I);
-  } else {
-    // templates are redeclarables, i.e. they must have been merged into
-    // the primary context. Use localUncachedLookup to not pick up template
-    // decls from modules again.
-    llvm::SmallVector<NamedDecl*, 6> Results;
-    DC->getPrimaryContext()->localUncachedLookup(Name, Results);
-    for (llvm::SmallVector<NamedDecl *, 6>::const_iterator
-           I = Results.begin(), E = Results.end();
-         I != E && FoundSpecialization; ++I)
-      FoundSpecialization = findMatchingSpecialization(FD, CD, *I);
-  }
-  return FoundSpecialization && isSameEntity(FoundSpecialization, D);
 }

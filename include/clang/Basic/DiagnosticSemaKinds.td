@@ -415,8 +415,6 @@ def err_object_cannot_be_passed_returned_by_value : Error<
 def err_parameters_retval_cannot_have_fp16_type : Error<
   "%select{parameters|function return value}0 cannot have __fp16 type; did you forget * ?">;
 def warn_enum_value_overflow : Warning<"overflow in enumeration value">;
-def warn_pragma_options_align_unsupported_option : Warning<
-  "unsupported alignment option in '#pragma options align'">;
 def warn_pragma_options_align_reset_failed : Warning<
   "#pragma options align=reset failed: %0">;
 def err_pragma_options_align_mac68k_target_unsupported : Error<
@@ -725,6 +723,10 @@ def warn_arc_repeated_use_of_weak : Warning <
   "but may be unpredictably set to nil; assign to a strong variable to keep "
   "the object alive">,
   InGroup<ARCRepeatedUseOfWeak>, DefaultIgnore;
+def warn_implicitly_retains_self : Warning <
+  "block implicitly retains 'self'; explicitly mention 'self' to indicate "
+  "this is intended behavior">,
+  InGroup<DiagGroup<"implicit-retain-self">>;
 def warn_arc_possible_repeated_use_of_weak : Warning <
   "weak %select{variable|property|implicit property|instance variable}0 %1 may "
   "be accessed multiple times in this %select{function|method|block|lambda}2 "
@@ -787,7 +789,7 @@ def err_static_assert_expression_is_not_constant : Error<
 def err_static_assert_failed : Error<"static_assert failed %0">;
 
 def warn_inline_namespace_reopened_noninline : Warning<
-  "inline namespace cannot be re-opened as a non-inline namespace">;
+  "inline namespace cannot be reopened as a non-inline namespace">;
 def err_inline_namespace_mismatch : Error<
   "%select{|non-}0inline namespace "
   "cannot be reopened as %select{non-|}0inline">;
@@ -1976,7 +1978,7 @@ def warn_impcast_string_literal_to_bool : Warning<
   InGroup<StringConversion>, DefaultIgnore;
 def warn_impcast_different_enum_types : Warning<
   "implicit conversion from enumeration type %0 to different enumeration type "
-  "%1">, InGroup<DiagGroup<"conversion">>;
+  "%1">, InGroup<EnumConversion>;
 def warn_impcast_bool_to_null_pointer : Warning<
     "initialization of pointer of type %0 to null from a constant boolean "
     "expression">, InGroup<BoolConversion>;
@@ -3868,6 +3870,11 @@ def warn_logical_and_in_logical_or : Warning<
   "'&&' within '||'">, InGroup<LogicalOpParentheses>;
 def note_logical_and_in_logical_or_silence : Note<
   "place parentheses around the '&&' expression to silence this warning">;
+
+def warn_addition_in_bitshift : Warning<
+  "'%0' within '%1'">, InGroup<ShiftOpParentheses>;
+def note_addition_in_bitshift_silence : Note<
+  "place parentheses around the '%0' expression to silence this warning">;
 
 def warn_self_assignment : Warning<
   "explicitly assigning a variable of type %0 to itself">,

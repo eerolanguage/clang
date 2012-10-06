@@ -485,6 +485,8 @@ void TypeLocWriter::VisitExtVectorTypeLoc(ExtVectorTypeLoc TL) {
 }
 void TypeLocWriter::VisitFunctionTypeLoc(FunctionTypeLoc TL) {
   Writer.AddSourceLocation(TL.getLocalRangeBegin(), Record);
+  Writer.AddSourceLocation(TL.getLParenLoc(), Record);
+  Writer.AddSourceLocation(TL.getRParenLoc(), Record);
   Writer.AddSourceLocation(TL.getLocalRangeEnd(), Record);
   for (unsigned i = 0, e = TL.getNumArgs(); i != e; ++i)
     Writer.AddDeclRef(TL.getArg(i), Record);
@@ -1950,6 +1952,11 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
   unsigned HeaderAbbrev = Stream.EmitAbbrev(Abbrev);
 
   Abbrev = new BitCodeAbbrev();
+  Abbrev->Add(BitCodeAbbrevOp(SUBMODULE_TOPHEADER));
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Name
+  unsigned TopHeaderAbbrev = Stream.EmitAbbrev(Abbrev);
+
+  Abbrev = new BitCodeAbbrev();
   Abbrev->Add(BitCodeAbbrevOp(SUBMODULE_UMBRELLA_DIR));
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Name
   unsigned UmbrellaDirAbbrev = Stream.EmitAbbrev(Abbrev);
@@ -2019,6 +2026,12 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
       Record.push_back(SUBMODULE_HEADER);
       Stream.EmitRecordWithBlob(HeaderAbbrev, Record, 
                                 Mod->Headers[I]->getName());
+    }
+    for (unsigned I = 0, N = Mod->TopHeaders.size(); I != N; ++I) {
+      Record.clear();
+      Record.push_back(SUBMODULE_TOPHEADER);
+      Stream.EmitRecordWithBlob(TopHeaderAbbrev, Record,
+                                Mod->TopHeaders[I]->getName());
     }
 
     // Emit the imports. 
