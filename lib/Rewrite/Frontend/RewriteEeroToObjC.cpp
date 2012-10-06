@@ -208,6 +208,12 @@ class TranslatorPrinterHelper : public PrinterHelper {
         return HandleBlockExpr(BE, OS);
       }
       
+      // There seems to be a bug in StmtPrinter.cpp -- fixing here for now
+      //
+      if (ObjCPropertyRefExpr* PR = dyn_cast_or_null<ObjCPropertyRefExpr>(E)) {
+        return HandlePropertyRefExpr(PR, OS);
+      }
+      
       return false;
     }
 
@@ -314,6 +320,26 @@ class TranslatorPrinterHelper : public PrinterHelper {
     return true;
   }
 
+  bool HandlePropertyRefExpr(ObjCPropertyRefExpr* E, raw_ostream& OS) {
+
+    // There seems to be a bug in StmtPrinter.cpp -- fixing here for now
+
+    if (E->isSuperReceiver())
+      OS << "super";
+    else if (E->isObjectReceiver() && E->getBase())
+      E->getBase()->printPretty(OS, 0, Policy);
+    else if (E->isClassReceiver())
+      OS << E->getClassReceiver()->getName();
+
+    OS << ".";
+
+    if (E->isImplicitProperty())
+      OS << E->getImplicitPropertyGetter()->getSelector().getAsString();
+    else
+      OS << E->getExplicitProperty()->getName();
+    
+    return true;
+  }
 
   private:
     PrintingPolicy& Policy;
