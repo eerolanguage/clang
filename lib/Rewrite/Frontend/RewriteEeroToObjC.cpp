@@ -5,6 +5,7 @@
 #include "clang/AST/AST.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/ParentMap.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -23,8 +24,10 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
   //---------------------------------------------------------------------------------------------
   public:
     TranslatorVisitor(Rewriter& R) :
-      TheRewriter(R), SM(0), Policy(0), TheSystemPrinterHelper(0) {}
+      TheRewriter(R), SM(0), Policy(0), TheSystemPrinterHelper(0), BlockStmtMap(0) {}
 
+    virtual ~TranslatorVisitor() { delete BlockStmtMap; }
+  
     void Initialize();
     void Finalize();
 
@@ -131,8 +134,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
     // Track block bodies for special handling, since Locs are messed up.
     //
-    set<CompoundStmt*> BlockBodies;
-
+    ParentMap* BlockStmtMap;
 };
 
 //-----------------------------------------------------------------------------------------------
@@ -434,15 +436,17 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
   // expression).
   //
   if (CompoundStmt* CS = dyn_cast_or_null<CompoundStmt>(S)) {
-    if (BlockBodies.find(CS) == BlockBodies.end()) { // don't rewrite marked block bodies
-      RewriteCompoundStatement(CS);
-    }
+    RewriteCompoundStatement(CS);
 
   // Blocks need special handling, since the locations appear to get munged. Clang's
   // AST printer exhibits the problem as well.
   //
   } else if (BlockExpr* BE = dyn_cast_or_null<BlockExpr>(S)) {
-    BlockBodies.insert(dyn_cast<CompoundStmt>(BE->getBody())); // mark this stmt to be ignored
+    if (BlockStmtMap) {
+      BlockStmtMap->addStmt(BE->getBody());
+    } else {
+      BlockStmtMap = new ParentMap(BE->getBody());
+    }
   }
 
   return true;
@@ -977,7 +981,9 @@ void TranslatorVisitor::RewriteCompoundStatement(CompoundStmt* S) {
 
   for (CompoundStmt::const_body_iterator BI = S->body_begin(),
        E = S->body_end(); BI != E; ++BI) {
-    RewriteStatement(*BI);
+    if (!BlockStmtMap || !BlockStmtMap->hasParent(*BI)) { // don't rewrite block statements here
+      RewriteStatement(*BI);
+    }
   }
 }
 
