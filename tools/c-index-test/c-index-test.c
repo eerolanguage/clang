@@ -1956,6 +1956,25 @@ static int inspect_cursor_at(int argc, const char **argv) {
         if (clang_Cursor_isDynamicCall(Cursor))
           printf(" Dynamic-call");
 
+        {
+          CXModule mod = clang_Cursor_getModule(Cursor);
+          CXString name;
+          unsigned i, numHeaders;
+          if (mod) {
+            name = clang_Module_getFullName(mod);
+            numHeaders = clang_Module_getNumTopLevelHeaders(mod);
+            printf(" ModuleName=%s Headers(%d):",
+                   clang_getCString(name), numHeaders);
+            clang_disposeString(name);
+            for (i = 0; i < numHeaders; ++i) {
+              CXFile file = clang_Module_getTopLevelHeader(mod, i);
+              CXString filename = clang_getFileName(file);
+              printf("\n%s", clang_getCString(filename));
+              clang_disposeString(filename);
+            }
+          }
+        }
+
         if (completionString != NULL) {
           printf("\nCompletion string: ");
           print_completion_string(completionString, stdout);
@@ -2357,12 +2376,14 @@ static CXIdxClientFile index_importedASTFile(CXClientData client_data,
 
   printf("[importedASTFile]: ");
   printCXIndexFile((CXIdxClientFile)info->file);
-  printf(" | loc: ");
-  printCXIndexLoc(info->loc, client_data);
-  printf(" | module name: \"%s\"", info->moduleName);
-  printf(" | source name: \"%s\"", info->sourceName);
-  printf(" | isModule: %d | isIncludeDirective: %d\n",
-         info->isModule, info->isIncludeDirective);
+  if (info->module) {
+    CXString name = clang_Module_getFullName(info->module);
+    printf(" | loc: ");
+    printCXIndexLoc(info->loc, client_data);
+    printf(" | name: \"%s\"", clang_getCString(name));
+    printf(" | isImplicit: %d\n", info->isImplicit);
+    clang_disposeString(name);
+  }
 
   return (CXIdxClientFile)info->file;
 }

@@ -4296,6 +4296,7 @@ bool IntExprEvaluator::VisitCallExpr(const CallExpr *E) {
     return Error(E);
   }
 
+  case Builtin::BI__builtin_bswap16:
   case Builtin::BI__builtin_bswap32:
   case Builtin::BI__builtin_bswap64: {
     APSInt Val;
@@ -4919,7 +4920,7 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
           if (!LHSValue.Offset.isZero() || !RHSValue.Offset.isZero())
             return false;
           const Expr *LHSExpr = LHSValue.Base.dyn_cast<const Expr*>();
-          const Expr *RHSExpr = LHSValue.Base.dyn_cast<const Expr*>();
+          const Expr *RHSExpr = RHSValue.Base.dyn_cast<const Expr*>();
           if (!LHSExpr || !RHSExpr)
             return false;
           const AddrLabelExpr *LHSAddrExpr = dyn_cast<AddrLabelExpr>(LHSExpr);

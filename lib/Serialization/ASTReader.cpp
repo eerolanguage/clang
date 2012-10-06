@@ -3230,7 +3230,23 @@ ASTReader::ASTReadResult ASTReader::ReadSubmoduleBlock(ModuleFile &F) {
       }
       break;      
     }
-        
+
+    case SUBMODULE_TOPHEADER: {
+      if (First) {
+        Error("missing submodule metadata record at beginning of block");
+        return Failure;
+      }
+
+      if (!CurrentModule)
+        break;
+
+      // FIXME: Be more lazy about this!
+      StringRef FileName(BlobStart, BlobLen);
+      if (const FileEntry *File = PP.getFileManager().getFile(FileName))
+        CurrentModule->TopHeaders.insert(File);
+      break;
+    }
+
     case SUBMODULE_UMBRELLA_DIR: {
       if (First) {
         Error("missing submodule metadata record at beginning of block");
@@ -4293,6 +4309,8 @@ void TypeLocReader::VisitExtVectorTypeLoc(ExtVectorTypeLoc TL) {
 }
 void TypeLocReader::VisitFunctionTypeLoc(FunctionTypeLoc TL) {
   TL.setLocalRangeBegin(ReadSourceLocation(Record, Idx));
+  TL.setLParenLoc(ReadSourceLocation(Record, Idx));
+  TL.setRParenLoc(ReadSourceLocation(Record, Idx));
   TL.setLocalRangeEnd(ReadSourceLocation(Record, Idx));
   for (unsigned i = 0, e = TL.getNumArgs(); i != e; ++i) {
     TL.setArg(i, ReadDeclAs<ParmVarDecl>(Record, Idx));
@@ -5614,10 +5632,7 @@ void ASTReader::ReadPendingInstantiations(
     SourceLocation Loc
       = SourceLocation::getFromRawEncoding(PendingInstantiations[Idx++]);
 
-    // For modules, find out whether an instantiation already exists
-    if (!getContext().getLangOpts().Modules
-        || needPendingInstantiation(D))
-      Pending.push_back(std::make_pair(D, Loc));
+    Pending.push_back(std::make_pair(D, Loc));
   }  
   PendingInstantiations.clear();
 }
@@ -6528,5 +6543,4 @@ ASTReader::~ASTReader() {
          J != F; ++J)
       delete J->first;
   }
-  assert(RedeclsAddedToAST.empty() && "RedeclsAddedToAST not empty!");
 }

@@ -2010,7 +2010,15 @@ enum CXCursorKind {
   CXCursor_MacroInstantiation            = CXCursor_MacroExpansion,
   CXCursor_InclusionDirective            = 503,
   CXCursor_FirstPreprocessing            = CXCursor_PreprocessingDirective,
-  CXCursor_LastPreprocessing             = CXCursor_InclusionDirective
+  CXCursor_LastPreprocessing             = CXCursor_InclusionDirective,
+
+  /* Extra Declarations */
+  /**
+   * \brief A module import declaration.
+   */
+  CXCursor_ModuleImportDecl              = 600,
+  CXCursor_FirstExtraDecl                = CXCursor_ModuleImportDecl,
+  CXCursor_LastExtraDecl                 = CXCursor_ModuleImportDecl
 };
 
 /**
@@ -3191,6 +3199,65 @@ CINDEX_LINKAGE CXString clang_Cursor_getBriefCommentText(CXCursor C);
  * \c CXComment_FullComment AST node.
  */
 CINDEX_LINKAGE CXComment clang_Cursor_getParsedComment(CXCursor C);
+
+/**
+ * @}
+ */
+
+/**
+ * \defgroup CINDEX_MODULE Module introspection
+ *
+ * The functions in this group provide access to information about modules.
+ *
+ * @{
+ */
+
+typedef void *CXModule;
+
+/**
+ * \brief Given a CXCursor_ModuleImportDecl cursor, return the associated module.
+ */
+CINDEX_LINKAGE CXModule clang_Cursor_getModule(CXCursor C);
+
+/**
+ * \param Module a module object.
+ *
+ * \returns the parent of a sub-module or NULL if the given module is top-level,
+ * e.g. for 'std.vector' it will return the 'std' module.
+ */
+CINDEX_LINKAGE CXModule clang_Module_getParent(CXModule Module);
+
+/**
+ * \param Module a module object.
+ *
+ * \returns the name of the module, e.g. for the 'std.vector' sub-module it
+ * will return "vector".
+ */
+CINDEX_LINKAGE CXString clang_Module_getName(CXModule Module);
+
+/**
+ * \param Module a module object.
+ *
+ * \returns the full name of the module, e.g. "std.vector".
+ */
+CINDEX_LINKAGE CXString clang_Module_getFullName(CXModule Module);
+
+/**
+ * \param Module a module object.
+ *
+ * \returns the number of top level headers associated with this module.
+ */
+CINDEX_LINKAGE unsigned clang_Module_getNumTopLevelHeaders(CXModule Module);
+
+/**
+ * \param Module a module object.
+ *
+ * \param Index top level header index (zero-based).
+ *
+ * \returns the specified top level header associated with the module.
+ */
+CINDEX_LINKAGE
+CXFile clang_Module_getTopLevelHeader(CXModule Module, unsigned Index);
 
 /**
  * @}
@@ -4926,29 +4993,18 @@ typedef struct {
    */
   CXFile file;
   /**
+   * \brief The imported module or NULL if the AST file is a PCH.
+   */
+  CXModule module;
+  /**
    * \brief Location where the file is imported. Applicable only for modules.
    */
   CXIdxLoc loc;
   /**
-   * \brief Non-zero if the AST file is a module otherwise it's a PCH.
-   */
-  int isModule;
-  /**
    * \brief Non-zero if an inclusion directive was automatically turned into
-   * a module import.
+   * a module import. Applicable only for modules.
    */
-  int isIncludeDirective;
-  /**
-   * \brief The name of the file being included or the module being imported,
-   * as written in the source code.
-   */
-  const char *sourceName;
-  /**
-   * \brief The actual name of the module or submodule being imported.
-   * The syntax is a sequence of identifiers separated by dots, e.g "std.vector"
-   * Applicable only for modules.
-   */
-  const char *moduleName;
+  int isImplicit;
 
 } CXIdxImportedASTFileInfo;
 

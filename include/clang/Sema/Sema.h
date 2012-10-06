@@ -6394,8 +6394,7 @@ public:
 
   /// ActOnPragmaOptionsAlign - Called on well formed \#pragma options align.
   void ActOnPragmaOptionsAlign(PragmaOptionsAlignKind Kind,
-                               SourceLocation PragmaLoc,
-                               SourceLocation KindLoc);
+                               SourceLocation PragmaLoc);
 
   enum PragmaPackKind {
     PPK_Default, // #pragma pack([n])

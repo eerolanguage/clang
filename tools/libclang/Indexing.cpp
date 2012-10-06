@@ -74,8 +74,7 @@ public:
                                   StringRef RelativePath,
                                   const Module *Imported) {
     if (Imported) {
-      IndexCtx.importedModule(HashLoc, FileName, /*isIncludeDirective=*/true,
-                              Imported);
+      // We handle implicit imports via ImportDecls.
       return;
     }
 
@@ -192,19 +191,16 @@ public:
                          unsigned indexOptions,
                          CXTranslationUnit cxTU)
     : IndexCtx(clientData, indexCallbacks, indexOptions, cxTU),
-      CXTU(cxTU), EnablePPDetailedRecordForModules(false) { }
-
-  bool EnablePPDetailedRecordForModules;
+      CXTU(cxTU) { }
 
   virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
                                          StringRef InFile) {
-    // We usually disable the preprocessing record for indexing even if the
-    // original preprocessing options had it enabled. Now that the indexing
-    // Preprocessor has been created (without a preprocessing record), re-enable
-    // the option in case modules are enabled, so that the detailed record
-    // option can be propagated when the module file is generated.
-    if (CI.getLangOpts().Modules && EnablePPDetailedRecordForModules)
-      CI.getPreprocessorOpts().DetailedRecord = true;
+    PreprocessorOptions &PPOpts = CI.getPreprocessorOpts();
+
+    if (!PPOpts.ImplicitPCHInclude.empty()) {
+      IndexCtx.importedPCH(
+                        CI.getFileManager().getFile(PPOpts.ImplicitPCHInclude));
+    }
 
     IndexCtx.setASTContext(CI.getASTContext());
     Preprocessor &PP = CI.getPreprocessor();
@@ -396,17 +392,11 @@ static void clang_indexSourceFile_Impl(void *UserData) {
     // FIXME: Add a flag for modules.
     CacheCodeCompletionResults
       = TU_options & CXTranslationUnit_CacheCompletionResults;
-    if (TU_options & CXTranslationUnit_DetailedPreprocessingRecord) {
-      PPOpts.DetailedRecord = true;
-    }
   }
 
-  IndexAction->EnablePPDetailedRecordForModules
-    = PPOpts.DetailedRecord ||
-      (TU_options & CXTranslationUnit_DetailedPreprocessingRecord);
-
-  if (!requestedToGetTU)
-    PPOpts.DetailedRecord = false;
+  if (TU_options & CXTranslationUnit_DetailedPreprocessingRecord) {
+    PPOpts.DetailedRecord = true;
+  }
 
   DiagnosticErrorTrap DiagTrap(*Diags);
   bool Success = ASTUnit::LoadFromCompilerInvocationAction(CInvok.getPtr(), Diags,
@@ -536,6 +526,9 @@ static void clang_indexTranslationUnit_Impl(void *UserData) {
     return;
 
   ASTUnit::ConcurrencyCheck Check(*Unit);
+
+  if (const FileEntry *PCHFile = Unit->getPCHFile())
+    IndexCtx->importedPCH(PCHFile);
 
   FileManager &FileMgr = Unit->getFileManager();
 

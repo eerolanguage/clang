@@ -2779,8 +2779,7 @@ Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
         TypeSpecType == DeclSpec::TST_enum) {
       AttributeList* attrs = DS.getAttributes().getList();
       while (attrs) {
-        Diag(attrs->getScopeLoc(),
-             diag::warn_declspec_attribute_ignored)
+        Diag(attrs->getLoc(), diag::warn_declspec_attribute_ignored)
         << attrs->getName()
         << (TypeSpecType == DeclSpec::TST_class ? 0 :
             TypeSpecType == DeclSpec::TST_struct ? 1 :
@@ -7634,6 +7633,9 @@ void Sema::ActOnFinishKNRParamDeclarations(Scope *S, Declarator &D,
         unsigned DiagID; // unused
         DS.SetTypeSpecType(DeclSpec::TST_int, FTI.ArgInfo[i].IdentLoc,
                            PrevSpec, DiagID);
+        // Use the identifier location for the type source range.
+        DS.SetRangeStart(FTI.ArgInfo[i].IdentLoc);
+        DS.SetRangeEnd(FTI.ArgInfo[i].IdentLoc);
         Declarator ParamD(DS, Declarator::KNRTypeListContext);
         ParamD.SetIdentifier(FTI.ArgInfo[i].Ident, FTI.ArgInfo[i].IdentLoc);
         FTI.ArgInfo[i].Param = ActOnParamDeclarator(S, ParamD);
@@ -8100,13 +8102,28 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
   bool Error = DS.SetTypeSpecType(DeclSpec::TST_int, Loc, Dummy, DiagID);
   (void)Error; // Silence warning.
   assert(!Error && "Error setting up implicit decl!");
+  SourceLocation NoLoc;
   Declarator D(DS, Declarator::BlockContext);
-  D.AddTypeInfo(DeclaratorChunk::getFunction(false, false, false,
-                                             SourceLocation(), 0, 0, 0, true, 
-                                             SourceLocation(), SourceLocation(),
-                                             SourceLocation(), SourceLocation(),
-                                             EST_None, SourceLocation(),
-                                             0, 0, 0, 0, Loc, Loc, D),
+  D.AddTypeInfo(DeclaratorChunk::getFunction(/*HasProto=*/false,
+                                             /*IsAmbiguous=*/false,
+                                             /*RParenLoc=*/NoLoc,
+                                             /*ArgInfo=*/0,
+                                             /*NumArgs=*/0,
+                                             /*EllipsisLoc=*/NoLoc,
+                                             /*RParenLoc=*/NoLoc,
+                                             /*TypeQuals=*/0,
+                                             /*RefQualifierIsLvalueRef=*/true,
+                                             /*RefQualifierLoc=*/NoLoc,
+                                             /*ConstQualifierLoc=*/NoLoc,
+                                             /*VolatileQualifierLoc=*/NoLoc,
+                                             /*MutableLoc=*/NoLoc,
+                                             EST_None,
+                                             /*ESpecLoc=*/NoLoc,
+                                             /*Exceptions=*/0,
+                                             /*ExceptionRanges=*/0,
+                                             /*NumExceptions=*/0,
+                                             /*NoexceptExpr=*/0,
+                                             Loc, Loc, D),
                 DS.getAttributes(),
                 SourceLocation());
   D.SetIdentifier(&II, Loc);
