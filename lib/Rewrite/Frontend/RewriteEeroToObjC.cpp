@@ -74,6 +74,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteCaseStatement(CaseStmt* S);
     void RewriteDefaultStatement(DefaultStmt* S);
     void RewriteBreakStatement(BreakStmt* S);
+    void RewriteAutoreleasePoolStmt(ObjCAutoreleasePoolStmt* S);
 
     enum StatementStringMode {
         ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT,
@@ -966,6 +967,10 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
   } else if (BreakStmt* SBS = dyn_cast_or_null<BreakStmt>(S)) {
     RewriteBreakStatement(SBS);
 
+  } else if (ObjCAutoreleasePoolStmt* APS =
+        dyn_cast_or_null<ObjCAutoreleasePoolStmt>(S)) {
+    RewriteAutoreleasePoolStmt(APS);
+
   } else {
 //    printf("STMT: %s\n", GetStatementString(S).c_str());
     string Str = GetStatementString(S);
@@ -1166,6 +1171,18 @@ void TranslatorVisitor::RewriteBreakStatement(BreakStmt* S) {
   } else { // inserted break
     DeferredInsertTextAtEndOfLine(S->getBreakLoc(), "\nbreak;");
   }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteAutoreleasePoolStmt(ObjCAutoreleasePoolStmt* S) {
+ 
+  const SourceRange& range =
+      GetRange(S->getAtLoc(), S->getSubStmt()->getLocStart());
+  
+  TheRewriter.ReplaceText(range, "@autoreleasepool {");
+
+  DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }
 
 //------------------------------------------------------------------------------------------------
