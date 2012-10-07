@@ -947,7 +947,7 @@ def rewrite_objc : Flag<"-rewrite-objc">, Flags<[DriverOption,CC1Option]>,
   HelpText<"Rewrite Objective-C source to C++">, Group<Action_Group>;
 def rewrite_legacy_objc : Flag<"-rewrite-legacy-objc">, Flags<[DriverOption]>,
   HelpText<"Rewrite Legacy Objective-C source to C++">;
-def rewrite_eero_to_objc : Flag<"-rewrite-eero-to-objc">, Flags<[DriverOption,CC1Option]>,
+def rewrite_eero_to_objc : Flag<"-eero-to-objc">, Flags<[DriverOption,CC1Option]>,
   HelpText<"Rewrite Eero source to Objective-C">, Group<Action_Group>;
 def rdynamic : Flag<"-rdynamic">;
 def rpath : Separate<"-rpath">, Flags<[LinkerInput]>;

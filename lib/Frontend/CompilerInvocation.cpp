@@ -460,7 +460,7 @@ static const char *getActionName(frontend::ActionKind Kind) {
   case frontend::PrintPreprocessedInput: return "-E";
   case frontend::RewriteMacros:          return "-rewrite-macros";
   case frontend::RewriteObjC:            return "-rewrite-objc";
-  case frontend::RewriteEeroToObjC:      return "-rewrite-eero-to-objc";
+  case frontend::RewriteEeroToObjC:      return "-eero-to-objc";
   case frontend::RewriteTest:            return "-rewrite-test";
   case frontend::RunAnalysis:            return "-analyze";
   case frontend::MigrateSource:          return "-migrate";

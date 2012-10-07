@@ -1586,7 +1586,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-rewrite-objc");
       rewriteKind = RK_Fragile;
     } else if (JA.getType() == types::TY_RewrittenEeroToObjC) {
-      CmdArgs.push_back("-rewrite-eero-to-objc");
+      CmdArgs.push_back("-eero-to-objc");
     } else {
       assert(JA.getType() == types::TY_PP_Asm &&
              "Unexpected output type!");
