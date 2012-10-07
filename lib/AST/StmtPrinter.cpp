@@ -1748,7 +1748,7 @@ void StmtPrinter::VisitObjCMessageExpr(ObjCMessageExpr *Mess) {
 
   case ObjCMessageExpr::SuperInstance:
   case ObjCMessageExpr::SuperClass:
-    OS << "Super";
+    OS << "super";
     break;
   }
 
