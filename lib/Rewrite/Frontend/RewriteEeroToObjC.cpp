@@ -75,6 +75,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteDefaultStatement(DefaultStmt* S);
     void RewriteBreakStatement(BreakStmt* S);
     void RewriteAutoreleasePoolStmt(ObjCAutoreleasePoolStmt* S);
+    void RewriteSynchronizedStmt(ObjCAtSynchronizedStmt* S);
 
     enum StatementStringMode {
         ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT,
@@ -997,6 +998,10 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
         dyn_cast_or_null<ObjCAutoreleasePoolStmt>(S)) {
     RewriteAutoreleasePoolStmt(APS);
 
+  } else if (ObjCAtSynchronizedStmt* SNS =
+        dyn_cast_or_null<ObjCAtSynchronizedStmt>(S)) {
+    RewriteSynchronizedStmt(SNS);
+
   } else {
 //    printf("STMT: %s\n", GetStatementString(S).c_str());
     string Str = GetStatementString(S);
@@ -1207,6 +1212,29 @@ void TranslatorVisitor::RewriteAutoreleasePoolStmt(ObjCAutoreleasePoolStmt* S) {
       GetRange(S->getAtLoc(), S->getSubStmt()->getLocStart());
   
   TheRewriter.ReplaceText(range, "@autoreleasepool {");
+
+  DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteSynchronizedStmt(ObjCAtSynchronizedStmt* S) {
+
+  const SourceRange& LeftRange =
+      GetRange(S->getAtSynchronizedLoc(),
+               S->getSynchExpr()->getLocStart().getLocWithOffset(-1));
+  
+  TheRewriter.ReplaceText(LeftRange, "@synchronized");
+
+  DeferredInsertText(S->getSynchExpr()->getLocStart(), "(");
+
+  TheRewriter.ReplaceText(S->getSynchExpr()->getSourceRange(),
+                          GetStatementString(S->getSynchExpr(), REMOVE_TRAILING_SEMICOLON));
+
+  const SourceLocation& ExprLocEnd =
+      Lexer::getLocForEndOfToken(S->getSynchExpr()->getLocEnd(), 0, *SM, LangOpts);
+ 
+  DeferredInsertText(ExprLocEnd, ") {");
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }
