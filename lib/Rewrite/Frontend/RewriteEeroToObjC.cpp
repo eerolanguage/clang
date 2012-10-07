@@ -519,15 +519,44 @@ void TranslatorVisitor::RewriteImportsAndIncludes() {
 //
 void TranslatorVisitor::RewriteFunctionDecl(FunctionDecl* Function) {
 
-  const SourceLocation& LocEnd = Function->getSourceRange().getEnd();
+  string str = Function->getResultType().getAsString(*Policy);
+  str += ' ';
+  str += Function->getName();
+  str += "(";
+
+  for (FunctionDecl::param_iterator B = Function->param_begin(),
+                                    E = Function->param_end(),
+                                    I = B;
+       I != E;
+       ++I) {
+
+    if (I != B) {
+      str += ", ";
+    }
+    str += (*I)->getType().getAsString(*Policy);
+    str += ' ';
+    str += (*I)->getName();
+  }
+
+  if (Function->isVariadic()) {
+    str += ", ...";
+  }
+
+  str += ')';
+
+  const SourceLocation& LocStart = Function->getLocStart();
+  SourceLocation LocEnd;
 
   if (Function->isThisDeclarationADefinition()) {
-    CompoundStmt* body = dyn_cast<CompoundStmt>(Function->getBody());
-    DeferredInsertText(body->getLBracLoc(), " {");
-    DeferredInsertText(LocEnd, "\n}");
+    LocEnd = Function->getBody()->getLocStart();
+    str += " {";
+    DeferredInsertText(Function->getLocEnd(), "\n}");
   } else {
-    DeferredInsertTextAfterToken(LocEnd, ";");
+    LocEnd = Function->getLocEnd();
+    str += ";";
   }
+
+  TheRewriter.ReplaceText(GetRange(LocStart, LocEnd), str);
 }
 
 //------------------------------------------------------------------------------------------------
