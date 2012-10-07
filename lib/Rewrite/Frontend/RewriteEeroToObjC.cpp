@@ -76,6 +76,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteBreakStatement(BreakStmt* S);
     void RewriteAutoreleasePoolStmt(ObjCAutoreleasePoolStmt* S);
     void RewriteSynchronizedStmt(ObjCAtSynchronizedStmt* S);
+    void RewriteTryStmt(ObjCAtTryStmt* S);
+    void RewriteThrowStmt(ObjCAtThrowStmt* S);
 
     enum StatementStringMode {
         ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT,
@@ -1002,6 +1004,12 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
         dyn_cast_or_null<ObjCAtSynchronizedStmt>(S)) {
     RewriteSynchronizedStmt(SNS);
 
+  } else if (ObjCAtTryStmt* TS = dyn_cast_or_null<ObjCAtTryStmt>(S)) {
+    RewriteTryStmt(TS);
+
+  } else if (ObjCAtThrowStmt* THS = dyn_cast_or_null<ObjCAtThrowStmt>(S)) {
+    RewriteThrowStmt(THS);
+
   } else {
 //    printf("STMT: %s\n", GetStatementString(S).c_str());
     string Str = GetStatementString(S);
@@ -1225,18 +1233,64 @@ void TranslatorVisitor::RewriteSynchronizedStmt(ObjCAtSynchronizedStmt* S) {
                S->getSynchExpr()->getLocStart().getLocWithOffset(-1));
   
   TheRewriter.ReplaceText(LeftRange, "@synchronized");
+  
+  string exprStr = "(";
+  exprStr += GetStatementString(S->getSynchExpr(), REMOVE_TRAILING_SEMICOLON);
+  exprStr += ") {";
 
-  DeferredInsertText(S->getSynchExpr()->getLocStart(), "(");
-
-  TheRewriter.ReplaceText(S->getSynchExpr()->getSourceRange(),
-                          GetStatementString(S->getSynchExpr(), REMOVE_TRAILING_SEMICOLON));
-
-  const SourceLocation& ExprLocEnd =
-      Lexer::getLocForEndOfToken(S->getSynchExpr()->getLocEnd(), 0, *SM, LangOpts);
- 
-  DeferredInsertText(ExprLocEnd, ") {");
+  TheRewriter.ReplaceText(S->getSynchExpr()->getSourceRange(), exprStr);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteTryStmt(ObjCAtTryStmt* S) {
+ 
+  const SourceRange& TryRange =
+      GetRange(S->getAtTryLoc(), S->getTryBody()->getLocStart());
+  
+  TheRewriter.ReplaceText(TryRange, "@try {");
+
+  for (unsigned i = 0; i < S->getNumCatchStmts(); i++) {
+    if (ObjCAtCatchStmt* CatchStmt = S->getCatchStmt(i)) {
+      VarDecl* ParamDecl = CatchStmt->getCatchParamDecl();
+
+      const SourceRange& CatchRange = GetRange(CatchStmt->getAtCatchLoc(),
+                                      ParamDecl->getLocStart().getLocWithOffset(-1));
+
+      TheRewriter.ReplaceText(CatchRange, "} @catch");
+      
+      string declStr = "(";
+      declStr += ParamDecl->getType().getAsString(*Policy);
+      declStr += ' ';
+      declStr += ParamDecl->getName();
+      declStr += ") {";
+      
+      TheRewriter.ReplaceText(ParamDecl->getSourceRange(), declStr);
+    }
+  }
+  
+  if (ObjCAtFinallyStmt* FinallyStmt = S->getFinallyStmt()) {
+    const SourceRange& FinallyRange = GetRange(FinallyStmt->getAtFinallyLoc(),
+                                               FinallyStmt->getFinallyBody()->getLocStart());
+    TheRewriter.ReplaceText(FinallyRange, "} @finally {");
+  }
+
+  DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteThrowStmt(ObjCAtThrowStmt* S) {
+
+  const SourceRange& LeftRange =
+      GetRange(S->getThrowLoc(),
+               S->getThrowExpr()->getLocStart().getLocWithOffset(-1));
+  
+  TheRewriter.ReplaceText(LeftRange, "@throw");
+  
+  RewriteStatement(S->getThrowExpr());
 }
 
 //------------------------------------------------------------------------------------------------
