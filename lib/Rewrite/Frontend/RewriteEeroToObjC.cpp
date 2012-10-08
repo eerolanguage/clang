@@ -1494,7 +1494,7 @@ void TranslatorVisitor::AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation Loc
   if (startBuf[0] != '@') {
     DeferredInsertText(LocStart, "@");
   }
-  const char* endBuf = SM->getCharacterData(LocEnd);
+  const char* endBuf = SM->getCharacterData(LocEnd.getLocWithOffset(-1));
   if (endBuf[0] != '@') {
     DeferredInsertText(LocEnd, "@");
   }
