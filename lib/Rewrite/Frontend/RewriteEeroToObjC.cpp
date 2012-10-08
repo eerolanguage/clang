@@ -231,7 +231,9 @@ class TranslatorPrinterHelper : public PrinterHelper {
     if (ObjCSubscriptRefExpr* S =
             dyn_cast_or_null<ObjCSubscriptRefExpr>(E->getSyntacticForm())) {
 
-      if (S->getKeyExpr()->getType().getAsString(Policy) == "NSRange") {
+      QualType keyType = S->getKeyExpr()->getType().getUnqualifiedType();
+
+      if (keyType.getCanonicalType().getAsString(Policy) == "struct _NSRange") {
 
         if (ObjCMessageExpr* M =
                 dyn_cast_or_null<ObjCMessageExpr>(E->getResultExpr())) {
