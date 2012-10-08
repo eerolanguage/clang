@@ -113,6 +113,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void AddAtToSynthesizeDynamicKeywordsIfNeeded(const SourceLocation LocStart,
                                                   const SourceLocation LocEnd);
 
+    void RemovePrefixDeclarations();
+
     void DeferredInsertText(SourceLocation, string);
     void DeferredInsertTextAfterToken(SourceLocation, string);
     void DeferredInsertTextAtEndOfLine(SourceLocation, string);
@@ -1358,6 +1360,8 @@ void TranslatorVisitor::Finalize() {
 
   RewriteImportsAndIncludes();
 
+  RemovePrefixDeclarations();
+
   while (!StringInsertions.empty()) {
     StringInsertion insertion = StringInsertions.front();
 
@@ -1539,6 +1543,21 @@ void TranslatorVisitor::AddAtToSynthesizeDynamicKeywordsIfNeeded(const SourceLoc
         DeferredInsertTextAfterToken(LocStart.getLocWithOffset(pos), ";");
       }
     }
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RemovePrefixDeclarations() {
+
+  const FileID MainFileID = SM->getMainFileID();
+  const StringRef MainBuf = SM->getBufferData(MainFileID);
+  const SourceLocation& LocStart = SM->getLocForStartOfFile(MainFileID);
+
+  size_t pos = 0;
+  while ((pos = MainBuf.find("using prefix", pos)) != StringRef::npos) {
+    DeferredInsertText(LocStart.getLocWithOffset(pos), "// ");
+    ++pos;
   }
 }
 
