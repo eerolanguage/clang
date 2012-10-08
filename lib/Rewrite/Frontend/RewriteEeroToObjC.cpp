@@ -110,6 +110,9 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
                                    const SourceLocation LocEnd);
 
+    void AddAtToSynthesizeDynamicKeywordsIfNeeded(const SourceLocation LocStart,
+                                                  const SourceLocation LocEnd);
+
     void DeferredInsertText(SourceLocation, string);
     void DeferredInsertTextAfterToken(SourceLocation, string);
     void DeferredInsertTextAtEndOfLine(SourceLocation, string);
@@ -317,7 +320,7 @@ class TranslatorPrinterHelper : public PrinterHelper {
 
     E->getBody()->printPretty(stringStream, 0, Policy);
     string str = stringStream.str();
-    str.erase(str.find_last_not_of(" \n") + 1); // strip trailing newline    
+    str.erase(str.find_last_not_of(" \t\n") + 1); // strip trailing newline
     OS << str;
     
     return true;
@@ -725,6 +728,8 @@ void TranslatorVisitor::RewriteImplementationDecl(ObjCImplementationDecl* ImpDec
   const SourceLocation LocEnd = ImpDecl->getLocEnd();
 
   AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
+
+  AddAtToSynthesizeDynamicKeywordsIfNeeded(LocStart, LocEnd);
 
   RewriteInstanceVariables(ImpDecl->ivar_begin(),
                            ImpDecl->ivar_end(),
@@ -1379,7 +1384,7 @@ string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) 
 
   // Get rid of the extra newline the pretty printer adds
   //
-  str.erase(str.find_last_not_of(" \n") + 1);
+  str.erase(str.find_last_not_of(" \t\n") + 1);
 
   // Handle trailing ';'s
 
@@ -1397,7 +1402,7 @@ string TranslatorVisitor::GetStatementString(Stmt* S, StatementStringMode mode) 
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::StripTrailingSemicolon(string& str) {
-  str.erase(str.find_last_not_of(" ;") + 1);
+  str.erase(str.find_last_not_of(" \t;") + 1);
 }
 
 //------------------------------------------------------------------------------------------------
@@ -1497,6 +1502,41 @@ void TranslatorVisitor::AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation Loc
   const char* endBuf = SM->getCharacterData(LocEnd.getLocWithOffset(-1));
   if (endBuf[0] != '@') {
     DeferredInsertText(LocEnd, "@");
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::AddAtToSynthesizeDynamicKeywordsIfNeeded(const SourceLocation LocStart,
+                                                                 const SourceLocation LocEnd) {
+  // Add '@'s and semicolons, if needed.
+  //
+  const char* startBuf = SM->getCharacterData(LocStart);
+  const char* endBuf = SM->getCharacterData(LocEnd.getLocWithOffset(-1));
+
+  const StringRef BufferStr(startBuf, endBuf - startBuf);
+
+  const char* keywords[] = { "synthesize", "dynamic" };
+  const size_t keywordsCount = sizeof(keywords)/sizeof(const char*);
+  
+  for (size_t i = 0; i < keywordsCount; i++) {
+    size_t pos = 0;
+    while ((pos = BufferStr.find(keywords[i], pos)) != StringRef::npos) {
+      if (BufferStr[pos-1] != '@') {
+        DeferredInsertText(LocStart.getLocWithOffset(pos), "@");
+      }
+      while ((pos = BufferStr.find('\n', pos)) != StringRef::npos) {
+        size_t lastCharOnLinePos = BufferStr.find_last_not_of(" \t\n", pos);
+        if (BufferStr[lastCharOnLinePos] != ',') {
+          pos = lastCharOnLinePos;
+          break;
+        }
+        pos = BufferStr.find_first_not_of(" \t\n", ++pos);
+      }
+      if (pos != StringRef::npos && BufferStr[pos] != ';') {
+        DeferredInsertTextAfterToken(LocStart.getLocWithOffset(pos), ";");
+      }
+    }
   }
 }
 
