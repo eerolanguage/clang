@@ -385,8 +385,6 @@ ASTConsumer* clang::CreateEeroToObjCRewriter(const string& InFile,
 //
 void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
 
-  puts("----- HandleTranslationUnit -----");
-
   if (Diags.hasErrorOccurred()) {
     return;
   }
@@ -411,8 +409,6 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
 //------------------------------------------------------------------------------------------------
 //
 void RewriteEeroToObjC::Initialize(ASTContext& context) {
-
-  puts("----- Initialize -----");
 
   SM = &(context.getSourceManager());
   MainFileID = SM->getMainFileID();
@@ -1060,7 +1056,6 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
     RewriteThrowStmt(THS);
 
   } else {
-//    printf("STMT: %s\n", GetStatementString(S).c_str());
     string Str = GetStatementString(S);
     if (!Str.empty()) {
       TheRewriter.ReplaceText(GetRange(S), GetStatementString(S));
