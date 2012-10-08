@@ -996,7 +996,7 @@ void TranslatorVisitor::RewriteTopLevelDecl(Decl* D) {
       str = " " + str.substr(str.find('{'));
       DeferredInsertText(tag->getLocEnd(), str);
 
-  } else {
+  } else if (!isa<ParmVarDecl>(D)) { // ignore params that show up here
     str += ';';
     TheRewriter.ReplaceText(D->getSourceRange(), str);
   }
