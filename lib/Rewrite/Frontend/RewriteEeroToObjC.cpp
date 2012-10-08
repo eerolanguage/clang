@@ -982,13 +982,24 @@ void TranslatorVisitor::RewriteCategoryImplDecl(ObjCCategoryImplDecl* CatDecl) {
 //------------------------------------------------------------------------------------------------
 //
 void TranslatorVisitor::RewriteTopLevelDecl(Decl* D) {
+
   string stringBuf;
   llvm::raw_string_ostream stringStream(stringBuf);
   D->print(stringStream, *Policy);
   string str = stringStream.str();
-  str += ';';
 
-  TheRewriter.ReplaceText(D->getSourceRange(), str);
+  // Make sure we don't lose embedded tag definitions when rewriting
+  //
+  TagDecl* tag = dyn_cast_or_null<TagDecl>(D);
+
+  if (tag && !tag->isFreeStanding()) {
+      str = " " + str.substr(str.find('{'));
+      DeferredInsertText(tag->getLocEnd(), str);
+
+  } else {
+    str += ';';
+    TheRewriter.ReplaceText(D->getSourceRange(), str);
+  }
 }
 
 //------------------------------------------------------------------------------------------------
