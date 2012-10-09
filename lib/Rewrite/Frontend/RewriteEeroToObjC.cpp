@@ -40,6 +40,9 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
       return false;
     }
 
+    void RewriteForwardClassDecl(DeclGroupRef D);
+    void RewriteForwardProtocolDecl(DeclGroupRef D);
+
   //---------------------------------------------------------------------------------------------
   protected:
   
@@ -189,6 +192,8 @@ class RewriteEeroToObjC : public ASTConsumer {
     virtual void Initialize(ASTContext& context);
 
     virtual void HandleTranslationUnit(ASTContext& C);
+
+    virtual bool HandleTopLevelDecl(DeclGroupRef D);
 };
 
 //------------------------------------------------------------------------------------------------
@@ -417,6 +422,33 @@ void RewriteEeroToObjC::HandleTranslationUnit(ASTContext& C) {
 
 //------------------------------------------------------------------------------------------------
 //
+bool RewriteEeroToObjC::HandleTopLevelDecl(DeclGroupRef D) {
+
+  for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
+
+    if (!SM->isFromMainFile((*I)->getLocation())) {
+      return true;
+    }
+
+    if (ObjCInterfaceDecl *Class = dyn_cast<ObjCInterfaceDecl>(*I)) {
+      if (!Class->isThisDeclarationADefinition()) {
+        Visitor.RewriteForwardClassDecl(D);
+        break;
+      }
+    }
+    if (ObjCProtocolDecl *Proto = dyn_cast<ObjCProtocolDecl>(*I)) {
+      if (!Proto->isThisDeclarationADefinition()) {
+        Visitor.RewriteForwardProtocolDecl(D);
+        break;
+      }
+    }
+  }
+
+  return true;
+}
+
+//------------------------------------------------------------------------------------------------
+//
 void RewriteEeroToObjC::Initialize(ASTContext& context) {
 
   SM = &(context.getSourceManager());
@@ -440,13 +472,15 @@ bool TranslatorVisitor::VisitDecl(Decl* D) {
   if (!SM->isFromMainFile(D->getLocation())) {
     return true;
   }
-
+  
   if (ObjCInterfaceDecl* IFD = dyn_cast_or_null<ObjCInterfaceDecl>(D)) {
-    RewriteInterfaceDecl(IFD);
-
+    if (IFD->isThisDeclarationADefinition()) {
+      RewriteInterfaceDecl(IFD);
+    }
   } else if (ObjCProtocolDecl* PD = dyn_cast_or_null<ObjCProtocolDecl>(D)) {
-    RewriteProtocolDecl(PD);
-
+    if (PD->isThisDeclarationADefinition()) {
+      RewriteProtocolDecl(PD);
+    }
   } else if (ObjCImplementationDecl* IMPD = dyn_cast_or_null<ObjCImplementationDecl>(D)) {
     RewriteImplementationDecl(IMPD);
 
@@ -1045,6 +1079,50 @@ void TranslatorVisitor::RewriteCategoryImplDecl(ObjCCategoryImplDecl* CatDecl) {
        I = CatDecl->classmeth_begin(), E = CatDecl->classmeth_end();
        I != E; ++I) {
     RewriteMethodDeclaration(*I);
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteForwardClassDecl(DeclGroupRef D) {
+
+  string str = "@class ";
+  SourceRange Range;
+
+  for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
+    ObjCInterfaceDecl *ForwardDecl = cast<ObjCInterfaceDecl>(*I);
+    Range = ForwardDecl->getSourceRange();
+    if (I != D.begin()) {
+      str += ", ";
+    }
+    str += ForwardDecl->getNameAsString();
+  }
+
+  if (!Range.isInvalid()) {
+    str += ";";
+    TheRewriter.ReplaceText(Range, str);
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteForwardProtocolDecl(DeclGroupRef D) {
+
+  string str = "@protocol ";
+  SourceRange Range;
+
+  for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
+    ObjCProtocolDecl *ForwardDecl = cast<ObjCProtocolDecl>(*I);
+    Range = ForwardDecl->getSourceRange();
+    if (I != D.begin()) {
+      str += ", ";
+    }
+    str += ForwardDecl->getNameAsString();
+  }
+
+  if (!Range.isInvalid()) {
+    str += ";";
+    TheRewriter.ReplaceText(Range, str);
   }
 }
 
