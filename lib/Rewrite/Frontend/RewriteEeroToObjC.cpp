@@ -48,6 +48,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteFunctionDecl(FunctionDecl* Function);
 
     void RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl);
+    void RewriteProtocolDecl(ObjCProtocolDecl* PDecl);
     void RewriteMethodDeclaration(ObjCMethodDecl* Method);
     void RewriteImplementationDecl(ObjCImplementationDecl* ImpDecl);
 
@@ -104,11 +105,19 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
                       const SourceLocation LocEnd,
                       const char c);
 
-    void AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation LocStart,
-                                         const SourceLocation LocEnd);
+    void AddAtToStartAndEndKeywordsIfNeeded(const SourceLocation LocStart,
+                                            const SourceLocation LocEnd);
 
-    void AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
-                                   const SourceLocation LocEnd);
+    void AddAtToAccessSpecIfNeeded(const SourceLocation& LocStart,
+                                   const SourceLocation& LocEnd);
+
+    void AddAtToRequiredOptionalIfNeeded(const SourceLocation& LocStart,
+                                         const SourceLocation& LocEnd);
+
+    void AddAtToKeywordsInReverse(const char* Keywords[],
+                                  size_t NumOfKeywords,
+                                  const SourceLocation& LocStart,
+                                  const SourceLocation& LocEnd);
 
     void AddAtToSynthesizeDynamicKeywordsIfNeeded(const SourceLocation LocStart,
                                                   const SourceLocation LocEnd);
@@ -435,6 +444,9 @@ bool TranslatorVisitor::VisitDecl(Decl* D) {
   if (ObjCInterfaceDecl* IFD = dyn_cast_or_null<ObjCInterfaceDecl>(D)) {
     RewriteInterfaceDecl(IFD);
 
+  } else if (ObjCProtocolDecl* PD = dyn_cast_or_null<ObjCProtocolDecl>(D)) {
+    RewriteProtocolDecl(PD);
+
   } else if (ObjCImplementationDecl* IMPD = dyn_cast_or_null<ObjCImplementationDecl>(D)) {
     RewriteImplementationDecl(IMPD);
 
@@ -569,7 +581,7 @@ void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl) {
   const SourceLocation LocStart = ClassDecl->getAtStartLoc();
   const SourceLocation LocEnd = ClassDecl->getLocEnd();
 
-  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
+  AddAtToStartAndEndKeywordsIfNeeded(LocStart, LocEnd);
 
   SourceLocation CurrentLoc;
 
@@ -617,6 +629,66 @@ void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl) {
        I = ClassDecl->classmeth_begin(), E = ClassDecl->classmeth_end();
        I != E; ++I) {
     RewriteMethodDeclaration(*I);
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteProtocolDecl(ObjCProtocolDecl* PDecl) {
+
+  const SourceLocation& LocStart = PDecl->getAtStartLoc();
+  const SourceLocation& LocEnd = PDecl->getLocEnd();
+
+  AddAtToStartAndEndKeywordsIfNeeded(LocStart, LocEnd);
+
+  SourceLocation CurrentLoc = LocStart;
+
+  // Rewrite protocol names, since they might have implicit prefixes
+  //
+  const ObjCList<ObjCProtocolDecl>& Protocols = PDecl->getReferencedProtocols();
+  ObjCProtocolDecl::protocol_loc_iterator LI = PDecl->protocol_loc_begin();
+  for (ObjCList<ObjCProtocolDecl>::iterator I = Protocols.begin(),
+       E = Protocols.end(); I != E; ++I) {
+    const SourceLocation loc = (*LI);
+    const int len = GetTokenLength(loc);
+    TheRewriter.ReplaceText(loc, len, (*I)->getName());
+    CurrentLoc = loc.getLocWithOffset(len);
+    LI++;
+  }
+
+  MoveLocToNextLine(CurrentLoc);
+  SourceLocation AtPropertyTrackingLoc;
+
+  for (ObjCProtocolDecl::prop_iterator I = PDecl->prop_begin(),
+       E = PDecl->prop_end(); I != E; ++I) {
+    RewriteProperty(*I, AtPropertyTrackingLoc);
+    if (CurrentLoc < AtPropertyTrackingLoc) {
+      AddAtToRequiredOptionalIfNeeded(CurrentLoc, AtPropertyTrackingLoc);
+    }
+    CurrentLoc = Lexer::getLocForEndOfToken(I->getLocEnd(), 0, *SM, LangOpts);
+  }
+
+  for (ObjCProtocolDecl::instmeth_iterator I = PDecl->instmeth_begin(),
+                                           E = PDecl->instmeth_end();
+       I != E;
+       ++I) {
+
+    if (!I->isImplicit()) {
+      AddAtToRequiredOptionalIfNeeded(CurrentLoc, I->getLocStart());
+      RewriteMethodDeclaration(*I);
+      CurrentLoc = Lexer::getLocForEndOfToken(I->getLocEnd(), 0, *SM, LangOpts);
+    }
+  }
+
+  for (ObjCProtocolDecl::classmeth_iterator
+       I = PDecl->classmeth_begin(), E = PDecl->classmeth_end();
+       I != E; ++I) {
+
+    if (!I->isImplicit()) {
+      AddAtToRequiredOptionalIfNeeded(CurrentLoc, I->getLocStart());
+      RewriteMethodDeclaration(*I);
+      CurrentLoc = Lexer::getLocForEndOfToken(I->getLocEnd(), 0, *SM, LangOpts);
+    }
   }
 }
 
@@ -727,7 +799,7 @@ void TranslatorVisitor::RewriteImplementationDecl(ObjCImplementationDecl* ImpDec
   const SourceLocation LocStart = ImpDecl->getAtStartLoc();
   const SourceLocation LocEnd = ImpDecl->getLocEnd();
 
-  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
+  AddAtToStartAndEndKeywordsIfNeeded(LocStart, LocEnd);
 
   AddAtToSynthesizeDynamicKeywordsIfNeeded(LocStart, LocEnd);
 
@@ -823,15 +895,7 @@ void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
     {ObjCPropertyDecl::OBJC_PR_atomic,    "atomic"},
   };
 
-  string str;
-
-  if (PDecl->getPropertyImplementation() == ObjCPropertyDecl::Required) {
-    str += "@required\n";
-  } else if (PDecl->getPropertyImplementation() == ObjCPropertyDecl::Optional) {
-    str += "@optional\n";
-  }
-
-  str += "\r@property ";
+  string str = "  @property ";
 
   if (PDecl->getPropertyAttributes() != ObjCPropertyDecl::OBJC_PR_noattr) {
 
@@ -879,19 +943,19 @@ void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
   str += ';';
 
   const SourceLocation& AtLoc = PDecl->getAtLoc();
-  const SourceLocation LocEnd = PDecl->getLocEnd();
+  const SourceLocation& LocEnd = PDecl->getLocEnd();
   SourceLocation Loc;
 
   if (PreviousAtLoc.isInvalid() || AtLoc != PreviousAtLoc) {
     Loc = AtLoc;
+    PreviousAtLoc = AtLoc;
+    str = '\n' + str;
   } else {
     Loc = PDecl->getLocation();
     MoveLocToBeginningOfLine(Loc); // we don't have the type loc
   }
 
   TheRewriter.ReplaceText(GetRange(Loc, LocEnd), str);
-
-  PreviousAtLoc = AtLoc;
 }
 
 //------------------------------------------------------------------------------------------------
@@ -901,7 +965,7 @@ void TranslatorVisitor::RewriteCategoryDecl(ObjCCategoryDecl* CatDecl) {
   const SourceLocation LocStart = CatDecl->getAtStartLoc();
   const SourceLocation LocEnd = CatDecl->getLocEnd();
 
-  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
+  AddAtToStartAndEndKeywordsIfNeeded(LocStart, LocEnd);
 
   // Rewrite class name, since it might have an implicit prefix
   //
@@ -946,7 +1010,7 @@ void TranslatorVisitor::RewriteCategoryImplDecl(ObjCCategoryImplDecl* CatDecl) {
   const SourceLocation LocStart = CatDecl->getAtStartLoc();
   const SourceLocation LocEnd = CatDecl->getLocEnd();
 
-  AddAtToIfImpEndKeywordsIfNeeded(LocStart, LocEnd);
+  AddAtToStartAndEndKeywordsIfNeeded(LocStart, LocEnd);
 
   // Rewrite class name, since it might have an implicit prefix
   //
@@ -1492,8 +1556,8 @@ bool TranslatorVisitor::CheckForChar(const SourceLocation LocStart,
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::AddAtToIfImpEndKeywordsIfNeeded(const SourceLocation LocStart,
-    const SourceLocation LocEnd) {
+void TranslatorVisitor::AddAtToStartAndEndKeywordsIfNeeded(const SourceLocation LocStart,
+                                                           const SourceLocation LocEnd) {
   // Add '@'s to beginning and end keywords, if needed
   //
   const char* startBuf = SM->getCharacterData(LocStart);
@@ -1558,22 +1622,40 @@ void TranslatorVisitor::RemovePrefixDeclarations() {
 
 //------------------------------------------------------------------------------------------------
 //
-void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation LocStart,
-    const SourceLocation LocEnd) {
-  // String buffer for searches
-  //
+void TranslatorVisitor::AddAtToAccessSpecIfNeeded(const SourceLocation& LocStart,
+                                                  const SourceLocation& LocEnd) {
+  const char* keywords[] = { "private", "protected", "public", "package" };
+  const size_t count = sizeof(keywords) / sizeof(const char*);
+
+  AddAtToKeywordsInReverse(keywords, count, LocStart, LocEnd);
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::AddAtToRequiredOptionalIfNeeded(const SourceLocation& LocStart,
+                                                        const SourceLocation& LocEnd) {
+  const char* keywords[] = { "required", "optional" };
+  const size_t count = sizeof(keywords) / sizeof(const char*);
+
+  AddAtToKeywordsInReverse(keywords, count, LocStart, LocEnd);
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::AddAtToKeywordsInReverse(const char* Keywords[],
+                                                 size_t NumOfKeywords,
+                                                 const SourceLocation& LocStart,
+                                                 const SourceLocation& LocEnd) {
+
   const char* startBuf = SM->getCharacterData(LocStart);
   const char* endBuf = SM->getCharacterData(LocEnd);
-  std::string bufferStr(startBuf, endBuf - startBuf);
-
-  const char* keyword[] = { "private", "protected", "public", "package" };
-  const size_t count = sizeof(keyword) / sizeof(const char*);
-
-  // Look for access control specifiers to add '@s' if needed
+  const StringRef bufferStr(startBuf, endBuf - startBuf);
+  
+  // Look for keywords to add '@s' if needed
   //
-  for (size_t i = 0; i < count; i++) {
-    const size_t pos = bufferStr.rfind(keyword[i]);
-    if (pos != std::string::npos) {
+  for (size_t i = 0; i < NumOfKeywords; i++) {
+    const size_t pos = bufferStr.rfind(Keywords[i]);
+    if (pos != StringRef::npos) {
       if (pos == 0 || bufferStr[pos - 1] != '@') {
         DeferredInsertText(LocStart.getLocWithOffset(pos), "@");
       }
