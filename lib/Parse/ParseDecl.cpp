@@ -1743,6 +1743,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
     }
 
     if (ParseExpressionList(Exprs, CommaLocs)) {
+      Actions.ActOnInitializerError(ThisDecl);
       SkipUntil(tok::r_paren);
 
       if (getLangOpts().CPlusPlus && D.getCXXScopeSpec().isSet()) {
