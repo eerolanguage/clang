@@ -20,7 +20,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "llvm/Intrinsics.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -409,7 +409,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   }
   case Builtin::BI__builtin_unreachable: {
     if (CatchUndefined)
-      EmitCheck(Builder.getFalse());
+      EmitCheck(Builder.getFalse(), "builtin_unreachable",
+                EmitCheckSourceLocation(E->getExprLoc()),
+                llvm::ArrayRef<llvm::Value *>());
     else
       Builder.CreateUnreachable();
 

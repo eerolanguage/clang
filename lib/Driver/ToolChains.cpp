@@ -713,11 +713,11 @@ DerivedArgList *Darwin::TranslateArgs(const DerivedArgList &Args,
     if (A->getOption().matches(options::OPT_Xarch__)) {
       // Skip this argument unless the architecture matches either the toolchain
       // triple arch, or the arch being bound.
-      //
-      // FIXME: Canonicalize name.
-      StringRef XarchArch = A->getValue(Args, 0);
-      if (!(XarchArch == getArchName()  ||
-            (BoundArch && XarchArch == BoundArch)))
+      llvm::Triple::ArchType XarchArch =
+        llvm::Triple::getArchTypeForDarwinArchName(A->getValue(Args, 0));
+      if (!(XarchArch == getArch()  ||
+            (BoundArch && XarchArch ==
+             llvm::Triple::getArchTypeForDarwinArchName(BoundArch))))
         continue;
 
       Arg *OriginalArg = A;
@@ -955,9 +955,7 @@ DerivedArgList *Darwin::TranslateArgs(const DerivedArgList &Args,
 }
 
 bool Darwin::IsUnwindTablesDefault() const {
-  // FIXME: Gross; we should probably have some separate target
-  // definition, possibly even reusing the one in clang.
-  return getArchName() == "x86_64";
+  return getArch() == llvm::Triple::x86_64;
 }
 
 bool Darwin::UseDwarfDebugFlags() const {
@@ -977,14 +975,14 @@ const char *Darwin::GetDefaultRelocationModel() const {
 }
 
 const char *Darwin::GetForcedPicModel() const {
-  if (getArchName() == "x86_64")
+  if (getArch() == llvm::Triple::x86_64)
     return "pic";
   return 0;
 }
 
 bool Darwin::SupportsProfiling() const {
   // Profiling instrumentation is only supported on x86.
-  return getArchName() == "i386" || getArchName() == "x86_64";
+  return getArch() == llvm::Triple::x86 || getArch() == llvm::Triple::x86_64;
 }
 
 bool Darwin::SupportsObjCGC() const {
@@ -1457,8 +1455,6 @@ Tool &Generic_GCC::SelectTool(const Compilation &C,
 }
 
 bool Generic_GCC::IsUnwindTablesDefault() const {
-  // FIXME: Gross; we should probably have some separate target
-  // definition, possibly even reusing the one in clang.
   return getArch() == llvm::Triple::x86_64;
 }
 
@@ -1668,19 +1664,43 @@ void Bitrig::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
       DriverArgs.hasArg(options::OPT_nostdincxx))
     return;
 
-  std::string Triple = getTriple().str();
-  if (Triple.substr(0, 5) == "amd64")
-    Triple.replace(0, 5, "x86_64");
+  switch (GetCXXStdlibType(DriverArgs)) {
+  case ToolChain::CST_Libcxx:
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/usr/include/c++/");
+    break;
+  case ToolChain::CST_Libstdcxx:
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/usr/include/c++/stdc++");
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/usr/include/c++/stdc++/backward");
 
-  addSystemInclude(DriverArgs, CC1Args, "/usr/include/c++/4.6.2");
-  addSystemInclude(DriverArgs, CC1Args, "/usr/include/c++/4.6.2/backward");
-  addSystemInclude(DriverArgs, CC1Args, "/usr/include/c++/4.6.2/" + Triple);
-
+    StringRef Triple = getTriple().str();
+    if (Triple.startswith("amd64"))
+      addSystemInclude(DriverArgs, CC1Args,
+                       getDriver().SysRoot + "/usr/include/c++/stdc++/x86_64" +
+                       Triple.substr(5));
+    else
+      addSystemInclude(DriverArgs, CC1Args,
+                       getDriver().SysRoot + "/usr/include/c++/stdc++/" +
+                       Triple);
+    break;
+  }
 }
 
 void Bitrig::AddCXXStdlibLibArgs(const ArgList &Args,
                                  ArgStringList &CmdArgs) const {
-  CmdArgs.push_back("-lstdc++");
+  switch (GetCXXStdlibType(Args)) {
+  case ToolChain::CST_Libcxx:
+    CmdArgs.push_back("-lc++");
+    CmdArgs.push_back("-lcxxrt");
+    // Include supc++ to provide Unwind until provided by libcxx.
+    CmdArgs.push_back("-lgcc");
+    break;
+  case ToolChain::CST_Libstdcxx:
+    CmdArgs.push_back("-lstdc++");
+    break;
+  }
 }
 
 /// FreeBSD - FreeBSD tool chain which can call as(1) and ld(1) directly.

@@ -24,7 +24,7 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/Intrinsics.h"
 #include "llvm/MDBuilder.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -348,7 +348,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
       for (FunctionDecl::redecl_iterator RI = FD->redecls_begin(),
              RE = FD->redecls_end(); RI != RE; ++RI)
         if (RI->isInlineSpecified()) {
-          Fn->addFnAttr(llvm::Attribute::InlineHint);
+          Fn->addFnAttr(llvm::Attributes::InlineHint);
           break;
         }
 
@@ -485,7 +485,7 @@ static void TryMarkNoThrow(llvm::Function *F) {
       } else if (isa<llvm::ResumeInst>(&*BI)) {
         return;
       }
-  F->setDoesNotThrow(true);
+  F->setDoesNotThrow();
 }
 
 void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
@@ -544,7 +544,9 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
   if (getContext().getLangOpts().CPlusPlus && !FD->hasImplicitReturnZero() &&
       !FD->getResultType()->isVoidType() && Builder.GetInsertBlock()) {
     if (CatchUndefined)
-      EmitCheck(Builder.getFalse());
+      EmitCheck(Builder.getFalse(), "missing_return",
+                EmitCheckSourceLocation(FD->getLocation()),
+                llvm::ArrayRef<llvm::Value*>());
     Builder.CreateUnreachable();
     Builder.ClearInsertionPoint();
   }
@@ -1041,6 +1043,7 @@ CodeGenFunction::getVLASize(const VariableArrayType *type) {
       numElements = vlaSize;
     } else {
       // It's undefined behavior if this wraps around, so mark it that way.
+      // FIXME: Teach -fcatch-undefined-behavior to trap this.
       numElements = Builder.CreateNUWMul(numElements, vlaSize);
     }
   } while ((type = getContext().getAsVariableArrayType(elementType)));
@@ -1118,10 +1121,25 @@ void CodeGenFunction::EmitVariablyModifiedType(QualType type) {
         // e.g. with a typedef and a pointer to it.
         llvm::Value *&entry = VLASizeMap[size];
         if (!entry) {
+          llvm::Value *Size = EmitScalarExpr(size);
+
+          // C11 6.7.6.2p5:
+          //   If the size is an expression that is not an integer constant
+          //   expression [...] each time it is evaluated it shall have a value
+          //   greater than zero.
+          if (CatchUndefined && size->getType()->isSignedIntegerType()) {
+            llvm::Value *Zero = llvm::Constant::getNullValue(Size->getType());
+            llvm::Constant *StaticArgs[] = {
+              EmitCheckSourceLocation(size->getLocStart()),
+              EmitCheckTypeDescriptor(size->getType())
+            };
+            EmitCheck(Builder.CreateICmpSGT(Size, Zero),
+                      "vla_bound_not_positive", StaticArgs, Size);
+          }
+
           // Always zexting here would be wrong if it weren't
           // undefined behavior to have a negative bound.
-          entry = Builder.CreateIntCast(EmitScalarExpr(size), SizeTy,
-                                        /*signed*/ false);
+          entry = Builder.CreateIntCast(Size, SizeTy, /*signed*/ false);
         }
       }
       type = vat->getElementType();

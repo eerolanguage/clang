@@ -1531,98 +1531,6 @@ static void CollectSuperClassPropertyImplementations(ObjCInterfaceDecl *CDecl,
   }
 }
 
-/// LookupPropertyDecl - Looks up a property in the current class and all
-/// its protocols.
-ObjCPropertyDecl *Sema::LookupPropertyDecl(const ObjCContainerDecl *CDecl,
-                                     IdentifierInfo *II) {
-  if (const ObjCInterfaceDecl *IDecl =
-        dyn_cast<ObjCInterfaceDecl>(CDecl)) {
-    for (ObjCContainerDecl::prop_iterator P = IDecl->prop_begin(),
-         E = IDecl->prop_end(); P != E; ++P) {
-      ObjCPropertyDecl *Prop = *P;
-      if (Prop->getIdentifier() == II)
-        return Prop;
-    }
-    // scan through class's protocols.
-    for (ObjCInterfaceDecl::all_protocol_iterator
-         PI = IDecl->all_referenced_protocol_begin(),
-         E = IDecl->all_referenced_protocol_end(); PI != E; ++PI) {
-      ObjCPropertyDecl *Prop = LookupPropertyDecl((*PI), II);
-      if (Prop)
-        return Prop;
-    }
-  }
-  else if (const ObjCProtocolDecl *PDecl =
-            dyn_cast<ObjCProtocolDecl>(CDecl)) {
-    for (ObjCProtocolDecl::prop_iterator P = PDecl->prop_begin(),
-         E = PDecl->prop_end(); P != E; ++P) {
-      ObjCPropertyDecl *Prop = *P;
-      if (Prop->getIdentifier() == II)
-        return Prop;
-    }
-    // scan through protocol's protocols.
-    for (ObjCProtocolDecl::protocol_iterator PI = PDecl->protocol_begin(),
-         E = PDecl->protocol_end(); PI != E; ++PI) {
-      ObjCPropertyDecl *Prop = LookupPropertyDecl((*PI), II);
-      if (Prop)
-        return Prop;
-    }
-  }
-  else if (const ObjCCategoryDecl *CatDecl =
-            dyn_cast<ObjCCategoryDecl>(CDecl)) {
-    for (ObjCContainerDecl::prop_iterator P = CatDecl->prop_begin(),
-         E = CatDecl->prop_end(); P != E; ++P) {
-      ObjCPropertyDecl *Prop = *P;
-      if (Prop->getIdentifier() == II)
-        return Prop;
-    }
-  }
-  return 0;
-}
-
-/// PropertyIfSetterOrGetter - Looks up the property if named declaration
-/// is a setter or getter method backing a property.
-ObjCPropertyDecl *Sema::PropertyIfSetterOrGetter(NamedDecl *D) {
-  if (const ObjCMethodDecl *Method = dyn_cast<ObjCMethodDecl>(D)) {
-    Selector Sel = Method->getSelector();
-    IdentifierInfo *Id = 0;
-    if (Sel.getNumArgs() == 0)
-      Id = Sel.getIdentifierInfoForSlot(0);
-    else if (Sel.getNumArgs() == 1) {
-      StringRef str = Sel.getNameForSlot(0);
-      if (str.startswith("set")) {
-        str = str.substr(3);
-        char front = str.front();
-        front = islower(front) ? toupper(front) : tolower(front);
-        SmallString<100> PropertyName = str;
-        PropertyName[0] = front;
-        Id = &PP.getIdentifierTable().get(PropertyName);
-      }
-    }
-    if (Id) {
-      if (isa<ObjCInterfaceDecl>(Method->getDeclContext())) {
-        const ObjCInterfaceDecl *IDecl = Method->getClassInterface();
-        while (IDecl) {
-          ObjCPropertyDecl  *PDecl =
-            LookupPropertyDecl(cast<ObjCContainerDecl>(IDecl), Id);
-          if (PDecl)
-            return PDecl;
-          for (ObjCCategoryDecl *Category = IDecl->getCategoryList();
-             Category; Category = Category->getNextClassCategory())
-            if ((PDecl =
-                 LookupPropertyDecl(cast<ObjCContainerDecl>(Category), Id)))
-              return PDecl;
-          IDecl = IDecl->getSuperClass();
-        }
-      } else if (ObjCPropertyDecl  *PDecl =
-                  LookupPropertyDecl(
-                    cast<ObjCContainerDecl>(Method->getDeclContext()), Id))
-               return PDecl;
-    }
-  }
-  return 0;
-}
-
 /// \brief Default synthesizes all properties which must be synthesized
 /// in class's \@implementation.
 void Sema::DefaultSynthesizeProperties(Scope *S, ObjCImplDecl* IMPDecl,
@@ -1935,7 +1843,7 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
     GetterMethod = ObjCMethodDecl::Create(Context, Loc, Loc,
                              property->getGetterName(),
                              property->getType(), 0, CD, /*isInstance=*/true,
-                             /*isVariadic=*/false, /*isSynthesized=*/true,
+                             /*isVariadic=*/false, /*isPropertyAccessor=*/true,
                              /*isImplicitlyDeclared=*/true, /*isDefined=*/false,
                              (property->getPropertyImplementation() ==
                               ObjCPropertyDecl::Optional) ?
@@ -1955,7 +1863,7 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
   } else
     // A user declared getter will be synthesize when @synthesize of
     // the property with the same name is seen in the @implementation
-    GetterMethod->setSynthesized(true);
+    GetterMethod->setPropertyAccessor(true);
   property->setGetterMethodDecl(GetterMethod);
 
   // Skip setter if property is read-only.
@@ -1973,7 +1881,7 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
         ObjCMethodDecl::Create(Context, Loc, Loc,
                                property->getSetterName(), Context.VoidTy, 0,
                                CD, /*isInstance=*/true, /*isVariadic=*/false,
-                               /*isSynthesized=*/true,
+                               /*isPropertyAccessor=*/true,
                                /*isImplicitlyDeclared=*/true,
                                /*isDefined=*/false,
                                (property->getPropertyImplementation() ==
@@ -2004,7 +1912,7 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
     } else
       // A user declared setter will be synthesize when @synthesize of
       // the property with the same name is seen in the @implementation
-      SetterMethod->setSynthesized(true);
+      SetterMethod->setPropertyAccessor(true);
     property->setSetterMethodDecl(SetterMethod);
   }
   // Add any synthesized methods to the global pool. This allows us to

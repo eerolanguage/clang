@@ -21,7 +21,7 @@
 #include "clang/AST/StmtObjC.h"
 #include "clang/Basic/Diagnostic.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/InlineAsm.h"
 using namespace clang;
 using namespace CodeGen;
@@ -1705,7 +1705,7 @@ static llvm::Constant *createARCRuntimeFunction(CodeGenModule &CGM,
       f->setLinkage(llvm::Function::ExternalWeakLinkage);
     // set nonlazybind attribute for these APIs for performance.
     if (fnName == "objc_retain" || fnName  == "objc_release")
-      f->addFnAttr(llvm::Attribute::NonLazyBind);
+      f->addFnAttr(llvm::Attributes::NonLazyBind);
   }
 
   return fn;
