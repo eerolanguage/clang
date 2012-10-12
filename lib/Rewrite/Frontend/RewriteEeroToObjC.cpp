@@ -199,6 +199,33 @@ class RewriteEeroToObjC : public ASTConsumer {
 };
 
 //------------------------------------------------------------------------------------------------
+static void ProcessMacroArguments(const SourceManager& SM,
+                                  string& str,
+                                  const SourceLocation& Loc,
+                                  SourceLocation& ExpansionLoc) {
+  size_t i = str.size();
+  if (Loc.getLocWithOffset(i).isMacroID() &&
+      SM.isMacroArgExpansion(Loc.getLocWithOffset(i))) {
+    const char* charBuf = SM.getCharacterData(ExpansionLoc);
+    while (charBuf[i] == ' ' || charBuf[i] == '\n') {
+      str += charBuf[i];
+      ++i;
+    }
+    int parenCount = 0;
+    do {
+      if (charBuf[i] == '(') {
+        ++parenCount;
+      } else if (charBuf[i] == ')') {
+        --parenCount;
+      }
+      str += charBuf[i];
+      ExpansionLoc = SM.getExpansionLoc(Loc).getLocWithOffset(i);
+      ++i;
+    } while (parenCount > 0);
+  }
+}
+
+//------------------------------------------------------------------------------------------------
 // TranslatorPrinterHelper
 //------------------------------------------------------------------------------------------------
 
@@ -276,7 +303,7 @@ class TranslatorPrinterHelper : public PrinterHelper {
         Lexer::isAtEndOfMacroExpansion(LocEnd, SM, Policy.LangOpts)) {
 
       const SourceLocation& ExpansionLocStart = SM.getExpansionLoc(LocStart);
-      const SourceLocation& ExpansionLocEnd = SM.getExpansionLoc(LocEnd);
+      SourceLocation ExpansionLocEnd = SM.getExpansionLoc(LocEnd);
 
       if (ExpansionLocEnd == ExpansionLocStart) {
         SmallVector<char, 64> buffer;
@@ -284,25 +311,7 @@ class TranslatorPrinterHelper : public PrinterHelper {
 
         // Handle macros with arguments
         //
-        size_t i = str.size();
-        if (LocEnd.getLocWithOffset(i).isMacroID() &&
-            SM.isMacroArgExpansion(LocEnd.getLocWithOffset(i))) {
-          const char* charBuf = SM.getCharacterData(ExpansionLocEnd);
-          while (charBuf[i] == ' ' || charBuf[i] == '\n') {
-            str += charBuf[i];
-            ++i;
-          }
-          int parenCount = 0;
-          do {
-            if (charBuf[i] == '(') {
-              ++parenCount;
-            } else if (charBuf[i] == ')') {
-              --parenCount;
-            }
-            str += charBuf[i];
-            ++i;
-          } while (parenCount > 0);
-        }
+        ProcessMacroArguments(SM, str, LocEnd, ExpansionLocEnd);
 
         OS << str;
         return true;
@@ -1599,24 +1608,7 @@ SourceRange TranslatorVisitor::GetRange(const SourceLocation& LocStart,
     //
     SmallVector<char, 64> buffer;
     string str = Lexer::getSpelling(AdjustedLocEnd, buffer, *SM, LangOpts);
-    size_t i = str.size();
-    if (LocEnd.getLocWithOffset(i).isMacroID() &&
-        SM->isMacroArgExpansion(LocEnd.getLocWithOffset(i))) {
-      const char* charBuf = SM->getCharacterData(AdjustedLocEnd);
-      while (charBuf[i] == ' ' || charBuf[i] == '\n') {
-        ++i;
-      }
-      int parenCount = 0;
-      do {
-        if (charBuf[i] == '(') {
-          ++parenCount;
-        } else if (charBuf[i] == ')') {
-          --parenCount;
-        }
-        AdjustedLocEnd = SM->getExpansionLoc(LocEnd).getLocWithOffset(i);
-        ++i;
-      } while (parenCount > 0);
-    }
+    ProcessMacroArguments(*SM, str, LocEnd, AdjustedLocEnd);
 
   } else {
     AdjustedLocEnd = LocEnd;
