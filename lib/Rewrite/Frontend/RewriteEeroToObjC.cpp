@@ -96,7 +96,9 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
 
     int GetTokenLength(SourceLocation Loc);
 
-    SourceRange GetRange(SourceLocation LocStart, SourceLocation LocEnd);
+    SourceRange GetRange(const SourceLocation& LocStart,
+                         const SourceLocation& LocEnd);
+
     SourceRange GetRange(SourceRange LocRange);
     SourceRange GetRange(Stmt* S);
 
@@ -278,10 +280,31 @@ class TranslatorPrinterHelper : public PrinterHelper {
 
       if (ExpansionLocEnd == ExpansionLocStart) {
         SmallVector<char, 64> buffer;
-        OS << Lexer::getSpelling(ExpansionLocStart,
-                                 buffer,
-                                 SM,
-                                 Policy.LangOpts);
+        string str = Lexer::getSpelling(ExpansionLocStart, buffer, SM, Policy.LangOpts);
+
+        // Handle macros with arguments
+        //
+        size_t i = str.size();
+        if (LocEnd.getLocWithOffset(i).isMacroID() &&
+            SM.isMacroArgExpansion(LocEnd.getLocWithOffset(i))) {
+          const char* charBuf = SM.getCharacterData(ExpansionLocEnd);
+          while (charBuf[i] == ' ' || charBuf[i] == '\n') {
+            str += charBuf[i];
+            ++i;
+          }
+          int parenCount = 0;
+          do {
+            if (charBuf[i] == '(') {
+              ++parenCount;
+            } else if (charBuf[i] == ')') {
+              --parenCount;
+            }
+            str += charBuf[i];
+            ++i;
+          } while (parenCount > 0);
+        }
+
+        OS << str;
         return true;
       }
     }
@@ -1557,17 +1580,49 @@ int TranslatorVisitor::GetTokenLength(SourceLocation Loc) {
 
 //------------------------------------------------------------------------------------------------
 //
-SourceRange TranslatorVisitor::GetRange(SourceLocation LocStart, SourceLocation LocEnd) {
+SourceRange TranslatorVisitor::GetRange(const SourceLocation& LocStart,
+                                        const SourceLocation& LocEnd) {
+  SourceLocation AdjustedLocStart;
 
   if (LocStart.isMacroID()) {
-    LocStart = SM->getExpansionLoc(LocStart);
+    AdjustedLocStart = SM->getExpansionLoc(LocStart);
+  } else {
+    AdjustedLocStart = LocStart;
   }
+
+  SourceLocation AdjustedLocEnd;
 
   if (LocEnd.isMacroID()) {
-    LocEnd = SM->getExpansionLoc(LocEnd);
+    AdjustedLocEnd = SM->getExpansionLoc(LocEnd);
+
+    // Skip past any function-like macro arguments
+    //
+    SmallVector<char, 64> buffer;
+    string str = Lexer::getSpelling(AdjustedLocEnd, buffer, *SM, LangOpts);
+    size_t i = str.size();
+    if (LocEnd.getLocWithOffset(i).isMacroID() &&
+        SM->isMacroArgExpansion(LocEnd.getLocWithOffset(i))) {
+      const char* charBuf = SM->getCharacterData(AdjustedLocEnd);
+      while (charBuf[i] == ' ' || charBuf[i] == '\n') {
+        ++i;
+      }
+      int parenCount = 0;
+      do {
+        if (charBuf[i] == '(') {
+          ++parenCount;
+        } else if (charBuf[i] == ')') {
+          --parenCount;
+        }
+        AdjustedLocEnd = SM->getExpansionLoc(LocEnd).getLocWithOffset(i);
+        ++i;
+      } while (parenCount > 0);
+    }
+
+  } else {
+    AdjustedLocEnd = LocEnd;
   }
 
-  return SourceRange(LocStart, LocEnd);
+  return SourceRange(AdjustedLocStart, AdjustedLocEnd);
 }
 
 //------------------------------------------------------------------------------------------------
