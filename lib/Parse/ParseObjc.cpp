@@ -1831,6 +1831,13 @@ Parser::ParseObjCAtProtocolDeclaration(SourceLocation AtLoc,
                                                    attrs.getList());
   }
 
+  if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+      Column(Tok.getLocation()) <= Column(AtLoc)) {
+    IdentifierLocPair ProtoInfo(protocolName, nameLoc);
+    return Actions.ActOnForwardProtocolDeclaration(AtLoc, &ProtoInfo, 1,
+                                                   attrs.getList());
+  }
+
   CheckNestedObjCContexts(AtLoc);
 
   if (Tok.is(tok::comma)) { // list of forward declarations.
