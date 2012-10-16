@@ -924,8 +924,8 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
                                            const Decl *TargetDecl,
                                            AttributeListType &PAL,
                                            unsigned &CallingConv) {
-  llvm::Attributes::Builder FuncAttrs;
-  llvm::Attributes::Builder RetAttrs;
+  llvm::AttrBuilder FuncAttrs;
+  llvm::AttrBuilder RetAttrs;
 
   CallingConv = FI.getEffectiveCallingConvention();
 
@@ -984,13 +984,14 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
     break;
 
   case ABIArgInfo::Indirect: {
-    llvm::Attributes::Builder SRETAttrs;
+    llvm::AttrBuilder SRETAttrs;
     SRETAttrs.addAttribute(llvm::Attributes::StructRet);
     if (RetAI.getInReg())
       SRETAttrs.addAttribute(llvm::Attributes::InReg);
     PAL.push_back(llvm::
                   AttributeWithIndex::get(Index,
-                                          llvm::Attributes::get(SRETAttrs)));
+                                         llvm::Attributes::get(getLLVMContext(),
+                                                               SRETAttrs)));
 
     ++Index;
     // sret disables readnone and readonly
@@ -1005,14 +1006,15 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
 
   if (RetAttrs.hasAttributes())
     PAL.push_back(llvm::
-                  AttributeWithIndex::get(0,
-                                          llvm::Attributes::get(RetAttrs)));
+                  AttributeWithIndex::get(llvm::AttrListPtr::ReturnIndex,
+                                         llvm::Attributes::get(getLLVMContext(),
+                                                               RetAttrs)));
 
   for (CGFunctionInfo::const_arg_iterator it = FI.arg_begin(),
          ie = FI.arg_end(); it != ie; ++it) {
     QualType ParamType = it->type;
     const ABIArgInfo &AI = it->info;
-    llvm::Attributes::Builder Attrs;
+    llvm::AttrBuilder Attrs;
 
     // 'restrict' -> 'noalias' is done in EmitFunctionProlog when we
     // have the corresponding parameter variable.  It doesn't make
@@ -1039,7 +1041,8 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
         if (Attrs.hasAttributes())
           for (unsigned I = 0; I < Extra; ++I)
             PAL.push_back(llvm::AttributeWithIndex::get(Index + I,
-                                                 llvm::Attributes::get(Attrs)));
+                                         llvm::Attributes::get(getLLVMContext(),
+                                                               Attrs)));
         Index += Extra;
       }
       break;
@@ -1072,12 +1075,15 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
 
     if (Attrs.hasAttributes())
       PAL.push_back(llvm::AttributeWithIndex::get(Index,
-                                                 llvm::Attributes::get(Attrs)));
+                                         llvm::Attributes::get(getLLVMContext(),
+                                                               Attrs)));
     ++Index;
   }
   if (FuncAttrs.hasAttributes())
-    PAL.push_back(llvm::AttributeWithIndex::get(~0,
-                                             llvm::Attributes::get(FuncAttrs)));
+    PAL.push_back(llvm::
+                  AttributeWithIndex::get(llvm::AttrListPtr::FunctionIndex,
+                                         llvm::Attributes::get(getLLVMContext(),
+                                                               FuncAttrs)));
 }
 
 /// An argument came in as a promoted argument; demote it back to its
@@ -1125,9 +1131,8 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
   // Name the struct return argument.
   if (CGM.ReturnTypeUsesSRet(FI)) {
     AI->setName("agg.result");
-    llvm::Attributes::Builder B;
-    B.addAttribute(llvm::Attributes::NoAlias);
-    AI->addAttr(llvm::Attributes::get(B));
+    AI->addAttr(llvm::Attributes::get(getLLVMContext(),
+                                      llvm::Attributes::NoAlias));
     ++AI;
   }
 
@@ -1196,11 +1201,9 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
         assert(AI != Fn->arg_end() && "Argument mismatch!");
         llvm::Value *V = AI;
 
-        if (Arg->getType().isRestrictQualified()) {
-          llvm::Attributes::Builder B;
-          B.addAttribute(llvm::Attributes::NoAlias);
-          AI->addAttr(llvm::Attributes::get(B));
-        }
+        if (Arg->getType().isRestrictQualified())
+          AI->addAttr(llvm::Attributes::get(getLLVMContext(),
+                                            llvm::Attributes::NoAlias));
 
         // Ensure the argument is the correct type.
         if (V->getType() != ArgI.getCoerceToType())

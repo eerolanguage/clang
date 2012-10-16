@@ -720,7 +720,7 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
     llvm_unreachable("cannot emit a property reference directly");
 
   case Expr::ObjCSelectorExprClass:
-  return EmitObjCSelectorLValue(cast<ObjCSelectorExpr>(E));
+    return EmitObjCSelectorLValue(cast<ObjCSelectorExpr>(E));
   case Expr::ObjCIsaExprClass:
     return EmitObjCIsaExpr(cast<ObjCIsaExpr>(E));
   case Expr::BinaryOperatorClass:
@@ -757,6 +757,8 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
     return EmitCXXConstructLValue(cast<CXXConstructExpr>(E));
   case Expr::CXXBindTemporaryExprClass:
     return EmitCXXBindTemporaryLValue(cast<CXXBindTemporaryExpr>(E));
+  case Expr::CXXUuidofExprClass:
+    return EmitCXXUuidofLValue(cast<CXXUuidofExpr>(E));
   case Expr::LambdaExprClass:
     return EmitLambdaLValue(cast<LambdaExpr>(E));
 
@@ -2079,13 +2081,14 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
 
   llvm::FunctionType *FnType =
     llvm::FunctionType::get(CGM.VoidTy, ArgTypes, false);
-  llvm::Attributes::Builder B;
+  llvm::AttrBuilder B;
   B.addAttribute(llvm::Attributes::NoReturn)
     .addAttribute(llvm::Attributes::NoUnwind)
     .addAttribute(llvm::Attributes::UWTable);
   llvm::Value *Fn = CGM.CreateRuntimeFunction(FnType,
                                           ("__ubsan_handle_" + CheckName).str(),
-                                              llvm::Attributes::get(B));
+                                         llvm::Attributes::get(getLLVMContext(),
+                                                               B));
   llvm::CallInst *HandlerCall = Builder.CreateCall(Fn, Args);
   HandlerCall->setDoesNotReturn();
   HandlerCall->setDoesNotThrow();
@@ -2857,6 +2860,14 @@ LValue CodeGenFunction::EmitCXXConstructLValue(const CXXConstructExpr *E) {
 LValue
 CodeGenFunction::EmitCXXTypeidLValue(const CXXTypeidExpr *E) {
   return MakeAddrLValue(EmitCXXTypeidExpr(E), E->getType());
+}
+
+llvm::Value *CodeGenFunction::EmitCXXUuidofExpr(const CXXUuidofExpr *E) {
+  return CGM.GetAddrOfUuidDescriptor(E);
+}
+
+LValue CodeGenFunction::EmitCXXUuidofLValue(const CXXUuidofExpr *E) {
+  return MakeAddrLValue(EmitCXXUuidofExpr(E), E->getType());
 }
 
 LValue

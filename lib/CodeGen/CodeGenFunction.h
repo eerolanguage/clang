@@ -1212,6 +1212,14 @@ public:
 
   CodeGenTypes &getTypes() const { return CGM.getTypes(); }
   ASTContext &getContext() const { return CGM.getContext(); }
+  /// Returns true if DebugInfo is actually initialized.
+  bool maybeInitializeDebugInfo() {
+    if (CGM.getModuleDebugInfo()) {
+      DebugInfo = CGM.getModuleDebugInfo();
+      return true;
+    }
+    return false;
+  }
   CGDebugInfo *getDebugInfo() { 
     if (DisableDebugInfo) 
       return NULL;
@@ -1841,6 +1849,7 @@ public:
 
   llvm::Value* EmitCXXTypeidExpr(const CXXTypeidExpr *E);
   llvm::Value *EmitDynamicCast(llvm::Value *V, const CXXDynamicCastExpr *DCE);
+  llvm::Value* EmitCXXUuidofExpr(const CXXUuidofExpr *E);
 
   void MaybeEmitStdInitializerListCleanup(llvm::Value *loc, const Expr *init);
   void EmitStdInitializerListCleanup(llvm::Value *loc,
@@ -2210,6 +2219,7 @@ public:
   LValue EmitCXXBindTemporaryLValue(const CXXBindTemporaryExpr *E);
   LValue EmitLambdaLValue(const LambdaExpr *E);
   LValue EmitCXXTypeidLValue(const CXXTypeidExpr *E);
+  LValue EmitCXXUuidofLValue(const CXXUuidofExpr *E);
 
   LValue EmitObjCMessageExprLValue(const ObjCMessageExpr *E);
   LValue EmitObjCIvarRefLValue(const ObjCIvarRefExpr *E);

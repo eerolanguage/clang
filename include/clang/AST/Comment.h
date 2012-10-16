@@ -27,7 +27,7 @@ class ParmVarDecl;
 class TemplateParameterList;
 
 namespace comments {
-
+class FullComment;
 /// Any part of the comment.
 /// Abstract class.
 class Comment {
@@ -175,8 +175,6 @@ public:
   void dump(llvm::raw_ostream &OS, const CommandTraits *Traits,
             const SourceManager *SM) const;
 
-  static bool classof(const Comment *) { return true; }
-
   SourceRange getSourceRange() const LLVM_READONLY { return Range; }
 
   SourceLocation getLocStart() const LLVM_READONLY {
@@ -218,8 +216,6 @@ public:
            C->getCommentKind() <= LastInlineContentCommentConstant;
   }
 
-  static bool classof(const InlineContentComment *) { return true; }
-
   void addTrailingNewline() {
     InlineContentCommentBits.HasTrailingNewline = 1;
   }
@@ -245,8 +241,6 @@ public:
   static bool classof(const Comment *C) {
     return C->getCommentKind() == TextCommentKind;
   }
-
-  static bool classof(const TextComment *) { return true; }
 
   child_iterator child_begin() const { return NULL; }
 
@@ -305,8 +299,6 @@ public:
   static bool classof(const Comment *C) {
     return C->getCommentKind() == InlineCommandCommentKind;
   }
-
-  static bool classof(const InlineCommandComment *) { return true; }
 
   child_iterator child_begin() const { return NULL; }
 
@@ -367,8 +359,6 @@ public:
     return C->getCommentKind() >= FirstHTMLTagCommentConstant &&
            C->getCommentKind() <= LastHTMLTagCommentConstant;
   }
-
-  static bool classof(const HTMLTagComment *) { return true; }
 
   StringRef getTagName() const LLVM_READONLY { return TagName; }
 
@@ -435,8 +425,6 @@ public:
     return C->getCommentKind() == HTMLStartTagCommentKind;
   }
 
-  static bool classof(const HTMLStartTagComment *) { return true; }
-
   child_iterator child_begin() const { return NULL; }
 
   child_iterator child_end() const { return NULL; }
@@ -492,8 +480,6 @@ public:
     return C->getCommentKind() == HTMLEndTagCommentKind;
   }
 
-  static bool classof(const HTMLEndTagComment *) { return true; }
-
   child_iterator child_begin() const { return NULL; }
 
   child_iterator child_end() const { return NULL; }
@@ -514,8 +500,6 @@ public:
     return C->getCommentKind() >= FirstBlockContentCommentConstant &&
            C->getCommentKind() <= LastBlockContentCommentConstant;
   }
-
-  static bool classof(const BlockContentComment *) { return true; }
 };
 
 /// A single paragraph that contains inline content.
@@ -544,8 +528,6 @@ public:
   static bool classof(const Comment *C) {
     return C->getCommentKind() == ParagraphCommentKind;
   }
-
-  static bool classof(const ParagraphComment *) { return true; }
 
   child_iterator child_begin() const {
     return reinterpret_cast<child_iterator>(Content.begin());
@@ -612,8 +594,6 @@ public:
     return C->getCommentKind() >= FirstBlockCommandCommentConstant &&
            C->getCommentKind() <= LastBlockCommandCommentConstant;
   }
-
-  static bool classof(const BlockCommandComment *) { return true; }
 
   child_iterator child_begin() const {
     return reinterpret_cast<child_iterator>(&Paragraph);
@@ -701,8 +681,6 @@ public:
     return C->getCommentKind() == ParamCommandCommentKind;
   }
 
-  static bool classof(const ParamCommandComment *) { return true; }
-
   enum PassDirection {
     In,
     Out,
@@ -728,19 +706,7 @@ public:
     return getNumArgs() > 0;
   }
 
-  StringRef getParamName(const Decl *OverridingDecl) const {
-    if (OverridingDecl && isParamIndexValid()) {
-      if (const ObjCMethodDecl *OMD = dyn_cast<ObjCMethodDecl>(OverridingDecl)) {
-        const ParmVarDecl *ParamDecl = OMD->param_begin()[getParamIndex()];
-        return ParamDecl->getName();
-      }
-      else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(OverridingDecl)) {
-        const ParmVarDecl *ParamDecl = FD->param_begin()[getParamIndex()];
-        return ParamDecl->getName();
-      }
-    }
-    return Args[0].Text;
-  }
+  StringRef getParamName(comments::FullComment *FC) const;
 
   SourceRange getParamNameRange() const {
     return Args[0].Range;
@@ -789,15 +755,11 @@ public:
     return C->getCommentKind() == TParamCommandCommentKind;
   }
 
-  static bool classof(const TParamCommandComment *) { return true; }
-
   bool hasParamName() const {
     return getNumArgs() > 0;
   }
 
-  StringRef getParamName() const {
-    return Args[0].Text;
-  }
+  StringRef getParamName(comments::FullComment *FC) const;
 
   SourceRange getParamNameRange() const {
     return Args[0].Range;
@@ -840,8 +802,6 @@ public:
     return C->getCommentKind() == VerbatimBlockLineCommentKind;
   }
 
-  static bool classof(const VerbatimBlockLineComment *) { return true; }
-
   child_iterator child_begin() const { return NULL; }
 
   child_iterator child_end() const { return NULL; }
@@ -871,8 +831,6 @@ public:
   static bool classof(const Comment *C) {
     return C->getCommentKind() == VerbatimBlockCommentKind;
   }
-
-  static bool classof(const VerbatimBlockComment *) { return true; }
 
   child_iterator child_begin() const {
     return reinterpret_cast<child_iterator>(Lines.begin());
@@ -929,8 +887,6 @@ public:
     return C->getCommentKind() == VerbatimLineCommentKind;
   }
 
-  static bool classof(const VerbatimLineComment *) { return true; }
-
   child_iterator child_begin() const { return NULL; }
 
   child_iterator child_end() const { return NULL; }
@@ -948,6 +904,10 @@ public:
 struct DeclInfo {
   /// Declaration the comment is attached to.  Should not be NULL.
   const Decl *CommentDecl;
+  
+  /// Location of this declaration. Not necessarily same as location of
+  /// CommentDecl.
+  SourceLocation Loc;
   
   /// Parameters that can be referenced by \\param if \c CommentDecl is something
   /// that we consider a "function".
@@ -1047,18 +1007,12 @@ struct DeclInfo {
 /// A full comment attached to a declaration, contains block content.
 class FullComment : public Comment {
   llvm::ArrayRef<BlockContentComment *> Blocks;
-
   DeclInfo *ThisDeclInfo;
-  /// Declaration that a comment is being looked for. This declaration and
-  /// CommentDecl in ThisDeclInfo are generally the same. But they could be
-  /// different when ThisDecl does not have comment and uses CommentDecl's comment.
-  const Decl *ThisDecl;
 
 public:
-  FullComment(llvm::ArrayRef<BlockContentComment *> Blocks, DeclInfo *D,
-              Decl *TD) :
+  FullComment(llvm::ArrayRef<BlockContentComment *> Blocks, DeclInfo *D) :
       Comment(FullCommentKind, SourceLocation(), SourceLocation()),
-      Blocks(Blocks), ThisDeclInfo(D), ThisDecl(TD) {
+      Blocks(Blocks), ThisDeclInfo(D) {
     if (Blocks.empty())
       return;
 
@@ -1071,22 +1025,16 @@ public:
     return C->getCommentKind() == FullCommentKind;
   }
 
-  static bool classof(const FullComment *) { return true; }
-
   child_iterator child_begin() const {
     return reinterpret_cast<child_iterator>(Blocks.begin());
   }
 
   child_iterator child_end() const {
-    return reinterpret_cast<child_iterator>(Blocks.end());
+    return reinterpret_cast<child_iterator>(Blocks.end()); 
   }
 
   const Decl *getDecl() const LLVM_READONLY {
     return ThisDeclInfo->CommentDecl;
-  }
-
-  const Decl *getDeclForCommentLookup() const LLVM_READONLY {
-    return ThisDecl;
   }
   
   const DeclInfo *getDeclInfo() const LLVM_READONLY {
@@ -1102,7 +1050,6 @@ public:
   llvm::ArrayRef<BlockContentComment *> getBlocks() const { return Blocks; }
   
 };
-  
 } // end namespace comments
 } // end namespace clang
 

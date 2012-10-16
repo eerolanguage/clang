@@ -156,7 +156,8 @@ void DeclInfo::fill() {
     IsFilled = true;
     return;
   }
-
+  Loc = CommentDecl->getLocation();
+  
   Decl::Kind K = CommentDecl->getKind();
   switch (K) {
   default:
@@ -304,6 +305,27 @@ void DeclInfo::fill() {
   IsFilled = true;
 }
 
+StringRef ParamCommandComment::getParamName(comments::FullComment *FC) const {
+  if (FC && isParamIndexValid())
+    return FC->getThisDeclInfo()->ParamVars[getParamIndex()]->getName();
+  return Args[0].Text;
+}
+
+StringRef TParamCommandComment::getParamName(comments::FullComment *FC) const {
+  if (FC && isPositionValid()) {
+    const TemplateParameterList *TPL = FC->getThisDeclInfo()->TemplateParameters;
+    for (unsigned i = 0, e = getDepth(); i != e; ++i) {
+      if (i == e-1)
+        return TPL->getParam(getIndex(i))->getName();
+      const NamedDecl *Param = TPL->getParam(getIndex(i));
+      if (const TemplateTemplateParmDecl *TTP =
+          dyn_cast<TemplateTemplateParmDecl>(Param))
+        TPL = TTP->getTemplateParameters();
+    }
+  }
+  return Args[0].Text;
+}
+  
 } // end namespace comments
 } // end namespace clang
 

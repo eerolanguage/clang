@@ -950,10 +950,9 @@ static llvm::Constant *getGuardAcquireFn(CodeGenModule &CGM,
   llvm::FunctionType *FTy =
     llvm::FunctionType::get(CGM.getTypes().ConvertType(CGM.getContext().IntTy),
                             GuardPtrTy, /*isVarArg=*/false);
-  llvm::Attributes::Builder B;
-  B.addAttribute(llvm::Attributes::NoUnwind);
   return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_acquire",
-                                   llvm::Attributes::get(B));
+                                   llvm::Attributes::get(CGM.getLLVMContext(),
+                                                 llvm::Attributes::NoUnwind));
 }
 
 static llvm::Constant *getGuardReleaseFn(CodeGenModule &CGM,
@@ -961,10 +960,9 @@ static llvm::Constant *getGuardReleaseFn(CodeGenModule &CGM,
   // void __cxa_guard_release(__guard *guard_object);
   llvm::FunctionType *FTy =
     llvm::FunctionType::get(CGM.VoidTy, GuardPtrTy, /*isVarArg=*/false);
-  llvm::Attributes::Builder B;
-  B.addAttribute(llvm::Attributes::NoUnwind);
   return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_release",
-                                   llvm::Attributes::get(B));
+                                   llvm::Attributes::get(CGM.getLLVMContext(),
+                                                 llvm::Attributes::NoUnwind));
 }
 
 static llvm::Constant *getGuardAbortFn(CodeGenModule &CGM,
@@ -972,10 +970,9 @@ static llvm::Constant *getGuardAbortFn(CodeGenModule &CGM,
   // void __cxa_guard_abort(__guard *guard_object);
   llvm::FunctionType *FTy =
     llvm::FunctionType::get(CGM.VoidTy, GuardPtrTy, /*isVarArg=*/false);
-  llvm::Attributes::Builder B;
-  B.addAttribute(llvm::Attributes::NoUnwind);
   return CGM.CreateRuntimeFunction(FTy, "__cxa_guard_abort",
-                                   llvm::Attributes::get(B));
+                                   llvm::Attributes::get(CGM.getLLVMContext(),
+                                                 llvm::Attributes::NoUnwind));
 }
 
 namespace {

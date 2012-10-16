@@ -4094,7 +4094,9 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
     if (IsUnqualifiedLookup)
       UnqualifiedTyposCorrected[Typo] = Result;
 
-    return Result;
+    TypoCorrection TC = Result;
+    TC.setCorrectionRange(SS, TypoName);
+    return TC;
   }
   else if (BestResults.size() > 1
            // Ugly hack equivalent to CTC == CTC_ObjCMessageReceiver;
@@ -4114,7 +4116,9 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
     if (IsUnqualifiedLookup)
       UnqualifiedTyposCorrected[Typo] = BestResults["super"].front();
 
-    return BestResults["super"].front();
+    TypoCorrection TC = BestResults["super"].front();
+    TC.setCorrectionRange(SS, TypoName);
+    return TC;
   }
 
   // If this was an unqualified lookup and we believe the callback object did

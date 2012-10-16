@@ -1640,7 +1640,8 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
           Diag(R.getNameLoc(), diag::err_no_member_suggest)
             << Name << computeDeclContext(SS, false) << CorrectedQuotedStr
             << SS.getRange()
-            << FixItHint::CreateReplacement(R.getNameLoc(), CorrectedStr);
+            << FixItHint::CreateReplacement(Corrected.getCorrectionRange(),
+                                            CorrectedStr);
         if (ND)
           Diag(ND->getLocation(), diag::note_previous_decl)
             << CorrectedQuotedStr;
@@ -8102,8 +8103,16 @@ static QualType CheckAddressOfOperand(Sema &S, ExprResult &OrigOp,
 
     // The method was named without a qualifier.
     } else if (!DRE->getQualifier()) {
-      S.Diag(OpLoc, diag::err_unqualified_pointer_member_function)
-        << op->getSourceRange();
+      if (MD->getParent()->getName().empty())
+        S.Diag(OpLoc, diag::err_unqualified_pointer_member_function)
+          << op->getSourceRange();
+      else {
+        SmallString<32> Str;
+        StringRef Qual = (MD->getParent()->getName() + "::").toStringRef(Str);
+        S.Diag(OpLoc, diag::err_unqualified_pointer_member_function)
+          << op->getSourceRange()
+          << FixItHint::CreateInsertion(op->getSourceRange().getBegin(), Qual);
+      }
     }
 
     return S.Context.getMemberPointerType(op->getType(),
@@ -11977,9 +11986,9 @@ Sema::ActOnObjCBoolLiteral(SourceLocation OpLoc, tok::TokenKind Kind) {
          "Unknown Objective-C Boolean value!");
   QualType BoolT = Context.ObjCBuiltinBoolTy;
   if (!Context.getBOOLDecl()) {
-    LookupResult Result(*this, &Context.Idents.get("BOOL"), SourceLocation(),
+    LookupResult Result(*this, &Context.Idents.get("BOOL"), OpLoc,
                         Sema::LookupOrdinaryName);
-    if (LookupName(Result, getCurScope())) {
+    if (LookupName(Result, getCurScope()) && Result.isSingleResult()) {
       NamedDecl *ND = Result.getFoundDecl();
       if (TypedefDecl *TD = dyn_cast<TypedefDecl>(ND)) 
         Context.setBOOLDecl(TD);

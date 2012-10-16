@@ -606,7 +606,8 @@ LookupMemberExprInRecord(Sema &SemaRef, LookupResult &R,
     R.addDecl(ND);
     SemaRef.Diag(R.getNameLoc(), diag::err_no_member_suggest)
       << Name << DC << CorrectedQuotedStr << SS.getRange()
-      << FixItHint::CreateReplacement(R.getNameLoc(), CorrectedStr);
+      << FixItHint::CreateReplacement(Corrected.getCorrectionRange(),
+                                      CorrectedStr);
     SemaRef.Diag(ND->getLocation(), diag::note_previous_decl)
       << ND->getDeclName();
   }
@@ -1022,7 +1023,7 @@ static bool ShouldTryAgainWithRedefinitionType(Sema &S, ExprResult &base) {
   // Do the substitution as long as the redefinition type isn't just a
   // possibly-qualified pointer to builtin-id or builtin-Class again.
   opty = redef->getAs<ObjCObjectPointerType>();
-  if (opty && !opty->getObjectType()->getInterface() != 0)
+  if (opty && !opty->getObjectType()->getInterface())
     return false;
 
   base = S.ImpCastExprToType(base.take(), redef, CK_BitCast);

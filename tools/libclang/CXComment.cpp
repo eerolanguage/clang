@@ -305,7 +305,7 @@ CXString clang_TParamCommandComment_getParamName(CXComment CXC) {
   if (!TPCC || !TPCC->hasParamName())
     return createCXString((const char *) 0);
 
-  return createCXString(TPCC->getParamName(), /*DupString=*/ false);
+  return createCXString(TPCC->getParamName(0), /*DupString=*/ false);
 }
 
 unsigned clang_TParamCommandComment_isParamPositionValid(CXComment CXC) {
@@ -671,7 +671,7 @@ void CommentASTToHTMLConverter::visitParamCommandComment(
   } else
     Result << "<dt class=\"param-name-index-invalid\">";
 
-  appendToResultWithHTMLEscaping(C->getParamName(FC->getDeclForCommentLookup()));
+  appendToResultWithHTMLEscaping(C->getParamName(FC));
   Result << "</dt>";
 
   if (C->isParamIndexValid()) {
@@ -697,7 +697,7 @@ void CommentASTToHTMLConverter::visitTParamCommandComment(
   } else
     Result << "<dt class=\"tparam-name-index-invalid\">";
 
-  appendToResultWithHTMLEscaping(C->getParamName());
+  appendToResultWithHTMLEscaping(C->getParamName(FC));
   Result << "</dt>";
 
   if (C->isPositionValid()) {
@@ -960,7 +960,7 @@ void CommentASTToXMLConverter::visitBlockCommandComment(const BlockCommandCommen
 
 void CommentASTToXMLConverter::visitParamCommandComment(const ParamCommandComment *C) {
   Result << "<Parameter><Name>";
-  appendToResultWithXMLEscaping(C->getParamName(FC->getDeclForCommentLookup()));
+  appendToResultWithXMLEscaping(C->getParamName(FC));
   Result << "</Name>";
 
   if (C->isParamIndexValid())
@@ -986,7 +986,7 @@ void CommentASTToXMLConverter::visitParamCommandComment(const ParamCommandCommen
 void CommentASTToXMLConverter::visitTParamCommandComment(
                                   const TParamCommandComment *C) {
   Result << "<Parameter><Name>";
-  appendToResultWithXMLEscaping(C->getParamName());
+  appendToResultWithXMLEscaping(C->getParamName(FC));
   Result << "</Name>";
 
   if (C->isPositionValid() && C->getDepth() == 1) {
@@ -1096,7 +1096,7 @@ void CommentASTToXMLConverter::visitFullComment(const FullComment *C) {
 
     {
       // Print line and column number.
-      SourceLocation Loc = DI->CommentDecl->getLocation();
+      SourceLocation Loc = DI->Loc;
       std::pair<FileID, unsigned> LocInfo = SM.getDecomposedLoc(Loc);
       FileID FID = LocInfo.first;
       unsigned FileOffset = LocInfo.second;

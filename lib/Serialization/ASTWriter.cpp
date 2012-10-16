@@ -1694,16 +1694,6 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP, bool IsModule) {
   llvm::array_pod_sort(MacrosToEmit.begin(), MacrosToEmit.end(),
                        &compareMacroDefinitions);
 
-  // Resolve any identifiers that defined macros at the time they were
-  // deserialized, adding them to the list of macros to emit (if appropriate).
-  for (unsigned I = 0, N = DeserializedMacroNames.size(); I != N; ++I) {
-    IdentifierInfo *Name
-      = const_cast<IdentifierInfo *>(DeserializedMacroNames[I]);
-    if (Name->hadMacroDefinition() && MacroDefinitionsSeen.insert(Name))
-      MacrosToEmit.push_back(std::make_pair(Name,
-                                            PP.getMacroInfoHistory(Name)));
-  }
-
   /// \brief Offsets of each of the macros into the bitstream, indexed by
   /// the local macro ID
   ///
@@ -1744,6 +1734,7 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP, bool IsModule) {
 
       AddIdentifierRef(Name, Record);
       addMacroRef(MI, Record);
+      Record.push_back(inferSubmoduleIDFromLocation(MI->getDefinitionLoc()));
       AddSourceLocation(MI->getDefinitionLoc(), Record);
       AddSourceLocation(MI->getUndefLoc(), Record);
       Record.push_back(MI->isUsed());
@@ -1992,6 +1983,11 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Feature
   unsigned RequiresAbbrev = Stream.EmitAbbrev(Abbrev);
 
+  Abbrev = new BitCodeAbbrev();
+  Abbrev->Add(BitCodeAbbrevOp(SUBMODULE_EXCLUDED_HEADER));
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Name
+  unsigned ExcludedHeaderAbbrev = Stream.EmitAbbrev(Abbrev);
+
   // Write the submodule metadata block.
   RecordData Record;
   Record.push_back(getNumberOfModules(WritingModule));
@@ -2052,6 +2048,13 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
       Record.push_back(SUBMODULE_HEADER);
       Stream.EmitRecordWithBlob(HeaderAbbrev, Record, 
                                 Mod->Headers[I]->getName());
+    }
+    // Emit the excluded headers.
+    for (unsigned I = 0, N = Mod->ExcludedHeaders.size(); I != N; ++I) {
+      Record.clear();
+      Record.push_back(SUBMODULE_EXCLUDED_HEADER);
+      Stream.EmitRecordWithBlob(ExcludedHeaderAbbrev, Record, 
+                                Mod->ExcludedHeaders[I]->getName());
     }
     for (unsigned I = 0, N = Mod->TopHeaders.size(); I != N; ++I) {
       Record.clear();
@@ -2587,8 +2590,14 @@ public:
     if (isInterestingIdentifier(II, Macro)) {
       DataLen += 2; // 2 bytes for builtin ID
       DataLen += 2; // 2 bytes for flags
-      if (hadMacroDefinition(II, Macro))
-        DataLen += 8;
+      if (hadMacroDefinition(II, Macro)) {
+        for (MacroInfo *M = Macro; M; M = M->getPreviousDefinition()) {
+          if (Writer.getMacroRef(M) != 0)
+            DataLen += 4;
+        }
+
+        DataLen += 4;
+      }
 
       for (IdentifierResolver::iterator D = IdResolver.begin(II),
                                      DEnd = IdResolver.end();
@@ -2625,8 +2634,6 @@ public:
     clang::io::Emit16(Out, Bits);
     Bits = 0;
     bool HadMacroDefinition = hadMacroDefinition(II, Macro);
-    bool HasMacroDefinition = HadMacroDefinition && II->hasMacroDefinition();
-    Bits = (Bits << 1) | unsigned(HasMacroDefinition);
     Bits = (Bits << 1) | unsigned(HadMacroDefinition);
     Bits = (Bits << 1) | unsigned(II->isExtensionToken());
     Bits = (Bits << 1) | unsigned(II->isPoisoned());
@@ -2635,9 +2642,13 @@ public:
     clang::io::Emit16(Out, Bits);
 
     if (HadMacroDefinition) {
-      clang::io::Emit32(Out, Writer.getMacroRef(Macro));
-      clang::io::Emit32(Out,
-        Writer.inferSubmoduleIDFromLocation(Macro->getDefinitionLoc()));
+      // Write all of the macro IDs associated with this identifier.
+      for (MacroInfo *M = Macro; M; M = M->getPreviousDefinition()) {
+        if (MacroID ID = Writer.getMacroRef(M))
+          clang::io::Emit32(Out, ID);
+      }
+
+      clang::io::Emit32(Out, 0);
     }
 
     // Emit the declaration IDs in reverse order, because the
@@ -3424,8 +3435,8 @@ void ASTWriter::WriteASTCore(Sema &SemaRef, MemorizeStatCalls *StatCalls,
   // Write the remaining AST contents.
   RecordData Record;
   Stream.EnterSubblock(AST_BLOCK_ID, 5);
-  WriteMetadata(Context, isysroot, OutputFile);
   WriteLanguageOptions(Context.getLangOpts());
+  WriteMetadata(Context, isysroot, OutputFile);
   if (StatCalls && isysroot.empty())
     WriteStatCache(*StatCalls);
 
@@ -3687,6 +3698,7 @@ void ASTWriter::WriteMacroUpdates() {
        I != E; ++I) {
     addMacroRef(I->first, Record);
     AddSourceLocation(I->second.UndefLoc, Record);
+    Record.push_back(inferSubmoduleIDFromLocation(I->second.UndefLoc));
   }
   Stream.EmitRecord(MACRO_UPDATES, Record);
 }
@@ -4548,8 +4560,6 @@ void ASTWriter::ReaderInitialized(ASTReader *Reader) {
 
 void ASTWriter::IdentifierRead(IdentID ID, IdentifierInfo *II) {
   IdentifierIDs[II] = ID;
-  if (II->hadMacroDefinition())
-    DeserializedMacroNames.push_back(II);
 }
 
 void ASTWriter::MacroRead(serialization::MacroID ID, MacroInfo *MI) {
@@ -4575,10 +4585,6 @@ void ASTWriter::MacroDefinitionRead(serialization::PreprocessedEntityID ID,
                                     MacroDefinition *MD) {
   assert(MacroDefinitions.find(MD) == MacroDefinitions.end());
   MacroDefinitions[MD] = ID;
-}
-
-void ASTWriter::MacroVisible(IdentifierInfo *II) {
-  DeserializedMacroNames.push_back(II);
 }
 
 void ASTWriter::ModuleRead(serialization::SubmoduleID ID, Module *Mod) {
