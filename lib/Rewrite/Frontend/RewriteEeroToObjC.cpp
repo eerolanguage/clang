@@ -328,7 +328,7 @@ class TranslatorPrinterHelper : public PrinterHelper {
 
   bool HandleObjCArrayLiteral(ObjCArrayLiteral* E, raw_ostream& OS) {
     if (E->getNumElements() == 0) {
-      OS << "[NSMutableArray new]";
+      OS << "[NSMutableArray array]";
       return true;
     }
     return false;
@@ -336,7 +336,7 @@ class TranslatorPrinterHelper : public PrinterHelper {
 
   bool HandleObjCDictionaryLiteral(ObjCDictionaryLiteral* E, raw_ostream& OS) {
     if (E->getNumElements() == 0) {
-      OS << "[NSMutableDictionary new]";
+      OS << "[NSMutableDictionary dictionary]";
       return true;
     }
     return false;
