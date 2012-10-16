@@ -200,17 +200,23 @@ class RewriteEeroToObjC : public ASTConsumer {
 
 //------------------------------------------------------------------------------------------------
 static void ProcessMacroArguments(const SourceManager& SM,
-                                  string& str,
+                                  string& MacroStr,
                                   const SourceLocation& Loc,
                                   SourceLocation& ExpansionLoc) {
-  size_t i = str.size();
-  if (Loc.getLocWithOffset(i).isMacroID() &&
-      SM.isMacroArgExpansion(Loc.getLocWithOffset(i))) {
-    const char* charBuf = SM.getCharacterData(ExpansionLoc);
-    while (charBuf[i] == ' ' || charBuf[i] == '\n') {
-      str += charBuf[i];
-      ++i;
-    }
+
+  // Functions like SM.isMacroArgExpansion() don't always seem to work properly,
+  // so simply look for parens after a macro expansion. However, we ignore opening
+  // parens after a newline, which isn't perfect, but maybe good enough (for now,
+  // at least).
+  //
+  const char* charBuf = SM.getCharacterData(ExpansionLoc);
+  size_t i = MacroStr.size();
+
+  while (charBuf[i] == ' ' || charBuf[i] == '\t') {
+    ++i;
+  }
+
+  if (charBuf[i] == '(') {
     int parenCount = 0;
     do {
       if (charBuf[i] == '(') {
@@ -218,7 +224,7 @@ static void ProcessMacroArguments(const SourceManager& SM,
       } else if (charBuf[i] == ')') {
         --parenCount;
       }
-      str += charBuf[i];
+      MacroStr += charBuf[i];
       ExpansionLoc = SM.getExpansionLoc(Loc).getLocWithOffset(i);
       ++i;
     } while (parenCount > 0);
