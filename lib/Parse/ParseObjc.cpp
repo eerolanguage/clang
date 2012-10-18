@@ -210,6 +210,8 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
     return 0;
   }
 
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   // We have a class or category name - consume it.
   IdentifierInfo *nameId = Tok.getIdentifierInfo();
   SourceLocation nameLoc = ConsumeToken();
@@ -265,7 +267,7 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                         EndProtoLoc);
     
     if (Tok.is(tok::l_brace) || 
-        (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+        (isEero &&
          (isVisibilitySpecifier(Tok, NextToken()) ||
           isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(CategoryType, tok::objc_private, AtLoc);
@@ -277,7 +279,15 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
   IdentifierInfo *superClassId = 0;
   SourceLocation superClassLoc;
 
-  if (Tok.is(tok::colon)) { // a super class is specified.
+  // In Eero, an empty superclass implies superclass "NSObject".
+  // For the very rare case of declaring a root class, the user must 
+  // explicitly specify a superclass of "void".
+  //
+  if (isEero && Tok.is(tok::colon) && NextToken().is(tok::kw_void)) {
+    ConsumeToken(); // eat the ':'
+    ConsumeToken(); // eat the 'void'
+
+  } else if (Tok.is(tok::colon)) { // a super class is specified.
     ConsumeToken();
 
     // Code completion of superclass names.
@@ -293,7 +303,11 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
     }
     superClassId = Tok.getIdentifierInfo();
     superClassLoc = ConsumeToken();
+
+  } else if (isEero) {  // superclass defaults to NSObject
+    superClassId = Actions.NSAPIObj->getNSClassId(NSAPI::ClassId_NSObject);
   }
+
   // Next, we need to check for any protocol references.
   SmallVector<Decl *, 8> ProtocolRefs;
   SmallVector<SourceLocation, 8> ProtocolLocs;
@@ -311,7 +325,7 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                      EndProtoLoc, attrs.getList());
 
   if (Tok.is(tok::l_brace) || 
-      (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+      (isEero &&
        (isVisibilitySpecifier(Tok, NextToken()) ||
         isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
     ParseObjCClassInstanceVariables(ClsType, tok::objc_protected, AtLoc);

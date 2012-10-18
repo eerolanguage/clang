@@ -661,10 +661,36 @@ void TranslatorVisitor::RewriteInterfaceDecl(ObjCInterfaceDecl* ClassDecl) {
   //
   ObjCInterfaceDecl* SuperClassDecl = ClassDecl->getSuperClass();
   if (SuperClassDecl) {
-    const SourceLocation loc = ClassDecl->getSuperClassLoc();
+    SourceLocation loc = ClassDecl->getSuperClassLoc();
+    string str;
+    if (loc.isInvalid()) { // implicit NSObject superclass
+      loc = ClassDecl->getLocation();
+      str += ClassDecl->getName();
+      str += " : ";
+    }
+    str += SuperClassDecl->getName();
     const int len = GetTokenLength(loc);
-    TheRewriter.ReplaceText(loc, len, SuperClassDecl->getName());
+    TheRewriter.ReplaceText(loc, len, str);
     CurrentLoc = loc.getLocWithOffset(len + 1);
+
+  } else { // no superclass -- this is a user-defined root class, so remove ":void"
+    const SourceLocation& NameLoc = ClassDecl->getLocation();
+    const SourceLocation& Start = Lexer::getLocForEndOfToken(NameLoc, 0, *SM, LangOpts);
+    SourceLocation End;
+    if (ClassDecl->getReferencedProtocols().size() > 0) {
+      const StringRef bufferStr(SM->getCharacterData(NameLoc));
+      const size_t endPos = bufferStr.find("<");
+      if (endPos != StringRef::npos) {
+        End = NameLoc.getLocWithOffset(endPos - 1);
+      }
+    } else {
+      End = NameLoc;
+      MoveLocToEndOfLine(End);
+    }
+    if (Start.isValid() && End.isValid()) {
+      TheRewriter.RemoveText(GetRange(Start, End));
+      CurrentLoc = End.getLocWithOffset(1);
+    }
   }
 
   // Rewrite protocol names as well, since they might have implicit prefixes
@@ -1136,7 +1162,7 @@ void TranslatorVisitor::RewriteForwardClassDecl(DeclGroupRef D) {
     str += ForwardDecl->getNameAsString();
   }
 
-  if (!Range.isInvalid()) {
+  if (Range.isValid()) {
     str += ";";
     TheRewriter.ReplaceText(Range, str);
   }
@@ -1158,7 +1184,7 @@ void TranslatorVisitor::RewriteForwardProtocolDecl(DeclGroupRef D) {
     str += ForwardDecl->getNameAsString();
   }
 
-  if (!Range.isInvalid()) {
+  if (Range.isValid()) {
     str += ";";
     TheRewriter.ReplaceText(Range, str);
   }
