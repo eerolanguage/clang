@@ -874,6 +874,9 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
         ((!InMessageExpression && !Tok.isAtStartOfLine()) ||
          (ParenCount > 0 || BracketCount > 0))) {
       isPotentialEeroSend = true;
+      if (Tok.is(tok::kw_class)) { // handle the "class" selector
+        Tok.setKind(tok::identifier);
+      }
     }
 
     // In an Objective-C method, if we have "super" followed by an identifier,

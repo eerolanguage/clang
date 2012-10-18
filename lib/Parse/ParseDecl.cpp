@@ -3632,9 +3632,10 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
   case tok::kw__Decimal64:
   case tok::kw__Decimal128:
   case tok::kw___vector:
+    return true;
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class:
+  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
   case tok::kw_struct:
   case tok::kw___interface:
   case tok::kw_union:
@@ -3704,9 +3705,10 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw__Decimal64:
   case tok::kw__Decimal128:
   case tok::kw___vector:
+    return true;
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class:
+  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
   case tok::kw_struct:
   case tok::kw___interface:
   case tok::kw_union:
@@ -3845,9 +3847,10 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw__Decimal64:
   case tok::kw__Decimal128:
   case tok::kw___vector:
+    return true;
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class:
+  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
   case tok::kw_struct:
   case tok::kw_union:
   case tok::kw___interface:
