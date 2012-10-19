@@ -2536,6 +2536,39 @@ llvm::Value *WinX86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   return AddrTyped;
 }
 
+class NaClX86_64ABIInfo : public ABIInfo {
+ public:
+  NaClX86_64ABIInfo(CodeGen::CodeGenTypes &CGT, bool HasAVX)
+      : ABIInfo(CGT), PInfo(CGT), NInfo(CGT, HasAVX) {}
+  virtual void computeInfo(CGFunctionInfo &FI) const;
+  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                 CodeGenFunction &CGF) const;
+ private:
+  PNaClABIInfo PInfo;  // Used for generating calls with pnaclcall callingconv.
+  X86_64ABIInfo NInfo; // Used for everything else.
+};
+
+class NaClX86_64TargetCodeGenInfo : public TargetCodeGenInfo  {
+ public:
+  NaClX86_64TargetCodeGenInfo(CodeGen::CodeGenTypes &CGT, bool HasAVX)
+      : TargetCodeGenInfo(new NaClX86_64ABIInfo(CGT, HasAVX)) {}
+};
+
+void NaClX86_64ABIInfo::computeInfo(CGFunctionInfo &FI) const {
+  if (FI.getASTCallingConvention() == CC_PnaclCall)
+    PInfo.computeInfo(FI);
+  else
+    NInfo.computeInfo(FI);
+}
+
+llvm::Value *NaClX86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                          CodeGenFunction &CGF) const {
+  // Always use the native convention; calling pnacl-style varargs functions
+  // is unuspported.
+  return NInfo.EmitVAArg(VAListAddr, Ty, CGF);
+}
+
+
 // PowerPC-32
 
 namespace {
@@ -2799,6 +2832,7 @@ private:
 
   ABIArgInfo classifyReturnType(QualType RetTy) const;
   ABIArgInfo classifyArgumentType(QualType RetTy) const;
+  bool isIllegalVectorType(QualType Ty) const;
 
   virtual void computeInfo(CGFunctionInfo &FI) const;
 
@@ -2945,6 +2979,27 @@ static bool isHomogeneousAggregate(QualType Ty, const Type *&Base,
 }
 
 ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty) const {
+  // Handle illegal vector types here.
+  if (isIllegalVectorType(Ty)) {
+    uint64_t Size = getContext().getTypeSize(Ty);
+    if (Size <= 32) {
+      llvm::Type *ResType =
+          llvm::Type::getInt32Ty(getVMContext());
+      return ABIArgInfo::getDirect(ResType);
+    }
+    if (Size == 64) {
+      llvm::Type *ResType = llvm::VectorType::get(
+          llvm::Type::getInt32Ty(getVMContext()), 2);
+      return ABIArgInfo::getDirect(ResType);
+    }
+    if (Size == 128) {
+      llvm::Type *ResType = llvm::VectorType::get(
+          llvm::Type::getInt32Ty(getVMContext()), 4);
+      return ABIArgInfo::getDirect(ResType);
+    }
+    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+  }
+
   if (!isAggregateTypeForABI(Ty)) {
     // Treat an enum type as its underlying type.
     if (const EnumType *EnumTy = Ty->getAs<EnumType>())
@@ -3161,6 +3216,21 @@ ABIArgInfo ARMABIInfo::classifyReturnType(QualType RetTy) const {
   return ABIArgInfo::getIndirect(0);
 }
 
+/// isIllegalVector - check whether Ty is an illegal vector type.
+bool ARMABIInfo::isIllegalVectorType(QualType Ty) const {
+  if (const VectorType *VT = Ty->getAs<VectorType>()) {
+    // Check whether VT is legal.
+    unsigned NumElements = VT->getNumElements();
+    uint64_t Size = getContext().getTypeSize(VT);
+    // NumElements should be power of 2.
+    if ((NumElements & (NumElements - 1)) != 0)
+      return true;
+    // Size should be greater than 32 bits.
+    return Size <= 32;
+  }
+  return false;
+}
+
 llvm::Value *ARMABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
                                    CodeGenFunction &CGF) const {
   llvm::Type *BP = CGF.Int8PtrTy;
@@ -3169,28 +3239,98 @@ llvm::Value *ARMABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   CGBuilderTy &Builder = CGF.Builder;
   llvm::Value *VAListAddrAsBPP = Builder.CreateBitCast(VAListAddr, BPP, "ap");
   llvm::Value *Addr = Builder.CreateLoad(VAListAddrAsBPP, "ap.cur");
-  // Handle address alignment for type alignment > 32 bits
+
+  uint64_t Size = CGF.getContext().getTypeSize(Ty) / 8;
   uint64_t TyAlign = CGF.getContext().getTypeAlign(Ty) / 8;
+  bool IsIndirect = false;
+
+  // The ABI alignment for 64-bit or 128-bit vectors is 8 for AAPCS and 4 for
+  // APCS. For AAPCS, the ABI alignment is at least 4-byte and at most 8-byte.
+  if (getABIKind() == ARMABIInfo::AAPCS_VFP ||
+      getABIKind() == ARMABIInfo::AAPCS)
+    TyAlign = std::min(std::max(TyAlign, (uint64_t)4), (uint64_t)8);
+  else
+    TyAlign = 4;
+  // Use indirect if size of the illegal vector is bigger than 16 bytes.
+  if (isIllegalVectorType(Ty) && Size > 16) {
+    IsIndirect = true;
+    Size = 4;
+    TyAlign = 4;
+  }
+
+  // Handle address alignment for ABI alignment > 4 bytes.
   if (TyAlign > 4) {
     assert((TyAlign & (TyAlign - 1)) == 0 &&
            "Alignment is not power of 2!");
     llvm::Value *AddrAsInt = Builder.CreatePtrToInt(Addr, CGF.Int32Ty);
     AddrAsInt = Builder.CreateAdd(AddrAsInt, Builder.getInt32(TyAlign - 1));
     AddrAsInt = Builder.CreateAnd(AddrAsInt, Builder.getInt32(~(TyAlign - 1)));
-    Addr = Builder.CreateIntToPtr(AddrAsInt, BP);
+    Addr = Builder.CreateIntToPtr(AddrAsInt, BP, "ap.align");
   }
-  llvm::Type *PTy =
-    llvm::PointerType::getUnqual(CGF.ConvertType(Ty));
-  llvm::Value *AddrTyped = Builder.CreateBitCast(Addr, PTy);
 
   uint64_t Offset =
-    llvm::RoundUpToAlignment(CGF.getContext().getTypeSize(Ty) / 8, 4);
+    llvm::RoundUpToAlignment(Size, 4);
   llvm::Value *NextAddr =
     Builder.CreateGEP(Addr, llvm::ConstantInt::get(CGF.Int32Ty, Offset),
                       "ap.next");
   Builder.CreateStore(NextAddr, VAListAddrAsBPP);
 
+  if (IsIndirect)
+    Addr = Builder.CreateLoad(Builder.CreateBitCast(Addr, BPP));
+  else if (TyAlign < CGF.getContext().getTypeAlign(Ty) / 8) {
+    // We can't directly cast ap.cur to pointer to a vector type, since ap.cur
+    // may not be correctly aligned for the vector type. We create an aligned
+    // temporary space and copy the content over from ap.cur to the temporary
+    // space. This is necessary if the natural alignment of the type is greater
+    // than the ABI alignment.
+    llvm::Type *I8PtrTy = Builder.getInt8PtrTy();
+    CharUnits CharSize = getContext().getTypeSizeInChars(Ty);
+    llvm::Value *AlignedTemp = CGF.CreateTempAlloca(CGF.ConvertType(Ty),
+                                                    "var.align");
+    llvm::Value *Dst = Builder.CreateBitCast(AlignedTemp, I8PtrTy);
+    llvm::Value *Src = Builder.CreateBitCast(Addr, I8PtrTy);
+    Builder.CreateMemCpy(Dst, Src,
+        llvm::ConstantInt::get(CGF.IntPtrTy, CharSize.getQuantity()),
+        TyAlign, false);
+    Addr = AlignedTemp; //The content is in aligned location.
+  }
+  llvm::Type *PTy =
+    llvm::PointerType::getUnqual(CGF.ConvertType(Ty));
+  llvm::Value *AddrTyped = Builder.CreateBitCast(Addr, PTy);
+
   return AddrTyped;
+}
+
+class NaClARMABIInfo : public ABIInfo {
+ public:
+  NaClARMABIInfo(CodeGen::CodeGenTypes &CGT, ARMABIInfo::ABIKind Kind)
+      : ABIInfo(CGT), PInfo(CGT), NInfo(CGT, Kind) {}
+  virtual void computeInfo(CGFunctionInfo &FI) const;
+  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                 CodeGenFunction &CGF) const;
+ private:
+  PNaClABIInfo PInfo; // Used for generating calls with pnaclcall callingconv.
+  ARMABIInfo NInfo; // Used for everything else.
+};
+
+class NaClARMTargetCodeGenInfo : public TargetCodeGenInfo  {
+ public:
+  NaClARMTargetCodeGenInfo(CodeGen::CodeGenTypes &CGT, ARMABIInfo::ABIKind Kind)
+      : TargetCodeGenInfo(new NaClARMABIInfo(CGT, Kind)) {}
+};
+
+void NaClARMABIInfo::computeInfo(CGFunctionInfo &FI) const {
+  if (FI.getASTCallingConvention() == CC_PnaclCall)
+    PInfo.computeInfo(FI);
+  else
+    static_cast<const ABIInfo&>(NInfo).computeInfo(FI);
+}
+
+llvm::Value *NaClARMABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                       CodeGenFunction &CGF) const {
+  // Always use the native convention; calling pnacl-style varargs functions
+  // is unsupported.
+  return static_cast<const ABIInfo&>(NInfo).EmitVAArg(VAListAddr, Ty, CGF);
 }
 
 //===----------------------------------------------------------------------===//
@@ -4002,7 +4142,14 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
       else if (CodeGenOpts.FloatABI == "hard")
         Kind = ARMABIInfo::AAPCS_VFP;
 
-      return *(TheTargetCodeGenInfo = new ARMTargetCodeGenInfo(Types, Kind));
+      switch (Triple.getOS()) {
+        case llvm::Triple::NativeClient:
+          return *(TheTargetCodeGenInfo =
+                   new NaClARMTargetCodeGenInfo(Types, Kind));
+        default:
+          return *(TheTargetCodeGenInfo =
+                   new ARMTargetCodeGenInfo(Types, Kind));
+      }
     }
 
   case llvm::Triple::ppc:
@@ -4068,6 +4215,8 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
     case llvm::Triple::MinGW32:
     case llvm::Triple::Cygwin:
       return *(TheTargetCodeGenInfo = new WinX86_64TargetCodeGenInfo(Types));
+    case llvm::Triple::NativeClient:
+      return *(TheTargetCodeGenInfo = new NaClX86_64TargetCodeGenInfo(Types, HasAVX));
     default:
       return *(TheTargetCodeGenInfo = new X86_64TargetCodeGenInfo(Types,
                                                                   HasAVX));

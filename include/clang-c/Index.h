@@ -2597,6 +2597,7 @@ enum CXCallingConv {
   CXCallingConv_X86Pascal = 5,
   CXCallingConv_AAPCS = 6,
   CXCallingConv_AAPCS_VFP = 7,
+  CXCallingConv_PnaclCall = 8,
 
   CXCallingConv_Invalid = 100,
   CXCallingConv_Unexposed = 200
@@ -4984,6 +4985,11 @@ typedef struct {
   CXFile file;
   int isImport;
   int isAngled;
+  /**
+   * \brief Non-zero if the directive was automatically turned into a module
+   * import.
+   */
+  int isModuleImport;
 } CXIdxIncludedFileInfo;
 
 /**

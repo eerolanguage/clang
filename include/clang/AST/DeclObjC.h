@@ -541,6 +541,12 @@ public:
 
   ObjCPropertyDecl *FindPropertyDeclaration(IdentifierInfo *PropertyId) const;
 
+  typedef llvm::DenseMap<IdentifierInfo *, ObjCPropertyDecl*> PropertyMap;
+
+  /// This routine collects list of properties to be implemented in the class.
+  /// This includes, class's and its conforming protocols' properties.
+  virtual void collectPropertiesToImplement(PropertyMap& PM) const {}
+
   SourceLocation getAtStartLoc() const { return AtStart; }
   void setAtStartLoc(SourceLocation Loc) { AtStart = Loc; }
 
@@ -899,6 +905,8 @@ public:
 
   ObjCPropertyDecl
     *FindPropertyVisibleInPrimaryClass(IdentifierInfo *PropertyId) const;
+
+  virtual void collectPropertiesToImplement(PropertyMap& PM) const;
 
   /// isSuperClassOf - Return true if this class is the specified class or is a
   /// super class of the specified interface class.
@@ -1294,6 +1302,8 @@ public:
     return getFirstDeclaration();
   }
 
+  virtual void collectPropertiesToImplement(PropertyMap& PM) const;
+
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) { return K == ObjCProtocol; }
 
@@ -1581,8 +1591,12 @@ class ObjCImplementationDecl : public ObjCImplDecl {
   CXXCtorInitializer **IvarInitializers;
   unsigned NumIvarInitializers;
 
-  /// true if class has a .cxx_[construct,destruct] method.
-  bool HasCXXStructors : 1;
+  /// Do the ivars of this class require initialization other than
+  /// zero-initialization?
+  bool HasNonZeroConstructors : 1;
+
+  /// Do the ivars of this class require non-trivial destruction?
+  bool HasDestructors : 1;
 
   ObjCImplementationDecl(DeclContext *DC,
                          ObjCInterfaceDecl *classInterface,
@@ -1594,7 +1608,7 @@ class ObjCImplementationDecl : public ObjCImplDecl {
        SuperClass(superDecl), IvarLBraceLoc(IvarLBraceLoc), 
        IvarRBraceLoc(IvarRBraceLoc),
        IvarInitializers(0), NumIvarInitializers(0),
-       HasCXXStructors(false) {}
+       HasNonZeroConstructors(false), HasDestructors(false) {}
 public:
   static ObjCImplementationDecl *Create(ASTContext &C, DeclContext *DC,
                                         ObjCInterfaceDecl *classInterface,
@@ -1638,8 +1652,15 @@ public:
                            CXXCtorInitializer ** initializers,
                            unsigned numInitializers);
 
-  bool hasCXXStructors() const { return HasCXXStructors; }
-  void setHasCXXStructors(bool val) { HasCXXStructors = val; }
+  /// Do any of the ivars of this class (not counting its base classes)
+  /// require construction other than zero-initialization?
+  bool hasNonZeroConstructors() const { return HasNonZeroConstructors; }
+  void setHasNonZeroConstructors(bool val) { HasNonZeroConstructors = val; }
+
+  /// Do any of the ivars of this class (not counting its base classes)
+  /// require non-trivial destruction?
+  bool hasDestructors() const { return HasDestructors; }
+  void setHasDestructors(bool val) { HasDestructors = val; }
 
   /// getIdentifier - Get the identifier that names the class
   /// interface associated with this implementation.

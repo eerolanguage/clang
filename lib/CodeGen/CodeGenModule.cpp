@@ -884,6 +884,10 @@ llvm::Constant *CodeGenModule::GetWeakRefReference(const ValueDecl *VD) {
 
   // See if there is already something with the target's name in the module.
   llvm::GlobalValue *Entry = GetGlobalValue(AA->getAliasee());
+  if (Entry) {
+    unsigned AS = getContext().getTargetAddressSpace(VD->getType());
+    return llvm::ConstantExpr::getBitCast(Entry, DeclTy->getPointerTo(AS));
+  }
 
   llvm::Constant *Aliasee;
   if (isa<llvm::FunctionType>(DeclTy))
@@ -893,11 +897,10 @@ llvm::Constant *CodeGenModule::GetWeakRefReference(const ValueDecl *VD) {
   else
     Aliasee = GetOrCreateLLVMGlobal(AA->getAliasee(),
                                     llvm::PointerType::getUnqual(DeclTy), 0);
-  if (!Entry) {
-    llvm::GlobalValue* F = cast<llvm::GlobalValue>(Aliasee);
-    F->setLinkage(llvm::Function::ExternalWeakLinkage);    
-    WeakRefReferences.insert(F);
-  }
+
+  llvm::GlobalValue* F = cast<llvm::GlobalValue>(Aliasee);
+  F->setLinkage(llvm::Function::ExternalWeakLinkage);
+  WeakRefReferences.insert(F);
 
   return Aliasee;
 }
@@ -2538,7 +2541,7 @@ void CodeGenModule::EmitObjCIvarInitializations(ObjCImplementationDecl *D) {
                              /*isDefined=*/false, ObjCMethodDecl::Required);
     D->addInstanceMethod(DTORMethod);
     CodeGenFunction(*this).GenerateObjCCtorDtorMethod(D, DTORMethod, false);
-    D->setHasCXXStructors(true);
+    D->setHasDestructors(true);
   }
 
   // If the implementation doesn't have any ivar initializers, we don't need
@@ -2562,7 +2565,7 @@ void CodeGenModule::EmitObjCIvarInitializations(ObjCImplementationDecl *D) {
                                                 ObjCMethodDecl::Required);
   D->addInstanceMethod(CTORMethod);
   CodeGenFunction(*this).GenerateObjCCtorDtorMethod(D, CTORMethod, true);
-  D->setHasCXXStructors(true);
+  D->setHasNonZeroConstructors(true);
 }
 
 /// EmitNamespace - Emit all declarations in a namespace.
@@ -2821,7 +2824,7 @@ llvm::Constant *CodeGenModule::EmitUuidofInitializer(StringRef Uuid,
   llvm::APInt Field0(32, StringRef(Uuidstr     , 8), 16);
   llvm::APInt Field1(16, StringRef(Uuidstr +  9, 4), 16);
   llvm::APInt Field2(16, StringRef(Uuidstr + 14, 4), 16);
-  int Field3ValueOffsets[] = { 19, 21, 24, 26, 28, 30, 32, 34 };
+  static const int Field3ValueOffsets[] = { 19, 21, 24, 26, 28, 30, 32, 34 };
 
   APValue InitStruct(APValue::UninitStruct(), /*NumBases=*/0, /*NumFields=*/4);
   InitStruct.getStructField(0) = APValue(llvm::APSInt(Field0));

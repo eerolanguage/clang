@@ -873,6 +873,12 @@ def note_pure_virtual_function : Note<
 def err_deleted_decl_not_first : Error<
   "deleted definition must be first declaration">;
 
+def err_deleted_override : Error<
+  "deleted function %0 cannot override a non-deleted function">;
+
+def err_non_deleted_override : Error<
+  "non-deleted function %0 cannot override a deleted function">;
+
 def warn_weak_vtable : Warning<
   "%0 has no out-of-line virtual method definitions; its vtable will be "
   "emitted in every translation unit">,
@@ -2002,6 +2008,10 @@ def note_function_to_bool_call : Note<
 def warn_cast_align : Warning<
   "cast from %0 to %1 increases required alignment from %2 to %3">,
   InGroup<CastAlign>, DefaultIgnore;
+
+def warn_int_to_pointer_cast : Warning<
+  "cast to %1 from smaller integer type %0">,
+  InGroup<IntToPointerCast>;
 
 def warn_attribute_ignored_for_field_of_type : Warning<
   "%0 attribute ignored for field of type %1">,
@@ -4088,7 +4098,8 @@ def ext_typecheck_comparison_of_pointer_integer : ExtWarn<
 def err_typecheck_comparison_of_pointer_integer : Error<
   "comparison between pointer and integer (%0 and %1)">;
 def ext_typecheck_comparison_of_distinct_pointers : ExtWarn<
-  "comparison of distinct pointer types%diff{ ($ and $)|}0,1">;
+  "comparison of distinct pointer types%diff{ ($ and $)|}0,1">,
+  InGroup<CompareDistinctPointerType>;
 def ext_typecheck_cond_incompatible_operands : ExtWarn<
   "incompatible operand types (%0 and %1)">;
 def err_cond_voidptr_arc : Error <
@@ -4098,7 +4109,7 @@ def err_typecheck_comparison_of_distinct_pointers : Error<
   "comparison of distinct pointer types%diff{ ($ and $)|}0,1">;
 def ext_typecheck_comparison_of_distinct_pointers_nonstandard : ExtWarn<
   "comparison of distinct pointer types (%0 and %1) uses non-standard "
-  "composite pointer type %2">;
+  "composite pointer type %2">, InGroup<CompareDistinctPointerType>;
 def err_typecheck_assign_const : Error<"read-only variable is not assignable">;
 def err_stmtexpr_file_scope : Error<
   "statement expression not allowed at file scope">;

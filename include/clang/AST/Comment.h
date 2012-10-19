@@ -707,6 +707,10 @@ public:
   }
 
   StringRef getParamName(comments::FullComment *FC) const;
+  
+  StringRef getParamNameAsWritten() const {
+    return Args[0].Text;
+  }
 
   SourceRange getParamNameRange() const {
     return Args[0].Range;
@@ -760,6 +764,10 @@ public:
   }
 
   StringRef getParamName(comments::FullComment *FC) const;
+  
+  StringRef getParamNameAsWritten() const {
+    return Args[0].Text;
+  }
 
   SourceRange getParamNameRange() const {
     return Args[0].Range;
@@ -902,12 +910,19 @@ public:
 
 /// Information about the declaration, useful to clients of FullComment.
 struct DeclInfo {
-  /// Declaration the comment is attached to.  Should not be NULL.
+  /// Declaration the comment is actually attached to (in the source).
+  /// Should not be NULL.
   const Decl *CommentDecl;
   
-  /// Location of this declaration. Not necessarily same as location of
-  /// CommentDecl.
-  SourceLocation Loc;
+  /// CurrentDecl is the declaration with which the FullComment is associated.
+  ///
+  /// It can be different from \c CommentDecl.  It happens when we we decide
+  /// that the comment originally attached to \c CommentDecl is fine for
+  /// \c CurrentDecl too (for example, for a redeclaration or an overrider of
+  /// \c CommentDecl).
+  ///
+  /// The information in the DeclInfo corresponds to CurrentDecl.
+  const Decl *CurrentDecl;
   
   /// Parameters that can be referenced by \\param if \c CommentDecl is something
   /// that we consider a "function".
@@ -974,7 +989,7 @@ struct DeclInfo {
   /// If false, only \c CommentDecl is valid.
   unsigned IsFilled : 1;
 
-  /// Simplified kind of \c CommentDecl, see\c DeclKind enum.
+  /// Simplified kind of \c CommentDecl, see \c DeclKind enum.
   unsigned Kind : 3;
 
   /// Is \c CommentDecl a template declaration.
@@ -983,7 +998,7 @@ struct DeclInfo {
   /// Is \c CommentDecl an ObjCMethodDecl.
   unsigned IsObjCMethod : 1;
 
-  /// Is \c ThisDecl a non-static member function of C++ class or
+  /// Is \c CommentDecl a non-static member function of C++ class or
   /// instance method of ObjC class.
   /// Can be true only if \c IsFunctionDecl is true.
   unsigned IsInstanceMethod : 1;

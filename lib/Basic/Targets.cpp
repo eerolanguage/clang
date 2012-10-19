@@ -626,6 +626,11 @@ class NaClTargetInfo : public OSTargetInfo<Target> {
     this->DescriptionString = "e-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-"
                               "f32:32:32-f64:64:64-p:32:32:32-v128:32:32";
   }
+  virtual typename Target::CallingConvCheckResult checkCallingConvention(
+      CallingConv CC) const {
+    return CC == CC_PnaclCall ? Target::CCCR_OK :
+        Target::checkCallingConvention(CC);
+  }
 };
 } // end anonymous namespace.
 
@@ -4630,8 +4635,10 @@ TargetInfo *TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
 
   // Apply the user specified deltas.
   // First the enables.
-  for (std::vector<std::string>::const_iterator it = Opts.Features.begin(),
-         ie = Opts.Features.end(); it != ie; ++it) {
+  for (std::vector<std::string>::const_iterator 
+         it = Opts.FeaturesAsWritten.begin(),
+         ie = Opts.FeaturesAsWritten.end(); 
+       it != ie; ++it) {
     const char *Name = it->c_str();
 
     if (Name[0] != '+')
@@ -4645,8 +4652,10 @@ TargetInfo *TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
   }
 
   // Then the disables.
-  for (std::vector<std::string>::const_iterator it = Opts.Features.begin(),
-         ie = Opts.Features.end(); it != ie; ++it) {
+  for (std::vector<std::string>::const_iterator 
+         it = Opts.FeaturesAsWritten.begin(),
+         ie = Opts.FeaturesAsWritten.end(); 
+       it != ie; ++it) {
     const char *Name = it->c_str();
 
     if (Name[0] == '+')
