@@ -3069,8 +3069,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
             
       if (isEero) { // See if another selector piece, variadic args, or done
         if (Tok.is(tok::comma) && 
-            ((GetLookAheadToken(1).is(tok::identifier) && // normal selector
-              GetLookAheadToken(2).is(tok::colon)) ||     //
+            (GetLookAheadToken(2).is(tok::colon) ||  // normal selector
              GetLookAheadToken(1).is(tok::colon))) { // unnamed selector
           ConsumeToken(); // eat the comma, proceed to next selector
         } else { // either variadic args, or done
