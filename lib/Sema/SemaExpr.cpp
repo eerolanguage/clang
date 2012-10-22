@@ -8712,7 +8712,12 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
       if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(LHSExpr)) {
         if (PRE->isExplicitProperty()) {
           const ObjCPropertyDecl *PDecl = PRE->getExplicitProperty();
-          LHSType = PDecl->getType();
+          if (PDecl)
+            LHSType = PDecl->getType();
+        } else if (PRE->isImplicitProperty()) {
+          const ObjCMethodDecl *PDecl = PRE->getImplicitPropertyGetter();
+          if (PDecl)
+            LHSType = PDecl->getResultType();
         }
       }
     }
