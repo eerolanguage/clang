@@ -3618,7 +3618,19 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
     IdentifierInfo &II = PP.getIdentifierTable().get(SelName);      
     Selector Sel = PP.getSelectorTable().getUnarySelector(&II);
     if (!Sel.isNull()) {
-      QualType LHSClassType = LHSExpr->getType()->getPointeeType();
+      QualType LHSType = LHSExpr->getType();
+      // Handle property expressions, since they have a placeholder type
+      //
+      if (LHSExpr->hasPlaceholderType(BuiltinType::PseudoObject)) {
+        if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(LHSExpr)) {
+          if (PRE->isExplicitProperty()) {
+            const ObjCPropertyDecl *PDecl = PRE->getExplicitProperty();
+            LHSType = PDecl->getType();
+          }
+        }
+      }
+      QualType LHSClassType = LHSType->getPointeeType();
+
       // if method not defined for class of this object, check for builtin
       if (!LookupMethodInObjectType(Sel, LHSClassType, true)) {
         Selector builtinSel = SelectorForObjectBuiltinBinOp(Kind, LHSClassType);

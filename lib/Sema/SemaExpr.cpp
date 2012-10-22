@@ -8700,9 +8700,33 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
       StringRef variableName = getPreprocessor().getSpelling(loc, buffer);
       Diag(TokLoc, diag::err_redefinition) << variableName;
     }
+
     // Eero support for objc object binary operators
-    if (LHSExpr->getType()->isObjCObjectPointerType() && 
-        RHSExpr->getType()->isObjCObjectPointerType()) {
+
+    QualType LHSType = LHSExpr->getType();
+    QualType RHSType = RHSExpr->getType();
+
+    // Handle property expressions, since they have a placeholder type
+    //
+    if (LHSExpr->hasPlaceholderType(BuiltinType::PseudoObject)) {
+      if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(LHSExpr)) {
+        if (PRE->isExplicitProperty()) {
+          const ObjCPropertyDecl *PDecl = PRE->getExplicitProperty();
+          LHSType = PDecl->getType();
+        }
+      }
+    }
+    if (RHSExpr->hasPlaceholderType(BuiltinType::PseudoObject)) {
+      if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(RHSExpr)) {
+        if (PRE->isExplicitProperty()) {
+          const ObjCPropertyDecl *PDecl = PRE->getExplicitProperty();
+          RHSType = PDecl->getType();
+        }
+      }
+    }
+    
+    if (LHSType->isObjCObjectPointerType() &&
+        RHSType->isObjCObjectPointerType()) {
       ExprResult ObjectBinOpExpr = ActOnObjectBinOp(S, TokLoc, Kind, Opc, 
                                                     LHSExpr, RHSExpr);
       if (!ObjectBinOpExpr.isInvalid()) {
