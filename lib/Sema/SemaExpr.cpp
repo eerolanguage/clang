@@ -4570,7 +4570,10 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
     ExprResult Result = MaybeConvertParenListExprToParenExpr(S, CastExpr);
     if (Result.isInvalid()) return ExprError();
     CastExpr = Result.take();
-  } else if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+  }
+
+  // Handle Eero-specific casts and boxing/unboxing expressions
+  if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
     // Treat "(String)x" as "(String*)x"
     if (castType->isObjCObjectType()) { 
       castType = Context.getObjCObjectPointerType(castType);
