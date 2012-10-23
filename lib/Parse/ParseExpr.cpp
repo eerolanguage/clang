@@ -874,7 +874,10 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
         ((!InMessageExpression && !Tok.isAtStartOfLine()) ||
          (ParenCount > 0 || BracketCount > 0))) {
       isPotentialEeroSend = true;
-      if (Tok.is(tok::kw_class)) { // handle the "class" selector
+      // handle common selector names that are also keywords
+      if (Tok.is(tok::kw_class) ||
+          Tok.is(tok::kw_selector) ||
+          Tok.is(tok::kw_protocol)) {
         Tok.setKind(tok::identifier);
       }
     }
