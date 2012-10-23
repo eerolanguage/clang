@@ -361,7 +361,7 @@ bool EmitAssemblyHelper::AddEmitPasses(BackendAction Action,
     break;
   case LangOptions::FPC_Fast:
     Options.AllowFPOpFusion = llvm::FPOpFusion::Fast;
-    break;              
+    break;
   }
 
   Options.LessPreciseFPMADOption = CodeGenOpts.LessPreciseFPMAD;
@@ -396,10 +396,15 @@ bool EmitAssemblyHelper::AddEmitPasses(BackendAction Action,
   PassManager *PM = getCodeGenPasses();
 
   // Add LibraryInfo.
-  TargetLibraryInfo *TLI = new TargetLibraryInfo();
+  llvm::Triple TargetTriple(TheModule->getTargetTriple());
+  TargetLibraryInfo *TLI = new TargetLibraryInfo(TargetTriple);
   if (!CodeGenOpts.SimplifyLibCalls)
     TLI->disableAllFunctions();
   PM->add(TLI);
+
+  // Add TargetTransformInfo.
+  PM->add(new TargetTransformInfo(TM->getScalarTargetTransformInfo(),
+                                  TM->getVectorTargetTransformInfo()));
 
   // Normal mode, emit a .s or .o file by running the code generator. Note,
   // this also adds codegenerator level optimization passes.

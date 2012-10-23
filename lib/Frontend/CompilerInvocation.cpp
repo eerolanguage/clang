@@ -1003,10 +1003,10 @@ static void addWarningArgs(ArgList &Args, std::vector<std::string> &Warnings) {
   for (arg_iterator I = Args.filtered_begin(OPT_W_Group),
          E = Args.filtered_end(); I != E; ++I) {
     Arg *A = *I;
-    // If the argument is a pure flag, add its name (minus the "-W" at the beginning)
+    // If the argument is a pure flag, add its name (minus the "W" at the beginning)
     // to the warning list. Else, add its value (for the OPT_W case).
     if (A->getOption().getKind() == Option::FlagClass) {
-      Warnings.push_back(A->getOption().getName().substr(2));
+      Warnings.push_back(A->getOption().getName().substr(1));
     } else {
       for (unsigned Idx = 0, End = A->getNumValues();
            Idx < End; ++Idx) {
@@ -2242,16 +2242,7 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
                                              OPT_include_pth),
          ie = Args.filtered_end(); it != ie; ++it) {
     const Arg *A = *it;
-    // PCH is handled specially, we need to extra the original include path.
-    if (A->getOption().matches(OPT_include_pch)) {
-      std::string OriginalFile =
-        ASTReader::getOriginalSourceFile(A->getValue(Args), FileMgr, Diags);
-      if (OriginalFile.empty())
-        continue;
-
-      Opts.Includes.push_back(OriginalFile);
-    } else
-      Opts.Includes.push_back(A->getValue(Args));
+    Opts.Includes.push_back(A->getValue(Args));
   }
 
   for (arg_iterator it = Args.filtered_begin(OPT_chain_include),
@@ -2348,7 +2339,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   // Issue errors on arguments that are not valid for CC1.
   for (ArgList::iterator I = Args->begin(), E = Args->end();
        I != E; ++I) {
-    if (!(*I)->getOption().isCC1Option()) {
+    if (!(*I)->getOption().hasFlag(options::CC1Option)) {
       Diags.Report(diag::err_drv_unknown_argument) << (*I)->getAsString(*Args);
       Success = false;
     }

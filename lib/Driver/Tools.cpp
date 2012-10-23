@@ -200,6 +200,12 @@ static void addProfileRT(const ToolChain &TC, const ArgList &Args,
   CmdArgs.push_back(Args.MakeArgString(ProfileRT));
 }
 
+static bool forwardToGCC(const Option &O) {
+  return !O.hasFlag(options::NoForward) &&
+         !O.hasFlag(options::DriverOption) &&
+         !O.hasFlag(options::LinkerInput);
+}
+
 void Clang::AddPreprocessingOptions(Compilation &C,
                                     const Driver &D,
                                     const ArgList &Args,
@@ -677,6 +683,7 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
   // Get the effective triple, which takes into account the deployment target.
   std::string TripleStr = getToolChain().ComputeEffectiveClangTriple(Args);
   llvm::Triple Triple(TripleStr);
+  std::string CPUName = getARMTargetCPU(Args, Triple);
 
   // Select the ABI to use.
   //
@@ -684,6 +691,14 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
   const char *ABIName = 0;
   if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ)) {
     ABIName = A->getValue(Args);
+  } else if (Triple.isOSDarwin()) {
+    // The backend is hardwired to assume AAPCS for M-class processors, ensure
+    // the frontend matches that.
+    if (StringRef(CPUName).startswith("cortex-m")) {
+      ABIName = "aapcs";
+    } else {
+      ABIName = "apcs-gnu";
+    }
   } else {
     // Select the default based on the platform.
     switch(Triple.getEnvironment()) {
@@ -704,7 +719,7 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
 
   // Set the CPU based on -march= and -mcpu=.
   CmdArgs.push_back("-target-cpu");
-  CmdArgs.push_back(Args.MakeArgString(getARMTargetCPU(Args, Triple)));
+  CmdArgs.push_back(Args.MakeArgString(CPUName));
 
   // Determine floating point ABI from the options & target defaults.
   StringRef FloatABI = getARMFloatABI(D, Args, Triple);
@@ -1160,8 +1175,8 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
     (*it)->claim();
 
     // Skip over "-m".
-    assert(Name.startswith("-m") && "Invalid feature name.");
-    Name = Name.substr(2);
+    assert(Name.startswith("m") && "Invalid feature name.");
+    Name = Name.substr(1);
 
     bool IsNegative = Name.startswith("no-");
     if (IsNegative)
@@ -2270,7 +2285,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fbounds-checking=1");
   }
 
-  if (Args.hasArg(options::OPT__relocatable_pch))
+  if (Args.hasArg(options::OPT_relocatable_pch))
     CmdArgs.push_back("-relocatable-pch");
 
   if (Arg *A = Args.getLastArg(options::OPT_fconstant_string_class_EQ)) {
@@ -3197,7 +3212,7 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
   for (ArgList::const_iterator
          it = Args.begin(), ie = Args.end(); it != ie; ++it) {
     Arg *A = *it;
-    if (A->getOption().hasForwardToGCC()) {
+    if (forwardToGCC(A->getOption())) {
       // Don't forward any -g arguments to assembly steps.
       if (isa<AssembleJobAction>(JA) &&
           A->getOption().matches(options::OPT_g_Group))
@@ -3422,7 +3437,7 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
   for (ArgList::const_iterator
          it = Args.begin(), ie = Args.end(); it != ie; ++it) {
     Arg *A = *it;
-    if (A->getOption().hasForwardToGCC()) {
+    if (forwardToGCC(A->getOption())) {
       // Don't forward any -g arguments to assembly steps.
       if (isa<AssembleJobAction>(JA) &&
           A->getOption().matches(options::OPT_g_Group))
@@ -5716,6 +5731,11 @@ static void AddLibgcc(llvm::Triple Triple, const Driver &D,
     CmdArgs.push_back("-lgcc");
 }
 
+static bool hasMipsN32ABIArg(const ArgList &Args) {
+  Arg *A = Args.getLastArg(options::OPT_mabi_EQ);
+  return A && (A->getValue(Args) == StringRef("n32"));
+}
+
 void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
@@ -5772,10 +5792,18 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("elf32btsmip");
   else if (ToolChain.getArch() == llvm::Triple::mipsel)
     CmdArgs.push_back("elf32ltsmip");
-  else if (ToolChain.getArch() == llvm::Triple::mips64)
-    CmdArgs.push_back("elf64btsmip");
-  else if (ToolChain.getArch() == llvm::Triple::mips64el)
-    CmdArgs.push_back("elf64ltsmip");
+  else if (ToolChain.getArch() == llvm::Triple::mips64) {
+    if (hasMipsN32ABIArg(Args))
+      CmdArgs.push_back("elf32btsmipn32");
+    else
+      CmdArgs.push_back("elf64btsmip");
+  }
+  else if (ToolChain.getArch() == llvm::Triple::mips64el) {
+    if (hasMipsN32ABIArg(Args))
+      CmdArgs.push_back("elf32ltsmipn32");
+    else
+      CmdArgs.push_back("elf64ltsmip");
+  }
   else
     CmdArgs.push_back("elf_x86_64");
 
@@ -5813,8 +5841,12 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
              ToolChain.getArch() == llvm::Triple::mipsel)
       CmdArgs.push_back("/lib/ld.so.1");
     else if (ToolChain.getArch() == llvm::Triple::mips64 ||
-             ToolChain.getArch() == llvm::Triple::mips64el)
-      CmdArgs.push_back("/lib64/ld.so.1");
+             ToolChain.getArch() == llvm::Triple::mips64el) {
+      if (hasMipsN32ABIArg(Args))
+        CmdArgs.push_back("/lib32/ld.so.1");
+      else
+        CmdArgs.push_back("/lib64/ld.so.1");
+    }
     else if (ToolChain.getArch() == llvm::Triple::ppc)
       CmdArgs.push_back("/lib/ld.so.1");
     else if (ToolChain.getArch() == llvm::Triple::ppc64)
