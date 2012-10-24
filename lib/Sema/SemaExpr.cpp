@@ -4589,8 +4589,10 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
       castType = Context.getObjCObjectPointerType(castType);
       castTInfo = Context.getTrivialTypeSourceInfo(castType);
     }
-    // Eero supports objc object boxing/unboxing that looks like casts
-    const QualType castExprType = CastExpr->getType();
+    // Eero supports objc object boxing/unboxing that looks like casts.
+    // Make sure to handle pseudo/placeholder objects.
+    const QualType castExprType =
+        CheckPlaceholderExpr(CastExpr).get()->getType();
     if (!castType->isVoidPointerType() &&      // ignore void* casts
         !castExprType->isVoidPointerType() &&  //
         !castType->isBlockPointerType() &&     // ignore block casts
@@ -8716,33 +8718,11 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
 
     // Eero support for objc object binary operators
 
-    QualType LHSType = LHSExpr->getType();
-    QualType RHSType = RHSExpr->getType();
-
-    // Handle property expressions, since they have a placeholder type
+    // Handle pseudo/placeholder objects
     //
-    if (LHSExpr->hasPlaceholderType(BuiltinType::PseudoObject)) {
-      if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(LHSExpr)) {
-        if (PRE->isExplicitProperty()) {
-          const ObjCPropertyDecl *PDecl = PRE->getExplicitProperty();
-          if (PDecl)
-            LHSType = PDecl->getType();
-        } else if (PRE->isImplicitProperty()) {
-          const ObjCMethodDecl *PDecl = PRE->getImplicitPropertyGetter();
-          if (PDecl)
-            LHSType = PDecl->getResultType();
-        }
-      }
-    }
-    if (RHSExpr->hasPlaceholderType(BuiltinType::PseudoObject)) {
-      if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(RHSExpr)) {
-        if (PRE->isExplicitProperty()) {
-          const ObjCPropertyDecl *PDecl = PRE->getExplicitProperty();
-          RHSType = PDecl->getType();
-        }
-      }
-    }
-    
+    QualType LHSType = CheckPlaceholderExpr(LHSExpr).get()->getType();
+    QualType RHSType = CheckPlaceholderExpr(RHSExpr).get()->getType();
+
     if (LHSType->isObjCObjectPointerType() &&
         RHSType->isObjCObjectPointerType()) {
       ExprResult ObjectBinOpExpr = ActOnObjectBinOp(S, TokLoc, Kind, Opc, 

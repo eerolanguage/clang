@@ -3607,23 +3607,12 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
   if (!SelName.empty()) {
     IdentifierInfo &II = PP.getIdentifierTable().get(SelName);      
     Selector Sel = PP.getSelectorTable().getUnarySelector(&II);
+
     if (!Sel.isNull()) {
-      QualType LHSType = LHSExpr->getType();
-      // Handle property expressions, since they have a placeholder type
-      //
-      if (LHSExpr->hasPlaceholderType(BuiltinType::PseudoObject)) {
-        if (ObjCPropertyRefExpr *PRE = dyn_cast<ObjCPropertyRefExpr>(LHSExpr)) {
-          if (PRE->isExplicitProperty()) {
-            const ObjCPropertyDecl *PDecl = PRE->getExplicitProperty();
-            if (PDecl)
-              LHSType = PDecl->getType();
-          } else if (PRE->isImplicitProperty()) {
-            const ObjCMethodDecl *PDecl = PRE->getImplicitPropertyGetter();
-            if (PDecl)
-              LHSType = PDecl->getResultType();
-          }
-        }
-      }
+
+      // Handle pseudo/placeholder objects
+      QualType LHSType = CheckPlaceholderExpr(LHSExpr).get()->getType();
+
       QualType LHSClassType = LHSType->getPointeeType();
 
       // if method not defined for class of this object, check for builtin
