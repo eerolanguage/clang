@@ -4351,14 +4351,6 @@ static void diagnoseMisplacedEllipsis(Parser &P, Declarator &D,
 void Parser::ParseDirectDeclarator(Declarator &D) {
   DeclaratorScopeObj DeclScopeObj(*this, D.getCXXScopeSpec());
 
-  if (getLangOpts().Eero && // Some headers use these keywords as var names
-      (Tok.is(tok::kw_interface) || 
-       Tok.is(tok::kw_protocol) ||
-       Tok.is(tok::kw_property) ||
-       Tok.is(tok::kw_selector) ||
-       Tok.is(tok::kw_end)))
-    Tok.setKind(tok::identifier);
-
   if (getLangOpts().CPlusPlus && D.mayHaveIdentifier()) {
     // ParseDeclaratorInternal might already have parsed the scope.
     if (D.getCXXScopeSpec().isEmpty()) {

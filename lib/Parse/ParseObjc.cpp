@@ -1264,13 +1264,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
       ArgInfo.Name = &PP.getIdentifierTable().get(generatedName);
       ArgInfo.NameLoc = ArgTypeLoc;
 
-    } else if (Tok.is(tok::identifier) ||
-               Tok.is(tok::kw_interface) || // Some headers use these as arg names
-               Tok.is(tok::kw_protocol) ||  //
-               Tok.is(tok::kw_property) ||  //
-               Tok.is(tok::kw_end) ||       //
-               Tok.is(tok::kw_selector)) {  //
-
+    } else if (Tok.is(tok::identifier)) {
       ArgInfo.Name = Tok.getIdentifierInfo();
       ArgInfo.NameLoc = Tok.getLocation();
       ConsumeToken(); // Eat the identifier.

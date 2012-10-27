@@ -1331,11 +1331,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_encode:    // only exist in eero
   case tok::kw_protocol:  //
   case tok::kw_selector:  //
-    if (PP.isInLegacyHeader()) { // handle legacy (mainly C++) headers
-      Tok.setKind(tok::identifier);
-      return ParseCastExpression(isUnaryExpression, isAddressOfOperand,
-                                 NotCastExpr, isTypeCast);
-    }
     return ParseObjCAtExpression(Tok.getLocation());
   case tok::caret:
     Res = ParseBlockLiteralExpression();
