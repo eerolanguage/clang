@@ -231,9 +231,8 @@ Retry:
     return ParseDefaultStatement();
 
   case tok::l_brace:                // C99 6.8.2: compound-statement
-    if (getLangOpts().OffSideRule && 
-        Tok.getLength() != 0 && // if not an inserted left brace
-        !PP.isInLegacyHeader()) {
+    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
+        Tok.getLength() != 0) { // if not an inserted left brace
       Diag(Tok, diag::err_not_allowed) << "'{'";
       ConsumeAnyToken(); // eat it and move on
       return StmtError();
@@ -549,6 +548,8 @@ StmtResult Parser::ParseLabeledStatement(ParsedAttributesWithRange &attrs) {
 StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
   assert((MissingCase || Tok.is(tok::kw_case)) && "Not a case stmt!");
 
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   // It is very very common for code to contain many case statements recursively
   // nested, as in (but usually without indentation):
   //  case 1:
@@ -615,7 +616,7 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
     if (Tok.is(tok::colon)) {
       ColonLoc = ConsumeToken();
 
-    } else if (getLangOpts().Eero) { // colons are optional
+    } else if (isEero) { // colons are optional
       ColonLoc = PrevTokLocation;
     // Treat "case blah;" as a typo for "case blah:".
     } else if (Tok.is(tok::semi)) {
@@ -650,7 +651,7 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
       DeepestParsedCaseStmt = NextDeepest;
     }
 
-    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+    if (isEero) {
       if (Tok.is(tok::comma)) { // support comma-separated cases
         Tok.setKind(tok::kw_case);
       } else if (Tok.is(tok::kw_case)) {
@@ -667,7 +668,7 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
 
   if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     SubStmt = ParseCompoundStatement();
-    if (!SubStmt.isInvalid() && getLangOpts().Eero)
+    if (!SubStmt.isInvalid() && isEero)
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
   } else if (Tok.isNot(tok::r_brace)) {
     SubStmt = ParseStatement();
@@ -700,11 +701,13 @@ StmtResult Parser::ParseDefaultStatement() {
   assert(Tok.is(tok::kw_default) && "Not a default stmt!");
   SourceLocation DefaultLoc = ConsumeToken();  // eat the 'default'.
 
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   SourceLocation ColonLoc;
   if (Tok.is(tok::colon)) {
     ColonLoc = ConsumeToken();
 
-  } else if (getLangOpts().Eero) { // colons are optional
+  } else if (isEero) { // colons are optional
     ColonLoc = PrevTokLocation;
   // Treat "default;" as a typo for "default:".
   } else if (Tok.is(tok::semi)) {
@@ -721,7 +724,7 @@ StmtResult Parser::ParseDefaultStatement() {
   StmtResult SubStmt;
   if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     SubStmt = ParseCompoundStatement();
-    if (!SubStmt.isInvalid() && getLangOpts().Eero)
+    if (!SubStmt.isInvalid() && isEero)
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
   } else if (Tok.isNot(tok::r_brace)) {
     SubStmt = ParseStatement();
@@ -958,7 +961,8 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   SourceLocation CloseLoc = Tok.getLocation();
 
   // We broke out of the while loop because we found a '}' or EOF.
-  if (getLangOpts().OffSideRule && !indentationPositions.empty()) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
+      !indentationPositions.empty()) {
     indentationPositions.pop_back();
     if (Tok.is(tok::r_brace)) {
       Diag(Tok, diag::err_not_allowed) << "'}'";
@@ -1014,7 +1018,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
   // recover by skipping ahead to a semi and bailing out.  If condexp is
   // semantically invalid but we have well formed code, keep going.
   if (ExprResult.isInvalid() && !DeclResult && Tok.isNot(tok::r_paren)) {
-    if (getLangOpts().OptionalSemicolons && T.isIgnored())
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && T.isIgnored())
       return true; // just bail out right here
     SkipUntil(tok::semi);
     // Skipping may have stopped if it found the containing ')'.  If so, we can

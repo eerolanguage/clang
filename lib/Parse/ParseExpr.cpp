@@ -300,7 +300,7 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
     // Catches cases where the next line looks like the RHS of a bin op,
     // but it really isn't, e.g. after some (non-decl) assignments.
-    if (getLangOpts().OptionalSemicolons &&
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
         Tok.isAtStartOfLine() && 
         (ParenCount == 0) && (BracketCount == 0)) {
       return LHS;
@@ -1417,7 +1417,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
   SourceLocation Loc;
   const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
   while (1) {
-    if (getLangOpts().OptionalSemicolons && 
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
         Tok.isAtStartOfLine() &&
         (ParenCount == 0) && (BracketCount == 0)) {
       return LHS;
@@ -2624,7 +2624,8 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
 
   ExprResult Result(true);
-  if (!Tok.is(tok::l_brace) && !getLangOpts().OffSideRule) {
+  if (!Tok.is(tok::l_brace) &&
+      (!getLangOpts().OffSideRule || PP.isInLegacyHeader())) {
     // Saw something like: ^expr
     Diag(Tok, diag::err_expected_expression);
     Actions.ActOnBlockError(CaretLoc, getCurScope());
@@ -2658,7 +2659,8 @@ ExprResult Parser::ParseBlockLiteralExpression() {
                                        Stmt.get()->getLocEnd(),
                                        Stmts, false);
     }
-  } else if (!getLangOpts().OffSideRule || Tok.isAtStartOfLine()) {
+  } else if (!getLangOpts().OffSideRule || PP.isInLegacyHeader() ||
+             Tok.isAtStartOfLine()) {
     Stmt = ParseCompoundStatementBody();
   } else {
     Diag(Tok, diag::err_expected) << "newline";

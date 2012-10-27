@@ -664,6 +664,8 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     return DeclGroupPtrTy();
   }
 
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   Decl *SingleDecl = 0;
   switch (Tok.getKind()) {
   case tok::annot_pragma_vis:
@@ -725,7 +727,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     SingleDecl = Actions.ActOnFileScopeAsmDecl(Result.get(), StartLoc, EndLoc);
     break;
   }
-  case tok::kw_class: if (!getLangOpts().Eero) goto dont_know; // ugh
+  case tok::kw_class: if (!isEero) goto dont_know; // ugh
   case tok::at:
   case tok::kw_interface:
   case tok::kw_protocol:
@@ -751,7 +753,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     cutOffParsing();
     return DeclGroupPtrTy();
   case tok::kw_using:
-    if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
+    if (isEero &&
         GetLookAheadToken(1).is(tok::identifier) &&
         GetLookAheadToken(2).is(tok::identifier)) {
       const IdentifierInfo *II = NextToken().getIdentifierInfo();
@@ -837,9 +839,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
       
   default:
   dont_know:
-    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-        CurParsedObjCImpl) { // in an objc implementation
-
+    if (isEero && CurParsedObjCImpl) { // in an objc implementation
       // Check for instance method (minus is optional)
       if (Tok.is(tok::identifier) && 
           (NextToken().isAtStartOfLine() || 
