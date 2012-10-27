@@ -875,7 +875,8 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
          (ParenCount > 0 || BracketCount > 0))) {
       isPotentialEeroSend = true;
       // handle common selector names that are also keywords
-      if (Tok.is(tok::kw_class) ||
+      if (Tok.is(tok::kw_new) ||
+          Tok.is(tok::kw_class) ||
           Tok.is(tok::kw_selector) ||
           Tok.is(tok::kw_protocol)) {
         Tok.setKind(tok::identifier);
@@ -1330,6 +1331,11 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_encode:    // only exist in eero
   case tok::kw_protocol:  //
   case tok::kw_selector:  //
+    if (PP.isInLegacyHeader()) { // handle legacy (mainly C++) headers
+      Tok.setKind(tok::identifier);
+      return ParseCastExpression(isUnaryExpression, isAddressOfOperand,
+                                 NotCastExpr, isTypeCast);
+    }
     return ParseObjCAtExpression(Tok.getLocation());
   case tok::caret:
     Res = ParseBlockLiteralExpression();

@@ -48,6 +48,9 @@ using namespace clang;
 ///                 namespace-name ';'
 ///
 bool Parser::isCXXDeclarationStatement() {
+  // Eero ':=' operator
+  if (Tok.is(tok::identifier) && NextToken().is(tok::colonequal))
+    return true;
   switch (Tok.getKind()) {
     // asm-definition
   case tok::kw_asm:

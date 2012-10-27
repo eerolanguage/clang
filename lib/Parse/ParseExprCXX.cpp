@@ -2023,6 +2023,34 @@ bool Parser::ParseUnqualifiedId(CXXScopeSpec &SS, bool EnteringContext,
                                 SourceLocation& TemplateKWLoc,
                                 UnqualifiedId &Result) {
 
+  // Handle the keywords eero introduced
+  if (getLangOpts().Eero && PP.isInLegacyHeader()) {
+    switch (Tok.getKind()) {
+      case tok::kw_compatibility_alias:
+      case tok::kw_defs:
+      case tok::kw_encode:
+      case tok::kw_end:
+      case tok::kw_implementation:
+      case tok::kw_interface:
+      case tok::kw_protocol:
+      case tok::kw_selector:
+      case tok::kw_finally:
+      case tok::kw_synchronized:
+      case tok::kw_autoreleasepool:
+      case tok::kw_property:
+      case tok::kw_package:
+      case tok::kw_required:
+      case tok::kw_optional:
+      case tok::kw_synthesize:
+      case tok::kw_dynamic:
+      case tok::kw_import:
+        Tok.setKind(tok::identifier);
+        break;
+      default:
+        break;
+    }
+  }
+
   // Handle 'A::template B'. This is for template-ids which have not
   // already been annotated by ParseOptionalCXXScopeSpecifier().
   bool TemplateSpecified = false;
