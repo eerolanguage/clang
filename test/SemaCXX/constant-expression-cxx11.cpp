@@ -521,12 +521,19 @@ namespace DependentValues {
 
 struct I { int n; typedef I V[10]; };
 I::V x, y;
-template<bool B> struct S {
+int g(); // expected-note {{here}}
+template<bool B, typename T> struct S : T {
   int k;
   void f() {
     I::V &cells = B ? x : y;
     I &i = cells[k];
     switch (i.n) {}
+
+    constexpr int n = g(); // \
+    // expected-error {{must be initialized by a constant expression}} \
+    // expected-note {{non-constexpr function 'g'}}
+
+    constexpr int m = this->g(); // ok, could be constexpr
   }
 };
 
@@ -740,6 +747,15 @@ constexpr bool check(T a, T b) { return a == b.k; }
 
 static_assert(S(5) == 11, "");
 static_assert(check(S(5), 11), "");
+
+namespace PR14171 {
+
+struct X {
+  constexpr (operator int)() { return 0; }
+};
+static_assert(X() == 0, "");
+
+}
 
 }
 

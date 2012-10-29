@@ -341,7 +341,6 @@ Retry:
     ConsumeToken();
     return StmtError();
 
-
   case tok::annot_pragma_opencl_extension:
     ProhibitAttributes(Attrs);
     HandlePragmaOpenCLExtension();

@@ -546,6 +546,18 @@ const internal::VariadicDynCastAllOfMatcher<
   Stmt,
   CXXConstructExpr> constructExpr;
 
+/// \brief Matches implicit and explicit this expressions.
+///
+/// Example matches the implicit this expression in "return i".
+///     (matcher = thisExpr())
+/// \code
+/// struct foo {
+///   int i;
+///   int f() { return i; }
+/// };
+/// \endcode
+const internal::VariadicDynCastAllOfMatcher<Stmt, CXXThisExpr> thisExpr;
+
 /// \brief Matches nodes where temporaries are created.
 ///
 /// Example matches FunctionTakesString(GetStringByValue())
@@ -1074,6 +1086,15 @@ const internal::VariadicDynCastAllOfMatcher<
   Stmt,
   CXXFunctionalCastExpr> functionalCastExpr;
 
+/// \brief Matches \c QualTypes in the clang AST.
+const internal::VariadicAllOfMatcher<QualType> qualType;
+
+/// \brief Matches \c Types in the clang AST.
+const internal::VariadicDynCastAllOfMatcher<Type, Type> type;
+
+/// \brief Matches \c TypeLocs in the clang AST.
+const internal::VariadicDynCastAllOfMatcher<TypeLoc, TypeLoc> typeLoc;
+
 /// \brief Various overloads for the anyOf matcher.
 /// @{
 
@@ -1394,7 +1415,8 @@ internal::ArgumentAdaptingMatcher<internal::ForEachMatcher, ChildT> forEach(
 ///
 /// Usable as: Any Matcher
 template <typename DescendantT>
-internal::ArgumentAdaptingMatcher<internal::ForEachDescendantMatcher, DescendantT>
+internal::ArgumentAdaptingMatcher<internal::ForEachDescendantMatcher,
+                                  DescendantT>
 forEachDescendant(
     const internal::Matcher<DescendantT> &DescendantMatcher) {
   return internal::ArgumentAdaptingMatcher<
@@ -1458,7 +1480,8 @@ unless(const M &InnerMatcher) {
 /// \brief Matches a type if the declaration of the type matches the given
 /// matcher.
 ///
-/// Usable as: Matcher<QualType>, Matcher<CallExpr>, Matcher<CXXConstructExpr>
+/// Usable as: Matcher<QualType>, Matcher<CallExpr>, Matcher<CXXConstructExpr>,
+///   Matcher<MemberExpr>
 inline internal::PolymorphicMatcherWithParam1< internal::HasDeclarationMatcher,
                                      internal::Matcher<Decl> >
     hasDeclaration(const internal::Matcher<Decl> &InnerMatcher) {
@@ -2457,15 +2480,6 @@ isExplicitTemplateSpecialization() {
     internal::IsExplicitTemplateSpecializationMatcher>();
 }
 
-/// \brief Matches \c QualTypes in the clang AST.
-const internal::VariadicAllOfMatcher<QualType> qualType;
-
-/// \brief Matches \c Types in the clang AST.
-const internal::VariadicDynCastAllOfMatcher<Type, Type> type;
-
-/// \brief Matches \c TypeLocs in the clang AST.
-const internal::VariadicDynCastAllOfMatcher<TypeLoc, TypeLoc> typeLoc;
-
 /// \brief Matches \c TypeLocs for which the given inner
 /// QualType-matcher matches.
 inline internal::BindableMatcher<TypeLoc> loc(
@@ -2659,6 +2673,17 @@ AST_TYPE_MATCHER(AutoType, autoType);
 ///
 /// Usable as: Matcher<AutoType>
 AST_TYPE_TRAVERSE_MATCHER(hasDeducedType, getDeducedType);
+
+/// \brief Matches \c FunctionType nodes.
+///
+/// Given
+/// \code
+///   int (*f)(int);
+///   void g();
+/// \endcode
+/// functionType()
+///   matches "int (*f)(int)" and the type of "g".
+AST_TYPE_MATCHER(FunctionType, functionType);
 
 /// \brief Matches block pointer types, i.e. types syntactically represented as
 /// "void (^)(int)".

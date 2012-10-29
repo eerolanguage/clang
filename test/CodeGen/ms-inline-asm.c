@@ -1,5 +1,5 @@
 // REQUIRES: x86-64-registered-target
-// RUN: %clang_cc1 %s -triple x86_64-apple-darwin10 -O0 -fms-extensions -fenable-experimental-ms-inline-asm -w -emit-llvm -o - | FileCheck %s
+// RUN: %clang_cc1 %s -triple i386-apple-darwin10 -O0 -fms-extensions -fenable-experimental-ms-inline-asm -w -emit-llvm -o - | FileCheck %s
 
 void t1() {
 // CHECK: @t1
@@ -144,4 +144,59 @@ void t15() {
   __asm mov eax, offset var ; eax = address of myvar
 // CHECK: t15
 // CHECK: call void asm sideeffect inteldialect "mov eax, dword ptr $0", "*m,~{eax},~{dirflag},~{fpsr},~{flags}"(i32* %{{.*}}) nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $0", "r,~{eax},~{dirflag},~{fpsr},~{flags}"(i32* %{{.*}}) nounwind
+}
+
+void t16() {
+  int var = 10;
+  __asm mov [eax], offset var
+// CHECK: t16
+// CHECK: call void asm sideeffect inteldialect "mov [eax], $0", "r,~{dirflag},~{fpsr},~{flags}"(i32* %{{.*}}) nounwind
+}
+
+void t17() {
+  __asm _emit 0x4A
+  __asm _emit 0x43
+  __asm _emit 0x4B
+// CHECK: t17
+// CHECK:  call void asm sideeffect inteldialect ".byte 0x4A", "~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK:  call void asm sideeffect inteldialect ".byte 0x43", "~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK:  call void asm sideeffect inteldialect ".byte 0x4B", "~{dirflag},~{fpsr},~{flags}"() nounwind
+}
+
+struct t18_type { int a, b; };
+
+int t18() {
+  struct t18_type foo;
+  foo.a = 1;
+  foo.b = 2;
+  __asm {
+     lea ebx, foo
+     mov eax, [ebx].0
+     mov [ebx].4, ecx
+  }
+  return foo.b;
+// CHECK: t18
+// CHECK: call void asm sideeffect inteldialect "lea ebx, foo\0A\09mov eax, [ebx].0\0A\09mov [ebx].4, ecx", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+}
+
+int t19() {
+  struct t18_type foo;
+  foo.a = 1;
+  foo.b = 2;
+  __asm {
+     lea ebx, foo
+     mov eax, [ebx].foo.a
+     mov [ebx].foo.b, ecx
+  }
+  return foo.b;
+// CHECK: t19
+// CHECK: call void asm sideeffect inteldialect "lea ebx, foo\0A\09mov eax, [ebx].0\0A\09mov [ebx].4, ecx", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+}
+
+void t20() {
+  int foo;
+  __asm mov eax, TYPE foo
+// CHECK: t20
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$4", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
 }

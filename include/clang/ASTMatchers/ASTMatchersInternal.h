@@ -380,18 +380,14 @@ private:
     /// FIXME: Add other ways to convert...
     if (Node.isNull())
       return false;
-    CXXRecordDecl *NodeAsRecordDecl = Node->getAsCXXRecordDecl();
-    return NodeAsRecordDecl != NULL &&
-      InnerMatcher.matches(*NodeAsRecordDecl, Finder, Builder);
+    return matchesDecl(Node->getAsCXXRecordDecl(), Finder, Builder);
   }
 
   /// \brief Extracts the Decl of the callee of a CallExpr and returns whether
   /// the inner matcher matches on it.
   bool matchesSpecialized(const CallExpr &Node, ASTMatchFinder *Finder,
                           BoundNodesTreeBuilder *Builder) const {
-    const Decl *NodeAsDecl = Node.getCalleeDecl();
-    return NodeAsDecl != NULL &&
-      InnerMatcher.matches(*NodeAsDecl, Finder, Builder);
+    return matchesDecl(Node.getCalleeDecl(), Finder, Builder);
   }
 
   /// \brief Extracts the Decl of the constructor call and returns whether the
@@ -399,23 +395,38 @@ private:
   bool matchesSpecialized(const CXXConstructExpr &Node,
                           ASTMatchFinder *Finder,
                           BoundNodesTreeBuilder *Builder) const {
-    const Decl *NodeAsDecl = Node.getConstructor();
-    return NodeAsDecl != NULL &&
-      InnerMatcher.matches(*NodeAsDecl, Finder, Builder);
+    return matchesDecl(Node.getConstructor(), Finder, Builder);
+  }
+
+  /// \brief Extracts the \c ValueDecl a \c MemberExpr refers to and returns
+  /// whether the inner matcher matches on it.
+  bool matchesSpecialized(const MemberExpr &Node,
+                          ASTMatchFinder *Finder,
+                          BoundNodesTreeBuilder *Builder) const {
+    return matchesDecl(Node.getMemberDecl(), Finder, Builder);
+  }
+
+  /// \brief Returns whether the inner matcher \c Node. Returns false if \c Node
+  /// is \c NULL.
+  bool matchesDecl(const Decl *Node,
+                   ASTMatchFinder *Finder,
+                   BoundNodesTreeBuilder *Builder) const {
+    return Node != NULL && InnerMatcher.matches(*Node, Finder, Builder);
   }
 
   const Matcher<Decl> InnerMatcher;
 };
 
 /// \brief IsBaseType<T>::value is true if T is a "base" type in the AST
-/// node class hierarchies (i.e. if T is Decl, Stmt, QualType, or
-/// CXXCtorInitializer).
+/// node class hierarchies.
 template <typename T>
 struct IsBaseType {
   static const bool value =
       (llvm::is_same<T, Decl>::value ||
        llvm::is_same<T, Stmt>::value ||
        llvm::is_same<T, QualType>::value ||
+       llvm::is_same<T, Type>::value ||
+       llvm::is_same<T, TypeLoc>::value ||
        llvm::is_same<T, NestedNameSpecifier>::value ||
        llvm::is_same<T, NestedNameSpecifierLoc>::value ||
        llvm::is_same<T, CXXCtorInitializer>::value);
@@ -485,8 +496,10 @@ public:
                       TraversalKind Traverse,
                       BindKind Bind) {
     TOOLING_COMPILE_ASSERT((llvm::is_base_of<Decl, T>::value ||
-                            llvm::is_base_of<Stmt, T>::value),
-                           only_Decl_or_Stmt_allowed_for_recursive_matching);
+                            llvm::is_base_of<Stmt, T>::value ||
+                            llvm::is_base_of<TypeLoc, T>::value ||
+                            llvm::is_base_of<QualType, T>::value),
+                           unsupported_type_for_recursive_matching);
     return matchesChildOf(ast_type_traits::DynTypedNode::create(Node),
                           Matcher, Builder, Traverse, Bind);
   }
@@ -497,8 +510,10 @@ public:
                            BoundNodesTreeBuilder *Builder,
                            BindKind Bind) {
     TOOLING_COMPILE_ASSERT((llvm::is_base_of<Decl, T>::value ||
-                            llvm::is_base_of<Stmt, T>::value),
-                           only_Decl_or_Stmt_allowed_for_recursive_matching);
+                            llvm::is_base_of<Stmt, T>::value ||
+                            llvm::is_base_of<TypeLoc, T>::value ||
+                            llvm::is_base_of<QualType, T>::value),
+                           unsupported_type_for_recursive_matching);
     return matchesDescendantOf(ast_type_traits::DynTypedNode::create(Node),
                                Matcher, Builder, Bind);
   }

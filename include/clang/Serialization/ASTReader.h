@@ -63,6 +63,7 @@ class ASTUnit; // FIXME: Layering violation and egregious hack.
 class Attr;
 class Decl;
 class DeclContext;
+class DiagnosticOptions;
 class NestedNameSpecifier;
 class CXXBaseSpecifier;
 class CXXConstructorDecl;
@@ -72,6 +73,7 @@ class MacroDefinition;
 class NamedDecl;
 class OpaqueValueExpr;
 class Preprocessor;
+class PreprocessorOptions;
 class Sema;
 class SwitchCase;
 class ASTDeserializationListener;
@@ -83,15 +85,6 @@ class TypeLocReader;
 struct HeaderFileInfo;
 class VersionTuple;
 class TargetOptions;
-
-struct PCHPredefinesBlock {
-  /// \brief The file ID for this predefines buffer in a PCH file.
-  FileID BufferID;
-
-  /// \brief This predefines buffer in a PCH file.
-  StringRef Data;
-};
-typedef SmallVector<PCHPredefinesBlock, 2> PCHPredefinesBlocks;
 
 /// \brief Abstract interface for callback invocations by the ASTReader.
 ///
@@ -106,8 +99,7 @@ public:
   /// \brief Receives the language options.
   ///
   /// \returns true to indicate the options are invalid or false otherwise.
-  virtual bool ReadLanguageOptions(const serialization::ModuleFile &M,
-                                   const LangOptions &LangOpts,
+  virtual bool ReadLanguageOptions(const LangOptions &LangOpts,
                                    bool Complain) {
     return false;
   }
@@ -116,30 +108,49 @@ public:
   ///
   /// \returns true to indicate the target options are invalid, or false
   /// otherwise.
-  virtual bool ReadTargetOptions(const serialization::ModuleFile &M,
-                                 const TargetOptions &TargetOpts,
+  virtual bool ReadTargetOptions(const TargetOptions &TargetOpts,
                                  bool Complain) {
     return false;
   }
 
-  /// \brief Receives the contents of the predefines buffer.
+  /// \brief Receives the diagnostic options.
   ///
-  /// \param Buffers Information about the predefines buffers.
+  /// \returns true to indicate the diagnostic options are invalid, or false
+  /// otherwise.
+  virtual bool ReadDiagnosticOptions(const DiagnosticOptions &DiagOpts,
+                                     bool Complain) {
+    return false;
+  }
+
+  /// \brief Receives the file system options.
   ///
-  /// \param OriginalFileName The original file name for the AST file, which
-  /// will appear as an entry in the predefines buffer.
+  /// \returns true to indicate the file system options are invalid, or false
+  /// otherwise.
+  virtual bool ReadFileSystemOptions(const FileSystemOptions &FSOpts,
+                                     bool Complain) {
+    return false;
+  }
+
+  /// \brief Receives the header search options.
   ///
-  /// \param SuggestedPredefines If necessary, additional definitions are added
-  /// here.
+  /// \returns true to indicate the header search options are invalid, or false
+  /// otherwise.
+  virtual bool ReadHeaderSearchOptions(const HeaderSearchOptions &HSOpts,
+                                       bool Complain) {
+    return false;
+  }
+
+  /// \brief Receives the preprocessor options.
   ///
-  /// \param Complain Whether to complain about non-matching predefines buffers.
+  /// \param SuggestedPredefines Can be filled in with the set of predefines
+  /// that are suggested by the preprocessor options. Typically only used when
+  /// loading a precompiled header.
   ///
-  /// \returns true to indicate the predefines are invalid or false otherwise.
-  virtual bool ReadPredefinesBuffer(const PCHPredefinesBlocks &Buffers,
-                                    StringRef OriginalFileName,
-                                    std::string &SuggestedPredefines,
-                                    FileManager &FileMgr,
-                                    bool Complain) {
+  /// \returns true to indicate the preprocessor options are invalid, or false
+  /// otherwise.
+  virtual bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
+                                       bool Complain,
+                                       std::string &SuggestedPredefines) {
     return false;
   }
 
@@ -163,17 +174,13 @@ public:
   PCHValidator(Preprocessor &PP, ASTReader &Reader)
     : PP(PP), Reader(Reader), NumHeaderInfos(0) {}
 
-  virtual bool ReadLanguageOptions(const serialization::ModuleFile &M,
-                                   const LangOptions &LangOpts,
+  virtual bool ReadLanguageOptions(const LangOptions &LangOpts,
                                    bool Complain);
-  virtual bool ReadTargetOptions(const serialization::ModuleFile &M,
-                                 const TargetOptions &TargetOpts,
+  virtual bool ReadTargetOptions(const TargetOptions &TargetOpts,
                                  bool Complain);
-  virtual bool ReadPredefinesBuffer(const PCHPredefinesBlocks &Buffers,
-                                    StringRef OriginalFileName,
-                                    std::string &SuggestedPredefines,
-                                    FileManager &FileMgr,
-                                    bool Complain);
+  virtual bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
+                                       bool Complain,
+                                       std::string &SuggestedPredefines);
   virtual void ReadHeaderFileInfo(const HeaderFileInfo &HFI, unsigned ID);
   virtual void ReadCounter(const serialization::ModuleFile &M, unsigned Value);
 
@@ -870,10 +877,6 @@ private:
     ~ReadingKindTracker() { Reader.ReadingKind = PrevKind; }
   };
 
-  /// \brief All predefines buffers in the chain, to be treated as if
-  /// concatenated.
-  PCHPredefinesBlocks PCHPredefinesBuffers;
-
   /// \brief Suggested contents of the predefines buffer, after this
   /// PCH file has been processed.
   ///
@@ -907,15 +910,25 @@ private:
                                  llvm::SmallVectorImpl<ModuleFile *> &Loaded,
                                  unsigned ClientLoadCapabilities);
   bool ReadASTBlock(ModuleFile &F);
-  bool CheckPredefinesBuffers(bool Complain);
   bool ParseLineTable(ModuleFile &F, SmallVectorImpl<uint64_t> &Record);
   bool ReadSourceManagerBlock(ModuleFile &F);
   llvm::BitstreamCursor &SLocCursorForID(int ID);
   SourceLocation getImportLocation(ModuleFile *F);
   bool ReadSubmoduleBlock(ModuleFile &F);
-  bool ParseLanguageOptions(const ModuleFile &M, const RecordData &Record,
-                            bool Complain);
-  
+  static bool ParseLanguageOptions(const RecordData &Record, bool Complain,
+                                   ASTReaderListener &Listener);
+  static bool ParseTargetOptions(const RecordData &Record, bool Complain,
+                                 ASTReaderListener &Listener);
+  static bool ParseDiagnosticOptions(const RecordData &Record, bool Complain,
+                                     ASTReaderListener &Listener);
+  static bool ParseFileSystemOptions(const RecordData &Record, bool Complain,
+                                     ASTReaderListener &Listener);
+  static bool ParseHeaderSearchOptions(const RecordData &Record, bool Complain,
+                                       ASTReaderListener &Listener);
+  static bool ParsePreprocessorOptions(const RecordData &Record, bool Complain,
+                                       ASTReaderListener &Listener,
+                                       std::string &SuggestedPredefines);
+
   struct RecordLocation {
     RecordLocation(ModuleFile *M, uint64_t O)
       : F(M), Offset(O) {}
@@ -1159,6 +1172,14 @@ public:
   static std::string getOriginalSourceFile(const std::string &ASTFileName,
                                            FileManager &FileMgr,
                                            DiagnosticsEngine &Diags);
+
+  /// \brief Determine whether the given AST file is acceptable to load into a
+  /// translation unit with the given language and target options.
+  static bool isAcceptableASTFile(StringRef Filename,
+                                  FileManager &FileMgr,
+                                  const LangOptions &LangOpts,
+                                  const TargetOptions &TargetOpts,
+                                  const PreprocessorOptions &PPOpts);
 
   /// \brief Returns the suggested contents of the predefines buffer,
   /// which contains a (typically-empty) subset of the predefines
@@ -1623,10 +1644,10 @@ public:
   llvm::APFloat ReadAPFloat(const RecordData &Record, unsigned &Idx);
 
   // \brief Read a string
-  std::string ReadString(const RecordData &Record, unsigned &Idx);
+  static std::string ReadString(const RecordData &Record, unsigned &Idx);
 
   /// \brief Read a version tuple.
-  VersionTuple ReadVersionTuple(const RecordData &Record, unsigned &Idx);
+  static VersionTuple ReadVersionTuple(const RecordData &Record, unsigned &Idx);
 
   CXXTemporary *ReadCXXTemporary(ModuleFile &F, const RecordData &Record,
                                  unsigned &Idx);

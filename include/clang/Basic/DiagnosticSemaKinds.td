@@ -3147,6 +3147,9 @@ def note_sentinel_here : Note<
 def warn_missing_prototype : Warning<
   "no previous prototype for function %0">,
   InGroup<DiagGroup<"missing-prototypes">>, DefaultIgnore;
+def warn_missing_variable_declarations : Warning<
+  "no previous extern declaration for non-static variable %0">,
+  InGroup<DiagGroup<"missing-variable-declarations">>, DefaultIgnore;
 def err_redefinition : Error<"redefinition of %0">;
 def err_definition_of_implicitly_declared_member : Error<
   "definition of implicitly declared %select{default constructor|copy "
@@ -5145,18 +5148,20 @@ let CategoryName = "Inline Assembly Issue" in {
     "%diff{$ matching output with type $|}0,1">;
   def err_asm_unknown_register_name : Error<"unknown register name '%0' in asm">;
   def err_asm_empty : Error<"__asm used with no assembly instructions">;
-  def warn_asm_label_on_auto_decl : Warning<
-    "ignored asm label '%0' on automatic variable">;
   def err_invalid_asm_cast_lvalue : Error<
     "invalid use of a cast in a inline asm context requiring an l-value: "
     "remove the cast or build with -fheinous-gnu-extensions">;
+  def err_inline_ms_asm_parsing : Error<"%0">;
 
+  def warn_asm_label_on_auto_decl : Warning<
+    "ignored asm label '%0' on automatic variable">;
   def warn_invalid_asm_cast_lvalue : Warning<
-    "invalid use of a cast in a inline asm context requiring an l-value: "
+    "invalid use of a cast in an inline asm context requiring an l-value: "
     "accepted due to -fheinous-gnu-extensions, but clang may remove support "
     "for this in the future">;
-
-  def err_inline_ms_asm_parsing : Error<"%0">;
+  def warn_asm_mismatched_size_modifier : Warning<
+    "the size being stored is truncated, use a modifier to specify the size">,
+    InGroup<ASMOperandWidths>;
 }
 
 let CategoryName = "Semantic Issue" in {

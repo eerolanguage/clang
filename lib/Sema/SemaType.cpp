@@ -2665,6 +2665,9 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
 
     // C++0x [dcl.constexpr]p8: A constexpr specifier for a non-static member
     // function that is not a constructor declares that function to be const.
+    // FIXME: This should be deferred until we know whether this is a static
+    //        member function (for an out-of-class definition, we don't know
+    //        this until we perform redeclaration lookup).
     if (D.getDeclSpec().isConstexprSpecified() && !FreeFunction &&
         D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_static &&
         D.getName().getKind() != UnqualifiedId::IK_ConstructorName &&
@@ -2676,6 +2679,12 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
       T = Context.getFunctionType(FnTy->getResultType(),
                                   FnTy->arg_type_begin(),
                                   FnTy->getNumArgs(), EPI);
+      // Rebuild any parens around the identifier in the function type.
+      for (unsigned i = 0, e = D.getNumTypeObjects(); i != e; ++i) {
+        if (D.getTypeObject(i).Kind != DeclaratorChunk::Paren)
+          break;
+        T = S.BuildParenType(T);
+      }
     }
 
     // C++11 [dcl.fct]p6 (w/DR1417):
@@ -2729,6 +2738,12 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
       T = Context.getFunctionType(FnTy->getResultType(),
                                   FnTy->arg_type_begin(),
                                   FnTy->getNumArgs(), EPI);
+      // Rebuild any parens around the identifier in the function type.
+      for (unsigned i = 0, e = D.getNumTypeObjects(); i != e; ++i) {
+        if (D.getTypeObject(i).Kind != DeclaratorChunk::Paren)
+          break;
+        T = S.BuildParenType(T);
+      }
     }
   }
 

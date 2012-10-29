@@ -528,8 +528,10 @@ class X86_32ABIInfo : public ABIInfo {
   Class classify(QualType Ty) const;
   ABIArgInfo classifyReturnType(QualType RetTy,
                                 unsigned callingConvention) const;
-  ABIArgInfo classifyArgumentType(QualType RetTy, unsigned &FreeRegs) const;
-  bool shouldUseInReg(QualType Ty, unsigned &FreeRegs) const;
+  ABIArgInfo classifyArgumentType(QualType RetTy, unsigned &FreeRegs,
+                                  bool IsFastCall) const;
+  bool shouldUseInReg(QualType Ty, unsigned &FreeRegs,
+                      bool IsFastCall, bool &NeedsPadding) const;
 
 public:
 
@@ -804,12 +806,15 @@ X86_32ABIInfo::Class X86_32ABIInfo::classify(QualType Ty) const {
   return Integer;
 }
 
-bool X86_32ABIInfo::shouldUseInReg(QualType Ty, unsigned &FreeRegs) const {
+bool X86_32ABIInfo::shouldUseInReg(QualType Ty, unsigned &FreeRegs,
+                                   bool IsFastCall, bool &NeedsPadding) const {
+  NeedsPadding = false;
   Class C = classify(Ty);
   if (C == Float)
     return false;
 
-  unsigned SizeInRegs = (getContext().getTypeSize(Ty) + 31) / 32;
+  unsigned Size = getContext().getTypeSize(Ty);
+  unsigned SizeInRegs = (Size + 31) / 32;
 
   if (SizeInRegs == 0)
     return false;
@@ -820,11 +825,32 @@ bool X86_32ABIInfo::shouldUseInReg(QualType Ty, unsigned &FreeRegs) const {
   }
 
   FreeRegs -= SizeInRegs;
+
+  if (IsFastCall) {
+    if (Size > 32)
+      return false;
+
+    if (Ty->isIntegralOrEnumerationType())
+      return true;
+
+    if (Ty->isPointerType())
+      return true;
+
+    if (Ty->isReferenceType())
+      return true;
+
+    if (FreeRegs)
+      NeedsPadding = true;
+
+    return false;
+  }
+
   return true;
 }
 
 ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
-                                               unsigned &FreeRegs) const {
+                                               unsigned &FreeRegs,
+                                               bool IsFastCall) const {
   // FIXME: Set alignment on indirect arguments.
   if (isAggregateTypeForABI(Ty)) {
     // Structures with flexible arrays are always indirect.
@@ -842,16 +868,18 @@ ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
     if (isEmptyRecord(getContext(), Ty, true))
       return ABIArgInfo::getIgnore();
 
-    if (shouldUseInReg(Ty, FreeRegs)) {
+    llvm::LLVMContext &LLVMContext = getVMContext();
+    llvm::IntegerType *Int32 = llvm::Type::getInt32Ty(LLVMContext);
+    bool NeedsPadding;
+    if (shouldUseInReg(Ty, FreeRegs, IsFastCall, NeedsPadding)) {
       unsigned SizeInRegs = (getContext().getTypeSize(Ty) + 31) / 32;
-      llvm::LLVMContext &LLVMContext = getVMContext();
-      llvm::Type *Int32 = llvm::Type::getInt32Ty(LLVMContext);
       SmallVector<llvm::Type*, 3> Elements;
       for (unsigned I = 0; I < SizeInRegs; ++I)
         Elements.push_back(Int32);
       llvm::Type *Result = llvm::StructType::get(LLVMContext, Elements);
       return ABIArgInfo::getDirectInReg(Result);
     }
+    llvm::IntegerType *PaddingType = NeedsPadding ? Int32 : 0;
 
     // Expand small (<= 128-bit) record types when we know that the stack layout
     // of those arguments will match the struct. This is important because the
@@ -859,7 +887,7 @@ ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
     // optimizations.
     if (getContext().getTypeSize(Ty) <= 4*32 &&
         canExpandIndirectArgument(Ty, getContext()))
-      return ABIArgInfo::getExpand();
+      return ABIArgInfo::getExpandWithPadding(IsFastCall, PaddingType);
 
     return getIndirectResult(Ty, true, FreeRegs);
   }
@@ -892,7 +920,8 @@ ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
   if (const EnumType *EnumTy = Ty->getAs<EnumType>())
     Ty = EnumTy->getDecl()->getIntegerType();
 
-  bool InReg = shouldUseInReg(Ty, FreeRegs);
+  bool NeedsPadding;
+  bool InReg = shouldUseInReg(Ty, FreeRegs, IsFastCall, NeedsPadding);
 
   if (Ty->isPromotableIntegerType()) {
     if (InReg)
@@ -908,8 +937,15 @@ void X86_32ABIInfo::computeInfo(CGFunctionInfo &FI) const {
   FI.getReturnInfo() = classifyReturnType(FI.getReturnType(),
                                           FI.getCallingConvention());
 
-  unsigned FreeRegs = FI.getHasRegParm() ? FI.getRegParm() :
-    DefaultNumRegisterParameters;
+  unsigned CC = FI.getCallingConvention();
+  bool IsFastCall = CC == llvm::CallingConv::X86_FastCall;
+  unsigned FreeRegs;
+  if (IsFastCall)
+    FreeRegs = 2;
+  else if (FI.getHasRegParm())
+    FreeRegs = FI.getRegParm();
+  else
+    FreeRegs = DefaultNumRegisterParameters;
 
   // If the return value is indirect, then the hidden argument is consuming one
   // integer register.
@@ -923,7 +959,7 @@ void X86_32ABIInfo::computeInfo(CGFunctionInfo &FI) const {
 
   for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
        it != ie; ++it)
-    it->info = classifyArgumentType(it->type, FreeRegs);
+    it->info = classifyArgumentType(it->type, FreeRegs, IsFastCall);
 }
 
 llvm::Value *X86_32ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
@@ -2719,21 +2755,6 @@ llvm::Value *PPC64_SVR4_ABIInfo::EmitVAArg(llvm::Value *VAListAddr,
   llvm::Value *VAListAddrAsBPP = Builder.CreateBitCast(VAListAddr, BPP, "ap");
   llvm::Value *Addr = Builder.CreateLoad(VAListAddrAsBPP, "ap.cur");
 
-  // Handle address alignment for type alignment > 64 bits.  Although
-  // long double normally requires 16-byte alignment, this is not the
-  // case when it is passed as an argument; so handle that special case.
-  const BuiltinType *BT = Ty->getAs<BuiltinType>();
-  unsigned TyAlign = CGF.getContext().getTypeAlign(Ty) / 8;
-
-  if (TyAlign > 8 && (!BT || !BT->isFloatingPoint())) {
-    assert((TyAlign & (TyAlign - 1)) == 0 &&
-           "Alignment is not power of 2!");
-    llvm::Value *AddrAsInt = Builder.CreatePtrToInt(Addr, CGF.Int64Ty);
-    AddrAsInt = Builder.CreateAdd(AddrAsInt, Builder.getInt64(TyAlign - 1));
-    AddrAsInt = Builder.CreateAnd(AddrAsInt, Builder.getInt64(~(TyAlign - 1)));
-    Addr = Builder.CreateIntToPtr(AddrAsInt, BP);
-  }
-
   // Update the va_list pointer.
   unsigned SizeInBytes = CGF.getContext().getTypeSize(Ty) / 8;
   unsigned Offset = llvm::RoundUpToAlignment(SizeInBytes, 8);
@@ -2897,7 +2918,9 @@ void ARMABIInfo::computeInfo(CGFunctionInfo &FI) const {
 
   // Calling convention as default by an ABI.
   llvm::CallingConv::ID DefaultCC;
-  if (isEABI())
+  if (getContext().getTargetInfo().getTriple().getEnvironmentName()=="gnueabihf")
+    DefaultCC = llvm::CallingConv::ARM_AAPCS_VFP;
+  else if (isEABI())
     DefaultCC = llvm::CallingConv::ARM_AAPCS;
   else
     DefaultCC = llvm::CallingConv::ARM_APCS;
@@ -4151,10 +4174,10 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   case llvm::Triple::thumb:
     {
       ARMABIInfo::ABIKind Kind = ARMABIInfo::AAPCS;
-
       if (strcmp(getContext().getTargetInfo().getABI(), "apcs-gnu") == 0)
         Kind = ARMABIInfo::APCS;
-      else if (CodeGenOpts.FloatABI == "hard")
+      else if (CodeGenOpts.FloatABI == "hard" ||
+               (CodeGenOpts.FloatABI != "soft" && Triple.getEnvironment()==llvm::Triple::GNUEABIHF))
         Kind = ARMABIInfo::AAPCS_VFP;
 
       switch (Triple.getOS()) {

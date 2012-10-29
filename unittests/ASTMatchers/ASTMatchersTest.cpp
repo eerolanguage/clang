@@ -555,6 +555,118 @@ TEST(DeclarationMatcher, HasDescendant) {
       "};", ZDescendantClassXDescendantClassY));
 }
 
+// Implements a run method that returns whether BoundNodes contains a
+// Decl bound to Id that can be dynamically cast to T.
+// Optionally checks that the check succeeded a specific number of times.
+template <typename T>
+class VerifyIdIsBoundTo : public BoundNodesCallback {
+public:
+  // Create an object that checks that a node of type \c T was bound to \c Id.
+  // Does not check for a certain number of matches.
+  explicit VerifyIdIsBoundTo(llvm::StringRef Id)
+    : Id(Id), ExpectedCount(-1), Count(0) {}
+
+  // Create an object that checks that a node of type \c T was bound to \c Id.
+  // Checks that there were exactly \c ExpectedCount matches.
+  VerifyIdIsBoundTo(llvm::StringRef Id, int ExpectedCount)
+    : Id(Id), ExpectedCount(ExpectedCount), Count(0) {}
+
+  // Create an object that checks that a node of type \c T was bound to \c Id.
+  // Checks that there was exactly one match with the name \c ExpectedName.
+  // Note that \c T must be a NamedDecl for this to work.
+  VerifyIdIsBoundTo(llvm::StringRef Id, llvm::StringRef ExpectedName)
+    : Id(Id), ExpectedCount(1), Count(0), ExpectedName(ExpectedName) {}
+
+  ~VerifyIdIsBoundTo() {
+    if (ExpectedCount != -1)
+      EXPECT_EQ(ExpectedCount, Count);
+    if (!ExpectedName.empty())
+      EXPECT_EQ(ExpectedName, Name);
+  }
+
+  virtual bool run(const BoundNodes *Nodes) {
+    if (Nodes->getNodeAs<T>(Id)) {
+      ++Count;
+      if (const NamedDecl *Named = Nodes->getNodeAs<NamedDecl>(Id)) {
+        Name = Named->getNameAsString();
+      } else if (const NestedNameSpecifier *NNS =
+                 Nodes->getNodeAs<NestedNameSpecifier>(Id)) {
+        llvm::raw_string_ostream OS(Name);
+        NNS->print(OS, PrintingPolicy(LangOptions()));
+      }
+      return true;
+    }
+    return false;
+  }
+
+  virtual bool run(const BoundNodes *Nodes, ASTContext *Context) {
+    return run(Nodes);
+  }
+
+private:
+  const std::string Id;
+  const int ExpectedCount;
+  int Count;
+  const std::string ExpectedName;
+  std::string Name;
+};
+
+TEST(HasDescendant, MatchesDescendantTypes) {
+  EXPECT_TRUE(matches("void f() { int i = 3; }",
+                      decl(hasDescendant(loc(builtinType())))));
+  EXPECT_TRUE(matches("void f() { int i = 3; }",
+                      stmt(hasDescendant(builtinType()))));
+
+  EXPECT_TRUE(matches("void f() { int i = 3; }",
+                      stmt(hasDescendant(loc(builtinType())))));
+  EXPECT_TRUE(matches("void f() { int i = 3; }",
+                      stmt(hasDescendant(qualType(builtinType())))));
+
+  EXPECT_TRUE(notMatches("void f() { float f = 2.0f; }",
+                         stmt(hasDescendant(isInteger()))));
+
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "void f() { int a; float c; int d; int e; }",
+      functionDecl(forEachDescendant(
+          varDecl(hasDescendant(isInteger())).bind("x"))),
+      new VerifyIdIsBoundTo<Decl>("x", 3)));
+}
+
+TEST(HasDescendant, MatchesDescendantsOfTypes) {
+  EXPECT_TRUE(matches("void f() { int*** i; }",
+                      qualType(hasDescendant(builtinType()))));
+  EXPECT_TRUE(matches("void f() { int*** i; }",
+                      qualType(hasDescendant(
+                          pointerType(pointee(builtinType()))))));
+  EXPECT_TRUE(matches("void f() { int*** i; }",
+                      typeLoc(hasDescendant(builtinTypeLoc()))));
+
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "void f() { int*** i; }",
+      qualType(asString("int ***"), forEachDescendant(pointerType().bind("x"))),
+      new VerifyIdIsBoundTo<Type>("x", 2)));
+}
+
+TEST(Has, MatchesChildrenOfTypes) {
+  EXPECT_TRUE(matches("int i;",
+                      varDecl(hasName("i"), has(isInteger()))));
+  EXPECT_TRUE(notMatches("int** i;",
+                         varDecl(hasName("i"), has(isInteger()))));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "int (*f)(float, int);",
+      qualType(functionType(), forEach(qualType(isInteger()).bind("x"))),
+      new VerifyIdIsBoundTo<QualType>("x", 2)));
+}
+
+TEST(Has, MatchesChildTypes) {
+  EXPECT_TRUE(matches(
+      "int* i;",
+      varDecl(hasName("i"), hasType(qualType(has(builtinType()))))));
+  EXPECT_TRUE(notMatches(
+      "int* i;",
+      varDecl(hasName("i"), hasType(qualType(has(pointerType()))))));
+}
+
 TEST(Enum, DoesNotMatchClasses) {
   EXPECT_TRUE(notMatches("class X {};", enumDecl(hasName("X"))));
 }
@@ -612,58 +724,6 @@ TEST(TypeMatcher, MatchesClassType) {
   EXPECT_TRUE(
       matches("class A { public: A *a; class B {}; };", TypeAHasClassB));
 }
-
-// Implements a run method that returns whether BoundNodes contains a
-// Decl bound to Id that can be dynamically cast to T.
-// Optionally checks that the check succeeded a specific number of times.
-template <typename T>
-class VerifyIdIsBoundTo : public BoundNodesCallback {
-public:
-  // Create an object that checks that a node of type \c T was bound to \c Id.
-  // Does not check for a certain number of matches.
-  explicit VerifyIdIsBoundTo(llvm::StringRef Id)
-    : Id(Id), ExpectedCount(-1), Count(0) {}
-
-  // Create an object that checks that a node of type \c T was bound to \c Id.
-  // Checks that there were exactly \c ExpectedCount matches.
-  VerifyIdIsBoundTo(llvm::StringRef Id, int ExpectedCount)
-    : Id(Id), ExpectedCount(ExpectedCount), Count(0) {}
-
-  // Create an object that checks that a node of type \c T was bound to \c Id.
-  // Checks that there was exactly one match with the name \c ExpectedName.
-  // Note that \c T must be a NamedDecl for this to work.
-  VerifyIdIsBoundTo(llvm::StringRef Id, llvm::StringRef ExpectedName)
-    : Id(Id), ExpectedCount(1), Count(0), ExpectedName(ExpectedName) {}
-
-  ~VerifyIdIsBoundTo() {
-    if (ExpectedCount != -1)
-      EXPECT_EQ(ExpectedCount, Count);
-    if (!ExpectedName.empty())
-      EXPECT_EQ(ExpectedName, Name);
-  }
-
-  virtual bool run(const BoundNodes *Nodes) {
-    if (Nodes->getNodeAs<T>(Id)) {
-      ++Count;
-      if (const NamedDecl *Named = Nodes->getNodeAs<NamedDecl>(Id)) {
-        Name = Named->getNameAsString();
-      } else if (const NestedNameSpecifier *NNS =
-                 Nodes->getNodeAs<NestedNameSpecifier>(Id)) {
-        llvm::raw_string_ostream OS(Name);
-        NNS->print(OS, PrintingPolicy(LangOptions()));
-      }
-      return true;
-    }
-    return false;
-  }
-
-private:
-  const std::string Id;
-  const int ExpectedCount;
-  int Count;
-  const std::string ExpectedName;
-  std::string Name;
-};
 
 TEST(Matcher, BindMatchedNodes) {
   DeclarationMatcher ClassX = has(recordDecl(hasName("::X")).bind("x"));
@@ -1331,6 +1391,13 @@ TEST(Matcher, ConstructorArgumentCount) {
   EXPECT_TRUE(
       notMatches("class X { public: X(int, int); }; void x() { X x(0, 0); }",
                  Constructor1Arg));
+}
+
+TEST(Matcher,ThisExpr) {
+  EXPECT_TRUE(
+      matches("struct X { int a; int f () { return a; } };", thisExpr()));
+  EXPECT_TRUE(
+      notMatches("struct X { int f () { int a; return a; } };", thisExpr()));
 }
 
 TEST(Matcher, BindTemporaryExpression) {
@@ -2130,6 +2197,15 @@ TEST(Member, MatchesInMemberFunctionCall) {
                       "  s.first();"
                       "};",
                       memberExpr(member(hasName("first")))));
+}
+
+TEST(Member, MatchesMember) {
+  EXPECT_TRUE(matches(
+      "struct A { int i; }; void f() { A a; a.i = 2; }",
+      memberExpr(hasDeclaration(fieldDecl(hasType(isInteger()))))));
+  EXPECT_TRUE(notMatches(
+      "struct A { float f; }; void f() { A a; a.f = 2.0f; }",
+      memberExpr(hasDeclaration(fieldDecl(hasType(isInteger()))))));
 }
 
 TEST(Member, MatchesMemberAllocationFunction) {
@@ -3002,6 +3078,11 @@ TEST(TypeMatching, MatchesAutoTypes) {
                          autoType(hasDeducedType(isInteger()))));
 }
 
+TEST(TypeMatching, MatchesFunctionTypes) {
+  EXPECT_TRUE(matches("int (*f)(int);", functionType()));
+  EXPECT_TRUE(matches("void f(int i) {}", functionType()));
+}
+
 TEST(TypeMatching, PointerTypes) {
   // FIXME: Reactive when these tests can be more specific (not matching
   // implicit code on certain platforms), likely when we have hasDescendant for
@@ -3153,6 +3234,48 @@ TEST(NNS, MatchesNestedNameSpecifierPrefixes) {
       "struct A { struct B { struct C {}; }; }; A::B::C c;",
       nestedNameSpecifierLoc(hasPrefix(
           specifiesTypeLoc(loc(qualType(asString("struct A"))))))));
+}
+
+template <typename T>
+class VerifyRecursiveMatch : public BoundNodesCallback {
+public:
+  explicit VerifyRecursiveMatch(StringRef Id,
+                                const internal::Matcher<T> &InnerMatcher)
+      : Id(Id), InnerMatcher(InnerMatcher) {}
+
+  virtual bool run(const BoundNodes *Nodes) {
+    return false;
+  }
+
+  virtual bool run(const BoundNodes *Nodes, ASTContext *Context) {
+    const T *Node = Nodes->getNodeAs<T>(Id);
+    bool Found = false;
+    MatchFinder Finder;
+    Finder.addMatcher(InnerMatcher, new VerifyMatch(0, &Found));
+    Finder.findAll(*Node, *Context);
+    return Found;
+  }
+private:
+  std::string Id;
+  internal::Matcher<T> InnerMatcher;
+};
+
+TEST(MatchFinder, CanMatchDeclarationsRecursively) {
+  EXPECT_TRUE(matchAndVerifyResultTrue("class X { class Y {}; };",
+    recordDecl(hasName("::X")).bind("X"),
+    new VerifyRecursiveMatch<clang::Decl>("X", recordDecl(hasName("X::Y")))));
+  EXPECT_TRUE(matchAndVerifyResultFalse("class X { class Y {}; };",
+    recordDecl(hasName("::X")).bind("X"),
+    new VerifyRecursiveMatch<clang::Decl>("X", recordDecl(hasName("X::Z")))));
+}
+
+TEST(MatchFinder, CanMatchStatementsRecursively) {
+  EXPECT_TRUE(matchAndVerifyResultTrue("void f() { if (1) { for (;;) { } } }",
+    ifStmt().bind("if"),
+    new VerifyRecursiveMatch<clang::Stmt>("if", forStmt())));
+  EXPECT_TRUE(matchAndVerifyResultFalse("void f() { if (1) { for (;;) { } } }",
+    ifStmt().bind("if"),
+    new VerifyRecursiveMatch<clang::Stmt>("if", declStmt())));
 }
 
 } // end namespace ast_matchers

@@ -1001,8 +1001,7 @@ llvm::Value *CodeGenFunction::emitArrayLength(const ArrayType *origArrayType,
       arrayType = getContext().getAsArrayType(eltType);
     }
 
-    unsigned AddressSpace =
-        cast<llvm::PointerType>(addr->getType())->getAddressSpace();
+    unsigned AddressSpace = addr->getType()->getPointerAddressSpace();
     llvm::Type *BaseType = ConvertType(eltType)->getPointerTo(AddressSpace);
     addr = Builder.CreateBitCast(addr, BaseType, "array.begin");
   } else {
@@ -1190,7 +1189,7 @@ void CodeGenFunction::EmitDeclRefExprDbgValue(const DeclRefExpr *E,
                                               llvm::Constant *Init) {
   assert (Init && "Invalid DeclRefExpr initializer!");
   if (CGDebugInfo *Dbg = getDebugInfo())
-    if (CGM.getCodeGenOpts().DebugInfo >= CodeGenOptions::LimitedDebugInfo)
+    if (CGM.getCodeGenOpts().getDebugInfo() >= CodeGenOptions::LimitedDebugInfo)
       Dbg->EmitGlobalVariable(E->getDecl(), Init);
 }
 

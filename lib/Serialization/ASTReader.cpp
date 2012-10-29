@@ -30,7 +30,9 @@
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/PreprocessingRecord.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/HeaderSearchOptions.h"
 #include "clang/Basic/OnDiskHashTable.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/SourceManagerInternals.h"
@@ -63,59 +65,66 @@ using namespace clang::serialization::reader;
 
 ASTReaderListener::~ASTReaderListener() {}
 
-bool
-PCHValidator::ReadLanguageOptions(const ModuleFile &M,
-                                  const LangOptions &LangOpts,
-                                  bool Complain) {
-  const LangOptions &PPLangOpts = PP.getLangOpts();
-  
-#define LANGOPT(Name, Bits, Default, Description)           \
-  if (PPLangOpts.Name != LangOpts.Name) {                   \
-    if (Complain)                                           \
-      Reader.Diag(diag::err_pch_langopt_mismatch)           \
-        << Description << LangOpts.Name << PPLangOpts.Name; \
-    return true;                                            \
+/// \brief Compare the given set of language options against an existing set of
+/// language options.
+///
+/// \param Diags If non-NULL, diagnostics will be emitted via this engine.
+///
+/// \returns true if the languagae options mis-match, false otherwise.
+static bool checkLanguageOptions(const LangOptions &LangOpts,
+                                 const LangOptions &ExistingLangOpts,
+                                 DiagnosticsEngine *Diags) {
+#define LANGOPT(Name, Bits, Default, Description)                 \
+  if (ExistingLangOpts.Name != LangOpts.Name) {                   \
+    if (Diags)                                                    \
+      Diags->Report(diag::err_pch_langopt_mismatch)               \
+        << Description << LangOpts.Name << ExistingLangOpts.Name; \
+    return true;                                                  \
   }
 
-#define VALUE_LANGOPT(Name, Bits, Default, Description) \
-  if (PPLangOpts.Name != LangOpts.Name) {               \
-    if (Complain)                                       \
-      Reader.Diag(diag::err_pch_langopt_value_mismatch) \
-        << Description;                                 \
-    return true;                                        \
+#define VALUE_LANGOPT(Name, Bits, Default, Description)   \
+  if (ExistingLangOpts.Name != LangOpts.Name) {           \
+    if (Diags)                                            \
+      Diags->Report(diag::err_pch_langopt_value_mismatch) \
+        << Description;                                   \
+    return true;                                          \
   }
 
-#define ENUM_LANGOPT(Name, Type, Bits, Default, Description) \
-  if (PPLangOpts.get##Name() != LangOpts.get##Name()) {      \
-    if (Complain)                                            \
-      Reader.Diag(diag::err_pch_langopt_value_mismatch)      \
-        << Description;                                      \
-    return true;                                             \
+#define ENUM_LANGOPT(Name, Type, Bits, Default, Description)   \
+  if (ExistingLangOpts.get##Name() != LangOpts.get##Name()) {  \
+    if (Diags)                                                 \
+      Diags->Report(diag::err_pch_langopt_value_mismatch)      \
+        << Description;                                        \
+    return true;                                               \
   }
 
 #define BENIGN_LANGOPT(Name, Bits, Default, Description)
 #define BENIGN_ENUM_LANGOPT(Name, Type, Bits, Default, Description)
 #include "clang/Basic/LangOptions.def"
 
-  if (PPLangOpts.ObjCRuntime != LangOpts.ObjCRuntime) {
-    if (Complain)
-      Reader.Diag(diag::err_pch_langopt_value_mismatch)
-        << "target Objective-C runtime";
+  if (ExistingLangOpts.ObjCRuntime != LangOpts.ObjCRuntime) {
+    if (Diags)
+      Diags->Report(diag::err_pch_langopt_value_mismatch)
+      << "target Objective-C runtime";
     return true;
   }
-  
+
   return false;
 }
 
-bool PCHValidator::ReadTargetOptions(const ModuleFile &M, 
-                                     const TargetOptions &TargetOpts,
-                                     bool Complain) {
-  const TargetOptions &ExistingTargetOpts = PP.getTargetInfo().getTargetOpts();
-
+/// \brief Compare the given set of target options against an existing set of
+/// target options.
+///
+/// \param Diags If non-NULL, diagnostics will be emitted via this engine.
+///
+/// \returns true if the target options mis-match, false otherwise.
+static bool checkTargetOptions(const TargetOptions &TargetOpts,
+                               const TargetOptions &ExistingTargetOpts,
+                               DiagnosticsEngine *Diags) {
 #define CHECK_TARGET_OPT(Field, Name)                             \
   if (TargetOpts.Field != ExistingTargetOpts.Field) {             \
-    if (Complain)                                                 \
-      Reader.Diag(diag::err_pch_targetopt_mismatch)               \
+    if (Diags)                                                    \
+      Diags->Report(diag::err_pch_targetopt_mismatch)             \
         << Name << TargetOpts.Field << ExistingTargetOpts.Field;  \
     return true;                                                  \
   }
@@ -129,8 +138,8 @@ bool PCHValidator::ReadTargetOptions(const ModuleFile &M,
 
   // Compare feature sets.
   SmallVector<StringRef, 4> ExistingFeatures(
-                              ExistingTargetOpts.FeaturesAsWritten.begin(),
-                              ExistingTargetOpts.FeaturesAsWritten.end());
+                                             ExistingTargetOpts.FeaturesAsWritten.begin(),
+                                             ExistingTargetOpts.FeaturesAsWritten.end());
   SmallVector<StringRef, 4> ReadFeatures(TargetOpts.FeaturesAsWritten.begin(),
                                          TargetOpts.FeaturesAsWritten.end());
   std::sort(ExistingFeatures.begin(), ExistingFeatures.end());
@@ -146,28 +155,28 @@ bool PCHValidator::ReadTargetOptions(const ModuleFile &M,
     }
 
     if (ReadFeatures[ReadIdx] < ExistingFeatures[ExistingIdx]) {
-      if (Complain)
-        Reader.Diag(diag::err_pch_targetopt_feature_mismatch)
+      if (Diags)
+        Diags->Report(diag::err_pch_targetopt_feature_mismatch)
           << false << ReadFeatures[ReadIdx];
       return true;
     }
 
-    if (Complain)
-      Reader.Diag(diag::err_pch_targetopt_feature_mismatch)
+    if (Diags)
+      Diags->Report(diag::err_pch_targetopt_feature_mismatch)
         << true << ExistingFeatures[ExistingIdx];
     return true;
   }
 
   if (ExistingIdx < ExistingN) {
-    if (Complain)
-      Reader.Diag(diag::err_pch_targetopt_feature_mismatch)
+    if (Diags)
+      Diags->Report(diag::err_pch_targetopt_feature_mismatch)
         << true << ExistingFeatures[ExistingIdx];
     return true;
   }
 
   if (ReadIdx < ReadN) {
-    if (Complain)
-      Reader.Diag(diag::err_pch_targetopt_feature_mismatch)
+    if (Diags)
+      Diags->Report(diag::err_pch_targetopt_feature_mismatch)
         << false << ReadFeatures[ReadIdx];
     return true;
   }
@@ -175,311 +184,178 @@ bool PCHValidator::ReadTargetOptions(const ModuleFile &M,
   return false;
 }
 
+bool
+PCHValidator::ReadLanguageOptions(const LangOptions &LangOpts,
+                                  bool Complain) {
+  const LangOptions &ExistingLangOpts = PP.getLangOpts();
+  return checkLanguageOptions(LangOpts, ExistingLangOpts,
+                              Complain? &Reader.Diags : 0);
+}
+
+bool PCHValidator::ReadTargetOptions(const TargetOptions &TargetOpts,
+                                     bool Complain) {
+  const TargetOptions &ExistingTargetOpts = PP.getTargetInfo().getTargetOpts();
+  return checkTargetOptions(TargetOpts, ExistingTargetOpts,
+                            Complain? &Reader.Diags : 0);
+}
+
 namespace {
-  struct EmptyStringRef {
-    bool operator ()(StringRef r) const { return r.empty(); }
-  };
-  struct EmptyBlock {
-    bool operator ()(const PCHPredefinesBlock &r) const {return r.Data.empty();}
-  };
+  typedef llvm::StringMap<std::pair<StringRef, bool /*IsUndef*/> >
+    MacroDefinitionsMap;
 }
 
-static bool EqualConcatenations(SmallVector<StringRef, 2> L,
-                                PCHPredefinesBlocks R) {
-  // First, sum up the lengths.
-  unsigned LL = 0, RL = 0;
-  for (unsigned I = 0, N = L.size(); I != N; ++I) {
-    LL += L[I].size();
-  }
-  for (unsigned I = 0, N = R.size(); I != N; ++I) {
-    RL += R[I].Data.size();
-  }
-  if (LL != RL)
-    return false;
-  if (LL == 0 && RL == 0)
-    return true;
+/// \brief Collect the macro definitions provided by the given preprocessor
+/// options.
+static void collectMacroDefinitions(const PreprocessorOptions &PPOpts,
+                                    MacroDefinitionsMap &Macros,
+                                    SmallVectorImpl<StringRef> *MacroNames = 0){
+  for (unsigned I = 0, N = PPOpts.Macros.size(); I != N; ++I) {
+    StringRef Macro = PPOpts.Macros[I].first;
+    bool IsUndef = PPOpts.Macros[I].second;
 
-  // Kick out empty parts, they confuse the algorithm below.
-  L.erase(std::remove_if(L.begin(), L.end(), EmptyStringRef()), L.end());
-  R.erase(std::remove_if(R.begin(), R.end(), EmptyBlock()), R.end());
+    std::pair<StringRef, StringRef> MacroPair = Macro.split('=');
+    StringRef MacroName = MacroPair.first;
+    StringRef MacroBody = MacroPair.second;
 
-  // Do it the hard way. At this point, both vectors must be non-empty.
-  StringRef LR = L[0], RR = R[0].Data;
-  unsigned LI = 0, RI = 0, LN = L.size(), RN = R.size();
-  (void) RN;
-  for (;;) {
-    // Compare the current pieces.
-    if (LR.size() == RR.size()) {
-      // If they're the same length, it's pretty easy.
-      if (LR != RR)
-        return false;
-      // Both pieces are done, advance.
-      ++LI;
-      ++RI;
-      // If either string is done, they're both done, since they're the same
-      // length.
-      if (LI == LN) {
-        assert(RI == RN && "Strings not the same length after all?");
-        return true;
-      }
-      LR = L[LI];
-      RR = R[RI].Data;
-    } else if (LR.size() < RR.size()) {
-      // Right piece is longer.
-      if (!RR.startswith(LR))
-        return false;
-      ++LI;
-      assert(LI != LN && "Strings not the same length after all?");
-      RR = RR.substr(LR.size());
-      LR = L[LI];
-    } else {
-      // Left piece is longer.
-      if (!LR.startswith(RR))
-        return false;
-      ++RI;
-      assert(RI != RN && "Strings not the same length after all?");
-      LR = LR.substr(RR.size());
-      RR = R[RI].Data;
-    }
-  }
-}
+    // For an #undef'd macro, we only care about the name.
+    if (IsUndef) {
+      if (MacroNames && !Macros.count(MacroName))
+        MacroNames->push_back(MacroName);
 
-static std::pair<FileID, StringRef::size_type>
-FindMacro(const PCHPredefinesBlocks &Buffers, StringRef MacroDef) {
-  std::pair<FileID, StringRef::size_type> Res;
-  for (unsigned I = 0, N = Buffers.size(); I != N; ++I) {
-    Res.second = Buffers[I].Data.find(MacroDef);
-    if (Res.second != StringRef::npos) {
-      Res.first = Buffers[I].BufferID;
-      break;
-    }
-  }
-  return Res;
-}
-
-bool PCHValidator::ReadPredefinesBuffer(const PCHPredefinesBlocks &Buffers,
-                                        StringRef OriginalFileName,
-                                        std::string &SuggestedPredefines,
-                                        FileManager &FileMgr,
-                                        bool Complain) {
-  // We are in the context of an implicit include, so the predefines buffer will
-  // have a #include entry for the PCH file itself (as normalized by the
-  // preprocessor initialization). Find it and skip over it in the checking
-  // below.
-  SmallString<256> PCHInclude;
-  PCHInclude += "#include \"";
-  PCHInclude += HeaderSearch::NormalizeDashIncludePath(OriginalFileName,
-                                                       FileMgr);
-  PCHInclude += "\"\n";
-  std::pair<StringRef,StringRef> Split =
-    StringRef(PP.getPredefines()).split(PCHInclude.str());
-  StringRef Left =  Split.first, Right = Split.second;
-  if (Left == PP.getPredefines()) {
-    if (Complain)
-      Error("Missing PCH include entry!");
-    return true;
-  }
-
-  // If the concatenation of all the PCH buffers is equal to the adjusted
-  // command line, we're done.
-  SmallVector<StringRef, 2> CommandLine;
-  CommandLine.push_back(Left);
-  CommandLine.push_back(Right);
-  if (EqualConcatenations(CommandLine, Buffers))
-    return false;
-
-  SourceManager &SourceMgr = PP.getSourceManager();
-
-  // The predefines buffers are different. Determine what the differences are,
-  // and whether they require us to reject the PCH file.
-  SmallVector<StringRef, 8> PCHLines;
-  for (unsigned I = 0, N = Buffers.size(); I != N; ++I)
-    Buffers[I].Data.split(PCHLines, "\n", /*MaxSplit=*/-1, /*KeepEmpty=*/false);
-
-  SmallVector<StringRef, 8> CmdLineLines;
-  Left.split(CmdLineLines, "\n", /*MaxSplit=*/-1, /*KeepEmpty=*/false);
-
-  // Pick out implicit #includes after the PCH and don't consider them for
-  // validation; we will insert them into SuggestedPredefines so that the
-  // preprocessor includes them.
-  std::string IncludesAfterPCH;
-  SmallVector<StringRef, 8> AfterPCHLines;
-  Right.split(AfterPCHLines, "\n", /*MaxSplit=*/-1, /*KeepEmpty=*/false);
-  for (unsigned i = 0, e = AfterPCHLines.size(); i != e; ++i) {
-    if (AfterPCHLines[i].startswith("#include ")) {
-      IncludesAfterPCH += AfterPCHLines[i];
-      IncludesAfterPCH += '\n';
-    } else {
-      CmdLineLines.push_back(AfterPCHLines[i]);
-    }
-  }
-
-  // Make sure we add the includes last into SuggestedPredefines before we
-  // exit this function.
-  struct AddIncludesRAII {
-    std::string &SuggestedPredefines;
-    std::string &IncludesAfterPCH;
-
-    AddIncludesRAII(std::string &SuggestedPredefines,
-                    std::string &IncludesAfterPCH)
-      : SuggestedPredefines(SuggestedPredefines),
-        IncludesAfterPCH(IncludesAfterPCH) { }
-    ~AddIncludesRAII() {
-      SuggestedPredefines += IncludesAfterPCH;
-    }
-  } AddIncludes(SuggestedPredefines, IncludesAfterPCH);
-
-  // Sort both sets of predefined buffer lines, since we allow some extra
-  // definitions and they may appear at any point in the output.
-  std::sort(CmdLineLines.begin(), CmdLineLines.end());
-  std::sort(PCHLines.begin(), PCHLines.end());
-
-  // Determine which predefines that were used to build the PCH file are missing
-  // from the command line.
-  std::vector<StringRef> MissingPredefines;
-  std::set_difference(PCHLines.begin(), PCHLines.end(),
-                      CmdLineLines.begin(), CmdLineLines.end(),
-                      std::back_inserter(MissingPredefines));
-
-  bool MissingDefines = false;
-  bool ConflictingDefines = false;
-  for (unsigned I = 0, N = MissingPredefines.size(); I != N; ++I) {
-    StringRef Missing = MissingPredefines[I];
-    if (Missing.startswith("#include ")) {
-      // An -include was specified when generating the PCH; it is included in
-      // the PCH, just ignore it.
-      continue;
-    }
-    if (!Missing.startswith("#define ")) {
-      if (Complain)
-        Reader.Diag(diag::warn_pch_compiler_options_mismatch);
-      return true;
-    }
-
-    // This is a macro definition. Determine the name of the macro we're
-    // defining.
-    std::string::size_type StartOfMacroName = strlen("#define ");
-    std::string::size_type EndOfMacroName
-      = Missing.find_first_of("( \n\r", StartOfMacroName);
-    assert(EndOfMacroName != std::string::npos &&
-           "Couldn't find the end of the macro name");
-    StringRef MacroName = Missing.slice(StartOfMacroName, EndOfMacroName);
-
-    // Determine whether this macro was given a different definition on the
-    // command line.
-    std::string MacroDefStart = "#define " + MacroName.str();
-    std::string::size_type MacroDefLen = MacroDefStart.size();
-    SmallVector<StringRef, 8>::iterator ConflictPos
-      = std::lower_bound(CmdLineLines.begin(), CmdLineLines.end(),
-                         MacroDefStart);
-    for (; ConflictPos != CmdLineLines.end(); ++ConflictPos) {
-      if (!ConflictPos->startswith(MacroDefStart)) {
-        // Different macro; we're done.
-        ConflictPos = CmdLineLines.end();
-        break;
-      }
-
-      assert(ConflictPos->size() > MacroDefLen &&
-             "Invalid #define in predefines buffer?");
-      if ((*ConflictPos)[MacroDefLen] != ' ' &&
-          (*ConflictPos)[MacroDefLen] != '(')
-        continue; // Longer macro name; keep trying.
-
-      // We found a conflicting macro definition.
-      break;
-    }
-
-    if (ConflictPos != CmdLineLines.end()) {
-      if (!Complain)
-        return true;
-      
-      Reader.Diag(diag::warn_cmdline_conflicting_macro_def)
-          << MacroName;
-
-      // Show the definition of this macro within the PCH file.
-      std::pair<FileID, StringRef::size_type> MacroLoc =
-          FindMacro(Buffers, Missing);
-      assert(MacroLoc.second!=StringRef::npos && "Unable to find macro!");
-      SourceLocation PCHMissingLoc =
-          SourceMgr.getLocForStartOfFile(MacroLoc.first)
-            .getLocWithOffset(MacroLoc.second);
-      Reader.Diag(PCHMissingLoc, diag::note_pch_macro_defined_as) << MacroName;
-
-      ConflictingDefines = true;
+      Macros[MacroName] = std::make_pair("", true);
       continue;
     }
 
-    // If the macro doesn't conflict, then we'll just pick up the macro
-    // definition from the PCH file. Warn the user that they made a mistake.
-    if (ConflictingDefines)
-      continue; // Don't complain if there are already conflicting defs
-
-    if (!MissingDefines) {
-      if (!Complain)
-        return true;
-      
-      Reader.Diag(diag::warn_cmdline_missing_macro_defs);
-      MissingDefines = true;
+    // For a #define'd macro, figure out the actual definition.
+    if (MacroName.size() == Macro.size())
+      MacroBody = "1";
+    else {
+      // Note: GCC drops anything following an end-of-line character.
+      StringRef::size_type End = MacroBody.find_first_of("\n\r");
+      MacroBody = MacroBody.substr(0, End);
     }
 
-    if (!Complain)
-      return true;
-    
-    // Show the definition of this macro within the PCH file.
-    std::pair<FileID, StringRef::size_type> MacroLoc =
-        FindMacro(Buffers, Missing);
-    assert(MacroLoc.second!=StringRef::npos && "Unable to find macro!");
-    SourceLocation PCHMissingLoc =
-        SourceMgr.getLocForStartOfFile(MacroLoc.first)
-          .getLocWithOffset(MacroLoc.second);
-    Reader.Diag(PCHMissingLoc, diag::note_using_macro_def_from_pch);
+    if (MacroNames && !Macros.count(MacroName))
+      MacroNames->push_back(MacroName);
+    Macros[MacroName] = std::make_pair(MacroBody, false);
   }
+}
+         
+/// \brief Check the preprocessor options deserialized from the control block
+/// against the preprocessor options in an existing preprocessor.
+///
+/// \param Diags If non-null, produce diagnostics for any mismatches incurred.
+static bool checkPreprocessorOptions(const PreprocessorOptions &PPOpts,
+                                     const PreprocessorOptions &ExistingPPOpts,
+                                     DiagnosticsEngine *Diags,
+                                     FileManager &FileMgr,
+                                     std::string &SuggestedPredefines) {
+  // Check macro definitions.
+  MacroDefinitionsMap ASTFileMacros;
+  collectMacroDefinitions(PPOpts, ASTFileMacros);
+  MacroDefinitionsMap ExistingMacros;
+  SmallVector<StringRef, 4> ExistingMacroNames;
+  collectMacroDefinitions(ExistingPPOpts, ExistingMacros, &ExistingMacroNames);
 
-  if (ConflictingDefines)
+  for (unsigned I = 0, N = ExistingMacroNames.size(); I != N; ++I) {
+    // Dig out the macro definition in the existing preprocessor options.
+    StringRef MacroName = ExistingMacroNames[I];
+    std::pair<StringRef, bool> Existing = ExistingMacros[MacroName];
+
+    // Check whether we know anything about this macro name or not.
+    llvm::StringMap<std::pair<StringRef, bool /*IsUndef*/> >::iterator Known
+      = ASTFileMacros.find(MacroName);
+    if (Known == ASTFileMacros.end()) {
+      // FIXME: Check whether this identifier was referenced anywhere in the
+      // AST file. If so, we should reject the AST file. Unfortunately, this
+      // information isn't in the control block. What shall we do about it?
+
+      if (Existing.second) {
+        SuggestedPredefines += "#undef ";
+        SuggestedPredefines += MacroName.str();
+        SuggestedPredefines += '\n';
+      } else {
+        SuggestedPredefines += "#define ";
+        SuggestedPredefines += MacroName.str();
+        SuggestedPredefines += ' ';
+        SuggestedPredefines += Existing.first.str();
+        SuggestedPredefines += '\n';
+      }
+      continue;
+    }
+
+    // If the macro was defined in one but undef'd in the other, we have a
+    // conflict.
+    if (Existing.second != Known->second.second) {
+      if (Diags) {
+        Diags->Report(diag::err_pch_macro_def_undef)
+          << MacroName << Known->second.second;
+      }
+      return true;
+    }
+
+    // If the macro was #undef'd in both, or if the macro bodies are identical,
+    // it's fine.
+    if (Existing.second || Existing.first == Known->second.first)
+      continue;
+
+    // The macro bodies differ; complain.
+    if (Diags) {
+      Diags->Report(diag::err_pch_macro_def_conflict)
+        << MacroName << Known->second.first << Existing.first;
+    }
     return true;
-
-  // Determine what predefines were introduced based on command-line
-  // parameters that were not present when building the PCH
-  // file. Extra #defines are okay, so long as the identifiers being
-  // defined were not used within the precompiled header.
-  std::vector<StringRef> ExtraPredefines;
-  std::set_difference(CmdLineLines.begin(), CmdLineLines.end(),
-                      PCHLines.begin(), PCHLines.end(),
-                      std::back_inserter(ExtraPredefines));
-  for (unsigned I = 0, N = ExtraPredefines.size(); I != N; ++I) {
-    StringRef &Extra = ExtraPredefines[I];
-    if (!Extra.startswith("#define ")) {
-      if (Complain)
-        Reader.Diag(diag::warn_pch_compiler_options_mismatch);
-      return true;
-    }
-
-    // This is an extra macro definition. Determine the name of the
-    // macro we're defining.
-    std::string::size_type StartOfMacroName = strlen("#define ");
-    std::string::size_type EndOfMacroName
-      = Extra.find_first_of("( \n\r", StartOfMacroName);
-    assert(EndOfMacroName != std::string::npos &&
-           "Couldn't find the end of the macro name");
-    StringRef MacroName = Extra.slice(StartOfMacroName, EndOfMacroName);
-
-    // Check whether this name was used somewhere in the PCH file. If
-    // so, defining it as a macro could change behavior, so we reject
-    // the PCH file.
-    if (IdentifierInfo *II = Reader.get(MacroName)) {
-      if (Complain)
-        Reader.Diag(diag::warn_macro_name_used_in_pch) << II;
-      return true;
-    }
-
-    // Add this definition to the suggested predefines buffer.
-    SuggestedPredefines += Extra;
-    SuggestedPredefines += '\n';
   }
 
-  // If we get here, it's because the predefines buffer had compatible
-  // contents. Accept the PCH file.
+  // Check whether we're using predefines.
+  if (PPOpts.UsePredefines != ExistingPPOpts.UsePredefines) {
+    if (Diags) {
+      Diags->Report(diag::err_pch_undef) << ExistingPPOpts.UsePredefines;
+    }
+    return true;
+  }
+
+  // Compute the #include and #include_macros lines we need.
+  for (unsigned I = 0, N = ExistingPPOpts.Includes.size(); I != N; ++I) {
+    StringRef File = ExistingPPOpts.Includes[I];
+    if (File == ExistingPPOpts.ImplicitPCHInclude)
+      continue;
+
+    if (std::find(PPOpts.Includes.begin(), PPOpts.Includes.end(), File)
+          != PPOpts.Includes.end())
+      continue;
+
+    SuggestedPredefines += "#include \"";
+    SuggestedPredefines +=
+      HeaderSearch::NormalizeDashIncludePath(File, FileMgr);
+    SuggestedPredefines += "\"\n";
+  }
+
+  for (unsigned I = 0, N = ExistingPPOpts.MacroIncludes.size(); I != N; ++I) {
+    StringRef File = ExistingPPOpts.MacroIncludes[I];
+    if (std::find(PPOpts.MacroIncludes.begin(), PPOpts.MacroIncludes.end(),
+                  File)
+        != PPOpts.MacroIncludes.end())
+      continue;
+
+    SuggestedPredefines += "#__include_macros \"";
+    SuggestedPredefines +=
+      HeaderSearch::NormalizeDashIncludePath(File, FileMgr);
+    SuggestedPredefines += "\"\n##\n";
+  }
+
   return false;
+}
+
+bool PCHValidator::ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
+                                           bool Complain,
+                                           std::string &SuggestedPredefines) {
+  const PreprocessorOptions &ExistingPPOpts = PP.getPreprocessorOpts();
+
+  return checkPreprocessorOptions(PPOpts, ExistingPPOpts,
+                                  Complain? &Reader.Diags : 0,
+                                  PP.getFileManager(),
+                                  SuggestedPredefines);
 }
 
 void PCHValidator::ReadHeaderFileInfo(const HeaderFileInfo &HFI,
@@ -842,20 +718,6 @@ void ASTReader::Error(unsigned DiagID,
     Diag(DiagID) << Arg1 << Arg2;
 }
 
-/// \brief Tell the AST listener about the predefines buffers in the chain.
-bool ASTReader::CheckPredefinesBuffers(bool Complain) {
-  if (Listener) {
-    // We only care about the primary module.
-    ModuleFile &M = ModuleMgr.getPrimaryModule();
-    return Listener->ReadPredefinesBuffer(PCHPredefinesBuffers,
-                                          M.ActualOriginalSourceFileName,
-                                          SuggestedPredefines,
-                                          FileMgr,
-                                          Complain);
-  }
-  return false;
-}
-
 //===----------------------------------------------------------------------===//
 // Source Manager Deserialization
 //===----------------------------------------------------------------------===//
@@ -1210,17 +1072,7 @@ bool ASTReader::ReadSLocEntry(int ID) {
     llvm::MemoryBuffer *Buffer
       = llvm::MemoryBuffer::getMemBuffer(StringRef(BlobStart, BlobLen - 1),
                                          Name);
-    FileID BufferID = SourceMgr.createFileIDForMemBuffer(Buffer, ID,
-                                                         BaseOffset + Offset);
-
-    if (strcmp(Name, "<built-in>") == 0 && F->Kind == MK_PCH) {
-      PCHPredefinesBlock Block = {
-        BufferID,
-        StringRef(BlobStart, BlobLen - 1)
-      };
-      PCHPredefinesBuffers.push_back(Block);
-    }
-
+    SourceMgr.createFileIDForMemBuffer(Buffer, ID, BaseOffset + Offset);
     break;
   }
 
@@ -1970,32 +1822,55 @@ ASTReader::ReadControlBlock(ModuleFile &F,
     case LANGUAGE_OPTIONS: {
       bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch) == 0;
       if (Listener && &F == *ModuleMgr.begin() &&
-          ParseLanguageOptions(F, Record, Complain) && !DisableValidation)
+          ParseLanguageOptions(Record, Complain, *Listener) &&
+          !DisableValidation)
         return ConfigurationMismatch;
       break;
     }
 
     case TARGET_OPTIONS: {
-      if (Listener && &F == *ModuleMgr.begin()) {
-        unsigned Idx = 0;
-        TargetOptions TargetOpts;
-        TargetOpts.Triple = ReadString(Record, Idx);
-        TargetOpts.CPU = ReadString(Record, Idx);
-        TargetOpts.ABI = ReadString(Record, Idx);
-        TargetOpts.CXXABI = ReadString(Record, Idx);
-        TargetOpts.LinkerVersion = ReadString(Record, Idx);
-        for (unsigned N = Record[Idx++]; N; --N) {
-          TargetOpts.FeaturesAsWritten.push_back(ReadString(Record, Idx));
-        }
-        for (unsigned N = Record[Idx++]; N; --N) {
-          TargetOpts.Features.push_back(ReadString(Record, Idx));
-        }
+      bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
+      if (Listener && &F == *ModuleMgr.begin() &&
+          ParseTargetOptions(Record, Complain, *Listener) &&
+          !DisableValidation)
+        return ConfigurationMismatch;
+      break;
+    }
 
-        bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
-        if (Listener->ReadTargetOptions(F, TargetOpts, Complain) &&
-            !DisableValidation)
-          return ConfigurationMismatch;
-      }
+    case DIAGNOSTIC_OPTIONS: {
+      bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
+      if (Listener && &F == *ModuleMgr.begin() &&
+          ParseDiagnosticOptions(Record, Complain, *Listener) &&
+          !DisableValidation)
+        return ConfigurationMismatch;
+      break;
+    }
+
+    case FILE_SYSTEM_OPTIONS: {
+      bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
+      if (Listener && &F == *ModuleMgr.begin() &&
+          ParseFileSystemOptions(Record, Complain, *Listener) &&
+          !DisableValidation)
+        return ConfigurationMismatch;
+      break;
+    }
+
+    case HEADER_SEARCH_OPTIONS: {
+      bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
+      if (Listener && &F == *ModuleMgr.begin() &&
+          ParseHeaderSearchOptions(Record, Complain, *Listener) &&
+          !DisableValidation)
+        return ConfigurationMismatch;
+      break;
+    }
+
+    case PREPROCESSOR_OPTIONS: {
+      bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
+      if (Listener && &F == *ModuleMgr.begin() &&
+          ParsePreprocessorOptions(Record, Complain, *Listener,
+                                   SuggestedPredefines) &&
+          !DisableValidation)
+        return ConfigurationMismatch;
       break;
     }
 
@@ -2955,15 +2830,6 @@ ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
     }
   }
 
-  // Check the predefines buffers.
-  bool ConfigComplain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
-  if (!DisableValidation && Type == MK_PCH &&
-      // FIXME: CheckPredefinesBuffers also sets the SuggestedPredefines;
-      // if DisableValidation is true, defines that were set on command-line
-      // but not in the PCH file will not be added to SuggestedPredefines.
-      CheckPredefinesBuffers(ConfigComplain))
-    return ConfigurationMismatch;
-
   // Mark all of the identifiers in the identifier table as being out of date,
   // so that various accessors know to check the loaded modules when the
   // identifier is used.
@@ -3339,6 +3205,171 @@ std::string ASTReader::getOriginalSourceFile(const std::string &ASTFileName,
   return std::string();
 }
 
+namespace {
+  class SimplePCHValidator : public ASTReaderListener {
+    const LangOptions &ExistingLangOpts;
+    const TargetOptions &ExistingTargetOpts;
+    const PreprocessorOptions &ExistingPPOpts;
+    FileManager &FileMgr;
+    
+  public:
+    SimplePCHValidator(const LangOptions &ExistingLangOpts,
+                       const TargetOptions &ExistingTargetOpts,
+                       const PreprocessorOptions &ExistingPPOpts,
+                       FileManager &FileMgr)
+      : ExistingLangOpts(ExistingLangOpts),
+        ExistingTargetOpts(ExistingTargetOpts),
+        ExistingPPOpts(ExistingPPOpts),
+        FileMgr(FileMgr)
+    {
+    }
+
+    virtual bool ReadLanguageOptions(const LangOptions &LangOpts,
+                                     bool Complain) {
+      return checkLanguageOptions(ExistingLangOpts, LangOpts, 0);
+    }
+    virtual bool ReadTargetOptions(const TargetOptions &TargetOpts,
+                                   bool Complain) {
+      return checkTargetOptions(ExistingTargetOpts, TargetOpts, 0);
+    }
+    virtual bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
+                                         bool Complain,
+                                         std::string &SuggestedPredefines) {
+      return checkPreprocessorOptions(ExistingPPOpts, PPOpts, 0, FileMgr,
+                                      SuggestedPredefines);
+    }
+  };
+}
+
+bool ASTReader::isAcceptableASTFile(StringRef Filename,
+                                    FileManager &FileMgr,
+                                    const LangOptions &LangOpts,
+                                    const TargetOptions &TargetOpts,
+                                    const PreprocessorOptions &PPOpts) {
+  // Open the AST file.
+  std::string ErrStr;
+  OwningPtr<llvm::MemoryBuffer> Buffer;
+  Buffer.reset(FileMgr.getBufferForFile(Filename, &ErrStr));
+  if (!Buffer) {
+    return false;
+  }
+
+  // Initialize the stream
+  llvm::BitstreamReader StreamFile;
+  llvm::BitstreamCursor Stream;
+  StreamFile.init((const unsigned char *)Buffer->getBufferStart(),
+                  (const unsigned char *)Buffer->getBufferEnd());
+  Stream.init(StreamFile);
+
+  // Sniff for the signature.
+  if (Stream.Read(8) != 'C' ||
+      Stream.Read(8) != 'P' ||
+      Stream.Read(8) != 'C' ||
+      Stream.Read(8) != 'H') {
+    return false;
+  }
+
+  SimplePCHValidator Validator(LangOpts, TargetOpts, PPOpts, FileMgr);
+  RecordData Record;
+  bool InControlBlock = false;
+  while (!Stream.AtEndOfStream()) {
+    unsigned Code = Stream.ReadCode();
+
+    if (Code == llvm::bitc::ENTER_SUBBLOCK) {
+      unsigned BlockID = Stream.ReadSubBlockID();
+
+      // We only know the control subblock ID.
+      switch (BlockID) {
+      case CONTROL_BLOCK_ID:
+        if (Stream.EnterSubBlock(CONTROL_BLOCK_ID)) {
+          return false;
+        } else {
+          InControlBlock = true;
+        }
+        break;
+
+      default:
+        if (Stream.SkipBlock())
+          return false;
+        break;
+      }
+      continue;
+    }
+
+    if (Code == llvm::bitc::END_BLOCK) {
+      if (Stream.ReadBlockEnd()) {
+        return false;
+      }
+      InControlBlock = false;
+      continue;
+    }
+
+    if (Code == llvm::bitc::DEFINE_ABBREV) {
+      Stream.ReadAbbrevRecord();
+      continue;
+    }
+
+    Record.clear();
+    const char *BlobStart = 0;
+    unsigned BlobLen = 0;
+    unsigned RecCode = Stream.ReadRecord(Code, Record, &BlobStart, &BlobLen);
+    if (InControlBlock) {
+      switch ((ControlRecordTypes)RecCode) {
+      case METADATA: {
+        if (Record[0] != VERSION_MAJOR) {
+          return false;
+        }
+
+        const std::string &CurBranch = getClangFullRepositoryVersion();
+        StringRef ASTBranch(BlobStart, BlobLen);
+        if (StringRef(CurBranch) != ASTBranch)
+          return false;
+
+        break;
+      }
+      case LANGUAGE_OPTIONS:
+        if (ParseLanguageOptions(Record, false, Validator))
+          return false;
+        break;
+
+      case TARGET_OPTIONS:
+        if (ParseTargetOptions(Record, false, Validator))
+          return false;
+        break;
+
+      case DIAGNOSTIC_OPTIONS:
+        if (ParseDiagnosticOptions(Record, false, Validator))
+          return false;
+        break;
+
+      case FILE_SYSTEM_OPTIONS:
+        if (ParseFileSystemOptions(Record, false, Validator))
+          return false;
+        break;
+
+      case HEADER_SEARCH_OPTIONS:
+        if (ParseHeaderSearchOptions(Record, false, Validator))
+          return false;
+        break;
+
+      case PREPROCESSOR_OPTIONS: {
+        std::string IgnoredSuggestedPredefines;
+        if (ParsePreprocessorOptions(Record, false, Validator,
+                                     IgnoredSuggestedPredefines))
+          return false;
+        break;
+      }
+
+      default:
+        // No other validation to perform.
+        break;
+      }
+    }
+  }
+  
+  return true;
+}
+
 bool ASTReader::ReadSubmoduleBlock(ModuleFile &F) {
   // Enter the submodule block.
   if (F.Stream.EnterSubBlock(SUBMODULE_BLOCK_ID)) {
@@ -3628,29 +3659,144 @@ bool ASTReader::ReadSubmoduleBlock(ModuleFile &F) {
 /// them to the AST listener if one is set.
 ///
 /// \returns true if the listener deems the file unacceptable, false otherwise.
-bool ASTReader::ParseLanguageOptions(const ModuleFile &M,
-                                     const RecordData &Record,
-                                     bool Complain) {
-  if (Listener) {
-    LangOptions LangOpts;
-    unsigned Idx = 0;
+bool ASTReader::ParseLanguageOptions(const RecordData &Record,
+                                     bool Complain,
+                                     ASTReaderListener &Listener) {
+  LangOptions LangOpts;
+  unsigned Idx = 0;
 #define LANGOPT(Name, Bits, Default, Description) \
   LangOpts.Name = Record[Idx++];
 #define ENUM_LANGOPT(Name, Type, Bits, Default, Description) \
   LangOpts.set##Name(static_cast<LangOptions::Type>(Record[Idx++]));
 #include "clang/Basic/LangOptions.def"
 
-    ObjCRuntime::Kind runtimeKind = (ObjCRuntime::Kind) Record[Idx++];
-    VersionTuple runtimeVersion = ReadVersionTuple(Record, Idx);
-    LangOpts.ObjCRuntime = ObjCRuntime(runtimeKind, runtimeVersion);
-    
-    unsigned Length = Record[Idx++];
-    LangOpts.CurrentModule.assign(Record.begin() + Idx, 
-                                  Record.begin() + Idx + Length);
-    return Listener->ReadLanguageOptions(M, LangOpts, Complain);
+  ObjCRuntime::Kind runtimeKind = (ObjCRuntime::Kind) Record[Idx++];
+  VersionTuple runtimeVersion = ReadVersionTuple(Record, Idx);
+  LangOpts.ObjCRuntime = ObjCRuntime(runtimeKind, runtimeVersion);
+  
+  unsigned Length = Record[Idx++];
+  LangOpts.CurrentModule.assign(Record.begin() + Idx, 
+                                Record.begin() + Idx + Length);
+  return Listener.ReadLanguageOptions(LangOpts, Complain);
+}
+
+bool ASTReader::ParseTargetOptions(const RecordData &Record,
+                                   bool Complain,
+                                   ASTReaderListener &Listener) {
+  unsigned Idx = 0;
+  TargetOptions TargetOpts;
+  TargetOpts.Triple = ReadString(Record, Idx);
+  TargetOpts.CPU = ReadString(Record, Idx);
+  TargetOpts.ABI = ReadString(Record, Idx);
+  TargetOpts.CXXABI = ReadString(Record, Idx);
+  TargetOpts.LinkerVersion = ReadString(Record, Idx);
+  for (unsigned N = Record[Idx++]; N; --N) {
+    TargetOpts.FeaturesAsWritten.push_back(ReadString(Record, Idx));
+  }
+  for (unsigned N = Record[Idx++]; N; --N) {
+    TargetOpts.Features.push_back(ReadString(Record, Idx));
   }
 
-  return false;
+  return Listener.ReadTargetOptions(TargetOpts, Complain);
+}
+
+bool ASTReader::ParseDiagnosticOptions(const RecordData &Record, bool Complain,
+                                       ASTReaderListener &Listener) {
+  DiagnosticOptions DiagOpts;
+  unsigned Idx = 0;
+#define DIAGOPT(Name, Bits, Default) DiagOpts.Name = Record[Idx++];
+#define ENUM_DIAGOPT(Name, Type, Bits, Default) \
+  DiagOpts.set##Name(static_cast<Type>(Record[Idx++]));
+#include "clang/Basic/DiagnosticOptions.def"
+
+  for (unsigned N = Record[Idx++]; N; --N) {
+    DiagOpts.Warnings.push_back(ReadString(Record, Idx));
+  }
+
+  return Listener.ReadDiagnosticOptions(DiagOpts, Complain);
+}
+
+bool ASTReader::ParseFileSystemOptions(const RecordData &Record, bool Complain,
+                                       ASTReaderListener &Listener) {
+  FileSystemOptions FSOpts;
+  unsigned Idx = 0;
+  FSOpts.WorkingDir = ReadString(Record, Idx);
+  return Listener.ReadFileSystemOptions(FSOpts, Complain);
+}
+
+bool ASTReader::ParseHeaderSearchOptions(const RecordData &Record,
+                                         bool Complain,
+                                         ASTReaderListener &Listener) {
+  HeaderSearchOptions HSOpts;
+  unsigned Idx = 0;
+  HSOpts.Sysroot = ReadString(Record, Idx);
+
+  // Include entries.
+  for (unsigned N = Record[Idx++]; N; --N) {
+    std::string Path = ReadString(Record, Idx);
+    frontend::IncludeDirGroup Group
+      = static_cast<frontend::IncludeDirGroup>(Record[Idx++]);
+    bool IsUserSupplied = Record[Idx++];
+    bool IsFramework = Record[Idx++];
+    bool IgnoreSysRoot = Record[Idx++];
+    bool IsInternal = Record[Idx++];
+    bool ImplicitExternC = Record[Idx++];
+    HSOpts.UserEntries.push_back(
+      HeaderSearchOptions::Entry(Path, Group, IsUserSupplied, IsFramework,
+                                 IgnoreSysRoot, IsInternal, ImplicitExternC));
+  }
+
+  // System header prefixes.
+  for (unsigned N = Record[Idx++]; N; --N) {
+    std::string Prefix = ReadString(Record, Idx);
+    bool IsSystemHeader = Record[Idx++];
+    HSOpts.SystemHeaderPrefixes.push_back(
+      HeaderSearchOptions::SystemHeaderPrefix(Prefix, IsSystemHeader));
+  }
+
+  HSOpts.ResourceDir = ReadString(Record, Idx);
+  HSOpts.ModuleCachePath = ReadString(Record, Idx);
+  HSOpts.DisableModuleHash = Record[Idx++];
+  HSOpts.UseBuiltinIncludes = Record[Idx++];
+  HSOpts.UseStandardSystemIncludes = Record[Idx++];
+  HSOpts.UseStandardCXXIncludes = Record[Idx++];
+  HSOpts.UseLibcxx = Record[Idx++];
+
+  return Listener.ReadHeaderSearchOptions(HSOpts, Complain);
+}
+
+bool ASTReader::ParsePreprocessorOptions(const RecordData &Record,
+                                         bool Complain,
+                                         ASTReaderListener &Listener,
+                                         std::string &SuggestedPredefines) {
+  PreprocessorOptions PPOpts;
+  unsigned Idx = 0;
+
+  // Macro definitions/undefs
+  for (unsigned N = Record[Idx++]; N; --N) {
+    std::string Macro = ReadString(Record, Idx);
+    bool IsUndef = Record[Idx++];
+    PPOpts.Macros.push_back(std::make_pair(Macro, IsUndef));
+  }
+
+  // Includes
+  for (unsigned N = Record[Idx++]; N; --N) {
+    PPOpts.Includes.push_back(ReadString(Record, Idx));
+  }
+
+  // Macro Includes
+  for (unsigned N = Record[Idx++]; N; --N) {
+    PPOpts.MacroIncludes.push_back(ReadString(Record, Idx));
+  }
+
+  PPOpts.UsePredefines = Record[Idx++];
+  PPOpts.ImplicitPCHInclude = ReadString(Record, Idx);
+  PPOpts.ImplicitPTHInclude = ReadString(Record, Idx);
+  PPOpts.ObjCXXARCStandardLibrary =
+    static_cast<ObjCXXARCStandardLibraryKind>(Record[Idx++]);
+  SuggestedPredefines.clear();
+  return Listener.ReadPreprocessorOptions(PPOpts, Complain,
+                                          SuggestedPredefines);
 }
 
 std::pair<ModuleFile *, unsigned>

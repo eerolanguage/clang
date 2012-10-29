@@ -156,8 +156,7 @@ static void setThunkVisibility(CodeGenModule &CGM, const CXXMethodDecl *MD,
 
   case TSK_ExplicitSpecialization:
   case TSK_ImplicitInstantiation:
-    if (!CGM.getCodeGenOpts().HiddenWeakTemplateVTables)
-      return;
+    return;
     break;
   }
 
@@ -334,7 +333,10 @@ void CodeGenFunction::GenerateThunk(llvm::Function *Fn,
     
     FunctionArgs.push_back(Param);
   }
-  
+
+  // Initialize debug info if needed.
+  maybeInitializeDebugInfo();
+
   StartFunction(GlobalDecl(), ResultType, Fn, FnInfo, FunctionArgs,
                 SourceLocation());
 
