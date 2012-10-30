@@ -874,11 +874,8 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
         ((!InMessageExpression && !Tok.isAtStartOfLine()) ||
          (ParenCount > 0 || BracketCount > 0))) {
       isPotentialEeroSend = true;
-      // handle common selector names that are also keywords
-      if (Tok.is(tok::kw_new) ||
-          Tok.is(tok::kw_class) ||
-          Tok.is(tok::kw_selector) ||
-          Tok.is(tok::kw_protocol)) {
+      // handle selector names that are also keywords
+      if (Tok.getIdentifierInfo()) {
         Tok.setKind(tok::identifier);
       }
     }
@@ -2103,7 +2100,7 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
   // identifier or a colon, then this is probably a message send.
   if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
       Tok.is(tok::identifier) &&
-      (NextToken().is(tok::identifier) || NextToken().is(tok::colon))) {
+      (NextToken().getIdentifierInfo() || NextToken().is(tok::colon))) {
     ExprType = SimpleExpr;
     isTypeCast = false;
   }
