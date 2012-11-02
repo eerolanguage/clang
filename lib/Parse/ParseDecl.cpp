@@ -1452,7 +1452,8 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   }
 
   // Eero "nested functions" (const blocks, really)
-  if (getLangOpts().Eero && !AllowFunctionDefinitions && 
+  if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+      !AllowFunctionDefinitions &&
        D.isFunctionDeclarator() && isStartOfFunctionDefinition(D)) {
 
     // Parse and convert the function to a block
@@ -2204,11 +2205,10 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 
     SourceLocation Loc = Tok.getLocation();
 
-    if (getLangOpts().OptionalSemicolons &&
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
         Tok.isNot(tok::semi) &&
         !firstPass && 
-        Tok.isAtStartOfLine() && 
-        !PP.isInLegacyHeader()) {
+        Tok.isAtStartOfLine()) {
       InsertTokenAndIgnoreNewline(tok::semi); // not great, but most reliable way to do this
     }
 
@@ -4490,8 +4490,7 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
   if (D.hasName() && !D.getNumTypeObjects())
     MaybeParseCXX0XAttributes(D);
 
-  while (!getLangOpts().OptionalSemicolons || 
-         PP.isInLegacyHeader() ||    
+  while (!getLangOpts().OptionalSemicolons || PP.isInLegacyHeader() ||
          !Tok.isAtStartOfLine()) { 
     if (Tok.is(tok::l_paren)) {
       // Enter function-declaration scope, limiting any declarators to the

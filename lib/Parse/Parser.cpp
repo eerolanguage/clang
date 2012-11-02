@@ -176,8 +176,8 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
     return false;
   }
 
-  if (getLangOpts().OptionalSemicolons && 
-      (ExpectedTok == tok::semi) && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && 
+      (ExpectedTok == tok::semi)) {
     if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
       return false;
     } else {
@@ -314,8 +314,9 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, bool StopAtSemi,
       if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
           Tok.isNot(tok::eof) &&
           (StopAtSemi || Toks[i] == tok::semi)) {
-        if (getLangOpts().OffSideRule) { // skip to next statement in cur block
-          if (Tok.isAtStartOfLine() && 
+        if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+          // Skip to next statement in cur block
+          if (Tok.isAtStartOfLine() &&
               (indentationPositions.empty() ||
                Column(Tok.getLocation()) <= indentationPositions.back())) {
             return false;

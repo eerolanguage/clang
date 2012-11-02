@@ -4596,10 +4596,11 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
   QualType T = NewVD->getType();
 
   if (T->isObjCObjectType()) {
-   if (!getLangOpts().Eero) { // eero objects are always pointers
+   if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
     Diag(NewVD->getLocation(), diag::err_statically_allocated_object)
       << FixItHint::CreateInsertion(NewVD->getLocation(), "*");
    } else {
+    // Eero objects are always pointers.
     // If const qualifier is present, remove it from the pointed-to data,
     // and add it to the variable itself. This is to make something like
     //      const String string = 'abc'
@@ -4611,7 +4612,8 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
     }      
    }
     T = Context.getObjCObjectPointerType(T);
-    if (getLangOpts().Eero && NewVD->getType().isLocalConstQualified()) {
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+        NewVD->getType().isLocalConstQualified()) {
       T.addConst();
     }
     NewVD->setType(T);
@@ -5286,12 +5288,13 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
   // Do not allow returning a objc interface by-value.
   if (R->getAs<FunctionType>()->getResultType()->isObjCObjectType()) {
-   if (!getLangOpts().Eero) { // eero objects are always pointers
+   if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
     Diag(D.getIdentifierLoc(),
          diag::err_object_cannot_be_passed_returned_by_value) << 0
     << R->getAs<FunctionType>()->getResultType()
     << FixItHint::CreateInsertion(D.getIdentifierLoc(), "*");
    }
+    // Eero objects are always pointers
     QualType T = R->getAs<FunctionType>()->getResultType();
     T = Context.getObjCObjectPointerType(T);
     if (const FunctionProtoType *FPT = dyn_cast<FunctionProtoType>(R)) {
@@ -7672,12 +7675,13 @@ ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
   // Parameter declarators cannot be interface types. All ObjC objects are
   // passed by reference.
   if (T->isObjCObjectType()) {
-   if (!getLangOpts().Eero) { // eero objects are always pointers
+   if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
     SourceLocation TypeEndLoc = TSInfo->getTypeLoc().getLocEnd();
     Diag(NameLoc,
          diag::err_object_cannot_be_passed_returned_by_value) << 1 << T
       << FixItHint::CreateInsertion(TypeEndLoc, "*");
    }
+    // Eero objects are always pointers
     T = Context.getObjCObjectPointerType(T);
     New->setType(T);
   }
@@ -10269,10 +10273,11 @@ void Sema::ActOnFields(Scope* S,
         Record->setHasObjectMember(true);
     } else if (FDTy->isObjCObjectType()) {
       /// A field cannot be an Objective-c object
-     if (!getLangOpts().Eero) { // eero objects are always pointers
+     if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
       Diag(FD->getLocation(), diag::err_statically_allocated_object)
         << FixItHint::CreateInsertion(FD->getLocation(), "*");
      }
+      // Eero objects are always pointers
       QualType T = Context.getObjCObjectPointerType(FD->getType());
       FD->setType(T);
     } else if (!getLangOpts().CPlusPlus) {

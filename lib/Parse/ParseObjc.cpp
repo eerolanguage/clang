@@ -468,7 +468,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       return cutOffParsing();
     }
     
-    if (getLangOpts().Eero) { // objc keywords without "@"s
+    if (getLangOpts().Eero && !PP.isInLegacyHeader()) { // objc keywords without "@"s
       switch (Tok.getKind()) {
         case tok::kw_optional:
         case tok::kw_required:
@@ -2209,13 +2209,13 @@ StmtResult Parser::ParseObjCThrowStmt(SourceLocation atLoc) {
 StmtResult
 Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
   ConsumeToken(); // consume synchronized
-  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
     Diag(Tok, diag::err_expected_lparen_after) << "@synchronized";
     return StmtError();
   }
 
   // The operand is surrounded with parentheses.
-  if (!getLangOpts().Eero) {
+  if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
     ConsumeParen();  // '('
   } else if (Tok.isAtStartOfLine()) {
     Diag(PrevTokLocation, diag::err_expected) <<
@@ -2226,7 +2226,7 @@ Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
 
   if (Tok.is(tok::r_paren)) {
     ConsumeParen();  // ')'
-  } else if (!getLangOpts().Eero) {
+  } else if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
     if (!operand.isInvalid())
       Diag(Tok, diag::err_expected_rparen);
 
@@ -2290,7 +2290,10 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
   if (TryBody.isInvalid())
     TryBody = Actions.ActOnNullStmt(Tok.getLocation());
 
-  while (Tok.is(tok::at) || Tok.is(tok::kw_catch) || Tok.is(tok::kw_finally)) {
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
+  while (Tok.is(tok::at) ||
+         (isEero && (Tok.is(tok::kw_catch) || Tok.is(tok::kw_finally)))) {
     // At this point, we need to lookahead to determine if this @ is the start
     // of an @catch or @finally.  We don't want to consume the @ token if this
     // is an @try or @encode or something else.
@@ -2305,7 +2308,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
       ConsumeToken(); // consume catch
       // Just inject an optional paren, since it would be very messy otherwise
       bool l_paren_inserted = false;
-      if (getLangOpts().Eero && Tok.isNot(tok::l_paren)) {
+      if (isEero && Tok.isNot(tok::l_paren)) {
         InsertToken(tok::l_paren); 
         l_paren_inserted = true;
       }
@@ -2326,7 +2329,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
 
         SourceLocation RParenLoc;
         // Inject a right paren if the left was
-        if (getLangOpts().Eero && l_paren_inserted)
+        if (isEero && l_paren_inserted)
           InsertTokenAndIgnoreNewline(tok::r_paren);
 
         if (Tok.is(tok::r_paren))
@@ -3359,7 +3362,7 @@ Parser::ParseObjCEncodeExpression(SourceLocation AtLoc) {
 ///       \@protocol ( protocol-name )
 ExprResult
 Parser::ParseObjCProtocolExpression(SourceLocation AtLoc) {
-  const bool isNotLiteral = !getLangOpts().Eero || Tok.isNot(tok::less);
+  const bool isNotLiteral = !getLangOpts().Eero || PP.isInLegacyHeader() || Tok.isNot(tok::less);
   SourceLocation ProtoLoc = isNotLiteral ?  ConsumeToken() : Tok.getLocation();
 
   if (Tok.isNot(tok::l_paren) && isNotLiteral)
@@ -3386,7 +3389,7 @@ Parser::ParseObjCProtocolExpression(SourceLocation AtLoc) {
 ///     objc-selector-expression
 ///       @selector '(' objc-keyword-selector ')'
 ExprResult Parser::ParseObjCSelectorExpression(SourceLocation AtLoc) {
-  const bool isNotLiteral = !getLangOpts().Eero || Tok.isNot(tok::pipe);
+  const bool isNotLiteral = !getLangOpts().Eero || PP.isInLegacyHeader() || Tok.isNot(tok::pipe);
   SourceLocation SelectorLoc = isNotLiteral ? ConsumeToken() : Tok.getLocation();
 
   if (Tok.isNot(tok::l_paren) && isNotLiteral)

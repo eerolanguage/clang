@@ -223,7 +223,7 @@ Retry:
     if (isEero)
       return ParseObjCThrowStmt(Tok.getLocation());
     else
-      ParseExprStatement();
+      return ParseExprStatement();
 
   case tok::kw_case:                // C99 6.8.1: labeled-statement
     return ParseCaseStatement();
@@ -778,7 +778,8 @@ StmtResult Parser::ParseCompoundStatement(bool isStmtExpr) {
 StmtResult Parser::ParseCompoundStatement(bool isStmtExpr,
                                           unsigned ScopeFlags) {
 
-  assert((Tok.is(tok::l_brace) || getLangOpts().OffSideRule) && 
+  assert((Tok.is(tok::l_brace) ||
+          (getLangOpts().OffSideRule && !PP.isInLegacyHeader())) &&
          "Not a compount stmt!");
 
   // Enter a scope to hold everything within the compound stmt.  Compound
@@ -1053,7 +1054,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
   assert(Tok.is(tok::kw_if) && "Not an if stmt!");
   SourceLocation IfLoc = ConsumeToken();  // eat the 'if'.
 
-  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
     Diag(Tok, diag::err_expected_lparen_after) << "if";
     SkipUntil(tok::semi);
     return StmtError();
@@ -1304,7 +1305,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc) {
   SourceLocation WhileLoc = Tok.getLocation();
   ConsumeToken();  // eat the 'while'.
 
-  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
     Diag(Tok, diag::err_expected_lparen_after) << "while";
     SkipUntil(tok::semi);
     return StmtError();
@@ -1421,7 +1422,7 @@ StmtResult Parser::ParseDoStatement() {
   }
   SourceLocation WhileLoc = ConsumeToken();
 
-  if (Tok.isNot(tok::l_paren) && !getLangOpts().Eero) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
     Diag(Tok, diag::err_expected_lparen_after) << "do/while";
     SkipUntil(tok::semi, false, true);
     return StmtError();
@@ -2199,7 +2200,8 @@ bool Parser::ParseAsmOperandsOpt(SmallVectorImpl<IdentifierInfo *> &Names,
 }
 
 Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
-  assert(Tok.is(tok::l_brace) || getLangOpts().OffSideRule);
+  assert(Tok.is(tok::l_brace) ||
+         (getLangOpts().OffSideRule && !PP.isInLegacyHeader()));
   SourceLocation LBraceLoc = Tok.getLocation();
 
   if (SkipFunctionBodies && trySkippingFunctionBody()) {

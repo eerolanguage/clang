@@ -1811,8 +1811,7 @@ void Lexer::LexCharConstant(Token &Result, const char *CurPtr,
   char C = getAndAdvanceChar(CurPtr, Result);
   if (C == '\'' && 
       (!getLangOpts().Eero || // Eero needs to allow empty '', since an objc string
-       !PP || 
-       PP->getSourceManager().isInSystemHeader(getSourceLocation(CurPtr)))) {
+       Legacy != LS_False)) { // if either "true" or "unknown"
     if (!isLexingRawMode() && !getLangOpts().AsmPreprocessor)
       Diag(BufferPtr, diag::ext_empty_character);
     FormTokenWithChars(Result, CurPtr, tok::unknown);
@@ -2894,7 +2893,8 @@ LexNextToken:
       Kind = tok::ellipsis;
       CurPtr = ConsumeChar(ConsumeChar(CurPtr, SizeTmp, Result),
                            SizeTmp2, Result);
-    } else if (getLangOpts().Eero && Char == '.') { // Eero accepts ".." too
+    } else if (getLangOpts().Eero && Legacy == LS_False &&
+               Char == '.') { // Eero accepts ".." too
       Kind = tok::ellipsis;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
     } else {
@@ -3173,7 +3173,8 @@ LexNextToken:
     } else if (LangOpts.CPlusPlus && Char == ':') {
       Kind = tok::coloncolon;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
-    } else if (getLangOpts().Eero && Char == '=') { // ':=' used for these
+    } else if (getLangOpts().Eero && Legacy == LS_False &&
+               Char == '=') { // ':=' used for these
       Kind = tok::colonequal;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
     } else {
