@@ -20,6 +20,7 @@
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PTHManager.h"
+#include "clang/Lex/Pragma.h"
 #include "clang/Frontend/ChainedDiagnosticConsumer.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -628,6 +629,42 @@ bool CompilerInstance::InitializeSourceManager(StringRef InputFile,
   return true;
 }
 
+// Eero C++ pragma
+//
+class EeroPragmaHandler : public PragmaHandler {
+  public:
+    EeroPragmaHandler(FrontendAction& action)
+        : PragmaHandler("eero"), Action(action) {}
+  protected:
+    virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
+                              Token &UnusedToken) {
+      CompilerInstance &CI = Action.getCompilerInstance();
+      if (CI.getLangOpts().Eero && !CI.getLangOpts().CPlusPlus) {
+        // Lex the 'C++' or 'C' (default) language choice.
+        Token Tok;
+        PP.LexUnexpandedToken(Tok);
+        if (Tok.is(tok::string_literal) || Tok.is(tok::char_constant)) {
+          const StringRef lang(PP.getSpelling(Tok));
+          if (lang == "\"C++\"" || lang == "'C++'") {
+            // Enable C++ support, drop out of source file, then try again
+            CI.getLangOpts().CPlusPlus = true;
+            CI.getLangOpts().WChar = true;
+            CI.getLangOpts().Bool = true;
+            // TODO: is there a better way to achieve this?
+            Token EOFToken;
+            EOFToken.setKind(tok::eof);
+            PP.EnterToken(EOFToken);
+            // Re-queue the file, now that the options have been modified
+            // to enable C++
+            CI.getFrontendOpts().Inputs.push_back(Action.getCurrentInput());
+          }
+        }
+      }
+    }
+  private:
+    FrontendAction &Action;
+};
+
 // High-Level Operations
 
 bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
@@ -666,12 +703,20 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
   if (getFrontendOpts().ShowStats)
     llvm::EnableStatistics();
 
-  for (unsigned i = 0, e = getFrontendOpts().Inputs.size(); i != e; ++i) {
+  // For eero, modify this loop to handle on-the-fly changes to the source
+  // file list (Inputs). TODO: find a better way.
+  //
+  for (unsigned i = 0; i != getFrontendOpts().Inputs.size(); ++i) {
     // Reset the ID tables if we are reusing the SourceManager.
     if (hasSourceManager())
       getSourceManager().clearIDTables();
 
     if (Act.BeginSourceFile(*this, getFrontendOpts().Inputs[i])) {
+
+      if (getLangOpts().Eero && !getLangOpts().CPlusPlus) {
+        getPreprocessor().AddPragmaHandler(new EeroPragmaHandler(Act));
+      }
+
       Act.Execute();
       Act.EndSourceFile();
     }
