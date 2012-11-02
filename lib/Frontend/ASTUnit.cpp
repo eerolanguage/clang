@@ -632,10 +632,6 @@ void StoredDiagnosticConsumer::HandleDiagnostic(DiagnosticsEngine::Level Level,
   StoredDiags.push_back(StoredDiagnostic(Level, Info));
 }
 
-const std::string &ASTUnit::getOriginalSourceFileName() {
-  return OriginalSourceFile;
-}
-
 ASTDeserializationListener *ASTUnit::getDeserializationListener() {
   if (WriterData)
     return &WriterData->Writer;
@@ -783,7 +779,6 @@ ASTUnit *ASTUnit::LoadFromASTFile(const std::string &Filename,
   Reader.reset(new ASTReader(PP, Context,
                              /*isysroot=*/"",
                              /*DisableValidation=*/disableValid,
-                             /*DisableStatCache=*/false,
                              AllowPCHWithCompilerErrors));
   
   // Recover resources if we crash before exiting this method.
@@ -2027,7 +2022,6 @@ bool ASTUnit::Reparse(RemappedFile *RemappedFiles, unsigned NumRemappedFiles) {
 
   // Remap files.
   PreprocessorOptions &PPOpts = Invocation->getPreprocessorOpts();
-  PPOpts.DisableStatCache = true;
   for (PreprocessorOptions::remapped_file_buffer_iterator 
          R = PPOpts.remapped_file_buffer_begin(),
          REnd = PPOpts.remapped_file_buffer_end();
@@ -2420,8 +2414,6 @@ void ASTUnit::CodeComplete(StringRef File, unsigned Line, unsigned Column,
     = new AugmentedCodeCompleteConsumer(*this, Consumer, CodeCompleteOpts);
   Clang->setCodeCompletionConsumer(AugmentedConsumer);
 
-  Clang->getFrontendOpts().SkipFunctionBodies = true;
-
   // If we have a precompiled preamble, try to use it. We only allow
   // the use of the precompiled preamble if we're if the completion
   // point is within the main file, after the end of the precompiled
@@ -2442,7 +2434,6 @@ void ASTUnit::CodeComplete(StringRef File, unsigned Line, unsigned Column,
 
   // If the main file has been overridden due to the use of a preamble,
   // make that override happen and introduce the preamble.
-  PreprocessorOpts.DisableStatCache = true;
   StoredDiagnostics.insert(StoredDiagnostics.end(),
                            stored_diag_begin(),
                            stored_diag_afterDriver_begin());
@@ -2515,7 +2506,7 @@ static bool serializeUnit(ASTWriter &Writer,
                           Sema &S,
                           bool hasErrors,
                           raw_ostream &OS) {
-  Writer.WriteAST(S, 0, std::string(), 0, "", hasErrors);
+  Writer.WriteAST(S, std::string(), 0, "", hasErrors);
 
   // Write the generated bitstream to "Out".
   if (!Buffer.empty())

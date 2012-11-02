@@ -803,7 +803,6 @@ void ASTWriter::WriteBlockInfoBlock() {
   RECORD(PP_COUNTER_VALUE);
   RECORD(SOURCE_LOCATION_OFFSETS);
   RECORD(SOURCE_LOCATION_PRELOADS);
-  RECORD(STAT_CACHE);
   RECORD(EXT_VECTOR_DECLS);
   RECORD(PPD_ENTITIES_OFFSETS);
   RECORD(REFERENCED_SELECTOR_POOL);
@@ -1327,46 +1326,6 @@ public:
   }
 };
 } // end anonymous namespace
-
-/// \brief Write the stat() system call cache to the AST file.
-void ASTWriter::WriteStatCache(MemorizeStatCalls &StatCalls) {
-  // Build the on-disk hash table containing information about every
-  // stat() call.
-  OnDiskChainedHashTableGenerator<ASTStatCacheTrait> Generator;
-  unsigned NumStatEntries = 0;
-  for (MemorizeStatCalls::iterator Stat = StatCalls.begin(),
-                                StatEnd = StatCalls.end();
-       Stat != StatEnd; ++Stat, ++NumStatEntries) {
-    StringRef Filename = Stat->first();
-    Generator.insert(Filename.data(), Stat->second);
-  }
-
-  // Create the on-disk hash table in a buffer.
-  SmallString<4096> StatCacheData;
-  uint32_t BucketOffset;
-  {
-    llvm::raw_svector_ostream Out(StatCacheData);
-    // Make sure that no bucket is at offset 0
-    clang::io::Emit32(Out, 0);
-    BucketOffset = Generator.Emit(Out);
-  }
-
-  // Create a blob abbreviation
-  using namespace llvm;
-  BitCodeAbbrev *Abbrev = new BitCodeAbbrev();
-  Abbrev->Add(BitCodeAbbrevOp(STAT_CACHE));
-  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
-  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
-  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));
-  unsigned StatCacheAbbrev = Stream.EmitAbbrev(Abbrev);
-
-  // Write the stat cache
-  RecordData Record;
-  Record.push_back(STAT_CACHE);
-  Record.push_back(BucketOffset);
-  Record.push_back(NumStatEntries);
-  Stream.EmitRecordWithBlob(StatCacheAbbrev, Record, StatCacheData.str());
-}
 
 //===----------------------------------------------------------------------===//
 // Source Manager Serialization
@@ -2272,24 +2231,35 @@ ASTWriter::inferSubmoduleIDFromLocation(SourceLocation Loc) {
 }
 
 void ASTWriter::WritePragmaDiagnosticMappings(const DiagnosticsEngine &Diag) {
+  // FIXME: Make it work properly with modules.
+  llvm::SmallDenseMap<const DiagnosticsEngine::DiagState *, unsigned, 64>
+      DiagStateIDMap;
+  unsigned CurrID = 0;
+  DiagStateIDMap[&Diag.DiagStates.front()] = ++CurrID; // the command-line one.
   RecordData Record;
   for (DiagnosticsEngine::DiagStatePointsTy::const_iterator
          I = Diag.DiagStatePoints.begin(), E = Diag.DiagStatePoints.end();
          I != E; ++I) {
-    const DiagnosticsEngine::DiagStatePoint &point = *I; 
+    const DiagnosticsEngine::DiagStatePoint &point = *I;
     if (point.Loc.isInvalid())
       continue;
 
     Record.push_back(point.Loc.getRawEncoding());
-    for (DiagnosticsEngine::DiagState::const_iterator
-           I = point.State->begin(), E = point.State->end(); I != E; ++I) {
-      if (I->second.isPragma()) {
-        Record.push_back(I->first);
-        Record.push_back(I->second.getMapping());
+    unsigned &DiagStateID = DiagStateIDMap[point.State];
+    Record.push_back(DiagStateID);
+    
+    if (DiagStateID == 0) {
+      DiagStateID = ++CurrID;
+      for (DiagnosticsEngine::DiagState::const_iterator
+             I = point.State->begin(), E = point.State->end(); I != E; ++I) {
+        if (I->second.isPragma()) {
+          Record.push_back(I->first);
+          Record.push_back(I->second.getMapping());
+        }
       }
+      Record.push_back(-1); // mark the end of the diag/map pairs for this
+                            // location.
     }
-    Record.push_back(-1); // mark the end of the diag/map pairs for this
-                          // location.
   }
 
   if (!Record.empty())
@@ -3393,7 +3363,7 @@ ASTWriter::~ASTWriter() {
     delete I->second;
 }
 
-void ASTWriter::WriteAST(Sema &SemaRef, MemorizeStatCalls *StatCalls,
+void ASTWriter::WriteAST(Sema &SemaRef,
                          const std::string &OutputFile,
                          Module *WritingModule, StringRef isysroot,
                          bool hasErrors) {
@@ -3412,7 +3382,7 @@ void ASTWriter::WriteAST(Sema &SemaRef, MemorizeStatCalls *StatCalls,
   Context = &SemaRef.Context;
   PP = &SemaRef.PP;
   this->WritingModule = WritingModule;
-  WriteASTCore(SemaRef, StatCalls, isysroot, OutputFile, WritingModule);
+  WriteASTCore(SemaRef, isysroot, OutputFile, WritingModule);
   Context = 0;
   PP = 0;
   this->WritingModule = 0;
@@ -3429,7 +3399,7 @@ static void AddLazyVectorDecls(ASTWriter &Writer, Vector &Vec,
   }
 }
 
-void ASTWriter::WriteASTCore(Sema &SemaRef, MemorizeStatCalls *StatCalls,
+void ASTWriter::WriteASTCore(Sema &SemaRef,
                              StringRef isysroot,
                              const std::string &OutputFile, 
                              Module *WritingModule) {
@@ -3586,8 +3556,6 @@ void ASTWriter::WriteASTCore(Sema &SemaRef, MemorizeStatCalls *StatCalls,
   // Write the remaining AST contents.
   RecordData Record;
   Stream.EnterSubblock(AST_BLOCK_ID, 5);
-  if (StatCalls && isysroot.empty())
-    WriteStatCache(*StatCalls);
 
   // Create a lexical update block containing all of the declarations in the
   // translation unit that do not come from other AST files.

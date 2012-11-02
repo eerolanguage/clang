@@ -338,25 +338,8 @@ private:
 };
 } // end anonymous namespace
 
-typedef llvm::ImmutableMap<SymbolRef, RefState> RegionStateTy;
-typedef llvm::ImmutableMap<SymbolRef, ReallocPair > ReallocMap;
-class RegionState {};
-class ReallocPairs {};
-namespace clang {
-namespace ento {
-  template <>
-  struct ProgramStateTrait<RegionState> 
-    : public ProgramStatePartialTrait<RegionStateTy> {
-    static void *GDMIndex() { static int x; return &x; }
-  };
-
-  template <>
-  struct ProgramStateTrait<ReallocPairs>
-    : public ProgramStatePartialTrait<ReallocMap> {
-    static void *GDMIndex() { static int x; return &x; }
-  };
-}
-}
+REGISTER_MAP_WITH_PROGRAMSTATE(RegionState, SymbolRef, RefState)
+REGISTER_MAP_WITH_PROGRAMSTATE(ReallocPairs, SymbolRef, ReallocPair)
 
 namespace {
 class StopTrackingCallback : public SymbolVisitor {
@@ -714,7 +697,7 @@ ProgramStateRef MallocChecker::FreeMemAux(CheckerContext &C,
       R->addRange(ArgExpr->getSourceRange());
       R->markInteresting(Sym);
       R->addVisitor(new MallocBugVisitor(Sym));
-      C.EmitReport(R);
+      C.emitReport(R);
     }
     return 0;
   }
@@ -849,7 +832,7 @@ void MallocChecker::ReportBadFree(CheckerContext &C, SVal ArgVal,
     BugReport *R = new BugReport(*BT_BadFree, os.str(), N);
     R->markInteresting(MR);
     R->addRange(range);
-    C.EmitReport(R);
+    C.emitReport(R);
   }
 }
 
@@ -1048,7 +1031,7 @@ void MallocChecker::reportLeak(SymbolRef Sym, ExplodedNode *N,
   BugReport *R = new BugReport(*BT_Leak, os.str(), N, LocUsedForUniqueing);
   R->markInteresting(Sym);
   R->addVisitor(new MallocBugVisitor(Sym, true));
-  C.EmitReport(R);
+  C.emitReport(R);
 }
 
 void MallocChecker::checkDeadSymbols(SymbolReaper &SymReaper,
@@ -1061,14 +1044,11 @@ void MallocChecker::checkDeadSymbols(SymbolReaper &SymReaper,
   RegionStateTy RS = state->get<RegionState>();
   RegionStateTy::Factory &F = state->get_context<RegionState>();
 
-  bool generateReport = false;
   llvm::SmallVector<SymbolRef, 2> Errors;
   for (RegionStateTy::iterator I = RS.begin(), E = RS.end(); I != E; ++I) {
     if (SymReaper.isDead(I->first)) {
-      if (I->second.isAllocated()) {
-        generateReport = true;
+      if (I->second.isAllocated())
         Errors.push_back(I->first);
-      }
       // Remove the dead symbol from the map.
       RS = F.remove(RS, I->first);
 
@@ -1076,8 +1056,8 @@ void MallocChecker::checkDeadSymbols(SymbolReaper &SymReaper,
   }
   
   // Cleanup the Realloc Pairs Map.
-  ReallocMap RP = state->get<ReallocPairs>();
-  for (ReallocMap::iterator I = RP.begin(), E = RP.end(); I != E; ++I) {
+  ReallocPairsTy RP = state->get<ReallocPairs>();
+  for (ReallocPairsTy::iterator I = RP.begin(), E = RP.end(); I != E; ++I) {
     if (SymReaper.isDead(I->first) ||
         SymReaper.isDead(I->second.ReallocatedSym)) {
       state = state->remove<ReallocPairs>(I->first);
@@ -1085,15 +1065,16 @@ void MallocChecker::checkDeadSymbols(SymbolReaper &SymReaper,
   }
 
   // Generate leak node.
-  static SimpleProgramPointTag Tag("MallocChecker : DeadSymbolsLeak");
-  ExplodedNode *N = C.addTransition(C.getState(), C.getPredecessor(), &Tag);
-
-  if (generateReport) {
+  ExplodedNode *N = C.getPredecessor();
+  if (!Errors.empty()) {
+    static SimpleProgramPointTag Tag("MallocChecker : DeadSymbolsLeak");
+    N = C.addTransition(C.getState(), C.getPredecessor(), &Tag);
     for (llvm::SmallVector<SymbolRef, 2>::iterator
-         I = Errors.begin(), E = Errors.end(); I != E; ++I) {
+        I = Errors.begin(), E = Errors.end(); I != E; ++I) {
       reportLeak(*I, N, C);
     }
   }
+
   C.addTransition(state->set<RegionState>(RS), N);
 }
 
@@ -1226,7 +1207,7 @@ bool MallocChecker::checkUseAfterFree(SymbolRef Sym, CheckerContext &C,
         R->addRange(S->getSourceRange());
       R->markInteresting(Sym);
       R->addVisitor(new MallocBugVisitor(Sym));
-      C.EmitReport(R);
+      C.emitReport(R);
       return true;
     }
   }
@@ -1294,17 +1275,22 @@ ProgramStateRef MallocChecker::evalAssume(ProgramStateRef state,
   RegionStateTy RS = state->get<RegionState>();
   for (RegionStateTy::iterator I = RS.begin(), E = RS.end(); I != E; ++I) {
     // If the symbol is assumed to be NULL, remove it from consideration.
-    if (state->getConstraintManager().isNull(state, I.getKey()).isTrue())
+    ConstraintManager &CMgr = state->getConstraintManager();
+    ConditionTruthVal AllocFailed = CMgr.isNull(state, I.getKey());
+    if (AllocFailed.isConstrainedTrue())
       state = state->remove<RegionState>(I.getKey());
   }
 
   // Realloc returns 0 when reallocation fails, which means that we should
   // restore the state of the pointer being reallocated.
-  ReallocMap RP = state->get<ReallocPairs>();
-  for (ReallocMap::iterator I = RP.begin(), E = RP.end(); I != E; ++I) {
+  ReallocPairsTy RP = state->get<ReallocPairs>();
+  for (ReallocPairsTy::iterator I = RP.begin(), E = RP.end(); I != E; ++I) {
     // If the symbol is assumed to be NULL, remove it from consideration.
-    if (!state->getConstraintManager().isNull(state, I.getKey()).isTrue())
+    ConstraintManager &CMgr = state->getConstraintManager();
+    ConditionTruthVal AllocFailed = CMgr.isNull(state, I.getKey());
+    if (!AllocFailed.isConstrainedTrue())
       continue;
+
     SymbolRef ReallocSym = I.getData().ReallocatedSym;
     if (const RefState *RS = state->get<RegionState>(ReallocSym)) {
       if (RS->isReleased()) {
@@ -1510,10 +1496,10 @@ MallocChecker::checkRegionChanges(ProgramStateRef State,
 
 static SymbolRef findFailedReallocSymbol(ProgramStateRef currState,
                                          ProgramStateRef prevState) {
-  ReallocMap currMap = currState->get<ReallocPairs>();
-  ReallocMap prevMap = prevState->get<ReallocPairs>();
+  ReallocPairsTy currMap = currState->get<ReallocPairs>();
+  ReallocPairsTy prevMap = prevState->get<ReallocPairs>();
 
-  for (ReallocMap::iterator I = prevMap.begin(), E = prevMap.end();
+  for (ReallocPairsTy::iterator I = prevMap.begin(), E = prevMap.end();
        I != E; ++I) {
     SymbolRef sym = I.getKey();
     if (!currMap.lookup(sym))

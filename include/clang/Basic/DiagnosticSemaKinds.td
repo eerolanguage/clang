@@ -95,7 +95,7 @@ def err_variably_modified_new_type : Error<
 
 // C99 Designated Initializers
 def ext_designated_init : Extension<
-  "designated initializers are a C99 feature">;
+  "designated initializers are a C99 feature">, InGroup<C99>;
 def err_array_designator_negative : Error<
   "array designator value '%0' is negative">;
 def err_array_designator_empty_range : Error<
@@ -5059,7 +5059,9 @@ def err_typecheck_cast_to_incomplete : Error<
   "cast to incomplete type %0">;
 def ext_typecheck_cast_nonscalar : Extension<
   "C99 forbids casting nonscalar type %0 to the same type">;
-def ext_typecheck_cast_to_union : Extension<"C99 forbids casts to union type">;
+def ext_typecheck_cast_to_union : Extension<
+  "cast to union type is a GNU extension">,
+  InGroup<GNU>;
 def err_typecheck_cast_to_union_no_type : Error<
   "cast to union type from type %0 not present in union">;
 def err_cast_pointer_from_non_pointer_int : Error<
@@ -5226,7 +5228,7 @@ def err_in_class_initializer_references_def_ctor : Error<
 
 def ext_in_class_initializer_non_constant : Extension<
   "in-class initializer for static data member is not a constant expression; "
-  "folding it to a constant is a GNU extension">;
+  "folding it to a constant is a GNU extension">, InGroup<GNU>;
 
 // C++ anonymous unions and GNU anonymous structs/unions
 def ext_anonymous_union : Extension<
@@ -5509,7 +5511,8 @@ def warn_format_string_is_wide_literal : Warning<
 def warn_printf_format_string_contains_null_char : Warning<
   "format string contains '\\0' within the string body">, InGroup<Format>;
 def warn_printf_asterisk_missing_arg : Warning<
-  "'%select{*|.*}0' specified field %select{width|precision}0 is missing a matching 'int' argument">;
+  "'%select{*|.*}0' specified field %select{width|precision}0 is missing a matching 'int' argument">,
+  InGroup<Format>;
 def warn_printf_asterisk_wrong_type : Warning<
   "field %select{width|precision}0 should have type %1, but argument has type %2">,
   InGroup<Format>;

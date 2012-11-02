@@ -147,6 +147,12 @@ public:
       traverse(*D);
     else if (const Stmt *S = DynNode.get<Stmt>())
       traverse(*S);
+    else if (const NestedNameSpecifier *NNS =
+             DynNode.get<NestedNameSpecifier>())
+      traverse(*NNS);
+    else if (const NestedNameSpecifierLoc *NNSLoc =
+             DynNode.get<NestedNameSpecifierLoc>())
+      traverse(*NNSLoc);
     else if (const QualType *Q = DynNode.get<QualType>())
       traverse(*Q);
     else if (const TypeLoc *T = DynNode.get<TypeLoc>())
@@ -197,6 +203,16 @@ public:
     // The TypeLoc is matched inside traverse.
     return traverse(TypeLocNode);
   }
+  bool TraverseNestedNameSpecifier(NestedNameSpecifier *NNS) {
+    ScopedIncrement ScopedDepth(&CurrentDepth);
+    return (NNS == NULL) || traverse(*NNS);
+  }
+  bool TraverseNestedNameSpecifierLoc(NestedNameSpecifierLoc NNS) {
+    ScopedIncrement ScopedDepth(&CurrentDepth);
+    if (!match(*NNS.getNestedNameSpecifier()))
+      return false;
+    return !NNS || traverse(NNS);
+  }
 
   bool shouldVisitTemplateInstantiations() const { return true; }
   bool shouldVisitImplicitCode() const { return true; }
@@ -230,6 +246,13 @@ private:
   }
   bool baseTraverse(TypeLoc TypeLocNode) {
     return VisitorBase::TraverseTypeLoc(TypeLocNode);
+  }
+  bool baseTraverse(const NestedNameSpecifier &NNS) {
+    return VisitorBase::TraverseNestedNameSpecifier(
+        const_cast<NestedNameSpecifier*>(&NNS));
+  }
+  bool baseTraverse(NestedNameSpecifierLoc NNS) {
+    return VisitorBase::TraverseNestedNameSpecifierLoc(NNS);
   }
 
   // Sets 'Matched' to true if 'Matcher' matches 'Node' and:
@@ -290,6 +313,15 @@ public:
                                         MatchCallback*> > *MatcherCallbackPairs)
      : MatcherCallbackPairs(MatcherCallbackPairs),
        ActiveASTContext(NULL) {
+  }
+
+  void onStartOfTranslationUnit() {
+    for (std::vector<std::pair<const internal::DynTypedMatcher*,
+                               MatchCallback*> >::const_iterator
+             I = MatcherCallbackPairs->begin(), E = MatcherCallbackPairs->end();
+         I != E; ++I) {
+      I->second->onStartOfTranslationUnit();
+    }
   }
 
   void set_active_ast_context(ASTContext *NewActiveASTContext) {
@@ -626,6 +658,7 @@ private:
       ParsingDone->run();
     }
     Visitor.set_active_ast_context(&Context);
+    Visitor.onStartOfTranslationUnit();
     Visitor.TraverseDecl(Context.getTranslationUnitDecl());
     Visitor.set_active_ast_context(NULL);
   }

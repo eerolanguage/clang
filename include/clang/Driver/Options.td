@@ -91,14 +91,6 @@ def ccc_echo : Flag<["-"], "ccc-echo">, CCCDriverOpt,
 def ccc_gcc_name : Separate<["-"], "ccc-gcc-name">, CCCDriverOpt,
   HelpText<"Name for native GCC compiler">,
   MetaVarName<"<gcc-path>">;
-def ccc_clang_cxx : Flag<["-"], "ccc-clang-cxx">, CCCDriverOpt,
-  HelpText<"Enable the clang compiler for C++">;
-def ccc_no_clang_cxx : Flag<["-"], "ccc-no-clang-cxx">, CCCDriverOpt,
-  HelpText<"Disable the clang compiler for C++">;
-def ccc_no_clang : Flag<["-"], "ccc-no-clang">, CCCDriverOpt,
-  HelpText<"Disable the clang compiler">;
-def ccc_no_clang_cpp : Flag<["-"], "ccc-no-clang-cpp">, CCCDriverOpt,
-  HelpText<"Disable the clang preprocessor">;
 def ccc_clang_archs : Separate<["-"], "ccc-clang-archs">, CCCDriverOpt,
   HelpText<"Comma separate list of architectures to use the clang compiler for">,
   MetaVarName<"<arch-list>">;
@@ -950,7 +942,7 @@ def rewrite_objc : Flag<["-"], "rewrite-objc">, Flags<[DriverOption,CC1Option]>,
   HelpText<"Rewrite Objective-C source to C++">, Group<Action_Group>;
 def rewrite_legacy_objc : Flag<["-"], "rewrite-legacy-objc">, Flags<[DriverOption]>,
   HelpText<"Rewrite Legacy Objective-C source to C++">;
-def rewrite_eero_to_objc : Flag<["-"], "-eero-to-objc">, Flags<[DriverOption,CC1Option]>,
+def rewrite_eero_to_objc : Flag<["-"], "eero-to-objc">, Flags<[DriverOption,CC1Option]>,
   HelpText<"Rewrite Eero source to Objective-C">, Group<Action_Group>;
 def rdynamic : Flag<["-"], "rdynamic">;
 def rpath : Separate<["-"], "rpath">, Flags<[LinkerInput]>;
@@ -992,8 +984,6 @@ def target : Separate<["-"], "target">, Flags<[DriverOption]>,
   HelpText<"Generate code for the given target">;
 def gcc_toolchain : Separate<["-"], "gcc-toolchain">, Flags<[DriverOption]>,
   HelpText<"Use the gcc toolchain at the given directory">;
-// We should deprecate the use of -ccc-host-triple, and then remove.
-def ccc_host_triple : Separate<["-"], "ccc-host-triple">, Alias<target>;
 def time : Flag<["-"], "time">,
   HelpText<"Time individual commands">;
 def traditional_cpp : Flag<["-", "--"], "traditional-cpp">, Flags<[CC1Option]>,

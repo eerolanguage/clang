@@ -96,21 +96,6 @@ bool types::isAcceptedByClang(ID Id) {
   }
 }
 
-bool types::isOnlyAcceptedByClang(ID Id) {
-  switch (Id) {
-  default:
-    return false;
-
-  case TY_AST:
-  case TY_LLVM_IR:
-  case TY_LLVM_BC:
-  case TY_RewrittenObjC:
-  case TY_RewrittenLegacyObjC:
-  case TY_RewrittenEeroToObjC:
-    return true;
-  }
-}
-
 bool types::isObjC(ID Id) {
   switch (Id) {
   default:

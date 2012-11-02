@@ -3236,6 +3236,94 @@ TEST(NNS, MatchesNestedNameSpecifierPrefixes) {
           specifiesTypeLoc(loc(qualType(asString("struct A"))))))));
 }
 
+TEST(NNS, DescendantsOfNestedNameSpecifiers) {
+  std::string Fragment =
+      "namespace a { struct A { struct B { struct C {}; }; }; };"
+      "void f() { a::A::B::C c; }";
+  EXPECT_TRUE(matches(
+      Fragment,
+      nestedNameSpecifier(specifiesType(asString("struct a::A::B")),
+                          hasDescendant(nestedNameSpecifier(
+                              specifiesNamespace(hasName("a")))))));
+  EXPECT_TRUE(notMatches(
+      Fragment,
+      nestedNameSpecifier(specifiesType(asString("struct a::A::B")),
+                          has(nestedNameSpecifier(
+                              specifiesNamespace(hasName("a")))))));
+  EXPECT_TRUE(matches(
+      Fragment,
+      nestedNameSpecifier(specifiesType(asString("struct a::A")),
+                          has(nestedNameSpecifier(
+                              specifiesNamespace(hasName("a")))))));
+
+  // Not really useful because a NestedNameSpecifier can af at most one child,
+  // but to complete the interface.
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Fragment,
+      nestedNameSpecifier(specifiesType(asString("struct a::A::B")),
+                          forEach(nestedNameSpecifier().bind("x"))),
+      new VerifyIdIsBoundTo<NestedNameSpecifier>("x", 1)));
+}
+
+TEST(NNS, NestedNameSpecifiersAsDescendants) {
+  std::string Fragment =
+      "namespace a { struct A { struct B { struct C {}; }; }; };"
+      "void f() { a::A::B::C c; }";
+  EXPECT_TRUE(matches(
+      Fragment,
+      decl(hasDescendant(nestedNameSpecifier(specifiesType(
+          asString("struct a::A")))))));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Fragment,
+      functionDecl(hasName("f"),
+                   forEachDescendant(nestedNameSpecifier().bind("x"))),
+      // Nested names: a, a::A and a::A::B.
+      new VerifyIdIsBoundTo<NestedNameSpecifier>("x", 3)));
+}
+
+TEST(NNSLoc, DescendantsOfNestedNameSpecifierLocs) {
+  std::string Fragment =
+      "namespace a { struct A { struct B { struct C {}; }; }; };"
+      "void f() { a::A::B::C c; }";
+  EXPECT_TRUE(matches(
+      Fragment,
+      nestedNameSpecifierLoc(loc(specifiesType(asString("struct a::A::B"))),
+                             hasDescendant(loc(nestedNameSpecifier(
+                                 specifiesNamespace(hasName("a"))))))));
+  EXPECT_TRUE(notMatches(
+      Fragment,
+      nestedNameSpecifierLoc(loc(specifiesType(asString("struct a::A::B"))),
+                             has(loc(nestedNameSpecifier(
+                                 specifiesNamespace(hasName("a"))))))));
+  EXPECT_TRUE(matches(
+      Fragment,
+      nestedNameSpecifierLoc(loc(specifiesType(asString("struct a::A"))),
+                             has(loc(nestedNameSpecifier(
+                                 specifiesNamespace(hasName("a"))))))));
+
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Fragment,
+      nestedNameSpecifierLoc(loc(specifiesType(asString("struct a::A::B"))),
+                             forEach(nestedNameSpecifierLoc().bind("x"))),
+      new VerifyIdIsBoundTo<NestedNameSpecifierLoc>("x", 1)));
+}
+
+TEST(NNSLoc, NestedNameSpecifierLocsAsDescendants) {
+  std::string Fragment =
+      "namespace a { struct A { struct B { struct C {}; }; }; };"
+      "void f() { a::A::B::C c; }";
+  EXPECT_TRUE(matches(
+      Fragment,
+      decl(hasDescendant(loc(nestedNameSpecifier(specifiesType(
+          asString("struct a::A"))))))));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Fragment,
+      functionDecl(hasName("f"),
+                   forEachDescendant(nestedNameSpecifierLoc().bind("x"))),
+      // Nested names: a, a::A and a::A::B.
+      new VerifyIdIsBoundTo<NestedNameSpecifierLoc>("x", 3)));
+}
+
 template <typename T>
 class VerifyRecursiveMatch : public BoundNodesCallback {
 public:
@@ -3276,6 +3364,27 @@ TEST(MatchFinder, CanMatchStatementsRecursively) {
   EXPECT_TRUE(matchAndVerifyResultFalse("void f() { if (1) { for (;;) { } } }",
     ifStmt().bind("if"),
     new VerifyRecursiveMatch<clang::Stmt>("if", declStmt())));
+}
+
+class VerifyStartOfTranslationUnit : public MatchFinder::MatchCallback {
+public:
+  VerifyStartOfTranslationUnit() : Called(false) {}
+  virtual void run(const MatchFinder::MatchResult &Result) {
+    EXPECT_TRUE(Called);
+  }
+  virtual void onStartOfTranslationUnit() {
+    Called = true;
+  }
+  bool Called;
+};
+
+TEST(MatchFinder, InterceptsStartOfTranslationUnit) {
+  MatchFinder Finder;
+  VerifyStartOfTranslationUnit VerifyCallback;
+  Finder.addMatcher(decl(), &VerifyCallback);
+  OwningPtr<FrontendActionFactory> Factory(newFrontendActionFactory(&Finder));
+  ASSERT_TRUE(tooling::runToolOnCode(Factory->create(), "int x;"));
+  EXPECT_TRUE(VerifyCallback.Called);
 }
 
 } // end namespace ast_matchers

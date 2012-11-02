@@ -23,6 +23,26 @@
 #include "clang-c/Platform.h"
 #include "clang-c/CXString.h"
 
+#define CINDEX_VERSION_MAJOR 0
+#define CINDEX_VERSION_MINOR 6
+
+#define CINDEX_VERSION_ENCODE(major, minor) ( \
+      ((major) * 10000)                       \
+    + ((minor) *     1))
+
+#define CINDEX_VERSION CINDEX_VERSION_ENCODE( \
+    CINDEX_VERSION_MAJOR,                     \
+    CINDEX_VERSION_MINOR )
+
+#define CINDEX_VERSION_STRINGIZE_(major, minor)   \
+    #major"."#minor
+#define CINDEX_VERSION_STRINGIZE(major, minor)    \
+    CINDEX_VERSION_STRINGIZE_(major, minor)
+
+#define CINDEX_VERSION_STRING CINDEX_VERSION_STRINGIZE( \
+    CINDEX_VERSION_MAJOR,                               \
+    CINDEX_VERSION_MINOR)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -3175,6 +3195,12 @@ CINDEX_LINKAGE int clang_Cursor_getObjCSelectorIndex(CXCursor);
  * method/message, it will return zero.
  */
 CINDEX_LINKAGE int clang_Cursor_isDynamicCall(CXCursor C);
+
+/**
+ * \brief Given a cursor pointing to an ObjC message, returns the CXType of the
+ * receiver.
+ */
+CINDEX_LINKAGE CXType clang_Cursor_getReceiverType(CXCursor C);
 
 /**
  * \brief Given a cursor that represents a declaration, return the associated

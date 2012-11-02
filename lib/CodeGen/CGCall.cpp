@@ -969,7 +969,7 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
   if (CodeGenOpts.OptimizeSize)
     FuncAttrs.addAttribute(llvm::Attributes::OptimizeForSize);
   if (CodeGenOpts.OptimizeSize == 2)
-    FuncAttrs.addAttribute(llvm::Attributes::ForceSizeOpt);
+    FuncAttrs.addAttribute(llvm::Attributes::MinSize);
   if (CodeGenOpts.DisableRedZone)
     FuncAttrs.addAttribute(llvm::Attributes::NoRedZone);
   if (CodeGenOpts.NoImplicitFloat)
@@ -1801,7 +1801,7 @@ void CodeGenFunction::EmitCallArg(CallArgList &args, const Expr *E,
                                   QualType type) {
   if (const ObjCIndirectCopyRestoreExpr *CRE
         = dyn_cast<ObjCIndirectCopyRestoreExpr>(E)) {
-    assert(getContext().getLangOpts().ObjCAutoRefCount);
+    assert(getLangOpts().ObjCAutoRefCount);
     assert(getContext().hasSameType(E->getType(), type));
     return emitWritebackArg(*this, args, CRE);
   }
