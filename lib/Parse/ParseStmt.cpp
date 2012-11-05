@@ -1588,20 +1588,12 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     ProhibitAttributes(attrs);
 
     // Prevent "for in" from looking like a message pass
-    //
-    if (isEero && Tok.is(tok::identifier) &&
-        NextToken().is(tok::identifier) &&
-        NextToken().getIdentifierInfo() == ObjCTypeQuals[objc_in]) {
-      Token InsertedSemi(NextToken());
-      InsertedSemi.setKind(tok::semi);
-      InsertedSemi.setLength(0);
-      PP.EnterToken(InsertedSemi);
-    }
-
-    Value = ParseExpression();
-
-    if (isEero && Tok.is(tok::semi) && !Tok.getLength()) {
-      ConsumeToken();
+    if (isEero && NextToken().is(tok::identifier) &&
+                  NextToken().getIdentifierInfo() == ObjCTypeQuals[objc_in]) {
+      // Simply parse the identifier expression. Includes support for C++.
+      Value = ParseCXXIdExpression();
+    } else {
+      Value = ParseExpression();
     }
 
     ForEach = isTokIdentifier_in();
