@@ -1412,6 +1412,8 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
     return DeclGroupPtrTy();
   }
 
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   // Save late-parsed attributes for now; they need to be parsed in the
   // appropriate function scope after the function Decl has been constructed.
   LateParsedAttrList LateParsedAttrs;
@@ -1452,8 +1454,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   }
 
   // Eero "nested functions" (const blocks, really)
-  if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-      !AllowFunctionDefinitions &&
+  if (isEero && !AllowFunctionDefinitions &&
        D.isFunctionDeclarator() && isStartOfFunctionDefinition(D)) {
 
     // Parse and convert the function to a block
@@ -1476,6 +1477,14 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
 
   if (ParseAsmAttributesAfterDeclarator(D))
     return DeclGroupPtrTy();
+
+  if (isEero && FRI) {
+    if (Tok.is(tok::colon)) {
+      Diag(Tok, diag::err_expected) << "\"in\" keyword (for all types of ranges)";
+    } else if (isTokIdentifier_in()) {
+      Tok.setKind(tok::colon);
+    }
+  }
 
   // C++0x [stmt.iter]p1: Check if we have a for-range-declarator. If so, we
   // must parse and analyze the for-range-initializer before the declaration is

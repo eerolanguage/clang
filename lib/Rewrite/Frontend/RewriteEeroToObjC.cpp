@@ -72,6 +72,8 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteIfStatement(IfStmt* S);
     void RewriteForStatement(ForStmt* S);
     void RewriteForCollectionStatement(ObjCForCollectionStmt* S);
+    void RewriteCXXForRangeStmtStatement(CXXForRangeStmt* S);
+    void RewriteForCArrayStmtStatement(CXXForRangeStmt* S);
     void RewriteWhileStatement(WhileStmt* S);
     void RewriteDoStatement(DoStmt* S);
     void RewriteSwitchStatement(SwitchStmt* S);
@@ -1229,6 +1231,9 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
   } else if (ObjCForCollectionStmt* FCS = dyn_cast_or_null<ObjCForCollectionStmt>(S)) {
     RewriteForCollectionStatement(FCS);
 
+  } else if (CXXForRangeStmt* FRS = dyn_cast_or_null<CXXForRangeStmt>(S)) {
+    RewriteCXXForRangeStmtStatement(FRS);
+
   } else if (WhileStmt* WS = dyn_cast_or_null<WhileStmt>(S)) {
     RewriteWhileStatement(WS);
 
@@ -1355,6 +1360,87 @@ void TranslatorVisitor::RewriteForCollectionStatement(ObjCForCollectionStmt* S) 
   str += ") {";
 
   TheRewriter.ReplaceText(GetRange(S->getForLoc(), S->getRParenLoc()), str);
+
+  DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteCXXForRangeStmtStatement(CXXForRangeStmt* S) {
+
+  // Handle C array for-in loops when not translating to Objective-C++
+  //
+  if (!LangOpts.CPlusPlus and S->getRangeInit()->getType()->isArrayType()) {
+    RewriteForCArrayStmtStatement(S);
+
+  } else { // Objective-C++
+    string str = "for (";
+
+    PrintingPolicy SubPolicy(*Policy);
+    SubPolicy.SuppressInitializers = true;
+    string stringBuf;
+    llvm::raw_string_ostream stringStream(stringBuf);
+    S->getLoopVariable()->print(stringStream, SubPolicy);
+    str += stringStream.str();
+
+    str += " : ";
+    str += GetStatementString(S->getRangeInit(), REMOVE_TRAILING_SEMICOLON);
+    str += ") {";
+
+    TheRewriter.ReplaceText(GetRange(S->getForLoc(), S->getRParenLoc()), str);
+
+    DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+  }
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteForCArrayStmtStatement(CXXForRangeStmt* S) {
+  
+  string initStr = "for (";
+
+  Stmt* initStmt = S->getBeginEndStmt();
+  initStr += GetStatementString(initStmt, REMOVE_TRAILING_SEMICOLON);
+
+  // Replace the generated var name (which relies on a C++ reference) with the original
+  // range variable name
+  //
+  string unusedRangeVar = cast<NamedDecl>(S->getRangeStmt()->getSingleDecl())->getName();
+  string rangeVar = GetStatementString(S->getRangeInit(), REMOVE_TRAILING_SEMICOLON);
+  size_t pos = 0;
+  while((pos = initStr.find(unusedRangeVar, pos)) != string::npos) {
+   initStr.replace(pos, unusedRangeVar.length(), rangeVar);
+   pos += rangeVar.length();
+  }
+
+  // Replace hard-coded length with something better
+  //
+  pos = initStr.find('+');
+  if (pos != string::npos) {
+    initStr.erase(pos + 1);
+    initStr += " sizeof(";
+    initStr += rangeVar;
+    initStr += ")/sizeof(";
+    initStr += S->getLoopVariable()->getType().getAsString();
+    initStr += ");";
+  }
+
+  Stmt* condStmt = S->getCond();
+  string condStr = GetStatementString(condStmt, ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT);
+
+  Stmt* incStmt = S->getInc();
+  string incStr = GetStatementString(incStmt, REMOVE_TRAILING_SEMICOLON);
+  incStr += ") {";
+
+  // Add the loop var statment to the beginning of the loop body
+  //
+  CompoundStmt* body = cast<CompoundStmt>(S->getBody());
+  Stmt* firstStmt = *(body->body_begin());
+  DeferredInsertText(firstStmt->getLocStart(), GetStatementString(S->getLoopVarStmt()) + '\n');
+
+  TheRewriter.ReplaceText(GetRange(S->getForLoc(), S->getColonLoc().getLocWithOffset(-1)), initStr);
+  TheRewriter.ReplaceText(GetRange(S->getColonLoc(), S->getColonLoc()), condStr);
+  TheRewriter.ReplaceText(GetRange(S->getRangeInit()->getLocStart(), S->getRParenLoc()), incStr);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
 }

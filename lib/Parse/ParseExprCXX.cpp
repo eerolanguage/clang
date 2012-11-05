@@ -545,6 +545,7 @@ ExprResult Parser::ParseCXXIdExpression(bool isAddressOfOperand) {
   //   '::' unqualified-id
   //
   CXXScopeSpec SS;
+  if (getLangOpts().CPlusPlus)
   ParseOptionalCXXScopeSpecifier(SS, ParsedType(), /*EnteringContext=*/false);
 
   SourceLocation TemplateKWLoc;

@@ -2610,12 +2610,13 @@ public:
 
 
   StmtResult ActOnForNSRangeStmt(SourceLocation ForLoc,
-                                 SourceLocation LParenLoc,
-                                 Stmt *First, 
+                                 Stmt *First,
                                  SourceLocation InLoc,
-                                 Expr* Second, 
-                                 SourceLocation RParenLoc,
-                                 Stmt *Body);  
+                                 Expr* Second);
+  StmtResult FinishForNSRangeStmt(Stmt *ForRange,
+                                  SourceLocation LParenLoc,
+                                  SourceLocation RParenLoc,
+                                  Stmt *Body);
 
   StmtResult ActOnCXXForRangeStmt(SourceLocation ForLoc, Stmt *LoopVar,
                                   SourceLocation ColonLoc, Expr *Collection,

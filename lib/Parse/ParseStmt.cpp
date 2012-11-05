@@ -1474,7 +1474,6 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   SourceLocation ForLoc = ConsumeToken();  // eat the 'for'.
 
   const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
-  SourceLocation InLoc;
 
   if (Tok.isNot(tok::l_paren) && !isEero) {
     Diag(Tok, diag::err_expected_lparen_after) << "for";
@@ -1550,8 +1549,8 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     MaybeParseCXX0XAttributes(attrs);
 
     // In C++0x, "for (T NS:a" might not be a typo for ::
-    bool MightBeForRangeStmt = getLangOpts().CPlusPlus;
-    ColonProtectionRAIIObject ColonProtection(*this, MightBeForRangeStmt);
+    bool MightBeForRangeStmt = getLangOpts().CPlusPlus || isEero;
+    ColonProtectionRAIIObject ColonProtection(*this, MightBeForRangeStmt && !isEero);
 
     SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
     StmtVector Stmts;
@@ -1563,7 +1562,8 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
                                       isEero ? PrevTokLocation : Tok.getLocation());
 
     if (ForRangeInit.ParsedForRangeDecl()) {
-      Diag(ForRangeInit.ColonLoc, getLangOpts().CPlusPlus0x ?
+      if (!isEero)
+        Diag(ForRangeInit.ColonLoc, getLangOpts().CPlusPlus0x ?
            diag::warn_cxx98_compat_for_range : diag::ext_for_range);
 
       ForRange = true;
@@ -1572,7 +1572,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     } else if ((ForEach = isTokIdentifier_in())) {
       Actions.ActOnForEachDeclStmt(DG);
       // ObjC: for (id x in expr)
-      InLoc = Tok.getLocation();
+      ForRangeInit.ColonLoc = Tok.getLocation();
       ConsumeToken(); // consume 'in'
 
       if (Tok.is(tok::code_completion)) {
@@ -1588,20 +1588,12 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     ProhibitAttributes(attrs);
 
     // Prevent "for in" from looking like a message pass
-    //
-    if (isEero && Tok.is(tok::identifier) &&
-        NextToken().is(tok::identifier) &&
-        NextToken().getIdentifierInfo() == ObjCTypeQuals[objc_in]) {
-      Token InsertedSemi(NextToken());
-      InsertedSemi.setKind(tok::semi);
-      InsertedSemi.setLength(0);
-      PP.EnterToken(InsertedSemi);
-    }
-
-    Value = ParseExpression();
-
-    if (isEero && Tok.is(tok::semi) && !Tok.getLength()) {
-      ConsumeToken();
+    if (isEero && NextToken().is(tok::identifier) &&
+                  NextToken().getIdentifierInfo() == ObjCTypeQuals[objc_in]) {
+      // Simply parse the identifier expression. Includes support for C++.
+      Value = ParseCXXIdExpression();
+    } else {
+      Value = ParseExpression();
     }
 
     ForEach = isTokIdentifier_in();
@@ -1617,7 +1609,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     if (Tok.is(tok::semi)) {
       ConsumeToken();
     } else if (ForEach) {
-      InLoc = Tok.getLocation();
+      ForRangeInit.ColonLoc = Tok.getLocation();
       ConsumeToken(); // consume 'in'
 
       if (Tok.is(tok::code_completion)) {
@@ -1686,24 +1678,48 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   // Match the ')'.
   T.consumeClose();
 
-  bool isCollectionAnNSRange = false;
-  if (isEero && ForEach && !Collection.isInvalid()) {
-    ParsedType NSRangeType = 
-        Actions.getTypeName(PP.getIdentifierTable().get("NSRange"), 
-                            SourceLocation(), getCurScope());
-    if (!NSRangeType.get().isNull() && 
-        Actions.Context.getCanonicalType(
-            Collection.get()->getType().getUnqualifiedType()) ==
-          Actions.Context.getCanonicalType(NSRangeType.get())) {
-      isCollectionAnNSRange = true;
-    }
-  }
-
   // We need to perform most of the semantic analysis for a C++0x for-range
   // statememt before parsing the body, in order to be able to deduce the type
   // of an auto-typed loop variable.
   StmtResult ForRangeStmt;
   StmtResult ForEachStmt;
+
+  bool isNSRange = false;
+  if (isEero) {
+    if (!ForRangeInit.RangeExpr.isUsable() && Collection.isUsable()) {
+      ForRangeInit.RangeExpr = Collection;
+    }
+    if (ForRangeInit.RangeExpr.isUsable()) {
+      QualType RangeType = ForRangeInit.RangeExpr.get()->getType();
+      if (!ForRange &&
+          (RangeType->isArrayType() || RangeType->isClassType())) {
+        isNSRange = false;
+        ForRange = false;
+        ForEach = false;
+        Diag(FirstPart.get()->getLocStart(), diag::err_expected) <<
+            "variable declaration here for C array or C++ object range";
+        Diag(ForRangeInit.RangeExpr.get()->getLocStart(), diag::note_using) <<
+            ForRangeInit.RangeExpr.get()->getSourceRange();
+      } else {
+        // TODO: get this type once; it's used in multiple places.
+        ParsedType NSRangeType =
+            Actions.getTypeName(PP.getIdentifierTable().get("NSRange"), 
+                                SourceLocation(), getCurScope());
+        if (!NSRangeType.get().isNull() && 
+            Actions.Context.getCanonicalType(
+                RangeType.getUnqualifiedType()) ==
+                Actions.Context.getCanonicalType(NSRangeType.get())) {
+          isNSRange = true;
+          ForRange = false;
+          ForEach = false;
+          ForRangeStmt = Actions.ActOnForNSRangeStmt(ForLoc,
+                                                     FirstPart.take(),
+                                                     ForRangeInit.ColonLoc,
+                                                     ForRangeInit.RangeExpr.get());
+        }
+      }
+    }
+  }
 
   if (ForRange) {
     ForRangeStmt = Actions.ActOnCXXForRangeStmt(ForLoc, FirstPart.take(),
@@ -1715,7 +1731,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
 
   // Similarly, we need to do the semantic analysis for a for-range
   // statement immediately in order to close over temporaries correctly.
-  } else if (ForEach && !isCollectionAnNSRange) {
+  } else if (ForEach) {
     ForEachStmt = Actions.ActOnObjCForCollectionStmt(ForLoc,
                                                      FirstPart.take(),
                                                      Collection.take(),
@@ -1752,15 +1768,11 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   if (Body.isInvalid())
     return StmtError();
 
-  // If we have an NSRange expression after the "in"
-  if (ForEach && isCollectionAnNSRange)
-    return Actions.ActOnForNSRangeStmt(ForLoc, 
-                                       T.getOpenLocation(),
-                                       FirstPart.take(), 
-                                       InLoc,
-                                       Collection.take(), 
-                                       T.getCloseLocation(),
-                                       Body.take());
+  if (isNSRange)
+    return Actions.FinishForNSRangeStmt(ForRangeStmt.take(),
+                                        T.getOpenLocation(),
+                                        T.getCloseLocation(),
+                                        Body.take());
   if (ForEach)
    return Actions.FinishObjCForCollectionStmt(ForEachStmt.take(),
                                               Body.take());

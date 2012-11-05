@@ -1598,12 +1598,9 @@ Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
 /// Eero: "for <int> i in <NSRange>" loop
 StmtResult 
 Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
-                          SourceLocation LParenLoc,
                           Stmt *First,
                           SourceLocation InLoc,
-                          Expr* Second, 
-                          SourceLocation RParenLoc,
-                          Stmt *Body) {
+                          Expr* Second) {
 
   if (First == 0 || Second == 0)
     return StmtError();
@@ -1655,14 +1652,6 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
                                            FirstType,
                                            VK_LValue,
                                            Second->getLocStart());
-
-  CheckForLoopConditionalStatement(*this, Second, 0, Body);
-
-  DiagnoseUnusedExprResult(Body);
-
-  if (isa<NullStmt>(Body))
-    getCurCompoundScope().setHasEmptyLoopBodies();
-
   if (!FirstType->isIntegerType())
     Diag(ForLoc, diag::err_selector_element_type) << FirstType << First->getSourceRange();
 
@@ -1721,8 +1710,25 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
 
   return Owned(new (Context) ForStmt(Context, initStmt, 
                                      condExpr.take(), 0, 
-                                     incrExpr.take(), Body, ForLoc, 
-                                     LParenLoc, RParenLoc));
+                                     incrExpr.take(), 0, ForLoc,
+                                     SourceLocation(), SourceLocation()));
+}
+
+/// FinishForNSRangeStmt - Attach the body to a for-NSRange statement.
+///
+StmtResult Sema::FinishForNSRangeStmt(Stmt *S,
+                                      SourceLocation LParenLoc,
+                                      SourceLocation RParenLoc,
+                                      Stmt *B) {
+  if (!S || !B)
+    return StmtError();
+
+  ForStmt *forStmt = cast<ForStmt>(S);
+  forStmt->setBody(B);
+  forStmt->setLParenLoc(LParenLoc);
+  forStmt->setRParenLoc(RParenLoc);
+
+  return S;
 }
 
 /// Finish building a variable declaration for a for-range statement.
