@@ -1563,7 +1563,8 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
                                       isEero ? PrevTokLocation : Tok.getLocation());
 
     if (ForRangeInit.ParsedForRangeDecl()) {
-      Diag(ForRangeInit.ColonLoc, getLangOpts().CPlusPlus0x ?
+      if (!isEero)
+        Diag(ForRangeInit.ColonLoc, getLangOpts().CPlusPlus0x ?
            diag::warn_cxx98_compat_for_range : diag::ext_for_range);
 
       ForRange = true;
