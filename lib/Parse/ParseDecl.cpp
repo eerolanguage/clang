@@ -4736,7 +4736,9 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
     LocalEndLoc = RParenLoc;
     EndLoc = RParenLoc;
 
-    if (getLangOpts().CPlusPlus) {
+    if (getLangOpts().CPlusPlus &&
+        (!getLangOpts().OffSideRule || PP.isInLegacyHeader() ||
+         !Tok.isAtStartOfLine())) {
       // FIXME: Accept these components in any order, and produce fixits to
       // correct the order if the user gets it wrong. Ideally we should deal
       // with the virt-specifier-seq and pure-specifier in the same way.
