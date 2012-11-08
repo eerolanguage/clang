@@ -650,6 +650,7 @@ class EeroPragmaHandler : public PragmaHandler {
             CI.getLangOpts().CPlusPlus = true;
             CI.getLangOpts().WChar = true;
             CI.getLangOpts().Bool = true;
+            CI.getLangOpts().CXXExceptions = CI.getLangOpts().ObjCExceptions;
             // TODO: is there a better way to achieve this?
             Token EOFToken;
             EOFToken.setKind(tok::eof);
