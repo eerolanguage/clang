@@ -895,9 +895,16 @@ private:
     void addDecl(Decl *D) { Decls.push_back(D); }
   };
 
-  /// A list of late parsed attributes.  Used by ParseGNUAttributes.
-  typedef llvm::SmallVector<LateParsedAttribute*, 2> LateParsedAttrList;
+  // A list of late-parsed attributes.  Used by ParseGNUAttributes.
+  class LateParsedAttrList: public llvm::SmallVector<LateParsedAttribute*, 2> {
+  public:
+    LateParsedAttrList(bool PSoon = false) : ParseSoon(PSoon) { }
 
+    bool parseSoon() { return ParseSoon; }
+
+  private:
+    bool ParseSoon;  // Are we planning to parse these shortly after creation?
+  };
 
   /// Contains the lexed tokens of a member function definition
   /// which needs to be parsed at the end of the class declaration
@@ -1599,6 +1606,7 @@ private:
   StmtResult ParseCompoundStatement(bool isStmtExpr = false);
   StmtResult ParseCompoundStatement(bool isStmtExpr,
                                     unsigned ScopeFlags);
+  void ParseCompoundStatementLeadingPragmas();
   StmtResult ParseCompoundStatementBody(bool isStmtExpr = false);
   bool ParseParenExprOrCondition(ExprResult &ExprResult,
                                  Decl *&DeclResult,
@@ -1971,6 +1979,11 @@ private:
     attrs.clear();
   }
   void DiagnoseProhibitedAttributes(ParsedAttributesWithRange &attrs);
+
+  // Forbid C++11 attributes that appear on certain syntactic 
+  // locations which standard permits but we don't supported yet, 
+  // for example, attributes appertain to decl specifiers.
+  void ProhibitCXX11Attributes(ParsedAttributesWithRange &attrs);
 
   void MaybeParseGNUAttributes(Declarator &D,
                                LateParsedAttrList *LateAttrs = 0) {

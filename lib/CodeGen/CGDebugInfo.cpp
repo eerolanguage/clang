@@ -15,6 +15,7 @@
 #include "CodeGenFunction.h"
 #include "CodeGenModule.h"
 #include "CGBlocks.h"
+#include "CGObjCRuntime.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclFriend.h"
 #include "clang/AST/DeclObjC.h"
@@ -518,21 +519,17 @@ llvm::DIType CGDebugInfo::createRecordFwdDecl(const RecordDecl *RD,
                                               llvm::DIDescriptor Ctx) {
   llvm::DIFile DefUnit = getOrCreateFile(RD->getLocation());
   unsigned Line = getLineNumber(RD->getLocation());
-  StringRef RDName = RD->getName();
+  StringRef RDName = getClassName(RD);
 
-  // Get the tag.
-  const CXXRecordDecl *CXXDecl = dyn_cast<CXXRecordDecl>(RD);
   unsigned Tag = 0;
-  if (CXXDecl) {
-    RDName = getClassName(RD);
-    Tag = llvm::dwarf::DW_TAG_class_type;
-  }
-  else if (RD->isStruct() || RD->isInterface())
+  if (RD->isStruct() || RD->isInterface())
     Tag = llvm::dwarf::DW_TAG_structure_type;
   else if (RD->isUnion())
     Tag = llvm::dwarf::DW_TAG_union_type;
-  else
-    llvm_unreachable("Unknown RecordDecl type!");
+  else {
+    assert(RD->isClass());
+    Tag = llvm::dwarf::DW_TAG_class_type;
+  }
 
   // Create the type.
   return DBuilder.createForwardDecl(Tag, RDName, Ctx, DefUnit, Line);
@@ -1416,12 +1413,21 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
       FieldAlign = CGM.getContext().getTypeAlign(FType);
     }
 
-    // We can't know the offset of our ivar in the structure if we're using
-    // the non-fragile abi and the debugger should ignore the value anyways.
-    // Call it the FieldNo+1 due to how debuggers use the information,
-    // e.g. negating the value when it needs a lookup in the dynamic table.
-    uint64_t FieldOffset = CGM.getLangOpts().ObjCRuntime.isNonFragile()
-                             ? FieldNo+1 : RL.getFieldOffset(FieldNo);
+    uint64_t FieldOffset;
+    if (CGM.getLangOpts().ObjCRuntime.isNonFragile()) {
+      // We don't know the runtime offset of an ivar if we're using the
+      // non-fragile ABI.  For bitfields, use the bit offset into the first
+      // byte of storage of the bitfield.  For other fields, use zero.
+      if (Field->isBitField()) {
+        FieldOffset = CGM.getObjCRuntime().ComputeBitfieldBitOffset(
+            CGM, ID, Field);
+        FieldOffset %= CGM.getContext().getCharWidth();
+      } else {
+        FieldOffset = 0;
+      }
+    } else {
+      FieldOffset = RL.getFieldOffset(FieldNo);
+    }
 
     unsigned Flags = 0;
     if (Field->getAccessControl() == ObjCIvarDecl::Protected)
@@ -1879,7 +1885,7 @@ llvm::DIType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
   // Get overall information about the record type for the debug info.
   llvm::DIFile DefUnit = getOrCreateFile(RD->getLocation());
   unsigned Line = getLineNumber(RD->getLocation());
-  StringRef RDName = RD->getName();
+  StringRef RDName = getClassName(RD);
 
   llvm::DIDescriptor RDContext;
   if (CGM.getCodeGenOpts().getDebugInfo() == CodeGenOptions::LimitedDebugInfo)
@@ -1900,9 +1906,7 @@ llvm::DIType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
   if (RD->isUnion())
     RealDecl = DBuilder.createUnionType(RDContext, RDName, DefUnit, Line,
 					Size, Align, 0, llvm::DIArray());
-  else if (CXXDecl) {
-    RDName = getClassName(RD);
-    
+  else if (RD->isClass()) {
     // FIXME: This could be a struct type giving a default visibility different
     // than C++ class type, but needs llvm metadata changes first.
     RealDecl = DBuilder.createClassType(RDContext, RDName, DefUnit, Line,

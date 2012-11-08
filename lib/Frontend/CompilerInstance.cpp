@@ -611,6 +611,19 @@ bool CompilerInstance::InitializeSourceManager(StringRef InputFile,
       return false;
     }
     SourceMgr.createMainFileID(File, Kind);
+
+    // The natural SourceManager infrastructure can't currently handle named
+    // pipes, but we would at least like to accept them for the main
+    // file. Detect them here, read them with the more generic MemoryBuffer
+    // function, and simply override their contents as we do for STDIN.
+    if (File->isNamedPipe()) {
+      OwningPtr<llvm::MemoryBuffer> MB;
+      if (llvm::error_code ec = llvm::MemoryBuffer::getFile(InputFile, MB)) {
+        Diags.Report(diag::err_cannot_open_file) << InputFile << ec.message();
+        return false;
+      }
+      SourceMgr.overrideFileContents(File, MB.take());
+    }
   } else {
     OwningPtr<llvm::MemoryBuffer> SB;
     if (llvm::MemoryBuffer::getSTDIN(SB)) {
@@ -795,7 +808,7 @@ static void compileModule(CompilerInstance &ImportingInstance,
     // Someone else is responsible for building the module. Wait for them to
     // finish.
     Locked.waitForUnlock();
-    break;
+    return;
   }
 
   ModuleMap &ModMap 
@@ -1008,13 +1021,36 @@ Module *CompilerInstance::loadModule(SourceLocation ImportLoc,
     }
 
     // Try to load the module we found.
+    unsigned ARRFlags = ASTReader::ARR_None;
+    if (Module)
+      ARRFlags |= ASTReader::ARR_OutOfDate;
     switch (ModuleManager->ReadAST(ModuleFile->getName(),
                                    serialization::MK_Module,
-                                   ASTReader::ARR_None)) {
+                                   ARRFlags)) {
     case ASTReader::Success:
       break;
 
-    case ASTReader::OutOfDate:
+    case ASTReader::OutOfDate: {
+      // The module file is out-of-date. Rebuild it.
+      getFileManager().invalidateCache(ModuleFile);
+      bool Existed;
+      llvm::sys::fs::remove(ModuleFileName, Existed);
+      compileModule(*this, Module, ModuleFileName);
+
+      // Try loading the module again.
+      ModuleFile = FileMgr->getFile(ModuleFileName);
+      if (!ModuleFile ||
+          ModuleManager->ReadAST(ModuleFileName,
+                                 serialization::MK_Module,
+                                 ASTReader::ARR_None) != ASTReader::Success) {
+        KnownModules[Path[0].first] = 0;
+        return 0;
+      }
+
+      // Okay, we've rebuilt and now loaded the module.
+      break;
+    }
+
     case ASTReader::VersionMismatch:
     case ASTReader::ConfigurationMismatch:
     case ASTReader::HadErrors:

@@ -31,6 +31,8 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/system_error.h"
 
+#include "SanitizerArgs.h"
+
 #include <cstdlib> // ::getenv
 
 #include "clang/Config/config.h" // for GCC_INSTALL_PREFIX
@@ -181,25 +183,6 @@ void Generic_ELF::anchor() {}
 Tool &Darwin::SelectTool(const Compilation &C, const JobAction &JA,
                          const ActionList &Inputs) const {
   Action::ActionClass Key = JA.getKind();
-  bool useClang = false;
-
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple())) {
-    useClang = true;
-    // Fallback to llvm-gcc for i386 kext compiles, we don't support that ABI.
-    if (!getDriver().shouldForceClangUse() &&
-        Inputs.size() == 1 &&
-        types::isCXX(Inputs[0]->getType()) &&
-        getTriple().isOSDarwin() &&
-        getTriple().getArch() == llvm::Triple::x86 &&
-        (C.getArgs().getLastArg(options::OPT_fapple_kext) ||
-         C.getArgs().getLastArg(options::OPT_mkernel)))
-      useClang = false;
-  }
-
-  // FIXME: This seems like a hacky way to choose clang frontend.
-  if (useClang)
-    Key = Action::AnalyzeJobClass;
-
   bool UseIntegratedAs = C.getArgs().hasFlag(options::OPT_integrated_as,
                                              options::OPT_no_integrated_as,
                                              IsIntegratedAssemblerDefault());
@@ -211,13 +194,11 @@ Tool &Darwin::SelectTool(const Compilation &C, const JobAction &JA,
     case Action::BindArchClass:
       llvm_unreachable("Invalid tool kind.");
     case Action::PreprocessJobClass:
-      T = new tools::darwin::Preprocess(*this); break;
     case Action::AnalyzeJobClass:
     case Action::MigrateJobClass:
-      T = new tools::Clang(*this); break;
     case Action::PrecompileJobClass:
     case Action::CompileJobClass:
-      T = new tools::darwin::Compile(*this); break;
+      T = new tools::Clang(*this); break;
     case Action::AssembleJobClass: {
       if (UseIntegratedAs)
         T = new tools::ClangAs(*this);
@@ -359,15 +340,16 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
     }
   }
 
+  SanitizerArgs Sanitize(getDriver(), Args);
+
   // Add ASAN runtime library, if required. Dynamic libraries and bundles
   // should not be linked with the runtime library.
-  if (Args.hasFlag(options::OPT_faddress_sanitizer,
-                   options::OPT_fno_address_sanitizer, false)) {
+  if (Sanitize.needsAsanRt()) {
     if (Args.hasArg(options::OPT_dynamiclib) ||
         Args.hasArg(options::OPT_bundle)) return;
     if (isTargetIPhoneOS()) {
       getDriver().Diag(diag::err_drv_clang_unsupported_per_platform)
-        << "-faddress-sanitizer";
+        << "-fsanitize=address";
     } else {
       AddLinkRuntimeLib(Args, CmdArgs, "libclang_rt.asan_osx.a");
 
@@ -1435,11 +1417,7 @@ Generic_GCC::~Generic_GCC() {
 Tool &Generic_GCC::SelectTool(const Compilation &C,
                               const JobAction &JA,
                               const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
+  Action::ActionClass Key = JA.getKind();
 
   Tool *&T = Tools[Key];
   if (!T) {
@@ -1448,14 +1426,11 @@ Tool &Generic_GCC::SelectTool(const Compilation &C,
     case Action::BindArchClass:
       llvm_unreachable("Invalid tool kind.");
     case Action::PreprocessJobClass:
-      T = new tools::gcc::Preprocess(*this); break;
     case Action::PrecompileJobClass:
-      T = new tools::gcc::Precompile(*this); break;
     case Action::AnalyzeJobClass:
     case Action::MigrateJobClass:
-      T = new tools::Clang(*this); break;
     case Action::CompileJobClass:
-      T = new tools::gcc::Compile(*this); break;
+      T = new tools::Clang(*this); break;
     case Action::AssembleJobClass:
       T = new tools::gcc::Assemble(*this); break;
     case Action::LinkJobClass:
@@ -1505,27 +1480,18 @@ Hexagon_TC::~Hexagon_TC() {
 Tool &Hexagon_TC::SelectTool(const Compilation &C,
                              const JobAction &JA,
                              const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  //   if (JA.getKind () == Action::CompileJobClass)
-  //     Key = JA.getKind ();
-  //     else
-
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
-  //   if ((JA.getKind () == Action::CompileJobClass)
-  //     && (JA.getType () != types::TY_LTO_BC)) {
-  //     Key = JA.getKind ();
-  //   }
-
+  Action::ActionClass Key = JA.getKind();
   Tool *&T = Tools[Key];
   if (!T) {
     switch (Key) {
     case Action::InputClass:
     case Action::BindArchClass:
       assert(0 && "Invalid tool kind.");
+    case Action::PreprocessJobClass:
+    case Action::PrecompileJobClass:
     case Action::AnalyzeJobClass:
+    case Action::MigrateJobClass:
+    case Action::CompileJobClass:
       T = new tools::Clang(*this); break;
     case Action::AssembleJobClass:
       T = new tools::hexagon::Assemble(*this); break;
@@ -1609,12 +1575,7 @@ OpenBSD::OpenBSD(const Driver &D, const llvm::Triple& Triple, const ArgList &Arg
 
 Tool &OpenBSD::SelectTool(const Compilation &C, const JobAction &JA,
                           const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
-
+  Action::ActionClass Key = JA.getKind();
   bool UseIntegratedAs = C.getArgs().hasFlag(options::OPT_integrated_as,
                                              options::OPT_no_integrated_as,
                                              IsIntegratedAssemblerDefault());
@@ -1649,12 +1610,7 @@ Bitrig::Bitrig(const Driver &D, const llvm::Triple& Triple, const ArgList &Args)
 
 Tool &Bitrig::SelectTool(const Compilation &C, const JobAction &JA,
                          const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
-
+  Action::ActionClass Key = JA.getKind();
   bool UseIntegratedAs = C.getArgs().hasFlag(options::OPT_integrated_as,
                                              options::OPT_no_integrated_as,
                                              IsIntegratedAssemblerDefault());
@@ -1741,12 +1697,7 @@ FreeBSD::FreeBSD(const Driver &D, const llvm::Triple& Triple, const ArgList &Arg
 
 Tool &FreeBSD::SelectTool(const Compilation &C, const JobAction &JA,
                           const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
-
+  Action::ActionClass Key = JA.getKind();
   bool UseIntegratedAs = C.getArgs().hasFlag(options::OPT_integrated_as,
                                              options::OPT_no_integrated_as,
                                              IsIntegratedAssemblerDefault());
@@ -1790,12 +1741,7 @@ NetBSD::NetBSD(const Driver &D, const llvm::Triple& Triple, const ArgList &Args)
 
 Tool &NetBSD::SelectTool(const Compilation &C, const JobAction &JA,
                          const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
-
+  Action::ActionClass Key = JA.getKind();
   bool UseIntegratedAs = C.getArgs().hasFlag(options::OPT_integrated_as,
                                              options::OPT_no_integrated_as,
                                              IsIntegratedAssemblerDefault());
@@ -1830,11 +1776,7 @@ Minix::Minix(const Driver &D, const llvm::Triple& Triple, const ArgList &Args)
 
 Tool &Minix::SelectTool(const Compilation &C, const JobAction &JA,
                         const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
+  Action::ActionClass Key = JA.getKind();
 
   Tool *&T = Tools[Key];
   if (!T) {
@@ -1871,11 +1813,7 @@ AuroraUX::AuroraUX(const Driver &D, const llvm::Triple& Triple,
 
 Tool &AuroraUX::SelectTool(const Compilation &C, const JobAction &JA,
                            const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
+  Action::ActionClass Key = JA.getKind();
 
   Tool *&T = Tools[Key];
   if (!T) {
@@ -1908,11 +1846,7 @@ Solaris::Solaris(const Driver &D, const llvm::Triple& Triple,
 
 Tool &Solaris::SelectTool(const Compilation &C, const JobAction &JA,
                            const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
+  Action::ActionClass Key = JA.getKind();
 
   Tool *&T = Tools[Key];
   if (!T) {
@@ -2285,12 +2219,7 @@ bool Linux::HasNativeLLVMSupport() const {
 
 Tool &Linux::SelectTool(const Compilation &C, const JobAction &JA,
                         const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
-
+  Action::ActionClass Key = JA.getKind();
   bool UseIntegratedAs = C.getArgs().hasFlag(options::OPT_integrated_as,
                                              options::OPT_no_integrated_as,
                                              IsIntegratedAssemblerDefault());
@@ -2508,11 +2437,7 @@ DragonFly::DragonFly(const Driver &D, const llvm::Triple& Triple, const ArgList 
 
 Tool &DragonFly::SelectTool(const Compilation &C, const JobAction &JA,
                             const ActionList &Inputs) const {
-  Action::ActionClass Key;
-  if (getDriver().ShouldUseClangCompiler(C, JA, getTriple()))
-    Key = Action::AnalyzeJobClass;
-  else
-    Key = JA.getKind();
+  Action::ActionClass Key = JA.getKind();
 
   Tool *&T = Tools[Key];
   if (!T) {

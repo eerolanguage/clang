@@ -520,7 +520,8 @@ def warn_conflicting_overriding_ret_types : Warning<
 
 def warn_conflicting_ret_types : Warning<
   "conflicting return type in "
-  "implementation of %0%diff{: $ vs $|}1,2">;
+  "implementation of %0%diff{: $ vs $|}1,2">,
+  InGroup<MismatchedReturnTypes>;
 
 def warn_conflicting_overriding_ret_type_modifiers : Warning<
   "conflicting distributed object modifiers on return type "
@@ -549,7 +550,9 @@ def warn_conflicting_overriding_param_types : Warning<
 
 def warn_conflicting_param_types : Warning<
   "conflicting parameter types in "
-  "implementation of %0%diff{: $ vs $|}1,2">;
+  "implementation of %0%diff{: $ vs $|}1,2">,
+  InGroup<MismatchedParameterTypes>;
+
 def warn_conflicting_param_modifiers : Warning<
   "conflicting distributed object modifiers on parameter type "
   "in implementation of %0">,
@@ -726,7 +729,7 @@ def warn_arc_repeated_use_of_weak : Warning <
 def warn_implicitly_retains_self : Warning <
   "block implicitly retains 'self'; explicitly mention 'self' to indicate "
   "this is intended behavior">,
-  InGroup<DiagGroup<"implicit-retain-self">>;
+  InGroup<DiagGroup<"implicit-retain-self">>, DefaultIgnore;
 def warn_arc_possible_repeated_use_of_weak : Warning <
   "weak %select{variable|property|implicit property|instance variable}0 %1 may "
   "be accessed multiple times in this %select{function|method|block|lambda}2 "

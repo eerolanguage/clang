@@ -508,9 +508,6 @@ void Parser::Initialize() {
   EnterScope(Scope::DeclScope);
   Actions.ActOnTranslationUnitScope(getCurScope());
 
-  // Prime the lexer look-ahead.
-  ConsumeToken();
-
   // Initialization for Objective-C context sensitive keywords recognition.
   // Referenced in Parser::ParseObjCTypeQualifierList.
   if (getLangOpts().ObjC1) {
@@ -565,6 +562,11 @@ void Parser::Initialize() {
     PP.SetPoisonReason(Ident___abnormal_termination,diag::err_seh___finally_block);
     PP.SetPoisonReason(Ident_AbnormalTermination,diag::err_seh___finally_block);
   }
+
+  Actions.Initialize();
+
+  // Prime the lexer look-ahead.
+  ConsumeToken();
 }
 
 namespace {
@@ -2045,8 +2047,8 @@ bool BalancedDelimiterTracker::diagnoseMissingClose() {
   }
   P.Diag(P.Tok, DID);
   P.Diag(LOpen, diag::note_matching) << LHSName;
-  if (P.SkipUntil(Close))
-    LClose = P.Tok.getLocation();
+  if (P.SkipUntil(Close, /*StopAtSemi*/ true, /*DontConsume*/ true))
+    LClose = P.ConsumeAnyToken();
   return true;
 }
 
