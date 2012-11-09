@@ -2722,6 +2722,12 @@ Sema::ActOnObjCAtCatchStmt(SourceLocation AtLoc,
   if (Var && Var->isInvalidDecl())
     return StmtError();
 
+  if (getLangOpts().Eero && getLangOpts().CPlusPlus && !PP.isInLegacyHeader()) {
+    if (Var && !Var->getType()->isObjCObjectPointerType()) {
+      return ActOnCXXCatchBlock(AtLoc, Parm, Body);
+    }
+  }
+
   return Owned(new (Context) ObjCAtCatchStmt(AtLoc, RParen, Var, Body));
 }
 
@@ -2738,6 +2744,74 @@ Sema::ActOnObjCAtTryStmt(SourceLocation AtLoc, Stmt *Try,
 
   getCurFunction()->setHasBranchProtectedScope();
   unsigned NumCatchStmts = CatchStmts.size();
+
+  // Eero C++ support: combine handling of ObjC and C++ exceptions.
+  // Under the hood, this code provides the equivalent of:
+  //
+  // @try {
+  //   do things...
+  // } @catch (...) {
+  //   try {
+  //     @throw; // rethrow exception
+  //   } catch (cpp_exception_type e) {
+  //   } catch (...) {
+  //     original objc "..." statements, if any
+  //   }
+  // }
+  //
+  if (getLangOpts().Eero && getLangOpts().CPlusPlus && !PP.isInLegacyHeader()) {
+    std::vector<Stmt*> objcCatchStmts;
+    std::vector<Stmt*> cxxCatchStmts;
+    ObjCAtCatchStmt *objcEllipsisStmt = 0;
+
+    for (unsigned i = 0; i < NumCatchStmts; i++) {
+      if (ObjCAtCatchStmt *objcCatchStmt =
+              dyn_cast_or_null<ObjCAtCatchStmt>(CatchStmts[i])) {
+        objcCatchStmts.push_back(objcCatchStmt);
+        if (objcCatchStmt->hasEllipsis()) {
+          if (objcEllipsisStmt != 0) {
+            Diag(objcCatchStmt->getAtCatchLoc(),
+                 diag::warn_exception_caught_by_earlier_handler) << "\"...\"";
+            Diag(objcEllipsisStmt->getAtCatchLoc(),
+                 diag::note_previous_exception_handler) << "\"...\"";
+          }
+          objcEllipsisStmt = objcCatchStmt;          
+        }
+      } else if (CXXCatchStmt *cxxCatchStmt =
+                    dyn_cast_or_null<CXXCatchStmt>(CatchStmts[i])) {
+        cxxCatchStmts.push_back(cxxCatchStmt);
+      }
+    }
+    if (!cxxCatchStmts.empty()) {
+      Stmt *objcRethrowStmt = BuildObjCAtThrowStmt(SourceLocation(), 0).take();
+      StmtResult rethrowCompoundStmt =
+          ActOnCompoundStmt(SourceLocation(),
+                            SourceLocation(),
+                            MultiStmtArg(objcRethrowStmt),
+                            false);
+      if (objcEllipsisStmt) {
+        StmtResult cxxEllipsis =
+            ActOnCXXCatchBlock(objcEllipsisStmt->getAtCatchLoc(),
+                               0,
+                               objcEllipsisStmt->getCatchBody());
+        cxxCatchStmts.push_back(cxxEllipsis.take());
+      } else {
+        StmtResult stubEllipsis = ActOnObjCAtCatchStmt(SourceLocation(),
+                                                       SourceLocation(), 0, 0);
+        objcEllipsisStmt = cast<ObjCAtCatchStmt>(stubEllipsis.take());
+        objcCatchStmts.push_back(objcEllipsisStmt);
+      }
+      StmtResult cxxTryBlock =
+          ActOnCXXTryBlock(SourceLocation(),
+                           rethrowCompoundStmt.take(),
+                           MultiStmtArg(cxxCatchStmts));
+
+      objcEllipsisStmt->setCatchBody(cxxTryBlock.take());
+      CatchStmts = MultiStmtArg(objcCatchStmts);
+      NumCatchStmts = CatchStmts.size();
+    }
+  }
+
   return Owned(ObjCAtTryStmt::Create(Context, AtLoc, Try,
                                      CatchStmts.data(),
                                      NumCatchStmts,

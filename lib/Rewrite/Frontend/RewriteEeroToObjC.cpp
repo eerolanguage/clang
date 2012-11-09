@@ -1591,19 +1591,24 @@ void TranslatorVisitor::RewriteTryStmt(ObjCAtTryStmt* S) {
   for (unsigned i = 0; i < S->getNumCatchStmts(); i++) {
     if (ObjCAtCatchStmt* CatchStmt = S->getCatchStmt(i)) {
       VarDecl* ParamDecl = CatchStmt->getCatchParamDecl();
+      if (ParamDecl) {
+        const SourceRange& CatchRange = GetRange(CatchStmt->getAtCatchLoc(),
+                                        ParamDecl->getLocStart().getLocWithOffset(-1));
 
-      const SourceRange& CatchRange = GetRange(CatchStmt->getAtCatchLoc(),
-                                      ParamDecl->getLocStart().getLocWithOffset(-1));
-
-      TheRewriter.ReplaceText(CatchRange, "} @catch");
-      
-      string declStr = "(";
-      declStr += ParamDecl->getType().getAsString(*Policy);
-      declStr += ' ';
-      declStr += ParamDecl->getName();
-      declStr += ") {";
-      
-      TheRewriter.ReplaceText(ParamDecl->getSourceRange(), declStr);
+        TheRewriter.ReplaceText(CatchRange, "} @catch");
+        
+        string declStr = "(";
+        declStr += ParamDecl->getType().getAsString(*Policy);
+        declStr += ' ';
+        declStr += ParamDecl->getName();
+        declStr += ") {";
+        
+        TheRewriter.ReplaceText(ParamDecl->getSourceRange(), declStr);
+      } else {
+        const SourceRange& CatchRange = GetRange(CatchStmt->getAtCatchLoc(),
+                                                 CatchStmt->getRParenLoc());
+        TheRewriter.ReplaceText(CatchRange, "} @catch (...) {");
+      }
     }
   }
   

@@ -3117,7 +3117,9 @@ VarDecl *Sema::BuildObjCExceptionDecl(TypeSourceInfo *TInfo, QualType T,
   } else if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
              T->isObjCObjectType()) {
     T = Context.getObjCObjectPointerType(T); // make it a pointer for eero
-  } else if (!T->isObjCObjectPointerType()) {
+  } else if (!T->isObjCObjectPointerType() &&
+             (!getLangOpts().Eero || !getLangOpts().CPlusPlus ||
+              PP.isInLegacyHeader())) {
     Invalid = true;
     Diag(IdLoc ,diag::err_catch_param_not_objc_type);
   } else if (T->isObjCQualifiedIdType()) {
