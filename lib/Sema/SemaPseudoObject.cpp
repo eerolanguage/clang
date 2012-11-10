@@ -1502,3 +1502,18 @@ Expr *Sema::recreateSyntacticForm(PseudoObjectExpr *E) {
     return stripOpaqueValuesFromPseudoObjectRef(*this, syntax);
   }
 }
+
+/// Introduced for Eero.
+/// Return either the expr type, or if a pseudo object, its type.
+///
+QualType Sema::GetExprOrPseudoObjectType(Expr *E) {
+  const BuiltinType *placeholderType = E->getType()->getAsPlaceholderType();
+  if (!placeholderType) return E->getType();
+
+  switch (placeholderType->getKind()) {
+    case BuiltinType::PseudoObject:
+      return checkPseudoObjectRValue(E).get()->getType();
+    default:
+      return E->getType();
+  }
+}

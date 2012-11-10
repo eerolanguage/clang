@@ -3611,7 +3611,7 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
     if (!Sel.isNull()) {
 
       // Handle pseudo/placeholder objects
-      QualType LHSType = CheckPlaceholderExpr(LHSExpr).get()->getType();
+      QualType LHSType = GetExprOrPseudoObjectType(LHSExpr);
 
       QualType LHSClassType = LHSType->getPointeeType();
 

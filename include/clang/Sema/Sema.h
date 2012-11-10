@@ -6807,6 +6807,8 @@ public:
   ExprResult checkPseudoObjectRValue(Expr *E);
   Expr *recreateSyntacticForm(PseudoObjectExpr *E);
 
+  QualType GetExprOrPseudoObjectType(Expr *E);
+
   QualType CheckConditionalOperands( // C99 6.5.15
     ExprResult &Cond, ExprResult &LHS, ExprResult &RHS,
     ExprValueKind &VK, ExprObjectKind &OK, SourceLocation QuestionLoc);

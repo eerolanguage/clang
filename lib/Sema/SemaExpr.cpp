@@ -4596,7 +4596,7 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
     // Eero supports objc object boxing/unboxing that looks like casts.
     // Make sure to handle pseudo/placeholder objects.
     const QualType castExprType =
-        CheckPlaceholderExpr(CastExpr).get()->getType();
+        GetExprOrPseudoObjectType(CastExpr);
     if (!castType->isVoidPointerType() &&      // ignore void* casts
         !castExprType->isVoidPointerType() &&  //
         !castType->isBlockPointerType() &&     // ignore block casts
@@ -8724,8 +8724,8 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
 
     // Handle pseudo/placeholder objects
     //
-    QualType LHSType = CheckPlaceholderExpr(LHSExpr).get()->getType();
-    QualType RHSType = CheckPlaceholderExpr(RHSExpr).get()->getType();
+    QualType LHSType = GetExprOrPseudoObjectType(LHSExpr);
+    QualType RHSType = GetExprOrPseudoObjectType(RHSExpr);
 
     if (LHSType->isObjCObjectPointerType() &&
         RHSType->isObjCObjectPointerType()) {
