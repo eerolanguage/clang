@@ -1634,6 +1634,9 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       // FIXME: Add support for explicit call of template constructor.
       SourceLocation TemplateKWLoc;
       UnqualifiedId Name;
+      if (isEero && Tok.is(tok::kw_end)) {
+        Tok.setKind(tok::identifier);
+      }
       if (getLangOpts().ObjC2 && OpKind == tok::period && Tok.is(tok::kw_class)) {
         // Objective-C++:
         //   After a '.' in a member access expression, treat the keyword
