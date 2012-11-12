@@ -6834,7 +6834,7 @@ static void diagnoseFunctionPointerToVoidComparison(Sema &S, SourceLocation Loc,
 }
 
 static bool isObjCObjectLiteral(ExprResult &E) {
-  switch (E.get()->getStmtClass()) {
+  switch (E.get()->IgnoreParenImpCasts()->getStmtClass()) {
   case Stmt::ObjCArrayLiteralClass:
   case Stmt::ObjCDictionaryLiteralClass:
   case Stmt::ObjCStringLiteralClass:
@@ -6926,6 +6926,7 @@ static void diagnoseObjCLiteralComparison(Sema &S, SourceLocation Loc,
     LK_String
   } LiteralKind;
 
+  Literal = Literal->IgnoreParenImpCasts();
   switch (Literal->getStmtClass()) {
   case Stmt::ObjCStringLiteralClass:
     // "string literal"

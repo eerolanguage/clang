@@ -29,7 +29,7 @@ using clang::tooling::newFrontendActionFactory;
 using clang::tooling::runToolOnCodeWithArgs;
 using clang::tooling::FrontendActionFactory;
 
-enum Language { Lang_C, Lang_CXX };
+enum Language { Lang_C, Lang_C89, Lang_CXX };
 
 /// \brief Base class for verifying some property of nodes found by a matcher.
 ///
@@ -76,6 +76,10 @@ testing::AssertionResult MatchVerifier<NodeType>::match(
   switch (L) {
   case Lang_C:
     Args.push_back("-std=c99");
+    FileName = "input.c";
+    break;
+  case Lang_C89:
+    Args.push_back("-std=c89");
     FileName = "input.c";
     break;
   case Lang_CXX:
@@ -252,6 +256,33 @@ TEST(CXXNewExpr, ArrayRange) {
   RangeVerifier<CXXNewExpr> Verifier;
   Verifier.expectRange(1, 12, 1, 22);
   EXPECT_TRUE(Verifier.match("void f() { new int[10]; }", newExpr()));
+}
+
+TEST(CXXNewExpr, ParenRange) {
+  RangeVerifier<CXXNewExpr> Verifier;
+  Verifier.expectRange(1, 12, 1, 20);
+  EXPECT_TRUE(Verifier.match("void f() { new int(); }", newExpr()));
+}
+
+TEST(MemberExpr, ImplicitMemberRange) {
+  RangeVerifier<MemberExpr> Verifier;
+  Verifier.expectRange(2, 30, 2, 30);
+  EXPECT_TRUE(Verifier.match("struct S { operator int() const; };\n"
+                             "int foo(const S& s) { return s; }",
+                             memberExpr()));
+}
+
+TEST(VarDecl, VMTypeFixedVarDeclRange) {
+  RangeVerifier<VarDecl> Verifier;
+  Verifier.expectRange(1, 1, 1, 23);
+  EXPECT_TRUE(Verifier.match("int a[(int)(void*)1234];",
+                             varDecl(), Lang_C89));
+}
+
+TEST(CXXConstructorDecl, NoRetFunTypeLocRange) {
+  RangeVerifier<CXXConstructorDecl> Verifier;
+  Verifier.expectRange(1, 11, 1, 13);
+  EXPECT_TRUE(Verifier.match("class C { C(); };", functionDecl()));
 }
 
 } // end namespace ast_matchers

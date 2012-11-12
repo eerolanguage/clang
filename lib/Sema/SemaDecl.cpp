@@ -3810,9 +3810,9 @@ Decl *Sema::HandleDeclarator(Scope *S, Declarator &D,
   return New;
 }
 
-/// TryToFixInvalidVariablyModifiedType - Helper method to turn variable array
-/// types into constant array types in certain situations which would otherwise
-/// be errors (for GCC compatibility).
+/// Helper method to turn variable array types into constant array
+/// types in certain situations which would otherwise be errors (for
+/// GCC compatibility).
 static QualType TryToFixInvalidVariablyModifiedType(QualType T,
                                                     ASTContext &Context,
                                                     bool &SizeIsNegative,
@@ -3878,6 +3878,52 @@ static QualType TryToFixInvalidVariablyModifiedType(QualType T,
   
   return Context.getConstantArrayType(VLATy->getElementType(),
                                       Res, ArrayType::Normal, 0);
+}
+
+static void
+FixInvalidVariablyModifiedTypeLoc(TypeLoc SrcTL, TypeLoc DstTL) {
+  if (PointerTypeLoc* SrcPTL = dyn_cast<PointerTypeLoc>(&SrcTL)) {
+    PointerTypeLoc* DstPTL = cast<PointerTypeLoc>(&DstTL);
+    FixInvalidVariablyModifiedTypeLoc(SrcPTL->getPointeeLoc(),
+                                      DstPTL->getPointeeLoc());
+    DstPTL->setStarLoc(SrcPTL->getStarLoc());
+    return;
+  }
+  if (ParenTypeLoc* SrcPTL = dyn_cast<ParenTypeLoc>(&SrcTL)) {
+    ParenTypeLoc* DstPTL = cast<ParenTypeLoc>(&DstTL);
+    FixInvalidVariablyModifiedTypeLoc(SrcPTL->getInnerLoc(),
+                                      DstPTL->getInnerLoc());
+    DstPTL->setLParenLoc(SrcPTL->getLParenLoc());
+    DstPTL->setRParenLoc(SrcPTL->getRParenLoc());
+    return;
+  }
+  ArrayTypeLoc* SrcATL = cast<ArrayTypeLoc>(&SrcTL);
+  ArrayTypeLoc* DstATL = cast<ArrayTypeLoc>(&DstTL);
+  TypeLoc SrcElemTL = SrcATL->getElementLoc();
+  TypeLoc DstElemTL = DstATL->getElementLoc();
+  DstElemTL.initializeFullCopy(SrcElemTL);
+  DstATL->setLBracketLoc(SrcATL->getLBracketLoc());
+  DstATL->setSizeExpr(SrcATL->getSizeExpr());
+  DstATL->setRBracketLoc(SrcATL->getRBracketLoc());
+}
+
+/// Helper method to turn variable array types into constant array
+/// types in certain situations which would otherwise be errors (for
+/// GCC compatibility).
+static TypeSourceInfo*
+TryToFixInvalidVariablyModifiedTypeSourceInfo(TypeSourceInfo *TInfo,
+                                              ASTContext &Context,
+                                              bool &SizeIsNegative,
+                                              llvm::APSInt &Oversized) {
+  QualType FixedTy
+    = TryToFixInvalidVariablyModifiedType(TInfo->getType(), Context,
+                                          SizeIsNegative, Oversized);
+  if (FixedTy.isNull())
+    return 0;
+  TypeSourceInfo *FixedTInfo = Context.getTrivialTypeSourceInfo(FixedTy);
+  FixInvalidVariablyModifiedTypeLoc(TInfo->getTypeLoc(),
+                                    FixedTInfo->getTypeLoc());
+  return FixedTInfo;
 }
 
 /// \brief Register the given locally-scoped external C declaration so
@@ -4007,19 +4053,21 @@ Sema::CheckTypedefForVariablyModifiedType(Scope *S, TypedefNameDecl *NewTD) {
   // then it shall have block scope.
   // Note that variably modified types must be fixed before merging the decl so
   // that redeclarations will match.
-  QualType T = NewTD->getUnderlyingType();
+  TypeSourceInfo *TInfo = NewTD->getTypeSourceInfo();
+  QualType T = TInfo->getType();
   if (T->isVariablyModifiedType()) {
     getCurFunction()->setHasBranchProtectedScope();
 
     if (S->getFnParent() == 0) {
       bool SizeIsNegative;
       llvm::APSInt Oversized;
-      QualType FixedTy =
-          TryToFixInvalidVariablyModifiedType(T, Context, SizeIsNegative,
-                                              Oversized);
-      if (!FixedTy.isNull()) {
+      TypeSourceInfo *FixedTInfo =
+        TryToFixInvalidVariablyModifiedTypeSourceInfo(TInfo, Context,
+                                                      SizeIsNegative,
+                                                      Oversized);
+      if (FixedTInfo) {
         Diag(NewTD->getLocation(), diag::warn_illegal_constant_array_size);
-        NewTD->setTypeSourceInfo(Context.getTrivialTypeSourceInfo(FixedTy));
+        NewTD->setTypeSourceInfo(FixedTInfo);
       } else {
         if (SizeIsNegative)
           Diag(NewTD->getLocation(), diag::err_typecheck_negative_array_size);
@@ -4593,7 +4641,8 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
   if (NewVD->isInvalidDecl())
     return false;
 
-  QualType T = NewVD->getType();
+  TypeSourceInfo *TInfo = NewVD->getTypeSourceInfo();
+  QualType T = TInfo->getType();
 
   if (T->isObjCObjectType()) {
    if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
@@ -4657,11 +4706,10 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
       (T->isVariableArrayType() && NewVD->hasGlobalStorage())) {
     bool SizeIsNegative;
     llvm::APSInt Oversized;
-    QualType FixedTy =
-        TryToFixInvalidVariablyModifiedType(T, Context, SizeIsNegative,
-                                            Oversized);
-
-    if (FixedTy.isNull() && T->isVariableArrayType()) {
+    TypeSourceInfo *FixedTInfo =
+      TryToFixInvalidVariablyModifiedTypeSourceInfo(TInfo, Context,
+                                                    SizeIsNegative, Oversized);
+    if (FixedTInfo == 0 && T->isVariableArrayType()) {
       const VariableArrayType *VAT = Context.getAsVariableArrayType(T);
       // FIXME: This won't give the correct result for
       // int a[10][n];
@@ -4680,7 +4728,7 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
       return false;
     }
 
-    if (FixedTy.isNull()) {
+    if (FixedTInfo == 0) {
       if (NewVD->isFileVarDecl())
         Diag(NewVD->getLocation(), diag::err_vm_decl_in_file_scope);
       else
@@ -4690,7 +4738,8 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD,
     }
 
     Diag(NewVD->getLocation(), diag::warn_illegal_constant_array_size);
-    NewVD->setType(FixedTy);
+    NewVD->setType(FixedTInfo->getType());
+    NewVD->setTypeSourceInfo(FixedTInfo);
   }
 
   if (Previous.empty() && NewVD->isExternC()) {
@@ -7230,8 +7279,8 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
   // All the following checks are C++ only.
   if (!getLangOpts().CPlusPlus) return;
 
-  QualType baseType = Context.getBaseElementType(var->getType());
-  if (baseType->isDependentType()) return;
+  QualType type = var->getType();
+  if (type->isDependentType()) return;
 
   // __block variables might require us to capture a copy-initializer.
   if (var->hasAttr<BlocksAttr>()) {
@@ -7240,8 +7289,6 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
 
     // Regardless, we don't want to ignore array nesting when
     // constructing this copy.
-    QualType type = var->getType();
-
     if (type->isStructureOrClassType()) {
       SourceLocation poi = var->getLocation();
       Expr *varRef =new (Context) DeclRefExpr(var, false, type, VK_LValue, poi);
@@ -7259,6 +7306,7 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
 
   Expr *Init = var->getInit();
   bool IsGlobal = var->hasGlobalStorage() && !var->isStaticLocal();
+  QualType baseType = Context.getBaseElementType(type);
 
   if (!var->getDeclContext()->isDependentContext() &&
       Init && !Init->isValueDependent()) {
@@ -9607,12 +9655,15 @@ FieldDecl *Sema::CheckFieldDecl(DeclarationName Name, QualType T,
   if (!InvalidDecl && T->isVariablyModifiedType()) {
     bool SizeIsNegative;
     llvm::APSInt Oversized;
-    QualType FixedTy = TryToFixInvalidVariablyModifiedType(T, Context,
-                                                           SizeIsNegative,
-                                                           Oversized);
-    if (!FixedTy.isNull()) {
+
+    TypeSourceInfo *FixedTInfo =
+      TryToFixInvalidVariablyModifiedTypeSourceInfo(TInfo, Context,
+                                                    SizeIsNegative,
+                                                    Oversized);
+    if (FixedTInfo) {
       Diag(Loc, diag::warn_illegal_constant_array_size);
-      T = FixedTy;
+      TInfo = FixedTInfo;
+      T = FixedTInfo->getType();
     } else {
       if (SizeIsNegative)
         Diag(Loc, diag::err_typecheck_negative_array_size);

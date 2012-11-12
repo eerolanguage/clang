@@ -590,19 +590,29 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
 
 // Initialization Utilities
 
-bool CompilerInstance::InitializeSourceManager(StringRef InputFile,
-                                               SrcMgr::CharacteristicKind Kind){
-  return InitializeSourceManager(InputFile, Kind, getDiagnostics(), 
+bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input){
+  return InitializeSourceManager(Input, getDiagnostics(),
                                  getFileManager(), getSourceManager(), 
                                  getFrontendOpts());
 }
 
-bool CompilerInstance::InitializeSourceManager(StringRef InputFile,
-                                               SrcMgr::CharacteristicKind Kind,
+bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input,
                                                DiagnosticsEngine &Diags,
                                                FileManager &FileMgr,
                                                SourceManager &SourceMgr,
                                                const FrontendOptions &Opts) {
+  SrcMgr::CharacteristicKind
+    Kind = Input.isSystem() ? SrcMgr::C_System : SrcMgr::C_User;
+
+  if (Input.isBuffer()) {
+    SourceMgr.createMainFileIDForMemBuffer(Input.getBuffer(), Kind);
+    assert(!SourceMgr.getMainFileID().isInvalid() &&
+           "Couldn't establish MainFileID!");
+    return true;
+  }
+
+  StringRef InputFile = Input.getFile();
+
   // Figure out where to get and map in the main file.
   if (InputFile != "-") {
     const FileEntry *File = FileMgr.getFile(InputFile);
