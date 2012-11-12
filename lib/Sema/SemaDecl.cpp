@@ -10285,6 +10285,8 @@ void Sema::ActOnFields(Scope* S,
       if (Record)
         Record->setHasFlexibleArrayMember(true);
     } else if (!FDTy->isDependentType() &&
+               (!getLangOpts().Eero || PP.isInLegacyHeader() ||
+                !FDTy->isObjCObjectType()) &&
                RequireCompleteType(FD->getLocation(), FD->getType(),
                                    diag::err_field_incomplete)) {
       // Incomplete type
