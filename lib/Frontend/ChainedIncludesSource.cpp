@@ -39,7 +39,7 @@ static ASTReader *createASTReader(CompilerInstance &CI,
     Reader->addInMemoryBuffer(sr, memBufs[ti]);
   }
   Reader->setDeserializationListener(deserialListener);
-  switch (Reader->ReadAST(pchFile, serialization::MK_PCH,
+  switch (Reader->ReadAST(pchFile, serialization::MK_PCH, SourceLocation(),
                           ASTReader::ARR_None)) {
   case ASTReader::Success:
     // Set the predefines buffer as suggested by the PCH reader.
@@ -99,7 +99,7 @@ ChainedIncludesSource *ChainedIncludesSource::create(CompilerInstance &CI) {
     Clang->setInvocation(CInvok.take());
     Clang->setDiagnostics(Diags.getPtr());
     Clang->setTarget(TargetInfo::CreateTargetInfo(Clang->getDiagnostics(),
-                                                  Clang->getTargetOpts()));
+                                                  &Clang->getTargetOpts()));
     Clang->createFileManager();
     Clang->createSourceManager(Clang->getFileManager());
     Clang->createPreprocessor();

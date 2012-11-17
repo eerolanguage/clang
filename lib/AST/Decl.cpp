@@ -480,8 +480,7 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D, bool OnlyTemplate) {
   if (!(isa<CXXMethodDecl>(D) ||
         isa<VarDecl>(D) ||
         isa<FieldDecl>(D) ||
-        (isa<TagDecl>(D) &&
-         (D->getDeclName() || cast<TagDecl>(D)->getTypedefNameForAnonDecl()))))
+        isa<TagDecl>(D)))
     return LinkageInfo::none();
 
   LinkageInfo LV;
@@ -656,8 +655,7 @@ LinkageInfo NamedDecl::getLinkageAndVisibility() const {
 llvm::Optional<Visibility> NamedDecl::getExplicitVisibility() const {
   // Use the most recent declaration of a variable.
   if (const VarDecl *Var = dyn_cast<VarDecl>(this)) {
-    if (llvm::Optional<Visibility> V =
-        getVisibilityOf(Var->getMostRecentDecl()))
+    if (llvm::Optional<Visibility> V = getVisibilityOf(Var))
       return V;
 
     if (Var->isStaticDataMember()) {
@@ -671,8 +669,7 @@ llvm::Optional<Visibility> NamedDecl::getExplicitVisibility() const {
   // Use the most recent declaration of a function, and also handle
   // function template specializations.
   if (const FunctionDecl *fn = dyn_cast<FunctionDecl>(this)) {
-    if (llvm::Optional<Visibility> V
-                            = getVisibilityOf(fn->getMostRecentDecl())) 
+    if (llvm::Optional<Visibility> V = getVisibilityOf(fn))
       return V;
 
     // If the function is a specialization of a template with an
@@ -2563,8 +2560,7 @@ void TagDecl::setTypedefNameForAnonDecl(TypedefNameDecl *TDD) {
 void TagDecl::startDefinition() {
   IsBeingDefined = true;
 
-  if (isa<CXXRecordDecl>(this)) {
-    CXXRecordDecl *D = cast<CXXRecordDecl>(this);
+  if (CXXRecordDecl *D = dyn_cast<CXXRecordDecl>(this)) {
     struct CXXRecordDecl::DefinitionData *Data = 
       new (getASTContext()) struct CXXRecordDecl::DefinitionData(D);
     for (redecl_iterator I = redecls_begin(), E = redecls_end(); I != E; ++I)

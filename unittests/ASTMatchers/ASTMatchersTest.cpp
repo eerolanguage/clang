@@ -947,6 +947,25 @@ TEST(Matcher, HasOperatorNameForOverloadedOperatorCall) {
               OpCallLessLess));
 }
 
+TEST(Matcher, NestedOverloadedOperatorCalls) {
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+        "class Y { }; "
+        "Y& operator&&(Y& x, Y& y) { return x; }; "
+        "Y a; Y b; Y c; Y d = a && b && c;",
+        operatorCallExpr(hasOverloadedOperatorName("&&")).bind("x"),
+        new VerifyIdIsBoundTo<CXXOperatorCallExpr>("x", 2)));
+  EXPECT_TRUE(matches(
+        "class Y { }; "
+        "Y& operator&&(Y& x, Y& y) { return x; }; "
+        "Y a; Y b; Y c; Y d = a && b && c;",
+        operatorCallExpr(hasParent(operatorCallExpr()))));
+  EXPECT_TRUE(matches(
+        "class Y { }; "
+        "Y& operator&&(Y& x, Y& y) { return x; }; "
+        "Y a; Y b; Y c; Y d = a && b && c;",
+        operatorCallExpr(hasDescendant(operatorCallExpr()))));
+}
+
 TEST(Matcher, ThisPointerType) {
   StatementMatcher MethodOnY =
     memberCallExpr(thisPointerType(recordDecl(hasName("Y"))));
@@ -2756,6 +2775,22 @@ TEST(ForEachDescendant, BindsOneNode) {
       recordDecl(hasName("C"),
                  forEachDescendant(fieldDecl(hasName("x")).bind("x"))),
       new VerifyIdIsBoundTo<FieldDecl>("x", 1)));
+}
+
+TEST(ForEachDescendant, NestedForEachDescendant) {
+  DeclarationMatcher m = recordDecl(
+      isDefinition(), decl().bind("x"), hasName("C"));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+    "class A { class B { class C {}; }; };",
+    recordDecl(hasName("A"), anyOf(m, forEachDescendant(m))),
+    new VerifyIdIsBoundTo<Decl>("x", "C")));
+
+  // FIXME: This is not really a useful matcher, but the result is still
+  // surprising (currently binds "A").
+  //EXPECT_TRUE(matchAndVerifyResultTrue(
+  //  "class A { class B { class C {}; }; };",
+  //  recordDecl(hasName("A"), allOf(hasDescendant(m), anyOf(m, anything()))),
+  //  new VerifyIdIsBoundTo<Decl>("x", "C")));
 }
 
 TEST(ForEachDescendant, BindsMultipleNodes) {

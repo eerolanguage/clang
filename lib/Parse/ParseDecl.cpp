@@ -3744,6 +3744,9 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw_volatile:
   case tok::kw_restrict:
 
+    // Debugger support.
+  case tok::kw___unknown_anytype:
+
     // typedef-name
   case tok::annot_typename:
     return true;
@@ -3845,6 +3848,9 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
 
     // Modules
   case tok::kw___module_private__:
+
+    // Debugger support
+  case tok::kw___unknown_anytype:
 
     // type-specifiers
   case tok::kw_short:

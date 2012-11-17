@@ -296,30 +296,24 @@ void CodeGenFunction::EmitOpenCLKernelMetadata(const FunctionDecl *FD,
     GenOpenCLArgMetadata(FD, Fn, CGM, Context, kernelMDArgs);
   
   if (FD->hasAttr<WorkGroupSizeHintAttr>()) {
-    llvm::SmallVector <llvm::Value*, 5> attrMDArgs;
-    attrMDArgs.push_back(llvm::MDString::get(Context, "work_group_size_hint"));
     WorkGroupSizeHintAttr *attr = FD->getAttr<WorkGroupSizeHintAttr>();
-    llvm::Type *iTy = llvm::IntegerType::get(Context, 32);
-    attrMDArgs.push_back(llvm::ConstantInt::get(iTy,
-       llvm::APInt(32, (uint64_t)attr->getXDim())));
-    attrMDArgs.push_back(llvm::ConstantInt::get(iTy,
-       llvm::APInt(32, (uint64_t)attr->getYDim())));
-    attrMDArgs.push_back(llvm::ConstantInt::get(iTy,
-       llvm::APInt(32, (uint64_t)attr->getZDim())));
+    llvm::Value *attrMDArgs[] = {
+      llvm::MDString::get(Context, "work_group_size_hint"),
+      Builder.getInt32(attr->getXDim()),
+      Builder.getInt32(attr->getYDim()),
+      Builder.getInt32(attr->getZDim())
+    };
     kernelMDArgs.push_back(llvm::MDNode::get(Context, attrMDArgs));
   }
 
   if (FD->hasAttr<ReqdWorkGroupSizeAttr>()) {
-    llvm::SmallVector <llvm::Value*, 5> attrMDArgs;
-    attrMDArgs.push_back(llvm::MDString::get(Context, "reqd_work_group_size"));
     ReqdWorkGroupSizeAttr *attr = FD->getAttr<ReqdWorkGroupSizeAttr>();
-    llvm::Type *iTy = llvm::IntegerType::get(Context, 32);
-    attrMDArgs.push_back(llvm::ConstantInt::get(iTy,
-       llvm::APInt(32, (uint64_t)attr->getXDim())));
-    attrMDArgs.push_back(llvm::ConstantInt::get(iTy,
-       llvm::APInt(32, (uint64_t)attr->getYDim())));
-    attrMDArgs.push_back(llvm::ConstantInt::get(iTy,
-       llvm::APInt(32, (uint64_t)attr->getZDim())));
+    llvm::Value *attrMDArgs[] = {
+      llvm::MDString::get(Context, "reqd_work_group_size"),
+      Builder.getInt32(attr->getXDim()),
+      Builder.getInt32(attr->getYDim()),
+      Builder.getInt32(attr->getZDim())
+    };
     kernelMDArgs.push_back(llvm::MDNode::get(Context, attrMDArgs));
   }
 
@@ -454,7 +448,16 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   // emit the type size.
   for (FunctionArgList::const_iterator i = Args.begin(), e = Args.end();
        i != e; ++i) {
-    QualType Ty = (*i)->getType();
+    const VarDecl *VD = *i;
+
+    // Dig out the type as written from ParmVarDecls; it's unclear whether
+    // the standard (C99 6.9.1p10) requires this, but we're following the
+    // precedent set by gcc.
+    QualType Ty;
+    if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(VD))
+      Ty = PVD->getOriginalType();
+    else
+      Ty = VD->getType();
 
     if (Ty->isVariablyModifiedType())
       EmitVariablyModifiedType(Ty);

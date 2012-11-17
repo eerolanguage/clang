@@ -2660,6 +2660,7 @@ Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
   }
 
   if (Tag) {
+    getASTContext().addUnnamedTag(Tag);
     Tag->setFreeStanding();
     if (Tag->isInvalidDecl())
       return Tag;
@@ -5748,6 +5749,18 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   ProcessDeclAttributes(S, NewFD, D,
                         /*NonInheritable=*/false, /*Inheritable=*/true);
 
+  QualType RetType = NewFD->getResultType();
+  const CXXRecordDecl *Ret = RetType->isRecordType() ?
+      RetType->getAsCXXRecordDecl() : RetType->getPointeeCXXRecordDecl();
+  if (!NewFD->isInvalidDecl() && !NewFD->hasAttr<WarnUnusedResultAttr>() &&
+      Ret && Ret->hasAttr<WarnUnusedResultAttr>()) {
+    const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(NewFD);
+    if (!(MD && MD->getCorrespondingMethodInClass(Ret, true))) {
+      NewFD->addAttr(new (Context) WarnUnusedResultAttr(SourceRange(),
+                                                        Context));
+    }
+  }
+
   if (!getLangOpts().CPlusPlus) {
     // Perform semantic checking on the function declaration.
     bool isExplicitSpecialization=false;
@@ -7402,6 +7415,10 @@ Sema::FinalizeDeclaratorGroup(Scope *S, const DeclSpec &DS,
   for (unsigned i = 0; i != NumDecls; ++i)
     if (Decl *D = Group[i])
       Decls.push_back(D);
+
+  if (DeclSpec::isDeclRep(DS.getTypeSpecType()))
+    if (const TagDecl *Tag = dyn_cast_or_null<TagDecl>(DS.getRepAsDecl()))
+      getASTContext().addUnnamedTag(Tag);
 
   return BuildDeclaratorGroup(Decls.data(), Decls.size(),
                               DS.getTypeSpecType() == DeclSpec::TST_auto);
@@ -9781,13 +9798,18 @@ bool Sema::CheckNontrivialField(FieldDecl *FD) {
       // copy constructors.
 
       CXXSpecialMember member = CXXInvalid;
-      if (!RDecl->hasTrivialCopyConstructor())
+      // We're required to check for any non-trivial constructors. Since the
+      // implicit default constructor is suppressed if there are any
+      // user-declared constructors, we just need to check that there is a
+      // trivial default constructor and a trivial copy constructor. (We don't
+      // worry about move constructors here, since this is a C++98 check.)
+      if (RDecl->hasNonTrivialCopyConstructor())
         member = CXXCopyConstructor;
       else if (!RDecl->hasTrivialDefaultConstructor())
         member = CXXDefaultConstructor;
-      else if (!RDecl->hasTrivialCopyAssignment())
+      else if (RDecl->hasNonTrivialCopyAssignment())
         member = CXXCopyAssignment;
-      else if (!RDecl->hasTrivialDestructor())
+      else if (RDecl->hasNonTrivialDestructor())
         member = CXXDestructor;
 
       if (member != CXXInvalid) {
@@ -9835,6 +9857,8 @@ static bool diagnoseNonTrivialUserDeclaredCtor(Sema &S, QualType QT,
 
 /// DiagnoseNontrivial - Given that a class has a non-trivial
 /// special member, figure out why.
+/// FIXME: These checks are not correct in C++11 mode. Currently, this is OK
+/// since we only use this in C++11 for a -Wc++98-compat warning.
 void Sema::DiagnoseNontrivial(const RecordType* T, CXXSpecialMember member) {
   QualType QT(T, 0U);
   CXXRecordDecl* RD = cast<CXXRecordDecl>(T->getDecl());
@@ -9933,17 +9957,21 @@ void Sema::DiagnoseNontrivial(const RecordType* T, CXXSpecialMember member) {
     }
   }
 
-  bool (CXXRecordDecl::*hasTrivial)() const;
+  bool (CXXRecordDecl::*hasNonTrivial)() const;
   switch (member) {
   case CXXDefaultConstructor:
-    hasTrivial = &CXXRecordDecl::hasTrivialDefaultConstructor; break;
+    hasNonTrivial = &CXXRecordDecl::hasNonTrivialDefaultConstructor; break;
   case CXXCopyConstructor:
-    hasTrivial = &CXXRecordDecl::hasTrivialCopyConstructor; break;
+    hasNonTrivial = &CXXRecordDecl::hasNonTrivialCopyConstructor; break;
   case CXXCopyAssignment:
-    hasTrivial = &CXXRecordDecl::hasTrivialCopyAssignment; break;
+    hasNonTrivial = &CXXRecordDecl::hasNonTrivialCopyAssignment; break;
+  case CXXMoveConstructor:
+    hasNonTrivial = &CXXRecordDecl::hasNonTrivialMoveConstructor; break;
+  case CXXMoveAssignment:
+    hasNonTrivial = &CXXRecordDecl::hasNonTrivialMoveAssignment; break;
   case CXXDestructor:
-    hasTrivial = &CXXRecordDecl::hasTrivialDestructor; break;
-  default:
+    hasNonTrivial = &CXXRecordDecl::hasNonTrivialDestructor; break;
+  case CXXInvalid:
     llvm_unreachable("unexpected special member");
   }
 
@@ -9952,7 +9980,7 @@ void Sema::DiagnoseNontrivial(const RecordType* T, CXXSpecialMember member) {
     const RecordType *BaseRT = bi->getType()->getAs<RecordType>();
     assert(BaseRT && "Don't know how to handle dependent bases");
     CXXRecordDecl *BaseRecTy = cast<CXXRecordDecl>(BaseRT->getDecl());
-    if (!(BaseRecTy->*hasTrivial)()) {
+    if ((BaseRecTy->*hasNonTrivial)()) {
       SourceLocation BaseLoc = bi->getLocStart();
       Diag(BaseLoc, diag::note_nontrivial_has_nontrivial) << QT << 1 << member;
       DiagnoseNontrivial(BaseRT, member);
@@ -9968,7 +9996,7 @@ void Sema::DiagnoseNontrivial(const RecordType* T, CXXSpecialMember member) {
     if (const RecordType *EltRT = EltTy->getAs<RecordType>()) {
       CXXRecordDecl* EltRD = cast<CXXRecordDecl>(EltRT->getDecl());
 
-      if (!(EltRD->*hasTrivial)()) {
+      if ((EltRD->*hasNonTrivial)()) {
         SourceLocation FLoc = fi->getLocation();
         Diag(FLoc, diag::note_nontrivial_has_nontrivial) << QT << 0 << member;
         DiagnoseNontrivial(EltRT, member);
@@ -9991,8 +10019,6 @@ void Sema::DiagnoseNontrivial(const RecordType* T, CXXSpecialMember member) {
       }
     }
   }
-
-  llvm_unreachable("found no explanation for non-trivial member");
 }
 
 /// TranslateIvarVisibility - Translate visibility from a token ID to an

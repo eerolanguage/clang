@@ -137,6 +137,8 @@ static SVal adjustReturnValue(SVal V, QualType ExpectedTy, QualType ActualTy,
     return V;
 
   // If the types already match, don't do any unnecessary work.
+  ExpectedTy = ExpectedTy.getCanonicalType();
+  ActualTy = ActualTy.getCanonicalType();
   if (ExpectedTy == ActualTy)
     return V;
 
@@ -166,27 +168,35 @@ static SVal adjustReturnValue(SVal V, QualType ExpectedTy, QualType ActualTy,
 void ExprEngine::removeDeadOnEndOfFunction(NodeBuilderContext& BC,
                                            ExplodedNode *Pred,
                                            ExplodedNodeSet &Dst) {
-  NodeBuilder Bldr(Pred, Dst, BC);
-
   // Find the last statement in the function and the corresponding basic block.
   const Stmt *LastSt = 0;
   const CFGBlock *Blk = 0;
   llvm::tie(LastSt, Blk) = getLastStmt(Pred);
   if (!Blk || !LastSt) {
+    Dst.Add(Pred);
     return;
   }
-  
-  // If the last statement is return, everything it references should stay live.
-  if (isa<ReturnStmt>(LastSt))
-    return;
 
-  // Here, we call the Symbol Reaper with 0 stack context telling it to clean up
-  // everything on the stack. We use LastStmt as a diagnostic statement, with 
-  // which the PreStmtPurgeDead point will be associated.
-  currBldrCtx = &BC;
-  removeDead(Pred, Dst, 0, 0, LastSt,
+  // Here, we destroy the current location context. We use the current
+  // function's entire body as a diagnostic statement, with which the program
+  // point will be associated. However, we only want to use LastStmt as a
+  // reference for what to clean up if it's a ReturnStmt; otherwise, everything
+  // is dead.
+  SaveAndRestore<const NodeBuilderContext *> NodeContextRAII(currBldrCtx, &BC);
+  const LocationContext *LCtx = Pred->getLocationContext();
+  removeDead(Pred, Dst, dyn_cast<ReturnStmt>(LastSt), LCtx,
+             LCtx->getAnalysisDeclContext()->getBody(),
              ProgramPoint::PostStmtPurgeDeadSymbolsKind);
-  currBldrCtx = 0;
+}
+
+static bool wasDifferentDeclUsedForInlining(CallEventRef<> Call,
+    const StackFrameContext *calleeCtx) {
+  const Decl *RuntimeCallee = calleeCtx->getDecl();
+  const Decl *StaticDecl = Call->getDecl();
+  assert(RuntimeCallee);
+  if (!StaticDecl)
+    return true;
+  return RuntimeCallee->getCanonicalDecl() != StaticDecl->getCanonicalDecl();
 }
 
 /// The call exit is simulated with a sequence of nodes, which occur between 
@@ -228,9 +238,10 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
       const LocationContext *LCtx = CEBNode->getLocationContext();
       SVal V = state->getSVal(RS, LCtx);
 
-      const Decl *Callee = calleeCtx->getDecl();
-      if (Callee != Call->getDecl()) {
-        QualType ReturnedTy = CallEvent::getDeclaredResultType(Callee);
+      // Ensure that the return type matches the type of the returned Expr.
+      if (wasDifferentDeclUsedForInlining(Call, calleeCtx)) {
+        QualType ReturnedTy =
+          CallEvent::getDeclaredResultType(calleeCtx->getDecl());
         if (!ReturnedTy.isNull()) {
           if (const Expr *Ex = dyn_cast<Expr>(CE)) {
             V = adjustReturnValue(V, Ex->getType(), ReturnedTy,
@@ -277,11 +288,12 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
 
     NodeBuilderContext Ctx(getCoreEngine(), Blk, BindedRetNode);
     currBldrCtx = &Ctx;
-    // Here, we call the Symbol Reaper with 0 statement and caller location
+    // Here, we call the Symbol Reaper with 0 statement and callee location
     // context, telling it to clean up everything in the callee's context
-    // (and it's children). We use LastStmt as a diagnostic statement, which
-    // which the PreStmtPurge Dead point will be associated.
-    removeDead(BindedRetNode, CleanedNodes, 0, callerCtx, LastSt,
+    // (and its children). We use the callee's function body as a diagnostic
+    // statement, with which the program point will be associated.
+    removeDead(BindedRetNode, CleanedNodes, 0, calleeCtx,
+               calleeCtx->getAnalysisDeclContext()->getBody(),
                ProgramPoint::PostStmtPurgeDeadSymbolsKind);
     currBldrCtx = 0;
   } else {

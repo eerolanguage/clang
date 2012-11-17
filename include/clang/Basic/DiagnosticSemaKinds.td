@@ -1592,8 +1592,6 @@ def err_attribute_argument_not_int : Error<
   "'%0' attribute requires integer constant">;
 def err_aligned_attribute_argument_not_int : Error<
   "'aligned' attribute requires integer constant">;
-def err_attribute_argument_not_class : Error<
-  "%0 attribute requires arguments that are class type or point to class type">;
 def err_attribute_first_argument_not_int_or_bool : Error<
   "%0 attribute first argument must be of int or bool type">;
 def err_attribute_argument_outof_range : Error<
@@ -1781,17 +1779,18 @@ def err_alias_not_supported_on_darwin : Error <
 def warn_attribute_wrong_decl_type : Warning<
   "%0 attribute only applies to %select{functions|unions|"
   "variables and functions|functions and methods|parameters|"
-  "functions, methods and blocks|functions, methods, and parameters|"
-  "classes|variables|methods|variables, functions and labels|"
-  "fields and global variables|structs|"
+  "functions, methods and blocks|functions, methods, and classes|"
+  "functions, methods, and parameters|classes|variables|methods|"
+  "variables, functions and labels|fields and global variables|structs|"
   "variables, functions and tag types|thread-local variables}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<
   "%0 attribute only applies to %select{functions|unions|"
   "variables and functions|functions and methods|parameters|"
-  "functions, methods and blocks|functions, methods, and parameters|"
-  "classes|variables|methods|variables, functions and labels|"
-  "fields and global variables|structs|thread-local variables}1">;
+  "functions, methods and blocks|functions, methods, and classes|"
+  "functions, methods, and parameters|classes|variables|methods|"
+  "variables, functions and labels|fields and global variables|structs|"
+  "variables, functions and tag types|thread-local variables}1">;
 def warn_function_attribute_wrong_type : Warning<
   "'%0' only applies to function types; type here is %1">,
   InGroup<IgnoredAttributes>;
@@ -4476,7 +4475,7 @@ def ext_delete_void_ptr_operand : ExtWarn<
 def err_ambiguous_delete_operand : Error<"ambiguous conversion of delete "
                                          "expression of type %0 to a pointer">;
 def warn_delete_incomplete : Warning<
-  "deleting pointer to incomplete type %0 may cause undefined behaviour">,
+  "deleting pointer to incomplete type %0 may cause undefined behavior">,
   InGroup<DiagGroup<"delete-incomplete">>;
 def err_delete_incomplete_class_type : Error<
   "deleting incomplete class type %0; no conversions to pointer type">;
@@ -5153,6 +5152,8 @@ let CategoryName = "Inline Assembly Issue" in {
     "%diff{$ matching output with type $|}0,1">;
   def err_asm_unknown_register_name : Error<"unknown register name '%0' in asm">;
   def err_asm_empty : Error<"__asm used with no assembly instructions">;
+  def err_asm_invalid_input_size : Error<
+    "invalid input size for constraint '%0'">;
   def err_invalid_asm_cast_lvalue : Error<
     "invalid use of a cast in a inline asm context requiring an l-value: "
     "remove the cast or build with -fheinous-gnu-extensions">;
