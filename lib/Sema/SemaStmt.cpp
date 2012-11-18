@@ -2724,6 +2724,10 @@ Sema::ActOnObjCAtCatchStmt(SourceLocation AtLoc,
 
   if (getLangOpts().Eero && getLangOpts().CPlusPlus && !PP.isInLegacyHeader()) {
     if (Var && !Var->getType()->isObjCObjectPointerType()) {
+      if (!Var->getType()->isReferenceType()) {
+        Diag(Var->getLocation(), diag::err_expected) <<
+          "exception object by reference, not by value (required by Eero)";
+      }
       return ActOnCXXCatchBlock(AtLoc, Parm, Body);
     }
   }
