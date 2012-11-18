@@ -77,6 +77,10 @@ def note_pragma_entered_here : Note<"#pragma entered here">;
 def note_decl_hiding_tag_type : Note<
   "%1 %0 is hidden by a non-type declaration of %0 here">;
 
+// Eero common diagnostics
+def err_expected : Error<"expected %0">;
+def err_not_allowed : Error<"%0 not allowed here">;
+
 // Sema && Lex
 def ext_c99_longlong : Extension<
   "'long long' is an extension when C99 mode is not enabled">,
