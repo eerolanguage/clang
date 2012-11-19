@@ -733,7 +733,11 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     SingleDecl = Actions.ActOnFileScopeAsmDecl(Result.get(), StartLoc, EndLoc);
     break;
   }
-  case tok::kw_class: if (!isEero) goto dont_know; // ugh
+  case tok::kw_class: if (!isEero ||
+                          (getLangOpts().CPlusPlus &&
+                           (GetLookAheadToken(2).is(tok::l_brace) ||
+                            GetLookAheadToken(2).is(tok::colon))))
+                        goto dont_know; // ugh
   case tok::at:
   case tok::kw_interface:
   case tok::kw_protocol:
