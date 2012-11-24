@@ -4132,7 +4132,7 @@ void TypoCorrection::addCorrectionDecl(NamedDecl *CDecl) {
   if (isKeyword())
     CorrectionDecls.clear();
 
-  CorrectionDecls.push_back(CDecl);
+  CorrectionDecls.push_back(CDecl->getUnderlyingDecl());
 
   if (!CorrectionName)
     CorrectionName = CDecl->getDeclName();
