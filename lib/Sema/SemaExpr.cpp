@@ -504,6 +504,12 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
     T = T.getUnqualifiedType();
 
   UpdateMarkingForLValueToRValue(E);
+  
+  // Loading a __weak object implicitly retains the value, so we need a cleanup to 
+  // balance that.
+  if (getLangOpts().ObjCAutoRefCount &&
+      E->getType().getObjCLifetime() == Qualifiers::OCL_Weak)
+    ExprNeedsCleanups = true;
 
   ExprResult Res = Owned(ImplicitCastExpr::Create(Context, T, CK_LValueToRValue,
                                                   E, 0, VK_RValue));
@@ -2840,7 +2846,10 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
     unsigned MaxWidth = Context.getTargetInfo().getIntMaxTWidth();
     // The microsoft literal suffix extensions support 128-bit literals, which
     // may be wider than [u]intmax_t.
-    if (Literal.isMicrosoftInteger && MaxWidth < 128)
+    // FIXME: Actually, they don't. We seem to have accidentally invented the
+    //        i128 suffix.
+    if (Literal.isMicrosoftInteger && MaxWidth < 128 &&
+        PP.getTargetInfo().hasInt128Type())
       MaxWidth = 128;
     llvm::APInt ResultVal(MaxWidth, 0);
 
@@ -2910,7 +2919,8 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
         
       // If it doesn't fit in unsigned long long, and we're using Microsoft
       // extensions, then its a 128-bit integer literal.
-      if (Ty.isNull() && Literal.isMicrosoftInteger) {
+      if (Ty.isNull() && Literal.isMicrosoftInteger &&
+          PP.getTargetInfo().hasInt128Type()) {
         if (Literal.isUnsigned)
           Ty = Context.UnsignedInt128Ty;
         else
@@ -3725,10 +3735,10 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
           (!Param || !Param->hasAttr<CFConsumedAttr>()))
         Arg = stripARCUnbridgedCast(Arg);
 
-      InitializedEntity Entity =
-        Param? InitializedEntity::InitializeParameter(Context, Param)
-             : InitializedEntity::InitializeParameter(Context, ProtoArgType,
-                                                      Proto->isArgConsumed(i));
+      InitializedEntity Entity = Param ?
+          InitializedEntity::InitializeParameter(Context, Param, ProtoArgType)
+        : InitializedEntity::InitializeParameter(Context, ProtoArgType,
+                                                 Proto->isArgConsumed(i));
       ExprResult ArgE = PerformCopyInitialization(Entity,
                                                   SourceLocation(),
                                                   Owned(Arg),
@@ -10905,13 +10915,14 @@ bool Sema::tryCaptureVariable(VarDecl *Var, SourceLocation Loc,
             // actually requires the destructor.
             if (isa<ParmVarDecl>(Var))
               FinalizeVarWithDestructor(Var, Record);
-            
+
             // According to the blocks spec, the capture of a variable from
             // the stack requires a const copy constructor.  This is not true
             // of the copy/move done to move a __block variable to the heap.
-            Expr *DeclRef = new (Context) DeclRefExpr(Var, false,
+            Expr *DeclRef = new (Context) DeclRefExpr(Var, Nested,
                                                       DeclRefType.withConst(), 
                                                       VK_LValue, Loc);
+            
             ExprResult Result
               = PerformCopyInitialization(
                   InitializedEntity::InitializeBlock(Var->getLocation(),
@@ -10996,7 +11007,7 @@ bool Sema::tryCaptureVariable(VarDecl *Var, SourceLocation Loc,
     if (BuildAndDiagnose) {
       ExprResult Result = captureInLambda(*this, LSI, Var, CaptureType,
                                           DeclRefType, Loc,
-                                          I == N-1);
+                                          Nested);
       if (!Result.isInvalid())
         CopyExpr = Result.take();
     }

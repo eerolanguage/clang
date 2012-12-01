@@ -1000,6 +1000,25 @@ bool ASTReader::ReadSLocEntry(int ID) {
   return false;
 }
 
+std::pair<SourceLocation, StringRef> ASTReader::getModuleImportLoc(int ID) {
+  if (ID == 0)
+    return std::make_pair(SourceLocation(), "");
+
+  if (unsigned(-ID) - 2 >= getTotalNumSLocs() || ID > 0) {
+    Error("source location entry ID out-of-range for AST file");
+    return std::make_pair(SourceLocation(), "");
+  }
+
+  // Find which module file this entry lands in.
+  ModuleFile *M = GlobalSLocEntryMap.find(-ID)->second;
+  if (M->Kind != MK_Module)
+    return std::make_pair(SourceLocation(), "");
+
+  // FIXME: Can we map this down to a particular submodule? That would be
+  // ideal.
+  return std::make_pair(M->ImportLoc, llvm::sys::path::stem(M->FileName));
+}
+
 /// \brief Find the location where the module F is imported.
 SourceLocation ASTReader::getImportLocation(ModuleFile *F) {
   if (F->ImportLoc.isValid())
@@ -2818,8 +2837,9 @@ ASTReader::ReadASTCore(StringRef FileName,
   ModuleFile *M;
   bool NewModule;
   std::string ErrorStr;
-  llvm::tie(M, NewModule) = ModuleMgr.addModule(FileName, Type, ImportedBy,
-                                                CurrentGeneration, ErrorStr);
+  llvm::tie(M, NewModule) = ModuleMgr.addModule(FileName, Type, ImportLoc,
+                                                ImportedBy, CurrentGeneration,
+                                                ErrorStr);
 
   if (!M) {
     // We couldn't load the module.
@@ -6448,13 +6468,14 @@ ReadTemplateArgumentList(SmallVector<TemplateArgument, 8> &TemplArgs,
 }
 
 /// \brief Read a UnresolvedSet structure.
-void ASTReader::ReadUnresolvedSet(ModuleFile &F, UnresolvedSetImpl &Set,
+void ASTReader::ReadUnresolvedSet(ModuleFile &F, ASTUnresolvedSet &Set,
                                   const RecordData &Record, unsigned &Idx) {
   unsigned NumDecls = Record[Idx++];
+  Set.reserve(Context, NumDecls);
   while (NumDecls--) {
     NamedDecl *D = ReadDeclAs<NamedDecl>(F, Record, Idx);
     AccessSpecifier AS = (AccessSpecifier)Record[Idx++];
-    Set.addDecl(D, AS);
+    Set.addDecl(Context, D, AS);
   }
 }
 

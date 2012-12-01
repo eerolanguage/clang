@@ -517,16 +517,23 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
              diag::err_param_default_argument_member_template_redecl)
           << WhichKind
           << NewParam->getDefaultArgRange();
-      } else if (CXXConstructorDecl *Ctor = dyn_cast<CXXConstructorDecl>(New)) {
-        CXXSpecialMember NewSM = getSpecialMember(Ctor),
-                         OldSM = getSpecialMember(cast<CXXConstructorDecl>(Old));
-        if (NewSM != OldSM) {
-          Diag(NewParam->getLocation(),diag::warn_default_arg_makes_ctor_special)
-            << NewParam->getDefaultArgRange() << NewSM;
-          Diag(Old->getLocation(), diag::note_previous_declaration_special)
-            << OldSM;
-        }
       }
+    }
+  }
+
+  // DR1344: If a default argument is added outside a class definition and that
+  // default argument makes the function a special member function, the program
+  // is ill-formed. This can only happen for constructors.
+  if (isa<CXXConstructorDecl>(New) &&
+      New->getMinRequiredArguments() < Old->getMinRequiredArguments()) {
+    CXXSpecialMember NewSM = getSpecialMember(cast<CXXMethodDecl>(New)),
+                     OldSM = getSpecialMember(cast<CXXMethodDecl>(Old));
+    if (NewSM != OldSM) {
+      ParmVarDecl *NewParam = New->getParamDecl(New->getMinRequiredArguments());
+      assert(NewParam->hasDefaultArg());
+      Diag(NewParam->getLocation(), diag::err_default_arg_makes_ctor_special)
+        << NewParam->getDefaultArgRange() << NewSM;
+      Diag(Old->getLocation(), diag::note_previous_declaration);
     }
   }
 
@@ -4186,9 +4193,6 @@ void Sema::EvaluateImplicitExceptionSpec(SourceLocation Loc, CXXMethodDecl *MD) 
                         CanonicalFPT, ExceptSpec);
 }
 
-static bool isImplicitCopyCtorArgConst(Sema &S, CXXRecordDecl *ClassDecl);
-static bool isImplicitCopyAssignmentArgConst(Sema &S, CXXRecordDecl *ClassDecl);
-
 void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
   CXXRecordDecl *RD = MD->getParent();
   CXXSpecialMember CSM = getSpecialMember(MD);
@@ -4231,11 +4235,11 @@ void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
     Trivial = RD->hasTrivialDefaultConstructor();
     break;
   case CXXCopyConstructor:
-    CanHaveConstParam = isImplicitCopyCtorArgConst(*this, RD);
+    CanHaveConstParam = RD->implicitCopyConstructorHasConstParam();
     Trivial = RD->hasTrivialCopyConstructor();
     break;
   case CXXCopyAssignment:
-    CanHaveConstParam = isImplicitCopyAssignmentArgConst(*this, RD);
+    CanHaveConstParam = RD->implicitCopyAssignmentHasConstParam();
     Trivial = RD->hasTrivialCopyAssignment();
     break;
   case CXXMoveConstructor:
@@ -6983,6 +6987,36 @@ Sema::ComputeDefaultedDefaultCtorExceptionSpec(SourceLocation Loc,
   return ExceptSpec;
 }
 
+namespace {
+/// RAII object to register a special member as being currently declared.
+struct DeclaringSpecialMember {
+  Sema &S;
+  Sema::SpecialMemberDecl D;
+  bool WasAlreadyBeingDeclared;
+
+  DeclaringSpecialMember(Sema &S, CXXRecordDecl *RD, Sema::CXXSpecialMember CSM)
+    : S(S), D(RD, CSM) {
+    WasAlreadyBeingDeclared = !S.SpecialMembersBeingDeclared.insert(D);
+    if (WasAlreadyBeingDeclared)
+      // This almost never happens, but if it does, ensure that our cache
+      // doesn't contain a stale result.
+      S.SpecialMemberCache.clear();
+
+    // FIXME: Register a note to be produced if we encounter an error while
+    // declaring the special member.
+  }
+  ~DeclaringSpecialMember() {
+    if (!WasAlreadyBeingDeclared)
+      S.SpecialMembersBeingDeclared.erase(D);
+  }
+
+  /// \brief Are we already trying to declare this special member?
+  bool isAlreadyBeingDeclared() const {
+    return WasAlreadyBeingDeclared;
+  }
+};
+}
+
 CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
                                                      CXXRecordDecl *ClassDecl) {
   // C++ [class.ctor]p5:
@@ -6991,8 +7025,12 @@ CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
   //   user-declared constructor for class X, a default constructor is
   //   implicitly declared. An implicitly-declared default constructor
   //   is an inline public member of its class.
-  assert(!ClassDecl->hasUserDeclaredConstructor() && 
+  assert(ClassDecl->needsImplicitDefaultConstructor() && 
          "Should not build implicit default constructor!");
+
+  DeclaringSpecialMember DSM(*this, ClassDecl, CXXDefaultConstructor);
+  if (DSM.isAlreadyBeingDeclared())
+    return 0;
 
   bool Constexpr = defaultedSpecialMemberIsConstexpr(*this, ClassDecl,
                                                      CXXDefaultConstructor,
@@ -7304,6 +7342,11 @@ CXXDestructorDecl *Sema::DeclareImplicitDestructor(CXXRecordDecl *ClassDecl) {
   //   If a class has no user-declared destructor, a destructor is
   //   declared implicitly. An implicitly-declared destructor is an
   //   inline public member of its class.
+  assert(ClassDecl->needsImplicitDestructor());
+
+  DeclaringSpecialMember DSM(*this, ClassDecl, CXXDestructor);
+  if (DSM.isAlreadyBeingDeclared())
+    return 0;
 
   // Create the actual destructor declaration.
   CanQualType ClassType
@@ -7719,76 +7762,6 @@ buildSingleCopyAssign(Sema &S, SourceLocation Loc, QualType T,
   return Result;
 }
 
-/// Determine whether an implicit copy assignment operator for ClassDecl has a
-/// const argument.
-/// FIXME: It ought to be possible to store this on the record.
-static bool isImplicitCopyAssignmentArgConst(Sema &S,
-                                             CXXRecordDecl *ClassDecl) {
-  if (ClassDecl->isInvalidDecl())
-    return true;
-
-  // C++ [class.copy]p10:
-  //   If the class definition does not explicitly declare a copy
-  //   assignment operator, one is declared implicitly.
-  //   The implicitly-defined copy assignment operator for a class X
-  //   will have the form
-  //
-  //       X& X::operator=(const X&)
-  //
-  //   if
-  //       -- each direct base class B of X has a copy assignment operator
-  //          whose parameter is of type const B&, const volatile B& or B,
-  //          and
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-                                       BaseEnd = ClassDecl->bases_end();
-       Base != BaseEnd; ++Base) {
-    // We'll handle this below
-    if (S.getLangOpts().CPlusPlus0x && Base->isVirtual())
-      continue;
-
-    assert(!Base->getType()->isDependentType() &&
-           "Cannot generate implicit members for class with dependent bases.");
-    CXXRecordDecl *BaseClassDecl = Base->getType()->getAsCXXRecordDecl();
-    if (!S.LookupCopyingAssignment(BaseClassDecl, Qualifiers::Const, false, 0))
-      return false;
-  }
-
-  // In C++11, the above citation has "or virtual" added
-  if (S.getLangOpts().CPlusPlus0x) {
-    for (CXXRecordDecl::base_class_iterator Base = ClassDecl->vbases_begin(),
-                                         BaseEnd = ClassDecl->vbases_end();
-         Base != BaseEnd; ++Base) {
-      assert(!Base->getType()->isDependentType() &&
-             "Cannot generate implicit members for class with dependent bases.");
-      CXXRecordDecl *BaseClassDecl = Base->getType()->getAsCXXRecordDecl();
-      if (!S.LookupCopyingAssignment(BaseClassDecl, Qualifiers::Const,
-                                     false, 0))
-        return false;
-    }
-  }
-  
-  //       -- for all the nonstatic data members of X that are of a class
-  //          type M (or array thereof), each such class type has a copy
-  //          assignment operator whose parameter is of type const M&,
-  //          const volatile M& or M.
-  for (CXXRecordDecl::field_iterator Field = ClassDecl->field_begin(),
-                                  FieldEnd = ClassDecl->field_end();
-       Field != FieldEnd; ++Field) {
-    QualType FieldType = S.Context.getBaseElementType(Field->getType());
-    if (CXXRecordDecl *FieldClassDecl = FieldType->getAsCXXRecordDecl())
-      if (!S.LookupCopyingAssignment(FieldClassDecl, Qualifiers::Const,
-                                     false, 0))
-        return false;
-  }
-  
-  //   Otherwise, the implicitly declared copy assignment operator will
-  //   have the form
-  //
-  //       X& X::operator=(X&)
-
-  return true;
-}
-
 Sema::ImplicitExceptionSpecification
 Sema::ComputeDefaultedCopyAssignmentExceptionSpec(CXXMethodDecl *MD) {
   CXXRecordDecl *ClassDecl = MD->getParent();
@@ -7856,10 +7829,15 @@ CXXMethodDecl *Sema::DeclareImplicitCopyAssignment(CXXRecordDecl *ClassDecl) {
   // constructor rules. Note that virtual bases are not taken into account
   // for determining the argument type of the operator. Note also that
   // operators taking an object instead of a reference are allowed.
+  assert(ClassDecl->needsImplicitCopyAssignment());
+
+  DeclaringSpecialMember DSM(*this, ClassDecl, CXXCopyAssignment);
+  if (DSM.isAlreadyBeingDeclared())
+    return 0;
 
   QualType ArgType = Context.getTypeDeclType(ClassDecl);
   QualType RetType = Context.getLValueReferenceType(ArgType);
-  if (isImplicitCopyAssignmentArgConst(*this, ClassDecl))
+  if (ClassDecl->implicitCopyAssignmentHasConstParam())
     ArgType = ArgType.withConst();
   ArgType = Context.getLValueReferenceType(ArgType);
 
@@ -8225,14 +8203,18 @@ hasMoveOrIsTriviallyCopyable(Sema &S, QualType Type, bool IsConstructor) {
     return true;
 
   if (IsConstructor) {
+    // FIXME: Need this because otherwise hasMoveConstructor isn't guaranteed to
+    // give the right answer.
     if (ClassDecl->needsImplicitMoveConstructor())
       S.DeclareImplicitMoveConstructor(ClassDecl);
-    return ClassDecl->hasDeclaredMoveConstructor();
+    return ClassDecl->hasMoveConstructor();
   }
 
+  // FIXME: Need this because otherwise hasMoveAssignment isn't guaranteed to
+  // give the right answer.
   if (ClassDecl->needsImplicitMoveAssignment())
     S.DeclareImplicitMoveAssignment(ClassDecl);
-  return ClassDecl->hasDeclaredMoveAssignment();
+  return ClassDecl->hasMoveAssignment();
 }
 
 /// Determine whether all non-static data members and direct or virtual bases
@@ -8275,6 +8257,10 @@ CXXMethodDecl *Sema::DeclareImplicitMoveAssignment(CXXRecordDecl *ClassDecl) {
   //
   //   - [first 4 bullets]
   assert(ClassDecl->needsImplicitMoveAssignment());
+
+  DeclaringSpecialMember DSM(*this, ClassDecl, CXXMoveAssignment);
+  if (DSM.isAlreadyBeingDeclared())
+    return 0;
 
   // [Checked after we build the declaration]
   //   - the move assignment operator would not be implicitly defined as
@@ -8571,70 +8557,6 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
   }
 }
 
-/// Determine whether an implicit copy constructor for ClassDecl has a const
-/// argument.
-/// FIXME: It ought to be possible to store this on the record.
-static bool isImplicitCopyCtorArgConst(Sema &S, CXXRecordDecl *ClassDecl) {
-  if (ClassDecl->isInvalidDecl())
-    return true;
-
-  // C++ [class.copy]p5:
-  //   The implicitly-declared copy constructor for a class X will
-  //   have the form
-  //
-  //       X::X(const X&)
-  //
-  //   if
-  //     -- each direct or virtual base class B of X has a copy
-  //        constructor whose first parameter is of type const B& or
-  //        const volatile B&, and
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-                                       BaseEnd = ClassDecl->bases_end();
-       Base != BaseEnd; ++Base) {
-    // Virtual bases are handled below.
-    if (Base->isVirtual())
-      continue;
-
-    CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
-    // FIXME: This lookup is wrong. If the copy ctor for a member or base is
-    // ambiguous, we should still produce a constructor with a const-qualified
-    // parameter.
-    if (!S.LookupCopyingConstructor(BaseClassDecl, Qualifiers::Const))
-      return false;
-  }
-
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->vbases_begin(),
-                                       BaseEnd = ClassDecl->vbases_end();
-       Base != BaseEnd; ++Base) {
-    CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
-    if (!S.LookupCopyingConstructor(BaseClassDecl, Qualifiers::Const))
-      return false;
-  }
-
-  //     -- for all the nonstatic data members of X that are of a
-  //        class type M (or array thereof), each such class type
-  //        has a copy constructor whose first parameter is of type
-  //        const M& or const volatile M&.
-  for (CXXRecordDecl::field_iterator Field = ClassDecl->field_begin(),
-                                  FieldEnd = ClassDecl->field_end();
-       Field != FieldEnd; ++Field) {
-    QualType FieldType = S.Context.getBaseElementType(Field->getType());
-    if (CXXRecordDecl *FieldClassDecl = FieldType->getAsCXXRecordDecl()) {
-      if (!S.LookupCopyingConstructor(FieldClassDecl, Qualifiers::Const))
-        return false;
-    }
-  }
-
-  //   Otherwise, the implicitly declared copy constructor will have
-  //   the form
-  //
-  //       X::X(X&)
-
-  return true;
-}
-
 Sema::ImplicitExceptionSpecification
 Sema::ComputeDefaultedCopyCtorExceptionSpec(CXXMethodDecl *MD) {
   CXXRecordDecl *ClassDecl = MD->getParent();
@@ -8695,10 +8617,15 @@ CXXConstructorDecl *Sema::DeclareImplicitCopyConstructor(
   // C++ [class.copy]p4:
   //   If the class definition does not explicitly declare a copy
   //   constructor, one is declared implicitly.
+  assert(ClassDecl->needsImplicitCopyConstructor());
+
+  DeclaringSpecialMember DSM(*this, ClassDecl, CXXCopyConstructor);
+  if (DSM.isAlreadyBeingDeclared())
+    return 0;
 
   QualType ClassType = Context.getTypeDeclType(ClassDecl);
   QualType ArgType = ClassType;
-  bool Const = isImplicitCopyCtorArgConst(*this, ClassDecl);
+  bool Const = ClassDecl->implicitCopyConstructorHasConstParam();
   if (Const)
     ArgType = ArgType.withConst();
   ArgType = Context.getLValueReferenceType(ArgType);
@@ -8865,6 +8792,10 @@ CXXConstructorDecl *Sema::DeclareImplicitMoveConstructor(
   //
   //   - [first 4 bullets]
   assert(ClassDecl->needsImplicitMoveConstructor());
+
+  DeclaringSpecialMember DSM(*this, ClassDecl, CXXMoveConstructor);
+  if (DSM.isAlreadyBeingDeclared())
+    return 0;
 
   // [Checked after we build the declaration]
   //   - the move assignment operator would not be implicitly defined as

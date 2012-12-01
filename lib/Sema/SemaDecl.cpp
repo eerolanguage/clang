@@ -2393,6 +2393,10 @@ bool Sema::MergeCompatibleFunctionDecls(FunctionDecl *New, FunctionDecl *Old,
   if (Old->isPure())
     New->setPure();
 
+  // Merge "used" flag.
+  if (Old->isUsed(false))
+    New->setUsed();
+
   // Merge attributes from the parameters.  These can mismatch with K&R
   // declarations.
   if (New->getNumParams() == Old->getNumParams())
@@ -2402,6 +2406,12 @@ bool Sema::MergeCompatibleFunctionDecls(FunctionDecl *New, FunctionDecl *Old,
 
   if (getLangOpts().CPlusPlus)
     return MergeCXXFunctionDecl(New, Old, S);
+
+  // Merge the function types so the we get the composite types for the return
+  // and argument types.
+  QualType Merged = Context.mergeTypes(Old->getType(), New->getType());
+  if (!Merged.isNull())
+    New->setType(Merged);
 
   return false;
 }
@@ -2617,6 +2627,10 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
       Old->getLinkage() == InternalLinkage &&
       New->getDeclContext() == Old->getDeclContext())
     New->setStorageClass(Old->getStorageClass());
+
+  // Merge "used" flag.
+  if (Old->isUsed(false))
+    New->setUsed();
 
   // Keep a chain of previous declarations.
   New->setPreviousDeclaration(Old);
@@ -8048,6 +8062,9 @@ void Sema::computeNRVO(Stmt *Body, FunctionScopeInfo *Scope) {
 }
 
 bool Sema::canSkipFunctionBody(Decl *D) {
+  if (!Consumer.shouldSkipFunctionBody(D))
+    return false;
+
   if (isa<ObjCMethodDecl>(D))
     return true;
 
@@ -10426,10 +10443,10 @@ void Sema::ActOnFields(Scope* S,
     if (CXXRecordDecl *CXXRecord = dyn_cast<CXXRecordDecl>(Record)) {
       if (!CXXRecord->isInvalidDecl()) {
         // Set access bits correctly on the directly-declared conversions.
-        UnresolvedSetImpl *Convs = CXXRecord->getConversionFunctions();
-        for (UnresolvedSetIterator I = Convs->begin(), E = Convs->end(); 
-             I != E; ++I)
-          Convs->setAccess(I, (*I)->getAccess());
+        for (CXXRecordDecl::conversion_iterator
+               I = CXXRecord->conversion_begin(),
+               E = CXXRecord->conversion_end(); I != E; ++I)
+          I.setAccess((*I)->getAccess());
         
         if (!CXXRecord->isDependentType()) {
           // Adjust user-defined destructor exception spec.

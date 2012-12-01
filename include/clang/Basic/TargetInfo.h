@@ -172,7 +172,8 @@ public:
 
 protected:
   IntType SizeType, IntMaxType, UIntMaxType, PtrDiffType, IntPtrType, WCharType,
-          WIntType, Char16Type, Char32Type, Int64Type, SigAtomicType;
+          WIntType, Char16Type, Char32Type, Int64Type, SigAtomicType,
+          ProcessIDType;
 
   /// \brief Whether Objective-C's built-in boolean type should be signed char.
   ///
@@ -213,7 +214,7 @@ public:
   IntType getChar32Type() const { return Char32Type; }
   IntType getInt64Type() const { return Int64Type; }
   IntType getSigAtomicType() const { return SigAtomicType; }
-
+  IntType getProcessIDType() const { return ProcessIDType; }
 
   /// \brief Return the width (in bits) of the specified integer type enum.
   ///
@@ -268,6 +269,9 @@ public:
   /// 'unsigned long long' for this target, in bits.
   unsigned getLongLongWidth() const { return LongLongWidth; }
   unsigned getLongLongAlign() const { return LongLongAlign; }
+
+  /// \brief Determine whether the __int128 type is supported on this target.
+  bool hasInt128Type() const { return getPointerWidth(0) >= 64; } // FIXME
 
   /// \brief Return the alignment that is suitable for storing any
   /// object with a fundamental alignment requirement.

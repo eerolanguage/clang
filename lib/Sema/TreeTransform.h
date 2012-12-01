@@ -7749,8 +7749,9 @@ ExprResult
 TreeTransform<Derived>::TransformCXXConstructExpr(CXXConstructExpr *E) {
   // CXXConstructExprs are always implicit, so when we have a
   // 1-argument construction we just transform that argument.
-  if (E->getNumArgs() == 1 ||
-      (E->getNumArgs() > 1 && getDerived().DropCallArgument(E->getArg(1))))
+  if ((E->getNumArgs() == 1 ||
+       (E->getNumArgs() > 1 && getDerived().DropCallArgument(E->getArg(1)))) &&
+      (!getDerived().DropCallArgument(E->getArg(0))))
     return getDerived().TransformExpr(E->getArg(0));
 
   TemporaryBase Rebase(*this, /*FIXME*/E->getLocStart(), DeclarationName());
@@ -9179,7 +9180,12 @@ TreeTransform<Derived>::RebuildCXXOperatorCallExpr(OverloadedOperatorKind Op,
     // IsAcceptableNonMemberOperatorCandidate for each of these?
     Functions.append(ULE->decls_begin(), ULE->decls_end());
   } else {
-    Functions.addDecl(cast<DeclRefExpr>(Callee)->getDecl());
+    // If we've resolved this to a particular non-member function, just call
+    // that function. If we resolved it to a member function,
+    // CreateOverloaded* will find that function for us.
+    NamedDecl *ND = cast<DeclRefExpr>(Callee)->getDecl();
+    if (!isa<CXXMethodDecl>(ND))
+      Functions.addDecl(ND);
   }
 
   // Add any functions found via argument-dependent lookup.

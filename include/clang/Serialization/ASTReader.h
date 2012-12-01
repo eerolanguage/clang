@@ -85,6 +85,7 @@ class TypeLocReader;
 struct HeaderFileInfo;
 class VersionTuple;
 class TargetOptions;
+class ASTUnresolvedSet;
 
 /// \brief Abstract interface for callback invocations by the ASTReader.
 ///
@@ -1545,6 +1546,10 @@ public:
   /// \brief Read the source location entry with index ID.
   virtual bool ReadSLocEntry(int ID);
 
+  /// \brief Retrieve the module import location and module name for the
+  /// given source manager entry ID.
+  virtual std::pair<SourceLocation, StringRef> getModuleImportLoc(int ID);
+
   /// \brief Retrieve the global submodule ID given a module and its local ID
   /// number.
   serialization::SubmoduleID 
@@ -1612,7 +1617,7 @@ public:
                            unsigned &Idx);
 
   /// \brief Read a UnresolvedSet structure.
-  void ReadUnresolvedSet(ModuleFile &F, UnresolvedSetImpl &Set,
+  void ReadUnresolvedSet(ModuleFile &F, ASTUnresolvedSet &Set,
                          const RecordData &Record, unsigned &Idx);
 
   /// \brief Read a C++ base specifier.

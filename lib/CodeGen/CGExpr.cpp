@@ -1119,8 +1119,11 @@ RValue CodeGenFunction::EmitLoadOfLValue(LValue LV) {
     return RValue::get(CGM.getObjCRuntime().EmitObjCWeakRead(*this,
                                                              AddrWeakObj));
   }
-  if (LV.getQuals().getObjCLifetime() == Qualifiers::OCL_Weak)
-    return RValue::get(EmitARCLoadWeak(LV.getAddress()));
+  if (LV.getQuals().getObjCLifetime() == Qualifiers::OCL_Weak) {
+    llvm::Value *Object = EmitARCLoadWeakRetained(LV.getAddress());
+    Object = EmitObjCConsumeObject(LV.getType(), Object);
+    return RValue::get(Object);
+  }
 
   if (LV.isSimple()) {
     assert(!LV.getType()->isFunctionType());
@@ -1947,7 +1950,7 @@ llvm::Constant *CodeGenFunction::EmitCheckTypeDescriptor(QualType T) {
   if (T->isIntegerType()) {
     TypeKind = 0;
     TypeInfo = (llvm::Log2_32(getContext().getTypeSize(T)) << 1) |
-               T->isSignedIntegerType();
+               (T->isSignedIntegerType() ? 1 : 0);
   } else if (T->isFloatingType()) {
     TypeKind = 1;
     TypeInfo = getContext().getTypeSize(T);

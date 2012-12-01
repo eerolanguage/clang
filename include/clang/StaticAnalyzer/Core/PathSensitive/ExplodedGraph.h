@@ -155,7 +155,14 @@ public:
   ProgramStateRef getState() const { return State; }
 
   template <typename T>
-  const T* getLocationAs() const { return llvm::dyn_cast<T>(&Location); }
+  const T* getLocationAs() const LLVM_LVALUE_FUNCTION {
+    return dyn_cast<T>(&Location);
+  }
+
+#if LLVM_HAS_RVALUE_REFERENCE_THIS
+  template <typename T>
+  void getLocationAs() && LLVM_DELETED_FUNCTION;
+#endif
 
   static void Profile(llvm::FoldingSetNodeID &ID,
                       const ProgramPoint &Loc,

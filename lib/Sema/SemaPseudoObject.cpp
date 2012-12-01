@@ -113,7 +113,7 @@ namespace {
     Expr *rebuildSpecific(ObjCPropertyRefExpr *refExpr) {
       // Fortunately, the constraint that we're rebuilding something
       // with a base limits the number of cases here.
-      assert(refExpr->getBase());
+      assert(refExpr->isObjectReceiver());
 
       if (refExpr->isExplicitProperty()) {
         return new (S.Context)
@@ -713,10 +713,9 @@ ExprResult ObjCPropertyOpBuilder::buildSet(Expr *op, SourceLocation opcLoc,
 ExprResult ObjCPropertyOpBuilder::buildRValueOperation(Expr *op) {
   // Explicit properties always have getters, but implicit ones don't.
   // Check that before proceeding.
-  if (RefExpr->isImplicitProperty() &&
-      !RefExpr->getImplicitPropertyGetter()) {
+  if (RefExpr->isImplicitProperty() && !RefExpr->getImplicitPropertyGetter()) {
     S.Diag(RefExpr->getLocation(), diag::err_getter_not_found)
-      << RefExpr->getBase()->getType();
+        << RefExpr->getSourceRange();
     return ExprError();
   }
 
@@ -964,16 +963,15 @@ Sema::ObjCSubscriptKind
   // objective-C pointer type.
   UnresolvedSet<4> ViableConversions;
   UnresolvedSet<4> ExplicitConversions;
-  const UnresolvedSetImpl *Conversions
+  std::pair<CXXRecordDecl::conversion_iterator,
+            CXXRecordDecl::conversion_iterator> Conversions
     = cast<CXXRecordDecl>(RecordTy->getDecl())->getVisibleConversionFunctions();
   
   int NoIntegrals=0, NoObjCIdPointers=0;
   SmallVector<CXXConversionDecl *, 4> ConversionDecls;
     
-  for (UnresolvedSetImpl::iterator I = Conversions->begin(),
-       E = Conversions->end();
-       I != E;
-       ++I) {
+  for (CXXRecordDecl::conversion_iterator
+         I = Conversions.first, E = Conversions.second; I != E; ++I) {
     if (CXXConversionDecl *Conversion
         = dyn_cast<CXXConversionDecl>((*I)->getUnderlyingDecl())) {
       QualType CT = Conversion->getConversionType().getNonReferenceType();

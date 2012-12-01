@@ -692,12 +692,13 @@ static llvm::Value *CreateCoercedLoad(llvm::Value *SrcPtr,
   // Otherwise do coercion through memory. This is stupid, but
   // simple.
   llvm::Value *Tmp = CGF.CreateTempAlloca(Ty);
-  llvm::Value *Casted =
-    CGF.Builder.CreateBitCast(Tmp, llvm::PointerType::getUnqual(SrcTy));
-  llvm::StoreInst *Store =
-    CGF.Builder.CreateStore(CGF.Builder.CreateLoad(SrcPtr), Casted);
-  // FIXME: Use better alignment / avoid requiring aligned store.
-  Store->setAlignment(1);
+  llvm::Type *I8PtrTy = CGF.Builder.getInt8PtrTy();
+  llvm::Value *Casted = CGF.Builder.CreateBitCast(Tmp, I8PtrTy);
+  llvm::Value *SrcCasted = CGF.Builder.CreateBitCast(SrcPtr, I8PtrTy);
+  // FIXME: Use better alignment.
+  CGF.Builder.CreateMemCpy(Casted, SrcCasted,
+      llvm::ConstantInt::get(CGF.IntPtrTy, SrcSize),
+      1, false);
   return CGF.Builder.CreateLoad(Tmp);
 }
 
@@ -779,12 +780,13 @@ static void CreateCoercedStore(llvm::Value *Src,
     // to that information.
     llvm::Value *Tmp = CGF.CreateTempAlloca(SrcTy);
     CGF.Builder.CreateStore(Src, Tmp);
-    llvm::Value *Casted =
-      CGF.Builder.CreateBitCast(Tmp, llvm::PointerType::getUnqual(DstTy));
-    llvm::LoadInst *Load = CGF.Builder.CreateLoad(Casted);
-    // FIXME: Use better alignment / avoid requiring aligned load.
-    Load->setAlignment(1);
-    CGF.Builder.CreateStore(Load, DstPtr, DstIsVolatile);
+    llvm::Type *I8PtrTy = CGF.Builder.getInt8PtrTy();
+    llvm::Value *Casted = CGF.Builder.CreateBitCast(Tmp, I8PtrTy);
+    llvm::Value *DstCasted = CGF.Builder.CreateBitCast(DstPtr, I8PtrTy);
+    // FIXME: Use better alignment.
+    CGF.Builder.CreateMemCpy(DstCasted, Casted,
+        llvm::ConstantInt::get(CGF.IntPtrTy, DstSize),
+        1, false);
   }
 }
 
@@ -1230,7 +1232,15 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
 
         if (isPromoted)
           V = emitArgumentDemotion(*this, Arg, V);
-        
+
+        // Because of merging of function types from multiple decls it is
+        // possible for the type of an argument to not match the corresponding
+        // type in the function type. Since we are codegening the callee
+        // in here, add a cast to the argument type.
+        llvm::Type *LTy = ConvertType(Arg->getType());
+        if (V->getType() != LTy)
+          V = Builder.CreateBitCast(V, LTy);
+
         EmitParmDecl(*Arg, V, ArgNo);
         break;
       }
@@ -1740,7 +1750,12 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
   // Create the temporary.
   llvm::Value *temp = CGF.CreateTempAlloca(destType->getElementType(),
                                            "icr.temp");
-
+  // Loading an l-value can introduce a cleanup if the l-value is __weak,
+  // and that cleanup will be conditional if we can't prove that the l-value
+  // isn't null, so we need to register a dominating point so that the cleanups
+  // system will make valid IR.
+  CodeGenFunction::ConditionalEvaluation condEval(CGF);
+  
   // Zero-initialize it if we're not doing a copy-initialization.
   bool shouldCopy = CRE->shouldCopy();
   if (!shouldCopy) {
@@ -1749,7 +1764,7 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
         cast<llvm::PointerType>(destType->getElementType()));
     CGF.Builder.CreateStore(null, temp);
   }
-
+  
   llvm::BasicBlock *contBB = 0;
 
   // If the address is *not* known to be non-null, we need to switch.
@@ -1772,6 +1787,7 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
       llvm::BasicBlock *copyBB = CGF.createBasicBlock("icr.copy");
       CGF.Builder.CreateCondBr(isNull, contBB, copyBB);
       CGF.EmitBlock(copyBB);
+      condEval.begin(CGF);
     }
   }
 
@@ -1788,10 +1804,12 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
     // Use an ordinary store, not a store-to-lvalue.
     CGF.Builder.CreateStore(src, temp);
   }
-
+  
   // Finish the control flow if we needed it.
-  if (shouldCopy && !provablyNonNull)
+  if (shouldCopy && !provablyNonNull) {
     CGF.EmitBlock(contBB);
+    condEval.end(CGF);
+  }
 
   args.addWriteback(srcAddr, srcAddrType, temp);
   args.add(RValue::get(finalArgument), CRE->getType());

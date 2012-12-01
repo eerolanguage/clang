@@ -860,11 +860,8 @@ public:
     return cudaConfigureCallDecl;
   }
 
-  /// Builds the struct used for __block variables.
-  QualType BuildByRefType(StringRef DeclName, QualType Ty) const;
-
   /// Returns true iff we need copy/dispose helpers for the given type.
-  bool BlockRequiresCopying(QualType Ty) const;
+  bool BlockRequiresCopying(QualType Ty, const VarDecl *D);
   
   
   /// Returns true, if given type has a known lifetime. HasByrefExtendedLayout is set
@@ -1108,6 +1105,10 @@ public:
   /// \brief Return the unique type for "ptrdiff_t" (C99 7.17) defined in
   /// <stddef.h>. Pointer - pointer requires this (C99 6.5.6p9).
   QualType getPointerDiffType() const;
+
+  /// \brief Return the unique type for "pid_t" defined in
+  /// <sys/types.h>. We need this to compute the correct type for vfork().
+  QualType getProcessIDType() const;
 
   /// \brief Return the C structure type used to represent constant CFStrings.
   QualType getCFConstantStringType() const;

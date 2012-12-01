@@ -900,6 +900,8 @@ def err_distant_exception_spec : Error<
 def err_incomplete_in_exception_spec : Error<
   "%select{|pointer to |reference to }0incomplete type %1 is not allowed "
   "in exception specification">;
+def err_rref_in_exception_spec : Error<
+  "rvalue reference type %0 is not allowed in exception specification">;
 def err_mismatched_exception_spec : Error<
   "exception specification in declaration does not match previous declaration">;
 def warn_mismatched_exception_spec : ExtWarn<
@@ -2167,13 +2169,9 @@ def err_uninitialized_member_for_assign : Error<
 def err_uninitialized_member_in_ctor : Error<
   "%select{|implicit default }0constructor for %1 must explicitly initialize "
   "the %select{reference|const}2 member %3">;
-def warn_default_arg_makes_ctor_special : Warning<
+def err_default_arg_makes_ctor_special : Error<
   "addition of default argument on redeclaration makes this constructor a "
-  "%select{default|copy|move}0 constructor">, InGroup<DefaultArgSpecialMember>;
-def note_previous_declaration_special : Note<
-  // The ERRORs are in hopes that if they occur, they'll get reported.
-  "previous declaration was %select{*ERROR*|a copy constructor|a move "
-  "constructor|*ERROR*|*ERROR*|*ERROR*|not a special member function}0">;
+  "%select{default|copy|move}0 constructor">;
 
 def err_use_of_default_argument_to_function_declared_later : Error<
   "use of default argument to function %0 that is declared later in class %1">;
@@ -4192,7 +4190,7 @@ def err_property_not_found : Error<
 def err_invalid_property_name : Error<
   "%0 is not a valid property name (accessing an object of type %1)">;
 def err_getter_not_found : Error<
-  "expected getter method not found on object of type %0">;
+  "no getter method for read from property">;
 def err_objc_subscript_method_not_found : Error<
   "expected method to %select{read|write}1 %select{dictionary|array}2 element not "
   "found on object of type %0">;
@@ -5166,7 +5164,8 @@ let CategoryName = "Inline Assembly Issue" in {
     "accepted due to -fheinous-gnu-extensions, but clang may remove support "
     "for this in the future">;
   def warn_asm_mismatched_size_modifier : Warning<
-    "the size being stored is truncated, use a modifier to specify the size">,
+    "the value is truncated when put into register, "
+    "use a modifier to specify the size">,
     InGroup<ASMOperandWidths>;
 }
 
@@ -5885,6 +5884,8 @@ def err_c99_array_usage_cxx : Error<
   "feature, not permitted in C++">;
 def err_double_requires_fp64 : Error<
   "use of type 'double' requires cl_khr_fp64 extension to be enabled">;
+def err_int128_unsupported : Error<
+  "__int128 is not supported on this target">;
 def err_nsconsumed_attribute_mismatch : Error<
   "overriding method has mismatched ns_consumed attribute on its"
   " parameter">;

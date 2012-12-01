@@ -266,9 +266,15 @@ static const Type *isSingleElementStruct(QualType T, ASTContext &Context) {
 }
 
 static bool is32Or64BitBasicType(QualType Ty, ASTContext &Context) {
+  // Treat complex types as the element type.
+  if (const ComplexType *CTy = Ty->getAs<ComplexType>())
+    Ty = CTy->getElementType();
+
+  // Check for a type which we know has a simple scalar argument-passing
+  // convention without any padding.  (We're specifically looking for 32
+  // and 64-bit integer and integer-equivalents, float, and double.)
   if (!Ty->getAs<BuiltinType>() && !Ty->hasPointerRepresentation() &&
-      !Ty->isAnyComplexType() && !Ty->isEnumeralType() &&
-      !Ty->isBlockPointerType())
+      !Ty->isEnumeralType() && !Ty->isBlockPointerType())
     return false;
 
   uint64_t Size = Context.getTypeSize(Ty);
@@ -2777,6 +2783,9 @@ PPC64_SVR4_ABIInfo::isPromotableTypeForABI(QualType Ty) const {
 
 ABIArgInfo
 PPC64_SVR4_ABIInfo::classifyArgumentType(QualType Ty) const {
+  if (Ty->isAnyComplexType())
+    return ABIArgInfo::getDirect();
+
   if (isAggregateTypeForABI(Ty)) {
     // Records with non trivial destructors/constructors should not be passed
     // by value.
@@ -3789,9 +3798,9 @@ void MSP430TargetCodeGenInfo::SetTargetAttributes(const Decl *D,
       F->addFnAttr(llvm::Attributes::NoInline);
 
       // Step 3: Emit ISR vector alias.
-      unsigned Num = attr->getNumber() + 0xffe0;
+      unsigned Num = attr->getNumber() / 2;
       new llvm::GlobalAlias(GV->getType(), llvm::Function::ExternalLinkage,
-                            "vector_" + Twine::utohexstr(Num),
+                            "__isr_" + Twine(Num),
                             GV, &M.getModule());
     }
   }
