@@ -8,33 +8,30 @@
 //===----------------------------------------------------------------------===//
 
 #include "Tools.h"
-
+#include "InputInfo.h"
+#include "SanitizerArgs.h"
+#include "ToolChains.h"
+#include "clang/Basic/ObjCRuntime.h"
 #include "clang/Driver/Action.h"
 #include "clang/Driver/Arg.h"
 #include "clang/Driver/ArgList.h"
+#include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
-#include "clang/Driver/Compilation.h"
 #include "clang/Driver/Job.h"
 #include "clang/Driver/Option.h"
 #include "clang/Driver/Options.h"
 #include "clang/Driver/ToolChain.h"
 #include "clang/Driver/Util.h"
-#include "clang/Basic/ObjCRuntime.h"
-
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/Process.h"
-#include "llvm/Support/ErrorHandling.h"
-
-#include "InputInfo.h"
-#include "SanitizerArgs.h"
-#include "ToolChains.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace clang::driver;
 using namespace clang::driver::tools;
@@ -1230,53 +1227,15 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
   }
 }
 
-static Arg* getLastHexagonArchArg (const ArgList &Args)
-{
-  Arg * A = NULL;
-
-  for (ArgList::const_iterator it = Args.begin(), ie = Args.end();
-       it != ie; ++it) {
-    if ((*it)->getOption().matches(options::OPT_march_EQ) ||
-        (*it)->getOption().matches(options::OPT_mcpu_EQ)) {
-      A = *it;
-      A->claim();
-    }
-    else if ((*it)->getOption().matches(options::OPT_m_Joined)){
-      StringRef Value = (*it)->getValue(0);
-      if (Value.startswith("v")) {
-        A = *it;
-        A->claim();
-      }
-    }
-  }
-  return A;
-}
-
-static StringRef getHexagonTargetCPU(const ArgList &Args)
-{
-  Arg *A;
-  llvm::StringRef WhichHexagon;
-
-  // Select the default CPU (v4) if none was given or detection failed.
-  if ((A = getLastHexagonArchArg (Args))) {
-    WhichHexagon = A->getValue();
-    if (WhichHexagon == "")
-      return "v4";
-    else
-      return WhichHexagon;
-  }
-  else
-    return "v4";
-}
-
 void Clang::AddHexagonTargetArgs(const ArgList &Args,
                                  ArgStringList &CmdArgs) const {
   llvm::Triple Triple = getToolChain().getTriple();
 
   CmdArgs.push_back("-target-cpu");
-  CmdArgs.push_back(Args.MakeArgString("hexagon" + getHexagonTargetCPU(Args)));
+  CmdArgs.push_back(Args.MakeArgString(
+                      "hexagon"
+                      + toolchains::Hexagon_TC::GetTargetCPU(Args)));
   CmdArgs.push_back("-fno-signed-char");
-  CmdArgs.push_back("-nobuiltininc");
 
   if (Args.hasArg(options::OPT_mqdsp6_compat))
     CmdArgs.push_back("-mqdsp6-compat");
@@ -1475,10 +1434,19 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args) {
   // Only one runtime library can be used at once.
   bool NeedsAsan = needsAsanRt();
   bool NeedsTsan = needsTsanRt();
+  bool NeedsMsan = needsMsanRt();
   if (NeedsAsan && NeedsTsan)
     D.Diag(diag::err_drv_argument_not_allowed_with)
       << lastArgumentForKind(D, Args, NeedsAsanRt)
       << lastArgumentForKind(D, Args, NeedsTsanRt);
+  if (NeedsAsan && NeedsMsan)
+    D.Diag(diag::err_drv_argument_not_allowed_with)
+      << lastArgumentForKind(D, Args, NeedsAsanRt)
+      << lastArgumentForKind(D, Args, NeedsMsanRt);
+  if (NeedsTsan && NeedsMsan)
+    D.Diag(diag::err_drv_argument_not_allowed_with)
+      << lastArgumentForKind(D, Args, NeedsTsanRt)
+      << lastArgumentForKind(D, Args, NeedsMsanRt);
 
   // If -fsanitize contains extra features of ASan, it should also
   // explicitly contain -fsanitize=address.
@@ -1486,6 +1454,19 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args) {
     D.Diag(diag::err_drv_argument_only_allowed_with)
       << lastArgumentForKind(D, Args, NeedsAsanRt)
       << "-fsanitize=address";
+
+  // Parse -f(no-)sanitize-blacklist options.
+  if (Arg *BLArg = Args.getLastArg(options::OPT_fsanitize_blacklist,
+                                   options::OPT_fno_sanitize_blacklist)) {
+    if (BLArg->getOption().matches(options::OPT_fsanitize_blacklist)) {
+      std::string BLPath = BLArg->getValue();
+      bool BLExists = false;
+      if (!llvm::sys::fs::exists(BLPath, BLExists) && BLExists)
+        BlacklistFile = BLPath;
+      else
+        D.Diag(diag::err_drv_no_such_file) << BLPath;
+    }
+  }
 }
 
 /// If AddressSanitizer is enabled, add appropriate linker flags (Linux).
@@ -1502,7 +1483,7 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
     llvm::sys::path::append(LibAsan, "lib", "linux",
         (Twine("libclang_rt.asan-") +
             TC.getArchName() + "-android.so"));
-    CmdArgs.push_back(Args.MakeArgString(LibAsan));
+    CmdArgs.insert(CmdArgs.begin(), Args.MakeArgString(LibAsan));
   } else {
     if (!Args.hasArg(options::OPT_shared)) {
       // LibAsan is "libclang_rt.asan-<ArchName>.a" in the Linux library
@@ -1511,7 +1492,17 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
       llvm::sys::path::append(LibAsan, "lib", "linux",
                               (Twine("libclang_rt.asan-") +
                                TC.getArchName() + ".a"));
-      CmdArgs.push_back(Args.MakeArgString(LibAsan));
+      // The ASan runtime needs to come before -lstdc++ (or -lc++, libstdc++.a,
+      // etc.) so that the linker picks ASan's versions of the global 'operator
+      // new' and 'operator delete' symbols. We take the extreme (but simple)
+      // strategy of inserting it at the front of the link command. It also
+      // needs to be forced to end up in the executable, so wrap it in
+      // whole-archive.
+      SmallVector<const char*, 3> PrefixArgs;
+      PrefixArgs.push_back("-whole-archive");
+      PrefixArgs.push_back(Args.MakeArgString(LibAsan));
+      PrefixArgs.push_back("-no-whole-archive");
+      CmdArgs.insert(CmdArgs.begin(), PrefixArgs.begin(), PrefixArgs.end());
       CmdArgs.push_back("-lpthread");
       CmdArgs.push_back("-ldl");
       CmdArgs.push_back("-export-dynamic");
@@ -1524,6 +1515,9 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
 static void addTsanRTLinux(const ToolChain &TC, const ArgList &Args,
                            ArgStringList &CmdArgs) {
   if (!Args.hasArg(options::OPT_shared)) {
+    if (!Args.hasArg(options::OPT_pie))
+      TC.getDriver().Diag(diag::err_drv_argument_only_allowed_with) <<
+        "-fsanitize=thread" << "-pie";
     // LibTsan is "libclang_rt.tsan-<ArchName>.a" in the Linux library
     // resource directory.
     SmallString<128> LibTsan(TC.getDriver().ResourceDir);
@@ -1531,6 +1525,27 @@ static void addTsanRTLinux(const ToolChain &TC, const ArgList &Args,
                             (Twine("libclang_rt.tsan-") +
                              TC.getArchName() + ".a"));
     CmdArgs.push_back(Args.MakeArgString(LibTsan));
+    CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-ldl");
+    CmdArgs.push_back("-export-dynamic");
+  }
+}
+
+/// If MemorySanitizer is enabled, add appropriate linker flags (Linux).
+/// This needs to be called before we add the C run-time (malloc, etc).
+static void addMsanRTLinux(const ToolChain &TC, const ArgList &Args,
+                           ArgStringList &CmdArgs) {
+  if (!Args.hasArg(options::OPT_shared)) {
+    if (!Args.hasArg(options::OPT_pie))
+      TC.getDriver().Diag(diag::err_drv_argument_only_allowed_with) <<
+        "-fsanitize=memory" << "-pie";
+    // LibMsan is "libclang_rt.msan-<ArchName>.a" in the Linux library
+    // resource directory.
+    SmallString<128> LibMsan(TC.getDriver().ResourceDir);
+    llvm::sys::path::append(LibMsan, "lib", "linux",
+                            (Twine("libclang_rt.msan-") +
+                             TC.getArchName() + ".a"));
+    CmdArgs.push_back(Args.MakeArgString(LibMsan));
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-ldl");
     CmdArgs.push_back("-export-dynamic");
@@ -2891,9 +2906,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-spell-checking");
 
 
-  // Silently ignore -fasm-blocks for now.
-  (void) Args.hasFlag(options::OPT_fasm_blocks, options::OPT_fno_asm_blocks,
-                      false);
+  // -fno-asm-blocks is default.
+  if (Args.hasFlag(options::OPT_fasm_blocks, options::OPT_fno_asm_blocks,
+                   false))
+    CmdArgs.push_back("-fasm-blocks");
 
   if (Arg *A = Args.getLastArg(options::OPT_fshow_overloads_EQ))
     A->render(Args, CmdArgs);
@@ -3455,7 +3471,7 @@ void hexagon::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   ArgStringList CmdArgs;
 
   std::string MarchString = "-march=";
-  MarchString += getHexagonTargetCPU(Args);
+  MarchString += toolchains::Hexagon_TC::GetTargetCPU(Args);
   CmdArgs.push_back(Args.MakeArgString(MarchString));
 
   RenderExtraToolArgs(JA, CmdArgs);
@@ -3514,77 +3530,158 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                const ArgList &Args,
                                const char *LinkingOutput) const {
 
-  const Driver &D = getToolChain().getDriver();
+  const toolchains::Hexagon_TC& ToolChain =
+    static_cast<const toolchains::Hexagon_TC&>(getToolChain());
+  const Driver &D = ToolChain.getDriver();
+
   ArgStringList CmdArgs;
 
-  for (ArgList::const_iterator
-         it = Args.begin(), ie = Args.end(); it != ie; ++it) {
-    Arg *A = *it;
-    if (forwardToGCC(A->getOption())) {
-      // Don't forward any -g arguments to assembly steps.
-      if (isa<AssembleJobAction>(JA) &&
-          A->getOption().matches(options::OPT_g_Group))
-        continue;
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  bool hasStaticArg = Args.hasArg(options::OPT_static);
+  bool buildingLib = Args.hasArg(options::OPT_shared);
+  bool incStdLib = !Args.hasArg(options::OPT_nostdlib);
+  bool incStartFiles = !Args.hasArg(options::OPT_nostartfiles);
+  bool incDefLibs = !Args.hasArg(options::OPT_nodefaultlibs);
+  bool useShared = buildingLib && !hasStaticArg;
 
-      // It is unfortunate that we have to claim here, as this means
-      // we will basically never report anything interesting for
-      // platforms using a generic gcc, even if we are just using gcc
-      // to get to the assembler.
-      A->claim();
-      A->render(Args, CmdArgs);
+  //----------------------------------------------------------------------------
+  // Silence warnings for various options
+  //----------------------------------------------------------------------------
+
+  Args.ClaimAllArgs(options::OPT_g_Group);
+  Args.ClaimAllArgs(options::OPT_emit_llvm);
+  Args.ClaimAllArgs(options::OPT_w); // Other warning options are already
+                                     // handled somewhere else.
+  Args.ClaimAllArgs(options::OPT_static_libgcc);
+
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  for (std::vector<std::string>::const_iterator i = ToolChain.ExtraOpts.begin(),
+         e = ToolChain.ExtraOpts.end();
+       i != e; ++i)
+    CmdArgs.push_back(i->c_str());
+
+  std::string MarchString = toolchains::Hexagon_TC::GetTargetCPU(Args);
+  CmdArgs.push_back(Args.MakeArgString("-m" + MarchString));
+
+  if (buildingLib) {
+    CmdArgs.push_back("-shared");
+    CmdArgs.push_back("-call_shared"); // should be the default, but doing as
+                                       // hexagon-gcc does
+  }
+
+  if (hasStaticArg)
+    CmdArgs.push_back("-static");
+
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+
+  const std::string MarchSuffix = "/" + MarchString;
+  const std::string G0Suffix = "/G0";
+  const std::string MarchG0Suffix = MarchSuffix + G0Suffix;
+  const std::string RootDir = toolchains::Hexagon_TC::GetGnuDir(D.InstalledDir)
+                              + "/";
+  const std::string StartFilesDir = RootDir
+                                    + "hexagon/lib"
+                                    + (buildingLib
+                                       ? MarchG0Suffix : MarchSuffix);
+
+  //----------------------------------------------------------------------------
+  // moslib
+  //----------------------------------------------------------------------------
+  std::vector<std::string> oslibs;
+  bool hasStandalone= false;
+
+  for (arg_iterator it = Args.filtered_begin(options::OPT_moslib_EQ),
+         ie = Args.filtered_end(); it != ie; ++it) {
+    (*it)->claim();
+    oslibs.push_back((*it)->getValue());
+    hasStandalone = hasStandalone || (oslibs.back() == "standalone");
+  }
+  if (oslibs.empty()) {
+    oslibs.push_back("standalone");
+    hasStandalone = true;
+  }
+
+  //----------------------------------------------------------------------------
+  // Start Files
+  //----------------------------------------------------------------------------
+  if (incStdLib && incStartFiles) {
+
+    if (!buildingLib) {
+      if (hasStandalone) {
+        CmdArgs.push_back(
+          Args.MakeArgString(StartFilesDir + "/crt0_standalone.o"));
+      }
+      CmdArgs.push_back(Args.MakeArgString(StartFilesDir + "/crt0.o"));
     }
+    std::string initObj = useShared ? "/initS.o" : "/init.o";
+    CmdArgs.push_back(Args.MakeArgString(StartFilesDir + initObj));
   }
 
-  RenderExtraToolArgs(JA, CmdArgs);
+  //----------------------------------------------------------------------------
+  // Library Search Paths
+  //----------------------------------------------------------------------------
+  const ToolChain::path_list &LibPaths = ToolChain.getFilePaths();
+  for (ToolChain::path_list::const_iterator
+         i = LibPaths.begin(),
+         e = LibPaths.end();
+       i != e;
+       ++i)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
 
-  // Add Arch Information
-  Arg *A;
-  if ((A = getLastHexagonArchArg(Args))) {
-    if (A->getOption().matches(options::OPT_m_Joined))
-      A->render(Args, CmdArgs);
-    else
-      CmdArgs.push_back (Args.MakeArgString("-m" + getHexagonTargetCPU(Args)));
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
+  Args.AddAllArgs(CmdArgs, options::OPT_e);
+  Args.AddAllArgs(CmdArgs, options::OPT_s);
+  Args.AddAllArgs(CmdArgs, options::OPT_t);
+  Args.AddAllArgs(CmdArgs, options::OPT_u_Group);
+
+  AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
+
+  //----------------------------------------------------------------------------
+  // Libraries
+  //----------------------------------------------------------------------------
+  if (incStdLib && incDefLibs) {
+    if (D.CCCIsCXX) {
+      ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lm");
+    }
+
+    CmdArgs.push_back("--start-group");
+
+    if (!buildingLib) {
+      for(std::vector<std::string>::iterator i = oslibs.begin(),
+            e = oslibs.end(); i != e; ++i)
+        CmdArgs.push_back(Args.MakeArgString("-l" + *i));
+      CmdArgs.push_back("-lc");
+    }
+    CmdArgs.push_back("-lgcc");
+
+    CmdArgs.push_back("--end-group");
   }
-  else {
-    CmdArgs.push_back (Args.MakeArgString("-m" + getHexagonTargetCPU(Args)));
+
+  //----------------------------------------------------------------------------
+  // End files
+  //----------------------------------------------------------------------------
+  if (incStdLib && incStartFiles) {
+    std::string finiObj = useShared ? "/finiS.o" : "/fini.o";
+    CmdArgs.push_back(Args.MakeArgString(StartFilesDir + finiObj));
   }
 
-  CmdArgs.push_back("-mqdsp6-compat");
-
-  const char *GCCName;
-  if (C.getDriver().CCCIsCXX)
-    GCCName = "hexagon-g++";
-  else
-    GCCName = "hexagon-gcc";
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
-
-  if (Output.isFilename()) {
-    CmdArgs.push_back("-o");
-    CmdArgs.push_back(Output.getFilename());
-  }
-
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-
-    // Don't try to pass LLVM or AST inputs to a generic gcc.
-    if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
-        II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
-      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
-        << getToolChain().getTripleString();
-    else if (II.getType() == types::TY_AST)
-      D.Diag(clang::diag::err_drv_no_ast_support)
-        << getToolChain().getTripleString();
-
-    if (II.isFilename())
-      CmdArgs.push_back(II.getFilename());
-    else
-      // Don't render as input, we need gcc to do the translations. FIXME: Pranav: What is this ?
-      II.getInputArg().render(Args, CmdArgs);
-  }
-  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
-
+  std::string Linker = ToolChain.GetProgramPath("hexagon-ld");
+  C.addCommand(
+    new Command(
+      JA, *this,
+      Args.MakeArgString(Linker), CmdArgs));
 }
 // Hexagon tools end.
 
@@ -5445,6 +5542,8 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     addAsanRTLinux(getToolChain(), Args, CmdArgs);
   if (Sanitize.needsTsanRt())
     addTsanRTLinux(getToolChain(), Args, CmdArgs);
+  if (Sanitize.needsMsanRt())
+    addMsanRTLinux(getToolChain(), Args, CmdArgs);
 
   if (D.CCCIsCXX &&
       !Args.hasArg(options::OPT_nostdlib) &&

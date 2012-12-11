@@ -9,7 +9,12 @@
 #ifndef CLANG_LIB_DRIVER_SANITIZERARGS_H_
 #define CLANG_LIB_DRIVER_SANITIZERARGS_H_
 
+#include "clang/Driver/Arg.h"
 #include "clang/Driver/ArgList.h"
+#include "clang/Driver/Driver.h"
+#include "clang/Driver/DriverDiagnostic.h"
+#include "clang/Driver/Options.h"
+#include "llvm/ADT/StringSwitch.h"
 
 namespace clang {
 namespace driver {
@@ -30,17 +35,20 @@ class SanitizerArgs {
 #include "clang/Basic/Sanitizers.def"
     NeedsAsanRt = AddressFull,
     NeedsTsanRt = Thread,
+    NeedsMsanRt = Memory,
     NeedsUbsanRt = (Undefined & ~Bounds) | Integer
   };
   unsigned Kind;
+  std::string BlacklistFile;
 
  public:
-  SanitizerArgs() : Kind(0) {}
+  SanitizerArgs() : Kind(0), BlacklistFile("") {}
   /// Parses the sanitizer arguments from an argument list.
   SanitizerArgs(const Driver &D, const ArgList &Args);
 
   bool needsAsanRt() const { return Kind & NeedsAsanRt; }
   bool needsTsanRt() const { return Kind & NeedsTsanRt; }
+  bool needsMsanRt() const { return Kind & NeedsMsanRt; }
   bool needsUbsanRt() const { return Kind & NeedsUbsanRt; }
 
   bool sanitizesVptr() const { return Kind & Vptr; }
@@ -55,6 +63,11 @@ class SanitizerArgs {
 #include "clang/Basic/Sanitizers.def"
     SanitizeOpt.pop_back();
     CmdArgs.push_back(Args.MakeArgString(SanitizeOpt));
+    if (!BlacklistFile.empty()) {
+      llvm::SmallString<64> BlacklistOpt("-fsanitize-blacklist=");
+      BlacklistOpt += BlacklistFile;
+      CmdArgs.push_back(Args.MakeArgString(BlacklistOpt));
+    }
   }
 
  private:
