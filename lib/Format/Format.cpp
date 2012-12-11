@@ -57,6 +57,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.PointerAndReferenceBindToType = false;
   LLVMStyle.AccessModifierOffset = -2;
   LLVMStyle.SplitTemplateClosingGreater = true;
+  LLVMStyle.IndentCaseLabels = false;
   return LLVMStyle;
 }
 
@@ -67,6 +68,7 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.PointerAndReferenceBindToType = true;
   GoogleStyle.AccessModifierOffset = -1;
   GoogleStyle.SplitTemplateClosingGreater = false;
+  GoogleStyle.IndentCaseLabels = true;
   return GoogleStyle;
 }
 
@@ -369,8 +371,9 @@ private:
     if (Newlines == 0 && Offset != 0)
       Newlines = 1;
     unsigned Indent = Line.Level * 2;
-    if (Token.Tok.is(tok::kw_public) || Token.Tok.is(tok::kw_protected) ||
-        Token.Tok.is(tok::kw_private))
+    if ((Token.Tok.is(tok::kw_public) || Token.Tok.is(tok::kw_protected) ||
+         Token.Tok.is(tok::kw_private)) &&
+        static_cast<int>(Indent) + Style.AccessModifierOffset >= 0)
       Indent += Style.AccessModifierOffset;
     replaceWhitespace(Token, Newlines, Indent);
     return Indent;
@@ -686,6 +689,8 @@ private:
   }
 
   bool spaceRequiredBetween(Token Left, Token Right) {
+    if (Right.is(tok::r_paren) || Right.is(tok::semi) || Right.is(tok::comma))
+      return false;
     if (Left.is(tok::kw_template) && Right.is(tok::less))
       return true;
     if (Left.is(tok::arrow) || Right.is(tok::arrow))
@@ -694,16 +699,20 @@ private:
       return false;
     if (Left.is(tok::less) || Right.is(tok::greater) || Right.is(tok::less))
       return false;
+    if (Right.is(tok::amp) || Right.is(tok::star))
+      return Left.isLiteral() ||
+          (Left.isNot(tok::star) && Left.isNot(tok::amp) &&
+           !Style.PointerAndReferenceBindToType);
     if (Left.is(tok::amp) || Left.is(tok::star))
       return Right.isLiteral() || Style.PointerAndReferenceBindToType;
     if (Right.is(tok::star) && Left.is(tok::l_paren))
       return false;
-    if (Right.is(tok::amp) || Right.is(tok::star))
-      return Left.isLiteral() || !Style.PointerAndReferenceBindToType;
     if (Left.is(tok::l_square) || Right.is(tok::l_square) ||
         Right.is(tok::r_square))
       return false;
-    if (Left.is(tok::coloncolon) || Right.is(tok::coloncolon))
+    if (Left.is(tok::coloncolon) ||
+        (Right.is(tok::coloncolon) &&
+         (Left.is(tok::identifier) || Left.is(tok::greater))))
       return false;
     if (Left.is(tok::period) || Right.is(tok::period))
       return false;
@@ -717,8 +726,6 @@ private:
     if (Left.is(tok::l_paren))
       return false;
     if (Left.is(tok::hash))
-      return false;
-    if (Right.is(tok::r_paren) || Right.is(tok::semi) || Right.is(tok::comma))
       return false;
     if (Right.is(tok::l_paren)) {
       return !Left.isAnyIdentifier() || isIfForOrWhile(Left);
@@ -745,6 +752,67 @@ private:
   std::vector<TokenAnnotation> Annotations;
 };
 
+class LexerBasedFormatTokenSource : public FormatTokenSource {
+public:
+  LexerBasedFormatTokenSource(Lexer &Lex, SourceManager &SourceMgr)
+      : GreaterStashed(false),
+        Lex(Lex),
+        SourceMgr(SourceMgr),
+        IdentTable(Lex.getLangOpts()) {
+    Lex.SetKeepWhitespaceMode(true);
+  }
+
+  virtual FormatToken getNextToken() {
+    if (GreaterStashed) {
+      FormatTok.NewlinesBefore = 0;
+      FormatTok.WhiteSpaceStart =
+          FormatTok.Tok.getLocation().getLocWithOffset(1);
+      FormatTok.WhiteSpaceLength = 0;
+      GreaterStashed = false;
+      return FormatTok;
+    }
+
+    FormatTok = FormatToken();
+    Lex.LexFromRawLexer(FormatTok.Tok);
+    FormatTok.WhiteSpaceStart = FormatTok.Tok.getLocation();
+
+    // Consume and record whitespace until we find a significant token.
+    while (FormatTok.Tok.is(tok::unknown)) {
+      FormatTok.NewlinesBefore += tokenText(FormatTok.Tok).count('\n');
+      FormatTok.WhiteSpaceLength += FormatTok.Tok.getLength();
+
+      if (FormatTok.Tok.is(tok::eof))
+        return FormatTok;
+      Lex.LexFromRawLexer(FormatTok.Tok);
+    }
+
+    if (FormatTok.Tok.is(tok::raw_identifier)) {
+      const IdentifierInfo &Info = IdentTable.get(tokenText(FormatTok.Tok));
+      FormatTok.Tok.setKind(Info.getTokenID());
+    }
+
+    if (FormatTok.Tok.is(tok::greatergreater)) {
+      FormatTok.Tok.setKind(tok::greater);
+      GreaterStashed = true;
+    }
+
+    return FormatTok;
+  }
+
+private:
+  FormatToken FormatTok;
+  bool GreaterStashed;
+  Lexer &Lex;
+  SourceManager &SourceMgr;
+  IdentifierTable IdentTable;
+
+  /// Returns the text of \c FormatTok.
+  StringRef tokenText(Token &Tok) {
+    return StringRef(SourceMgr.getCharacterData(Tok.getLocation()),
+                     Tok.getLength());
+  }
+};
+
 class Formatter : public UnwrappedLineConsumer {
 public:
   Formatter(const FormatStyle &Style, Lexer &Lex, SourceManager &SourceMgr,
@@ -760,7 +828,8 @@ public:
   }
 
   tooling::Replacements format() {
-    UnwrappedLineParser Parser(Lex, SourceMgr, *this);
+    LexerBasedFormatTokenSource Tokens(Lex, SourceMgr);
+    UnwrappedLineParser Parser(Style, Tokens, *this);
     StructuralError = Parser.parse();
     for (std::vector<UnwrappedLine>::iterator I = UnwrappedLines.begin(),
                                               E = UnwrappedLines.end();

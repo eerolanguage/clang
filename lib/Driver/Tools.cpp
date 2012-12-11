@@ -1227,6 +1227,28 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
   }
 }
 
+static inline bool HasPICArg(const ArgList &Args) {
+  return Args.hasArg(options::OPT_fPIC)
+    || Args.hasArg(options::OPT_fpic);
+}
+
+static Arg *GetLastSmallDataThresholdArg(const ArgList &Args) {
+  return Args.getLastArg(options::OPT_G,
+                         options::OPT_G_EQ,
+                         options::OPT_msmall_data_threshold_EQ);
+}
+
+static std::string GetHexagonSmallDataThresholdValue(const ArgList &Args) {
+  std::string value;
+  if (HasPICArg(Args))
+    value = "0";
+  else if (Arg *A = GetLastSmallDataThresholdArg(Args)) {
+    value = A->getValue();
+    A->claim();
+  }
+  return value;
+}
+
 void Clang::AddHexagonTargetArgs(const ArgList &Args,
                                  ArgStringList &CmdArgs) const {
   llvm::Triple Triple = getToolChain().getTriple();
@@ -1236,17 +1258,14 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
                       "hexagon"
                       + toolchains::Hexagon_TC::GetTargetCPU(Args)));
   CmdArgs.push_back("-fno-signed-char");
+  CmdArgs.push_back("-mqdsp6-compat");
+  CmdArgs.push_back("-Wreturn-type");
 
-  if (Args.hasArg(options::OPT_mqdsp6_compat))
-    CmdArgs.push_back("-mqdsp6-compat");
-
-  if (Arg *A = Args.getLastArg(options::OPT_G,
-                               options::OPT_msmall_data_threshold_EQ)) {
-    std::string SmallDataThreshold="-small-data-threshold=";
-    SmallDataThreshold += A->getValue();
+  std::string SmallDataThreshold = GetHexagonSmallDataThresholdValue(Args);
+  if (!SmallDataThreshold.empty()) {
     CmdArgs.push_back ("-mllvm");
-    CmdArgs.push_back(Args.MakeArgString(SmallDataThreshold));
-    A->claim();
+    CmdArgs.push_back(Args.MakeArgString(
+                        "-hexagon-small-data-threshold=" + SmallDataThreshold));
   }
 
   if (!Args.hasArg(options::OPT_fno_short_enums))
@@ -3484,6 +3503,14 @@ void hexagon::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fsyntax-only");
   }
 
+  std::string SmallDataThreshold = GetHexagonSmallDataThresholdValue(Args);
+  if (!SmallDataThreshold.empty())
+    CmdArgs.push_back(
+      Args.MakeArgString(std::string("-G") + SmallDataThreshold));
+
+  Args.AddAllArgs(CmdArgs, options::OPT_g_Group);
+  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
+                       options::OPT_Xassembler);
 
   // Only pass -x if gcc will understand it; otherwise hope gcc
   // understands the suffix correctly. The main use case this would go
@@ -3541,6 +3568,7 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
   //----------------------------------------------------------------------------
   bool hasStaticArg = Args.hasArg(options::OPT_static);
   bool buildingLib = Args.hasArg(options::OPT_shared);
+  bool buildPIE = Args.hasArg(options::OPT_pie);
   bool incStdLib = !Args.hasArg(options::OPT_nostdlib);
   bool incStartFiles = !Args.hasArg(options::OPT_nostartfiles);
   bool incDefLibs = !Args.hasArg(options::OPT_nodefaultlibs);
@@ -3575,6 +3603,15 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (hasStaticArg)
     CmdArgs.push_back("-static");
+
+  if (buildPIE && !buildingLib)
+    CmdArgs.push_back("-pie");
+
+  std::string SmallDataThreshold = GetHexagonSmallDataThresholdValue(Args);
+  if (!SmallDataThreshold.empty()) {
+    CmdArgs.push_back(
+      Args.MakeArgString(std::string("-G") + SmallDataThreshold));
+  }
 
   //----------------------------------------------------------------------------
   //
@@ -4079,6 +4116,9 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   // categories.
   if (Args.hasArg(options::OPT_ObjC) || Args.hasArg(options::OPT_ObjCXX))
     CmdArgs.push_back("-ObjC");
+
+  if (Args.hasArg(options::OPT_rdynamic))
+    CmdArgs.push_back("-export_dynamic");
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());

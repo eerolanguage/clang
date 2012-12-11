@@ -366,6 +366,16 @@ public:
                               const CXXDestructorDecl*>, 2>
       DelayedDestructorExceptionSpecChecks;
 
+  /// \brief All the members seen during a class definition which were both
+  /// explicitly defaulted and had explicitly-specified exception
+  /// specifications, along with the function type containing their
+  /// user-specified exception specification. Those exception specifications
+  /// were overridden with the default specifications, but we still need to
+  /// check whether they are compatible with the default specification, and
+  /// we can't do that until the nesting set of class definitions is complete.
+  SmallVector<std::pair<CXXMethodDecl*, const FunctionProtoType*>, 2>
+    DelayedDefaultedMemberExceptionSpecs;
+
   /// \brief Callback to the parser to parse templated functions when needed.
   typedef void LateTemplateParserCB(void *P, const FunctionDecl *FD);
   LateTemplateParserCB *LateTemplateParser;
@@ -1419,6 +1429,7 @@ public:
   void computeNRVO(Stmt *Body, sema::FunctionScopeInfo *Scope);
   Decl *ActOnFinishFunctionBody(Decl *Decl, Stmt *Body);
   Decl *ActOnFinishFunctionBody(Decl *Decl, Stmt *Body, bool IsInstantiation);
+  Decl *ActOnSkippedFunctionBody(Decl *Decl);
 
   /// ActOnFinishDelayedAttribute - Invoked when we have finished parsing an
   /// attribute for which parsing is delayed.
@@ -1536,7 +1547,9 @@ public:
                             Declarator *D = 0);
 
   bool CheckNontrivialField(FieldDecl *FD);
-  void DiagnoseNontrivial(const RecordType* Record, CXXSpecialMember mem);
+  void DiagnoseNontrivial(const CXXRecordDecl *Record, CXXSpecialMember CSM);
+  bool SpecialMemberIsTrivial(CXXMethodDecl *MD, CXXSpecialMember CSM,
+                              bool Diagnose = false);
   CXXSpecialMember getSpecialMember(const CXXMethodDecl *MD);
   void ActOnLastBitfield(SourceLocation DeclStart,
                          SmallVectorImpl<Decl *> &AllIvarDecls);
@@ -2297,7 +2310,8 @@ public:
   void checkUnusedDeclAttributes(Declarator &D);
 
   bool CheckRegparmAttr(const AttributeList &attr, unsigned &value);
-  bool CheckCallingConvAttr(const AttributeList &attr, CallingConv &CC);
+  bool CheckCallingConvAttr(const AttributeList &attr, CallingConv &CC, 
+                            const FunctionDecl *FD = 0);
   bool CheckNoReturnAttr(const AttributeList &attr);
 
   /// \brief Stmt attributes - this routine is the top level dispatcher.
@@ -4506,8 +4520,10 @@ public:
                                  StorageClass& SC);
   Decl *ActOnConversionDeclarator(CXXConversionDecl *Conversion);
 
-  void CheckExplicitlyDefaultedMethods(CXXRecordDecl *Record);
   void CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD);
+  void CheckExplicitlyDefaultedMemberExceptionSpec(CXXMethodDecl *MD,
+                                                   const FunctionProtoType *T);
+  void CheckDelayedExplicitlyDefaultedMemberExceptionSpecs();
 
   //===--------------------------------------------------------------------===//
   // C++ Derived Classes
@@ -4552,6 +4568,9 @@ public:
                                     CXXCastPath *BasePath);
 
   std::string getAmbiguousPathsDisplayString(CXXBasePaths &Paths);
+
+  bool CheckOverridingFunctionAttributes(const CXXMethodDecl *New,
+                                         const CXXMethodDecl *Old);
 
   /// CheckOverridingFunctionReturnType - Checks whether the return types are
   /// covariant, according to C++ [class.virtual]p5.
