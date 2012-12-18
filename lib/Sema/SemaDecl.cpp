@@ -1101,7 +1101,7 @@ void Sema::pushExternalDeclIntoScope(NamedDecl *D, DeclarationName Name) {
 
 bool Sema::isDeclInScope(NamedDecl *&D, DeclContext *Ctx, Scope *S,
                          bool ExplicitInstantiationOrSpecialization) {
-  return IdResolver.isDeclInScope(D, Ctx, Context, S,
+  return IdResolver.isDeclInScope(D, Ctx, S,
                                   ExplicitInstantiationOrSpecialization);
 }
 
@@ -2461,19 +2461,17 @@ void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old) {
     //   absence of a major array bound (8.3.4).
     else if (Old->getType()->isIncompleteArrayType() &&
              New->getType()->isArrayType()) {
-      CanQual<ArrayType> OldArray
-        = Context.getCanonicalType(Old->getType())->getAs<ArrayType>();
-      CanQual<ArrayType> NewArray
-        = Context.getCanonicalType(New->getType())->getAs<ArrayType>();
-      if (OldArray->getElementType() == NewArray->getElementType())
+      const ArrayType *OldArray = Context.getAsArrayType(Old->getType());
+      const ArrayType *NewArray = Context.getAsArrayType(New->getType());
+      if (Context.hasSameType(OldArray->getElementType(),
+                              NewArray->getElementType()))
         MergedT = New->getType();
     } else if (Old->getType()->isArrayType() &&
              New->getType()->isIncompleteArrayType()) {
-      CanQual<ArrayType> OldArray
-        = Context.getCanonicalType(Old->getType())->getAs<ArrayType>();
-      CanQual<ArrayType> NewArray
-        = Context.getCanonicalType(New->getType())->getAs<ArrayType>();
-      if (OldArray->getElementType() == NewArray->getElementType())
+      const ArrayType *OldArray = Context.getAsArrayType(Old->getType());
+      const ArrayType *NewArray = Context.getAsArrayType(New->getType());
+      if (Context.hasSameType(OldArray->getElementType(),
+                              NewArray->getElementType()))
         MergedT = Old->getType();
     } else if (New->getType()->isObjCObjectPointerType()
                && Old->getType()->isObjCObjectPointerType()) {
@@ -2623,8 +2621,7 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
   // specified at the prior declaration.
   // FIXME. revisit this code.
   if (New->hasExternalStorage() &&
-      Old->getLinkage() == InternalLinkage &&
-      New->getDeclContext() == Old->getDeclContext())
+      Old->getLinkage() == InternalLinkage)
     New->setStorageClass(Old->getStorageClass());
 
   // Merge "used" flag.
@@ -7293,7 +7290,10 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
   }
 
   if (var->isThisDeclarationADefinition() &&
-      var->getLinkage() == ExternalLinkage) {
+      var->getLinkage() == ExternalLinkage &&
+      getDiagnostics().getDiagnosticLevel(
+                       diag::warn_missing_variable_declarations,
+                       var->getLocation())) {
     // Find a previous declaration that's not a definition.
     VarDecl *prev = var->getPreviousDecl();
     while (prev && prev->isThisDeclarationADefinition())
@@ -7824,7 +7824,8 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D) {
   return ActOnStartOfFunctionDef(FnBodyScope, DP);
 }
 
-static bool ShouldWarnAboutMissingPrototype(const FunctionDecl *FD) {
+static bool ShouldWarnAboutMissingPrototype(const FunctionDecl *FD, 
+                             const FunctionDecl*& PossibleZeroParamPrototype) {
   // Don't warn about invalid declarations.
   if (FD->isInvalidDecl())
     return false;
@@ -7866,6 +7867,8 @@ static bool ShouldWarnAboutMissingPrototype(const FunctionDecl *FD) {
       continue;
       
     MissingPrototype = !Prev->getType()->isFunctionProtoType();
+    if (FD->getNumParams() == 0)
+      PossibleZeroParamPrototype = Prev;
     break;
   }
     
@@ -7931,8 +7934,22 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
   //   prototype declaration. This warning is issued even if the
   //   definition itself provides a prototype. The aim is to detect
   //   global functions that fail to be declared in header files.
-  if (ShouldWarnAboutMissingPrototype(FD))
+  const FunctionDecl *PossibleZeroParamPrototype = 0;
+  if (ShouldWarnAboutMissingPrototype(FD, PossibleZeroParamPrototype)) {
     Diag(FD->getLocation(), diag::warn_missing_prototype) << FD;
+  
+    if (PossibleZeroParamPrototype) {
+      // We found a declaration that is not a prototype, 
+      // but that could be a zero-parameter prototype
+      TypeSourceInfo* TI = PossibleZeroParamPrototype->getTypeSourceInfo();
+      TypeLoc TL = TI->getTypeLoc();
+      if (FunctionNoProtoTypeLoc* FTL = dyn_cast<FunctionNoProtoTypeLoc>(&TL))
+        Diag(PossibleZeroParamPrototype->getLocation(), 
+             diag::note_declaration_not_a_prototype)
+          << PossibleZeroParamPrototype 
+          << FixItHint::CreateInsertion(FTL->getRParenLoc(), "void");
+    }
+  }
 
   if (FnBodyScope)
     PushDeclContext(FnBodyScope, FD);
@@ -8007,7 +8024,7 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
            diag::err_attribute_can_be_applied_only_to_symbol_declaration)
         << "dllimport";
       FD->setInvalidDecl();
-      return FD;
+      return D;
     }
 
     // Visual C++ appears to not think this is an issue, so only issue
@@ -8024,7 +8041,7 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
   // We want to attach documentation to original Decl (which might be
   // a function template).
   ActOnDocumentableDecl(D);
-  return FD;
+  return D;
 }
 
 /// \brief Given the set of return statements within a function body,
@@ -8499,8 +8516,12 @@ bool Sema::CheckEnumUnderlyingType(TypeSourceInfo *TI) {
   SourceLocation UnderlyingLoc = TI->getTypeLoc().getBeginLoc();
   QualType T = TI->getType();
 
-  if (T->isDependentType() || T->isIntegralType(Context))
+  if (T->isDependentType())
     return false;
+
+  if (const BuiltinType *BT = T->getAs<BuiltinType>())
+    if (BT->isInteger())
+      return false;
 
   Diag(UnderlyingLoc, diag::err_enum_invalid_underlying) << T;
   return true;
