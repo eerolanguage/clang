@@ -2835,6 +2835,30 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw___pixel:
       isInvalid = DS.SetTypeAltiVecPixel(true, Loc, PrevSpec, DiagID);
       break;
+    case tok::kw_image1d_t:
+       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_image1d_t, Loc,
+                                      PrevSpec, DiagID);
+      break;
+    case tok::kw_image1d_array_t:
+       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_image1d_array_t, Loc,
+                                      PrevSpec, DiagID);
+      break;
+    case tok::kw_image1d_buffer_t:
+       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_image1d_buffer_t, Loc,
+                                      PrevSpec, DiagID);
+      break;
+    case tok::kw_image2d_t:
+       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_image2d_t, Loc,
+                                      PrevSpec, DiagID);
+      break;
+    case tok::kw_image2d_array_t:
+       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_image2d_array_t, Loc,
+                                      PrevSpec, DiagID);
+      break;
+    case tok::kw_image3d_t:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_image3d_t, Loc,
+                                     PrevSpec, DiagID);
+      break;
     case tok::kw___unknown_anytype:
       isInvalid = DS.SetTypeSpecType(TST_unknown_anytype, Loc,
                                      PrevSpec, DiagID);
@@ -3687,6 +3711,14 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
   case tok::kw___vector:
     return true;
 
+    // OpenCL specific types:
+  case tok::kw_image1d_t:
+  case tok::kw_image1d_array_t:
+  case tok::kw_image1d_buffer_t:
+  case tok::kw_image2d_t:
+  case tok::kw_image2d_array_t:
+  case tok::kw_image3d_t:
+
     // struct-or-union-specifier (C99) or class-specifier (C++)
   case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
   case tok::kw_struct:
@@ -3759,6 +3791,14 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw__Decimal128:
   case tok::kw___vector:
     return true;
+
+    // OpenCL specific types:
+  case tok::kw_image1d_t:
+  case tok::kw_image1d_array_t:
+  case tok::kw_image1d_buffer_t:
+  case tok::kw_image2d_t:
+  case tok::kw_image2d_array_t:
+  case tok::kw_image3d_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
   case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
@@ -3907,6 +3947,14 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw__Decimal128:
   case tok::kw___vector:
     return true;
+
+    // OpenCL specific types:
+  case tok::kw_image1d_t:
+  case tok::kw_image1d_array_t:
+  case tok::kw_image1d_buffer_t:
+  case tok::kw_image2d_t:
+  case tok::kw_image2d_array_t:
+  case tok::kw_image3d_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
   case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;

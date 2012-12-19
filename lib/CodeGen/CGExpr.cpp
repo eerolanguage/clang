@@ -1200,7 +1200,7 @@ RValue CodeGenFunction::EmitLoadOfBitfieldLValue(LValue LV) {
   } else {
     if (Info.Offset)
       Val = Builder.CreateLShr(Val, Info.Offset, "bf.lshr");
-    if (Info.Offset + Info.Size < Info.StorageSize)
+    if (static_cast<unsigned>(Info.Offset) + Info.Size < Info.StorageSize)
       Val = Builder.CreateAnd(Val, llvm::APInt::getLowBitsSet(Info.StorageSize,
                                                               Info.Size),
                               "bf.clear");
@@ -1401,7 +1401,7 @@ void CodeGenFunction::EmitStoreThroughBitfieldLValue(RValue Src, LValue Dst,
 
     ResultVal = Builder.CreateIntCast(ResultVal, ResLTy, Info.IsSigned,
                                       "bf.result.cast");
-    *Result = ResultVal;
+    *Result = EmitFromMemory(ResultVal, Dst.getType());
   }
 }
 

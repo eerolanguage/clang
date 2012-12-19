@@ -1128,7 +1128,13 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_void:
   case tok::kw_typename:
   case tok::kw_typeof:
-  case tok::kw___vector: {
+  case tok::kw___vector:
+  case tok::kw_image1d_t:
+  case tok::kw_image1d_array_t:
+  case tok::kw_image1d_buffer_t:
+  case tok::kw_image2d_t:
+  case tok::kw_image2d_array_t:
+  case tok::kw_image3d_t: {
     if (!getLangOpts().CPlusPlus) {
       Diag(Tok, diag::err_expected_expression);
       if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
