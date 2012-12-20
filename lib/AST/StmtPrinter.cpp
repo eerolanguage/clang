@@ -1399,7 +1399,7 @@ void StmtPrinter::VisitLambdaExpr(LambdaExpr *Node) {
       OS << ExceptionSpec;
     }
 
-    // FIXME: Attributes
+    // FIXME: Attribute
 
     // Print the trailing return type if it was specified in the source.
     if (Node->hasExplicitResultType())
@@ -1872,11 +1872,6 @@ void Stmt::printPretty(raw_ostream &OS,
                        unsigned Indentation) const {
   if (this == 0) {
     OS << "<NULL>";
-    return;
-  }
-
-  if (Policy.DumpSourceManager) {
-    dump(OS, *Policy.DumpSourceManager);
     return;
   }
 

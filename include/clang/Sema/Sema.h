@@ -2389,7 +2389,7 @@ public:
                                        Selector SetterSel,
                                        const bool isAssign,
                                        const bool isReadWrite,
-                                       const unsigned Attributes,
+                                       const unsigned Attribute,
                                        const unsigned AttributesAsWritten,
                                        bool *isOverridingProperty,
                                        TypeSourceInfo *T,
@@ -2406,7 +2406,7 @@ public:
                                        Selector SetterSel,
                                        const bool isAssign,
                                        const bool isReadWrite,
-                                       const unsigned Attributes,
+                                       const unsigned Attribute,
                                        const unsigned AttributesAsWritten,
                                        TypeSourceInfo *T,
                                        tok::ObjCKeywordKind MethodImplKind,
@@ -6217,11 +6217,11 @@ public:
                                SmallVectorImpl<Decl *> &Protocols);
 
   /// Ensure attributes are consistent with type.
-  /// \param [in, out] Attributes The attributes to check; they will
+  /// \param [in, out] Attribute The attributes to check; they will
   /// be modified to be consistent with \p PropertyTy.
   void CheckObjCPropertyAttributes(Decl *PropertyPtrTy,
                                    SourceLocation Loc,
-                                   unsigned &Attributes,
+                                   unsigned &Attribute,
                                    bool propertyInPrimaryClass);
 
   /// Process the specified property declaration and create decls for the
