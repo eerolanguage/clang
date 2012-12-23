@@ -667,25 +667,32 @@ class EeroPragmaHandler : public PragmaHandler {
     virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
                               Token &UnusedToken) {
       CompilerInstance &CI = Action.getCompilerInstance();
-      if (CI.getLangOpts().Eero && !CI.getLangOpts().CPlusPlus) {
+      if (CI.getLangOpts().Eero) {
         // Lex the 'C++' or 'C' (default) language choice.
         Token Tok;
         PP.LexUnexpandedToken(Tok);
         if (Tok.is(tok::string_literal) || Tok.is(tok::char_constant)) {
           const StringRef lang(PP.getSpelling(Tok));
           if (lang == "\"C++\"" || lang == "'C++'") {
-            // Enable C++ support, drop out of source file, then try again
-            CI.getLangOpts().CPlusPlus = true;
-            CI.getLangOpts().WChar = true;
-            CI.getLangOpts().Bool = true;
-            CI.getLangOpts().CXXExceptions = CI.getLangOpts().ObjCExceptions;
-            // TODO: is there a better way to achieve this?
-            Token EOFToken;
-            EOFToken.setKind(tok::eof);
-            PP.EnterToken(EOFToken);
-            // Re-queue the file, now that the options have been modified
-            // to enable C++
-            CI.getFrontendOpts().Inputs.push_back(Action.getCurrentInput());
+            if (!CI.getLangOpts().CPlusPlus) {
+              // Enable C++ support, drop out of source file, then try again
+              CI.getLangOpts().CPlusPlus = true;
+              CI.getLangOpts().WChar = true;
+              CI.getLangOpts().Bool = true;
+              CI.getLangOpts().CXXExceptions = CI.getLangOpts().ObjCExceptions;
+              // TODO: is there a better way to achieve this?
+              Token EOFToken;
+              EOFToken.setKind(tok::eof);
+              PP.EnterToken(EOFToken);
+              // Re-queue the file, now that the options have been modified
+              // to enable C++
+              CI.getFrontendOpts().Inputs.push_back(Action.getCurrentInput());
+            } else { // already has option CPlusPlus
+              // The backend options were already processed during the
+              // first pass, so clear them now. Avoids compiler complaints
+              // about specifying some opts twice.
+              CI.getCodeGenOpts().BackendOptions.clear();
+            }
           }
         }
       }
@@ -742,7 +749,7 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
 
     if (Act.BeginSourceFile(*this, getFrontendOpts().Inputs[i])) {
 
-      if (getLangOpts().Eero && !getLangOpts().CPlusPlus) {
+      if (getLangOpts().Eero) {
         getPreprocessor().AddPragmaHandler(new EeroPragmaHandler(Act));
       }
 
