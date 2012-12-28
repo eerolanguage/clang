@@ -608,12 +608,9 @@ public:
   bool SetTypeQual(TQ T, SourceLocation Loc, const char *&PrevSpec,
                    unsigned &DiagID, const LangOptions &Lang);
 
-  bool SetFunctionSpecInline(SourceLocation Loc, const char *&PrevSpec,
-                             unsigned &DiagID);
-  bool SetFunctionSpecVirtual(SourceLocation Loc, const char *&PrevSpec,
-                              unsigned &DiagID);
-  bool SetFunctionSpecExplicit(SourceLocation Loc, const char *&PrevSpec,
-                               unsigned &DiagID);
+  bool setFunctionSpecInline(SourceLocation Loc);
+  bool setFunctionSpecVirtual(SourceLocation Loc);
+  bool setFunctionSpecExplicit(SourceLocation Loc);
 
   bool SetFriendSpec(SourceLocation Loc, const char *&PrevSpec,
                      unsigned &DiagID);
@@ -1506,7 +1503,7 @@ private:
   /// \brief Is this Declarator a redeclaration?
   bool Redeclaration : 1;
 
-  /// Attrs - Attribute.
+  /// Attrs - Attributes.
   ParsedAttributes Attrs;
 
   /// \brief The asm label, if specified.

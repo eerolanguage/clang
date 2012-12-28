@@ -164,6 +164,15 @@ TEST_F(FormatTest, FormatsForLoop) {
   verifyFormat("for (;;) {\n"
                "  f();\n"
                "}");
+
+  verifyFormat(
+      "for (std::vector<UnwrappedLine>::iterator I = UnwrappedLines.begin(),\n"
+      "                                          E = UnwrappedLines.end();\n"
+      "     I != E; ++I) {\n}");
+
+  verifyFormat(
+      "for (MachineFun::iterator IIII = PrevIt, EEEE = F.end(); IIII != EEEE;\n"
+      "     ++IIIII) {\n}");
 }
 
 TEST_F(FormatTest, FormatsWhileLoop) {
@@ -370,8 +379,9 @@ TEST_F(FormatTest, FormatsFunctionDefinition) {
 
 TEST_F(FormatTest, FormatsAwesomeMethodCall) {
   verifyFormat(
-      "SomeLongMethodName(SomeReallyLongMethod(CallOtherReallyLongMethod(\n"
-      "    parameter, parameter, parameter)), SecondLongCall(parameter));");
+      "SomeLongMethodName(SomeReallyLongMethod(\n"
+      "    CallOtherReallyLongMethod(parameter, parameter, parameter)),\n"
+      "                   SecondLongCall(parameter));");
 }
 
 TEST_F(FormatTest, ConstructorInitializers) {
@@ -442,9 +452,59 @@ TEST_F(FormatTest, BreaksDesireably) {
   // taking into account the StopAt value.
   verifyFormat(
       "return aaaaaaaaaaaaaaaaaaaaaaaa || aaaaaaaaaaaaaaaaaaaaaaa ||\n"
-      "    aaaaaaaaaaa(aaaaaaaaa) || aaaaaaaaaaaaaaaaaaaaaaa ||\n"
-      "    aaaaaaaaaaaaaaaaaaaaaaaaa || aaaaaaaaaaaaaaaaaaaaaaa ||\n"
-      "    (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+      "       aaaaaaaaaaa(aaaaaaaaa) || aaaaaaaaaaaaaaaaaaaaaaa ||\n"
+      "       aaaaaaaaaaaaaaaaaaaaaaaaa || aaaaaaaaaaaaaaaaaaaaaaa ||\n"
+      "       (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+
+  verifyFormat(
+      "{\n  {\n    {\n"
+      "      Annotation.SpaceRequiredBefore =\n"
+      "          Line.Tokens[i - 1].Tok.isNot(tok::l_paren) &&\n"
+      "          Line.Tokens[i - 1].Tok.isNot(tok::l_square);\n"
+      "    }\n  }\n}");
+}
+
+TEST_F(FormatTest, BreaksAccordingToOperatorPrecedence) {
+  verifyFormat(
+      "if (aaaaaaaaaaaaaaaaaaaaaaaaa ||\n"
+      "    bbbbbbbbbbbbbbbbbbbbbbbbb && ccccccccccccccccccccccccc) {\n}");
+  verifyFormat(
+      "if (aaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbb ||\n"
+      "    ccccccccccccccccccccccccc) {\n}");
+  verifyFormat(
+      "if (aaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbb ||\n"
+      "    ccccccccccccccccccccccccc) {\n}");
+  verifyFormat(
+      "if ((aaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbb) &&\n"
+      "    ccccccccccccccccccccccccc) {\n}");
+}
+
+TEST_F(FormatTest, AlignsAfterAssignments) {
+  verifyFormat(
+      "int Result = aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "             aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+  verifyFormat(
+      "Result += aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "          aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+  verifyFormat(
+      "Result >>= aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "           aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+  verifyFormat(
+      "int Result = (aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "              aaaaaaaaaaaaaaaaaaaaaaaaa);"); 
+  verifyFormat(
+      "double LooooooooooooooooooooooooongResult =\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+}
+
+TEST_F(FormatTest, AlignsAfterReturn) {
+  verifyFormat(
+      "return aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "       aaaaaaaaaaaaaaaaaaaaaaaaa;");
+  verifyFormat(
+      "return (aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "        aaaaaaaaaaaaaaaaaaaaaaaaa);");
 }
 
 TEST_F(FormatTest, AlignsStringLiterals) {
@@ -545,7 +605,7 @@ TEST_F(FormatTest, UnderstandsTemplateParameters) {
   verifyFormat("template <typename T> void f() {\n}");
 }
 
-TEST_F(FormatTest, UndestandsUnaryOperators) {
+TEST_F(FormatTest, UnderstandsUnaryOperators) {
   verifyFormat("int a = -2;");
   verifyFormat("f(-1, -2, -3);");
   verifyFormat("a[-1] = 5;");
@@ -557,10 +617,30 @@ TEST_F(FormatTest, UndestandsUnaryOperators) {
   verifyFormat("++(a->f());");
   verifyFormat("--(a->f());");
   verifyFormat("if (!(a->f())) {\n}");
+
+  verifyFormat("a-- > b;");
+  verifyFormat("b ? -a : c;");
+  verifyFormat("n * sizeof char16;");
+  verifyFormat("sizeof(char);");
 }
 
 TEST_F(FormatTest, UndestandsOverloadedOperators) {
-  verifyFormat("bool operator<() {\n}");
+  verifyFormat("bool operator<();");
+  verifyFormat("bool operator>();");
+  verifyFormat("bool operator=();");
+  verifyFormat("bool operator==();");
+  verifyFormat("bool operator!=();");
+  verifyFormat("int operator+();");
+  verifyFormat("int operator++();");
+  verifyFormat("bool operator();");
+  verifyFormat("bool operator()();");
+  verifyFormat("bool operator[]();");
+  verifyFormat("operator bool();");
+  verifyFormat("operator SomeType<int>();");
+  verifyFormat("void *operator new(std::size_t size);");
+  verifyFormat("void *operator new[](std::size_t size);");
+  verifyFormat("void operator delete(void *ptr);");
+  verifyFormat("void operator delete[](void *ptr);");
 }
 
 TEST_F(FormatTest, UnderstandsUsesOfStar) {
@@ -578,6 +658,9 @@ TEST_F(FormatTest, UnderstandsUsesOfStar) {
   verifyFormat("int a = *b * c;");
   verifyFormat("int a = b * *c;");
   verifyFormat("int main(int argc, char **argv) {\n}");
+  verifyFormat("return 10 * b;");
+  verifyFormat("return *b * *c;");
+  verifyFormat("return a & ~b;");
 
   // FIXME: Is this desired for LLVM? Fix if not.
   verifyFormat("A<int *> a;");
@@ -599,9 +682,16 @@ TEST_F(FormatTest, LineStartsWithSpecialCharacter) {
 
 TEST_F(FormatTest, HandlesIncludeDirectives) {
   EXPECT_EQ("#include <string>\n", format("#include <string>\n"));
+  EXPECT_EQ("#include <a/b/c.h>\n", format("#include <a/b/c.h>\n"));
   EXPECT_EQ("#include \"a/b/string\"\n", format("#include \"a/b/string\"\n"));
   EXPECT_EQ("#include \"string.h\"\n", format("#include \"string.h\"\n"));
   EXPECT_EQ("#include \"string.h\"\n", format("#include \"string.h\"\n"));
+
+  EXPECT_EQ("#import <string>\n", format("#import <string>\n"));
+  EXPECT_EQ("#import <a/b/c.h>\n", format("#import <a/b/c.h>\n"));
+  EXPECT_EQ("#import \"a/b/string\"\n", format("#import \"a/b/string\"\n"));
+  EXPECT_EQ("#import \"string.h\"\n", format("#import \"string.h\"\n"));
+  EXPECT_EQ("#import \"string.h\"\n", format("#import \"string.h\"\n"));
 }
 
 
@@ -665,6 +755,40 @@ TEST_F(FormatTest, IncorrectCodeErrorDetection) {
                           " breakme(qwe);\n"
                           "}\n", Style));
 
+}
+
+TEST_F(FormatTest, FormatForObjectiveCMethodDecls) {
+  verifyFormat("- (void)sendAction:(SEL)aSelector to:(BOOL)anObject;");
+  EXPECT_EQ("- (NSUInteger)indexOfObject:(id)anObject;",
+            format("-(NSUInteger)indexOfObject:(id)anObject;"));
+  EXPECT_EQ("- (NSInteger)Mthod1;",
+            format("-(NSInteger)Mthod1;"));
+  EXPECT_EQ("+ (id)Mthod2;", format("+(id)Mthod2;"));
+  EXPECT_EQ("- (NSInteger)Method3:(id)anObject;",
+            format("-(NSInteger)Method3:(id)anObject;"));
+  EXPECT_EQ("- (NSInteger)Method4:(id)anObject;",
+            format("-(NSInteger)Method4:(id)anObject;"));
+  EXPECT_EQ("- (NSInteger)Method5:(id)anObject:(id)AnotherObject;",
+            format("-(NSInteger)Method5:(id)anObject:(id)AnotherObject;"));
+  EXPECT_EQ("- (id)Method6:(id)A:(id)B:(id)C:(id)D;",
+            format("- (id)Method6:(id)A:(id)B:(id)C:(id)D;"));
+  EXPECT_EQ("- (void)sendAction:(SEL)aSelector to:(id)anObject forAllCells:(BOOL)flag;",
+            format("- (void)sendAction:(SEL)aSelector to:(id)anObject forAllCells:(BOOL)flag;"));
+
+  // Very long objectiveC method declaration.
+  EXPECT_EQ("- (NSUInteger)indexOfObject:(id)anObject inRange:(NSRange)range\n    "
+            "outRange:(NSRange)out_range outRange1:(NSRange)out_range1\n    "
+            "outRange2:(NSRange)out_range2 outRange3:(NSRange)out_range3\n    "
+            "outRange4:(NSRange)out_range4 outRange5:(NSRange)out_range5\n    "
+            "outRange6:(NSRange)out_range6 outRange7:(NSRange)out_range7\n    "
+            "outRange8:(NSRange)out_range8 outRange9:(NSRange)out_range9;",
+
+            format("- (NSUInteger)indexOfObject:(id)anObject inRange:(NSRange)range "
+                   "outRange:(NSRange) out_range outRange1:(NSRange) out_range1 "
+                   "outRange2:(NSRange) out_range2  outRange3:(NSRange) out_range3  "
+                   "outRange4:(NSRange) out_range4  outRange5:(NSRange) out_range5 "
+                   "outRange6:(NSRange) out_range6  outRange7:(NSRange) out_range7  "
+                   "outRange8:(NSRange) out_range8  outRange9:(NSRange) out_range9;"));
 }
 
 }  // end namespace tooling

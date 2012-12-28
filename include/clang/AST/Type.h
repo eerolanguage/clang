@@ -1786,7 +1786,7 @@ public:
   std::pair<Linkage,Visibility> getLinkageAndVisibility() const;
 
   /// \brief Note that the linkage is no longer known.
-  void ClearLinkageCache();
+  void ClearLVCache();
 
   const char *getTypeClassName() const;
 
@@ -3330,7 +3330,8 @@ public:
     attr_stdcall,
     attr_thiscall,
     attr_pascal,
-    attr_pnaclcall
+    attr_pnaclcall,
+    attr_inteloclbicc
   };
 
 private:

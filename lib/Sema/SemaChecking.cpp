@@ -17,7 +17,6 @@
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
-#include "clang/AST/DeclObjC.h"
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
@@ -29,7 +28,6 @@
 #include "clang/Basic/TargetBuiltins.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
-#include "clang/Sema/Initialization.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/ScopeInfo.h"
@@ -5749,21 +5747,59 @@ void Sema::checkRetainCycles(VarDecl *Var, Expr *Init) {
     diagnoseRetainCycle(*this, Capturer, Owner);
 }
 
-bool Sema::checkUnsafeAssigns(SourceLocation Loc,
-                              QualType LHS, Expr *RHS) {
-  Qualifiers::ObjCLifetime LT = LHS.getObjCLifetime();
-  if (LT != Qualifiers::OCL_Weak && LT != Qualifiers::OCL_ExplicitNone)
+static bool checkUnsafeAssignLiteral(Sema &S, SourceLocation Loc,
+                                     Expr *RHS, bool isProperty) {
+  // Check if RHS is an Objective-C object literal, which also can get
+  // immediately zapped in a weak reference.  Note that we explicitly
+  // allow ObjCStringLiterals, since those are designed to never really die.
+  RHS = RHS->IgnoreParenImpCasts();
+
+  // This enum needs to match with the 'select' in
+  // warn_objc_arc_literal_assign (off-by-1).
+  Sema::ObjCLiteralKind Kind = S.CheckLiteralKind(RHS);
+  if (Kind == Sema::LK_String || Kind == Sema::LK_None)
     return false;
-  // strip off any implicit cast added to get to the one arc-specific
+
+  S.Diag(Loc, diag::warn_arc_literal_assign)
+    << (unsigned) Kind
+    << (isProperty ? 0 : 1)
+    << RHS->getSourceRange();
+
+  return true;
+}
+
+static bool checkUnsafeAssignObject(Sema &S, SourceLocation Loc,
+                                    Qualifiers::ObjCLifetime LT,
+                                    Expr *RHS, bool isProperty) {
+  // Strip off any implicit cast added to get to the one ARC-specific.
   while (ImplicitCastExpr *cast = dyn_cast<ImplicitCastExpr>(RHS)) {
     if (cast->getCastKind() == CK_ARCConsumeObject) {
-      Diag(Loc, diag::warn_arc_retained_assign)
-        << (LT == Qualifiers::OCL_ExplicitNone) << 1
+      S.Diag(Loc, diag::warn_arc_retained_assign)
+        << (LT == Qualifiers::OCL_ExplicitNone)
+        << (isProperty ? 0 : 1)
         << RHS->getSourceRange();
       return true;
     }
     RHS = cast->getSubExpr();
   }
+
+  if (LT == Qualifiers::OCL_Weak &&
+      checkUnsafeAssignLiteral(S, Loc, RHS, isProperty))
+    return true;
+
+  return false;
+}
+
+bool Sema::checkUnsafeAssigns(SourceLocation Loc,
+                              QualType LHS, Expr *RHS) {
+  Qualifiers::ObjCLifetime LT = LHS.getObjCLifetime();
+
+  if (LT != Qualifiers::OCL_Weak && LT != Qualifiers::OCL_ExplicitNone)
+    return false;
+
+  if (checkUnsafeAssignObject(*this, Loc, LT, RHS, false))
+    return true;
+
   return false;
 }
 
@@ -5806,8 +5842,8 @@ void Sema::checkUnsafeExprAssigns(SourceLocation Loc,
     if (!PD)
       return;
     
-    unsigned Attribute = PD->getPropertyAttributes();
-    if (Attribute & ObjCPropertyDecl::OBJC_PR_assign) {
+    unsigned Attributes = PD->getPropertyAttributes();
+    if (Attributes & ObjCPropertyDecl::OBJC_PR_assign) {
       // when 'assign' attribute was not explicitly specified
       // by user, ignore it and rely on property type itself
       // for lifetime info.
@@ -5825,15 +5861,9 @@ void Sema::checkUnsafeExprAssigns(SourceLocation Loc,
         RHS = cast->getSubExpr();
       }
     }
-    else if (Attribute & ObjCPropertyDecl::OBJC_PR_weak) {
-      while (ImplicitCastExpr *cast = dyn_cast<ImplicitCastExpr>(RHS)) {
-        if (cast->getCastKind() == CK_ARCConsumeObject) {
-          Diag(Loc, diag::warn_arc_retained_assign)
-          << 0 << 0<< RHS->getSourceRange();
-          return;
-        }
-        RHS = cast->getSubExpr();
-      }
+    else if (Attributes & ObjCPropertyDecl::OBJC_PR_weak) {
+      if (checkUnsafeAssignObject(*this, Loc, Qualifiers::OCL_Weak, RHS, true))
+        return;
     }
   }
 }

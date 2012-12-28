@@ -234,11 +234,6 @@ def CFUnknownTransfer : InheritableAttr {
   let Subjects = [Function];
 }
 
-def CFReturnsAutoreleased : Attr {
-  let Spellings = [GNU<"cf_returns_autoreleased">];
-  let ASTNode = 0;
-}
-
 def CFReturnsRetained : InheritableAttr {
   let Spellings = [GNU<"cf_returns_retained">];
   let Subjects = [ObjCMethod, Function];
@@ -568,6 +563,10 @@ def Packed : InheritableAttr {
 
 def PnaclCall : InheritableAttr {
   let Spellings = [GNU<"pnaclcall">];
+}
+
+def IntelOclBicc : InheritableAttr {
+  let Spellings = [GNU<"intel_ocl_bicc">];
 }
 
 def Pcs : InheritableAttr {

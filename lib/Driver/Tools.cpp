@@ -469,6 +469,7 @@ static const char *getLLVMArchSuffixForARM(StringRef CPU) {
     .Cases("arm1176jzf-s",  "mpcorenovfp",  "mpcore", "v6")
     .Cases("arm1156t2-s",  "arm1156t2f-s", "v6t2")
     .Cases("cortex-a5", "cortex-a8", "cortex-a9", "cortex-a15", "v7")
+    .Case("cortex-r5", "v7r")
     .Case("cortex-m3", "v7m")
     .Case("cortex-m4", "v7m")
     .Case("cortex-m0", "v6m")
@@ -1491,6 +1492,13 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args) {
         D.Diag(diag::err_drv_no_such_file) << BLPath;
     }
   }
+
+  // Parse -f(no-)sanitize-memory-track-origins options.
+  if (Kind & Memory)
+    MsanTrackOrigins =
+      Args.hasFlag(options::OPT_fsanitize_memory_track_origins,
+                   options::OPT_fno_sanitize_memory_track_origins,
+                   /* Default */false);
 }
 
 /// If AddressSanitizer is enabled, add appropriate linker flags (Linux).
