@@ -251,20 +251,20 @@ SourceLocation Stmt::getLocEnd() const {
   llvm_unreachable("unknown statement kind");
 }
 
-CompoundStmt::CompoundStmt(ASTContext &C, Stmt **StmtStart, unsigned NumStmts,
+CompoundStmt::CompoundStmt(ASTContext &C, ArrayRef<Stmt*> Stmts,
                            SourceLocation LB, SourceLocation RB)
   : Stmt(CompoundStmtClass), LBracLoc(LB), RBracLoc(RB) {
-  CompoundStmtBits.NumStmts = NumStmts;
-  assert(CompoundStmtBits.NumStmts == NumStmts &&
+  CompoundStmtBits.NumStmts = Stmts.size();
+  assert(CompoundStmtBits.NumStmts == Stmts.size() &&
          "NumStmts doesn't fit in bits of CompoundStmtBits.NumStmts!");
 
-  if (NumStmts == 0) {
+  if (Stmts.size() == 0) {
     Body = 0;
     return;
   }
 
-  Body = new (C) Stmt*[NumStmts];
-  memcpy(Body, StmtStart, NumStmts * sizeof(*Body));
+  Body = new (C) Stmt*[Stmts.size()];
+  std::copy(Stmts.begin(), Stmts.end(), Body);
 }
 
 void CompoundStmt::setStmts(ASTContext &C, Stmt **Stmts, unsigned NumStmts) {
@@ -769,13 +769,12 @@ SourceLocation ObjCAtTryStmt::getLocEnd() const {
 }
 
 CXXTryStmt *CXXTryStmt::Create(ASTContext &C, SourceLocation tryLoc,
-                               Stmt *tryBlock, Stmt **handlers,
-                               unsigned numHandlers) {
+                               Stmt *tryBlock, ArrayRef<Stmt*> handlers) {
   std::size_t Size = sizeof(CXXTryStmt);
-  Size += ((numHandlers + 1) * sizeof(Stmt));
+  Size += ((handlers.size() + 1) * sizeof(Stmt));
 
   void *Mem = C.Allocate(Size, llvm::alignOf<CXXTryStmt>());
-  return new (Mem) CXXTryStmt(tryLoc, tryBlock, handlers, numHandlers);
+  return new (Mem) CXXTryStmt(tryLoc, tryBlock, handlers);
 }
 
 CXXTryStmt *CXXTryStmt::Create(ASTContext &C, EmptyShell Empty,
@@ -788,11 +787,11 @@ CXXTryStmt *CXXTryStmt::Create(ASTContext &C, EmptyShell Empty,
 }
 
 CXXTryStmt::CXXTryStmt(SourceLocation tryLoc, Stmt *tryBlock,
-                       Stmt **handlers, unsigned numHandlers)
-  : Stmt(CXXTryStmtClass), TryLoc(tryLoc), NumHandlers(numHandlers) {
+                       ArrayRef<Stmt*> handlers)
+  : Stmt(CXXTryStmtClass), TryLoc(tryLoc), NumHandlers(handlers.size()) {
   Stmt **Stmts = reinterpret_cast<Stmt **>(this + 1);
   Stmts[0] = tryBlock;
-  std::copy(handlers, handlers + NumHandlers, Stmts + 1);
+  std::copy(handlers.begin(), handlers.end(), Stmts + 1);
 }
 
 CXXForRangeStmt::CXXForRangeStmt(DeclStmt *Range, DeclStmt *BeginEndStmt,

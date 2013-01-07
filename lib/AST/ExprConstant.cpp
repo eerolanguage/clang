@@ -738,7 +738,7 @@ namespace {
     bool checkSubobject(EvalInfo &Info, const Expr *E, CheckSubobjectKind CSK) {
       // Outside C++11, do not build a designator referring to a subobject of
       // any object: we won't use such a designator for anything.
-      if (!Info.getLangOpts().CPlusPlus0x)
+      if (!Info.getLangOpts().CPlusPlus11)
         Designator.setInvalid();
       return checkNullPointer(Info, E, CSK) &&
              Designator.checkSubobject(Info, E, CSK);
@@ -972,7 +972,7 @@ static bool CheckLValueConstantExpression(EvalInfo &Info, SourceLocation Loc,
   // manufacture when checking potential constant expressions is conservatively
   // assumed to be global here.
   if (!IsGlobalLValue(Base)) {
-    if (Info.getLangOpts().CPlusPlus0x) {
+    if (Info.getLangOpts().CPlusPlus11) {
       const ValueDecl *VD = Base.dyn_cast<const ValueDecl*>();
       Info.Diag(Loc, diag::note_constexpr_non_global, 1)
         << IsReferenceType << !Designator.Entries.empty()
@@ -1026,7 +1026,7 @@ static bool CheckLiteralType(EvalInfo &Info, const Expr *E) {
     return true;
 
   // Prvalue constant expressions must be of literal types.
-  if (Info.getLangOpts().CPlusPlus0x)
+  if (Info.getLangOpts().CPlusPlus11)
     Info.Diag(E, diag::note_constexpr_nonliteral)
       << E->getType();
   else
@@ -1527,7 +1527,7 @@ static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
     // A diagnostic will have already been produced.
     return false;
   if (Sub.isOnePastTheEnd()) {
-    Info.Diag(E, Info.getLangOpts().CPlusPlus0x ?
+    Info.Diag(E, Info.getLangOpts().CPlusPlus11 ?
                 (unsigned)diag::note_constexpr_read_past_end :
                 (unsigned)diag::note_invalid_subexpr_in_const_expr);
     return false;
@@ -1549,7 +1549,7 @@ static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
       if (CAT->getSize().ule(Index)) {
         // Note, it should not be possible to form a pointer with a valid
         // designator which points more than one past the end of the array.
-        Info.Diag(E, Info.getLangOpts().CPlusPlus0x ?
+        Info.Diag(E, Info.getLangOpts().CPlusPlus11 ?
                     (unsigned)diag::note_constexpr_read_past_end :
                     (unsigned)diag::note_invalid_subexpr_in_const_expr);
         return false;
@@ -1571,7 +1571,7 @@ static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
       // Next subobject is a complex number.
       uint64_t Index = Sub.Entries[I].ArrayIndex;
       if (Index > 1) {
-        Info.Diag(E, Info.getLangOpts().CPlusPlus0x ?
+        Info.Diag(E, Info.getLangOpts().CPlusPlus11 ?
                     (unsigned)diag::note_constexpr_read_past_end :
                     (unsigned)diag::note_invalid_subexpr_in_const_expr);
         return false;
@@ -1796,7 +1796,7 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
         // We support folding of const floating-point types, in order to make
         // static const data members of such types (supported as an extension)
         // more useful.
-        if (Info.getLangOpts().CPlusPlus0x) {
+        if (Info.getLangOpts().CPlusPlus11) {
           Info.CCEDiag(Conv, diag::note_constexpr_ltor_non_constexpr, 1) << VD;
           Info.Note(VD->getLocation(), diag::note_declared_at);
         } else {
@@ -1804,7 +1804,7 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
         }
       } else {
         // FIXME: Allow folding of values of any literal type in all languages.
-        if (Info.getLangOpts().CPlusPlus0x) {
+        if (Info.getLangOpts().CPlusPlus11) {
           Info.Diag(Conv, diag::note_constexpr_ltor_non_constexpr, 1) << VD;
           Info.Note(VD->getLocation(), diag::note_declared_at);
         } else {
@@ -2081,7 +2081,7 @@ static bool CheckTrivialDefaultConstructor(EvalInfo &Info, SourceLocation Loc,
   // call is a core constant expression whether or not the constructor is
   // constexpr.
   if (!CD->isConstexpr() && !IsValueInitialization) {
-    if (Info.getLangOpts().CPlusPlus0x) {
+    if (Info.getLangOpts().CPlusPlus11) {
       // FIXME: If DiagDecl is an implicitly-declared special member function,
       // we should be much more explicit about why it's not constexpr.
       Info.CCEDiag(Loc, diag::note_constexpr_invalid_function, 1)
@@ -2109,7 +2109,7 @@ static bool CheckConstexprFunction(EvalInfo &Info, SourceLocation CallLoc,
   if (Definition && Definition->isConstexpr() && !Definition->isInvalidDecl())
     return true;
 
-  if (Info.getLangOpts().CPlusPlus0x) {
+  if (Info.getLangOpts().CPlusPlus11) {
     const FunctionDecl *DiagDecl = Definition ? Definition : Declaration;
     // FIXME: If DiagDecl is an implicitly-declared special member function, we
     // should be much more explicit about why it's not constexpr.
@@ -4318,7 +4318,7 @@ bool IntExprEvaluator::VisitCallExpr(const CallExpr *E) {
 
   case Builtin::BIstrlen:
     // A call to strlen is not a constant expression.
-    if (Info.getLangOpts().CPlusPlus0x)
+    if (Info.getLangOpts().CPlusPlus11)
       Info.CCEDiag(E, diag::note_constexpr_invalid_function)
         << /*isConstexpr*/0 << /*isConstructor*/0 << "'strlen'";
     else
@@ -6192,12 +6192,12 @@ static bool Evaluate(APValue &Result, EvalInfo &Info, const Expr *E) {
       return false;
     Result = Info.CurrentCall->Temporaries[E];
   } else if (E->getType()->isVoidType()) {
-    if (!Info.getLangOpts().CPlusPlus0x)
+    if (!Info.getLangOpts().CPlusPlus11)
       Info.CCEDiag(E, diag::note_constexpr_nonliteral)
         << E->getType();
     if (!EvaluateVoid(E, Info))
       return false;
-  } else if (Info.getLangOpts().CPlusPlus0x) {
+  } else if (Info.getLangOpts().CPlusPlus11) {
     Info.Diag(E, diag::note_constexpr_nonliteral) << E->getType();
     return false;
   } else {
@@ -6267,7 +6267,7 @@ bool Expr::EvaluateAsRValue(EvalResult &Result, const ASTContext &Ctx) const {
   // FIXME: Evaluating values of large array and record types can cause
   // performance problems. Only do so in C++11 for now.
   if (isRValue() && (getType()->isArrayType() || getType()->isRecordType()) &&
-      !Ctx.getLangOpts().CPlusPlus0x)
+      !Ctx.getLangOpts().CPlusPlus11)
     return false;
 
   EvalInfo Info(Ctx, Result);
@@ -6314,7 +6314,7 @@ bool Expr::EvaluateAsInitializer(APValue &Value, const ASTContext &Ctx,
   // FIXME: Evaluating initializers for large array and record types can cause
   // performance problems. Only do so in C++11 for now.
   if (isRValue() && (getType()->isArrayType() || getType()->isRecordType()) &&
-      !Ctx.getLangOpts().CPlusPlus0x)
+      !Ctx.getLangOpts().CPlusPlus11)
     return false;
 
   Expr::EvalStatus EStatus;
@@ -6375,54 +6375,55 @@ APSInt Expr::EvaluateKnownConstInt(const ASTContext &Ctx) const {
 
 /// FIXME: Pass up a reason why! Invalid operation in i-c-e, division by zero,
 /// comma, etc
-///
-/// FIXME: Handle offsetof.  Two things to do:  Handle GCC's __builtin_offsetof
-/// to support gcc 4.0+  and handle the idiom GCC recognizes with a null pointer
-/// cast+dereference.
 
 // CheckICE - This function does the fundamental ICE checking: the returned
-// ICEDiag contains a Val of 0, 1, or 2, and a possibly null SourceLocation.
+// ICEDiag contains an ICEKind indicating whether the expression is an ICE,
+// and a (possibly null) SourceLocation indicating the location of the problem.
+//
 // Note that to reduce code duplication, this helper does no evaluation
 // itself; the caller checks whether the expression is evaluatable, and
 // in the rare cases where CheckICE actually cares about the evaluated
 // value, it calls into Evalute.
-//
-// Meanings of Val:
-// 0: This expression is an ICE.
-// 1: This expression is not an ICE, but if it isn't evaluated, it's
-//    a legal subexpression for an ICE. This return value is used to handle
-//    the comma operator in C99 mode.
-// 2: This expression is not an ICE, and is not a legal subexpression for one.
 
 namespace {
 
+enum ICEKind {
+  /// This expression is an ICE.
+  IK_ICE,
+  /// This expression is not an ICE, but if it isn't evaluated, it's
+  /// a legal subexpression for an ICE. This return value is used to handle
+  /// the comma operator in C99 mode, and non-constant subexpressions.
+  IK_ICEIfUnevaluated,
+  /// This expression is not an ICE, and is not a legal subexpression for one.
+  IK_NotICE
+};
+
 struct ICEDiag {
-  unsigned Val;
+  ICEKind Kind;
   SourceLocation Loc;
 
-  public:
-  ICEDiag(unsigned v, SourceLocation l) : Val(v), Loc(l) {}
-  ICEDiag() : Val(0) {}
+  ICEDiag(ICEKind IK, SourceLocation l) : Kind(IK), Loc(l) {}
 };
 
 }
 
-static ICEDiag NoDiag() { return ICEDiag(); }
+static ICEDiag NoDiag() { return ICEDiag(IK_ICE, SourceLocation()); }
+
+static ICEDiag Worst(ICEDiag A, ICEDiag B) { return A.Kind >= B.Kind ? A : B; }
 
 static ICEDiag CheckEvalInICE(const Expr* E, ASTContext &Ctx) {
   Expr::EvalResult EVResult;
   if (!E->EvaluateAsRValue(EVResult, Ctx) || EVResult.HasSideEffects ||
-      !EVResult.Val.isInt()) {
-    return ICEDiag(2, E->getLocStart());
-  }
+      !EVResult.Val.isInt())
+    return ICEDiag(IK_NotICE, E->getLocStart());
+
   return NoDiag();
 }
 
 static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
   assert(!E->isValueDependent() && "Should not see value dependent exprs!");
-  if (!E->getType()->isIntegralOrEnumerationType()) {
-    return ICEDiag(2, E->getLocStart());
-  }
+  if (!E->getType()->isIntegralOrEnumerationType())
+    return ICEDiag(IK_NotICE, E->getLocStart());
 
   switch (E->getStmtClass()) {
 #define ABSTRACT_STMT(Node)
@@ -6491,7 +6492,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
   case Expr::AtomicExprClass:
   case Expr::InitListExprClass:
   case Expr::LambdaExprClass:
-    return ICEDiag(2, E->getLocStart());
+    return ICEDiag(IK_NotICE, E->getLocStart());
 
   case Expr::SizeOfPackExprClass:
   case Expr::GNUNullExprClass:
@@ -6526,7 +6527,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
     const CallExpr *CE = cast<CallExpr>(E);
     if (CE->isBuiltinCall())
       return CheckEvalInICE(E, Ctx);
-    return ICEDiag(2, E->getLocStart());
+    return ICEDiag(IK_NotICE, E->getLocStart());
   }
   case Expr::DeclRefExprClass: {
     if (isa<EnumConstantDecl>(cast<DeclRefExpr>(E)->getDecl()))
@@ -6538,14 +6539,14 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
       // getAnyInitializer() can find a default argument, which leads
       // to chaos.
       if (isa<ParmVarDecl>(D))
-        return ICEDiag(2, cast<DeclRefExpr>(E)->getLocation());
+        return ICEDiag(IK_NotICE, cast<DeclRefExpr>(E)->getLocation());
 
       // C++ 7.1.5.1p2
       //   A variable of non-volatile const-qualified integral or enumeration
       //   type initialized by an ICE can be used in ICEs.
       if (const VarDecl *Dcl = dyn_cast<VarDecl>(D)) {
         if (!Dcl->getType()->isIntegralOrEnumerationType())
-          return ICEDiag(2, cast<DeclRefExpr>(E)->getLocation());
+          return ICEDiag(IK_NotICE, cast<DeclRefExpr>(E)->getLocation());
 
         const VarDecl *VD;
         // Look for a declaration of this variable that has an initializer, and
@@ -6553,10 +6554,10 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
         if (Dcl->getAnyInitializer(VD) && VD->checkInitIsICE())
           return NoDiag();
         else
-          return ICEDiag(2, cast<DeclRefExpr>(E)->getLocation());
+          return ICEDiag(IK_NotICE, cast<DeclRefExpr>(E)->getLocation());
       }
     }
-    return ICEDiag(2, E->getLocStart());
+    return ICEDiag(IK_NotICE, E->getLocStart());
   }
   case Expr::UnaryOperatorClass: {
     const UnaryOperator *Exp = cast<UnaryOperator>(E);
@@ -6570,7 +6571,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
       // C99 6.6/3 allows increment and decrement within unevaluated
       // subexpressions of constant expressions, but they can never be ICEs
       // because an ICE cannot contain an lvalue operand.
-      return ICEDiag(2, E->getLocStart());
+      return ICEDiag(IK_NotICE, E->getLocStart());
     case UO_Extension:
     case UO_LNot:
     case UO_Plus:
@@ -6580,23 +6581,23 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
     case UO_Imag:
       return CheckICE(Exp->getSubExpr(), Ctx);
     }
-    
+
     // OffsetOf falls through here.
   }
   case Expr::OffsetOfExprClass: {
-      // Note that per C99, offsetof must be an ICE. And AFAIK, using
-      // EvaluateAsRValue matches the proposed gcc behavior for cases like
-      // "offsetof(struct s{int x[4];}, x[1.0])".  This doesn't affect
-      // compliance: we should warn earlier for offsetof expressions with
-      // array subscripts that aren't ICEs, and if the array subscripts
-      // are ICEs, the value of the offsetof must be an integer constant.
-      return CheckEvalInICE(E, Ctx);
+    // Note that per C99, offsetof must be an ICE. And AFAIK, using
+    // EvaluateAsRValue matches the proposed gcc behavior for cases like
+    // "offsetof(struct s{int x[4];}, x[1.0])".  This doesn't affect
+    // compliance: we should warn earlier for offsetof expressions with
+    // array subscripts that aren't ICEs, and if the array subscripts
+    // are ICEs, the value of the offsetof must be an integer constant.
+    return CheckEvalInICE(E, Ctx);
   }
   case Expr::UnaryExprOrTypeTraitExprClass: {
     const UnaryExprOrTypeTraitExpr *Exp = cast<UnaryExprOrTypeTraitExpr>(E);
     if ((Exp->getKind() ==  UETT_SizeOf) &&
         Exp->getTypeOfArgument()->isVariableArrayType())
-      return ICEDiag(2, E->getLocStart());
+      return ICEDiag(IK_NotICE, E->getLocStart());
     return NoDiag();
   }
   case Expr::BinaryOperatorClass: {
@@ -6618,7 +6619,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
       // C99 6.6/3 allows assignments within unevaluated subexpressions of
       // constant expressions, but they can never be ICEs because an ICE cannot
       // contain an lvalue operand.
-      return ICEDiag(2, E->getLocStart());
+      return ICEDiag(IK_NotICE, E->getLocStart());
 
     case BO_Mul:
     case BO_Div:
@@ -6643,14 +6644,14 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
           Exp->getOpcode() == BO_Rem) {
         // EvaluateAsRValue gives an error for undefined Div/Rem, so make sure
         // we don't evaluate one.
-        if (LHSResult.Val == 0 && RHSResult.Val == 0) {
+        if (LHSResult.Kind == IK_ICE && RHSResult.Kind == IK_ICE) {
           llvm::APSInt REval = Exp->getRHS()->EvaluateKnownConstInt(Ctx);
           if (REval == 0)
-            return ICEDiag(1, E->getLocStart());
+            return ICEDiag(IK_ICEIfUnevaluated, E->getLocStart());
           if (REval.isSigned() && REval.isAllOnesValue()) {
             llvm::APSInt LEval = Exp->getLHS()->EvaluateKnownConstInt(Ctx);
             if (LEval.isMinSignedValue())
-              return ICEDiag(1, E->getLocStart());
+              return ICEDiag(IK_ICEIfUnevaluated, E->getLocStart());
           }
         }
       }
@@ -6658,22 +6659,20 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
         if (Ctx.getLangOpts().C99) {
           // C99 6.6p3 introduces a strange edge case: comma can be in an ICE
           // if it isn't evaluated.
-          if (LHSResult.Val == 0 && RHSResult.Val == 0)
-            return ICEDiag(1, E->getLocStart());
+          if (LHSResult.Kind == IK_ICE && RHSResult.Kind == IK_ICE)
+            return ICEDiag(IK_ICEIfUnevaluated, E->getLocStart());
         } else {
           // In both C89 and C++, commas in ICEs are illegal.
-          return ICEDiag(2, E->getLocStart());
+          return ICEDiag(IK_NotICE, E->getLocStart());
         }
       }
-      if (LHSResult.Val >= RHSResult.Val)
-        return LHSResult;
-      return RHSResult;
+      return Worst(LHSResult, RHSResult);
     }
     case BO_LAnd:
     case BO_LOr: {
       ICEDiag LHSResult = CheckICE(Exp->getLHS(), Ctx);
       ICEDiag RHSResult = CheckICE(Exp->getRHS(), Ctx);
-      if (LHSResult.Val == 0 && RHSResult.Val == 1) {
+      if (LHSResult.Kind == IK_ICE && RHSResult.Kind == IK_ICEIfUnevaluated) {
         // Rare case where the RHS has a comma "side-effect"; we need
         // to actually check the condition to see whether the side
         // with the comma is evaluated.
@@ -6683,9 +6682,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
         return NoDiag();
       }
 
-      if (LHSResult.Val >= RHSResult.Val)
-        return LHSResult;
-      return RHSResult;
+      return Worst(LHSResult, RHSResult);
     }
     }
   }
@@ -6710,7 +6707,7 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
         if (FL->getValue().convertToInteger(IgnoredVal,
                                             llvm::APFloat::rmTowardZero,
                                             &Ignored) & APFloat::opInvalidOp)
-          return ICEDiag(2, E->getLocStart());
+          return ICEDiag(IK_NotICE, E->getLocStart());
         return NoDiag();
       }
     }
@@ -6723,18 +6720,18 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
     case CK_IntegralCast:
       return CheckICE(SubExpr, Ctx);
     default:
-      return ICEDiag(2, E->getLocStart());
+      return ICEDiag(IK_NotICE, E->getLocStart());
     }
   }
   case Expr::BinaryConditionalOperatorClass: {
     const BinaryConditionalOperator *Exp = cast<BinaryConditionalOperator>(E);
     ICEDiag CommonResult = CheckICE(Exp->getCommon(), Ctx);
-    if (CommonResult.Val == 2) return CommonResult;
+    if (CommonResult.Kind == IK_NotICE) return CommonResult;
     ICEDiag FalseResult = CheckICE(Exp->getFalseExpr(), Ctx);
-    if (FalseResult.Val == 2) return FalseResult;
-    if (CommonResult.Val == 1) return CommonResult;
-    if (FalseResult.Val == 1 &&
-        Exp->getCommon()->EvaluateKnownConstInt(Ctx) == 0) return NoDiag();
+    if (FalseResult.Kind == IK_NotICE) return FalseResult;
+    if (CommonResult.Kind == IK_ICEIfUnevaluated) return CommonResult;
+    if (FalseResult.Kind == IK_ICEIfUnevaluated &&
+        Exp->getCommon()->EvaluateKnownConstInt(Ctx) != 0) return NoDiag();
     return FalseResult;
   }
   case Expr::ConditionalOperatorClass: {
@@ -6748,26 +6745,25 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
       if (CallCE->isBuiltinCall() == Builtin::BI__builtin_constant_p)
         return CheckEvalInICE(E, Ctx);
     ICEDiag CondResult = CheckICE(Exp->getCond(), Ctx);
-    if (CondResult.Val == 2)
+    if (CondResult.Kind == IK_NotICE)
       return CondResult;
 
     ICEDiag TrueResult = CheckICE(Exp->getTrueExpr(), Ctx);
     ICEDiag FalseResult = CheckICE(Exp->getFalseExpr(), Ctx);
 
-    if (TrueResult.Val == 2)
+    if (TrueResult.Kind == IK_NotICE)
       return TrueResult;
-    if (FalseResult.Val == 2)
+    if (FalseResult.Kind == IK_NotICE)
       return FalseResult;
-    if (CondResult.Val == 1)
+    if (CondResult.Kind == IK_ICEIfUnevaluated)
       return CondResult;
-    if (TrueResult.Val == 0 && FalseResult.Val == 0)
+    if (TrueResult.Kind == IK_ICE && FalseResult.Kind == IK_ICE)
       return NoDiag();
     // Rare case where the diagnostics depend on which side is evaluated
     // Note that if we get here, CondResult is 0, and at least one of
     // TrueResult and FalseResult is non-zero.
-    if (Exp->getCond()->EvaluateKnownConstInt(Ctx) == 0) {
+    if (Exp->getCond()->EvaluateKnownConstInt(Ctx) == 0)
       return FalseResult;
-    }
     return TrueResult;
   }
   case Expr::CXXDefaultArgExprClass:
@@ -6800,12 +6796,12 @@ static bool EvaluateCPlusPlus11IntegralConstantExpr(ASTContext &Ctx,
 }
 
 bool Expr::isIntegerConstantExpr(ASTContext &Ctx, SourceLocation *Loc) const {
-  if (Ctx.getLangOpts().CPlusPlus0x)
+  if (Ctx.getLangOpts().CPlusPlus11)
     return EvaluateCPlusPlus11IntegralConstantExpr(Ctx, this, 0, Loc);
 
-  ICEDiag d = CheckICE(this, Ctx);
-  if (d.Val != 0) {
-    if (Loc) *Loc = d.Loc;
+  ICEDiag D = CheckICE(this, Ctx);
+  if (D.Kind != IK_ICE) {
+    if (Loc) *Loc = D.Loc;
     return false;
   }
   return true;
@@ -6813,7 +6809,7 @@ bool Expr::isIntegerConstantExpr(ASTContext &Ctx, SourceLocation *Loc) const {
 
 bool Expr::isIntegerConstantExpr(llvm::APSInt &Value, ASTContext &Ctx,
                                  SourceLocation *Loc, bool isEvaluated) const {
-  if (Ctx.getLangOpts().CPlusPlus0x)
+  if (Ctx.getLangOpts().CPlusPlus11)
     return EvaluateCPlusPlus11IntegralConstantExpr(Ctx, this, &Value, Loc);
 
   if (!isIntegerConstantExpr(Ctx, Loc))
@@ -6824,7 +6820,7 @@ bool Expr::isIntegerConstantExpr(llvm::APSInt &Value, ASTContext &Ctx,
 }
 
 bool Expr::isCXX98IntegralConstantExpr(ASTContext &Ctx) const {
-  return CheckICE(this, Ctx).Val == 0;
+  return CheckICE(this, Ctx).Kind == IK_ICE;
 }
 
 bool Expr::isCXX11ConstantExpr(ASTContext &Ctx, APValue *Result,

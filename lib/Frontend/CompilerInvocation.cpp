@@ -392,7 +392,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
 
   Opts.MainFileName = Args.getLastArgValue(OPT_main_file_name);
   Opts.VerifyModule = !Args.hasArg(OPT_disable_llvm_verifier);
-  Opts.SanitizeRecover = Args.hasArg(OPT_fsanitize_recover);
+  Opts.SanitizeRecover = !Args.hasArg(OPT_fno_sanitize_recover);
 
   Opts.InstrumentFunctions = Args.hasArg(OPT_finstrument_functions);
   Opts.InstrumentForProfiling = Args.hasArg(OPT_pg);
@@ -974,7 +974,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   Opts.C99 = Std.isC99();
   Opts.C11 = Std.isC11();
   Opts.CPlusPlus = Std.isCPlusPlus();
-  Opts.CPlusPlus0x = Std.isCPlusPlus0x();
+  Opts.CPlusPlus11 = Std.isCPlusPlus11();
   Opts.CPlusPlus1y = Std.isCPlusPlus1y();
   Opts.Digraphs = Std.hasDigraphs();
   Opts.GNUMode = Std.isGNUMode();

@@ -717,7 +717,7 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
         if (!S.getLangOpts().C99) {
           if (S.getLangOpts().CPlusPlus)
             S.Diag(DS.getTypeSpecWidthLoc(),
-                   S.getLangOpts().CPlusPlus0x ?
+                   S.getLangOpts().CPlusPlus11 ?
                    diag::warn_cxx98_compat_longlong : diag::ext_cxx11_longlong);
           else
             S.Diag(DS.getTypeSpecWidthLoc(), diag::ext_c99_longlong);
@@ -736,7 +736,7 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
         if (!S.getLangOpts().C99) {
           if (S.getLangOpts().CPlusPlus)
             S.Diag(DS.getTypeSpecWidthLoc(),
-                   S.getLangOpts().CPlusPlus0x ?
+                   S.getLangOpts().CPlusPlus11 ?
                    diag::warn_cxx98_compat_longlong : diag::ext_cxx11_longlong);
           else
             S.Diag(DS.getTypeSpecWidthLoc(), diag::ext_c99_longlong);
@@ -1369,7 +1369,7 @@ QualType Sema::BuildArrayType(QualType T, ArrayType::ArraySizeModifier ASM,
 
   // C99 6.7.5.2p1: The size expression shall have integer type.
   // C++11 allows contextual conversions to such types.
-  if (!getLangOpts().CPlusPlus0x &&
+  if (!getLangOpts().CPlusPlus11 &&
       ArraySize && !ArraySize->isTypeDependent() &&
       !ArraySize->getType()->isIntegralOrUnscopedEnumerationType()) {
     Diag(ArraySize->getLocStart(), diag::err_array_size_non_int)
@@ -1390,7 +1390,7 @@ QualType Sema::BuildArrayType(QualType T, ArrayType::ArraySizeModifier ASM,
              isArraySizeVLA(*this, ArraySize, ConstVal)) {
     // Even in C++11, don't allow contextual conversions in the array bound
     // of a VLA.
-    if (getLangOpts().CPlusPlus0x &&
+    if (getLangOpts().CPlusPlus11 &&
         !ArraySize->getType()->isIntegralOrUnscopedEnumerationType()) {
       Diag(ArraySize->getLocStart(), diag::err_array_size_non_int)
         << ArraySize->getType() << ArraySize->getSourceRange();
@@ -1882,7 +1882,7 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
   // type (this is checked later) and we can skip this. In other languages
   // using auto, we need to check regardless.
   if (D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_auto &&
-      (!SemaRef.getLangOpts().CPlusPlus0x || !D.isFunctionDeclarator())) {
+      (!SemaRef.getLangOpts().CPlusPlus11 || !D.isFunctionDeclarator())) {
     int Error = -1;
 
     switch (D.getContext()) {
@@ -1948,7 +1948,7 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
     // contains a trailing return type. That is only legal at the outermost
     // level. Check all declarator chunks (outermost first) anyway, to give
     // better diagnostics.
-    if (SemaRef.getLangOpts().CPlusPlus0x && Error != -1) {
+    if (SemaRef.getLangOpts().CPlusPlus11 && Error != -1) {
       for (unsigned i = 0, e = D.getNumTypeObjects(); i != e; ++i) {
         unsigned chunkIndex = e - i - 1;
         state.setCurrentChunkIndex(chunkIndex);
@@ -2181,7 +2181,7 @@ static void warnAboutAmbiguousFunction(Sema &S, Declarator &D,
         << FixItHint::CreateRemoval(ParenRange);
     else {
       std::string Init = S.getFixItZeroInitializerForType(RT);
-      if (Init.empty() && S.LangOpts.CPlusPlus0x)
+      if (Init.empty() && S.LangOpts.CPlusPlus11)
         Init = "{}";
       if (!Init.empty())
         S.Diag(DeclType.Loc, diag::note_empty_parens_zero_initialize)
@@ -2830,7 +2830,7 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
         T = Context.getPackExpansionType(T, llvm::Optional<unsigned>());
       else
         S.Diag(D.getEllipsisLoc(),
-               LangOpts.CPlusPlus0x
+               LangOpts.CPlusPlus11
                  ? diag::warn_cxx98_compat_variadic_templates
                  : diag::ext_variadic_templates);
       break;

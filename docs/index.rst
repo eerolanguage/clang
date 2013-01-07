@@ -3,38 +3,53 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to Clang's documentation!
-=================================
-
-The conversion to Sphinx/reStructuredText based documentation is in
-progress. This page will get filled out with docs soon...
+.. title:: Welcome to Clang's documentation!
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
+   ReleaseNotes
+
+Using Clang as a Compiler
+=========================
+
+.. toctree::
+   :maxdepth: 1
+
+   UsersManual
    LanguageExtensions
-   LibASTMatchers
-   LibTooling
-   PCHInternals
-   Tooling
    AddressSanitizer
    ThreadSanitizer
    MemorySanitizer
+
+Using Clang as a Library
+========================
+
+.. toctree::
+   :maxdepth: 1
+
+   Tooling
+   IntroductionToTheClangAST
+   LibTooling
    ClangPlugins
+   RAVFrontendAction
+   LibASTMatchersTutorial
+   LibASTMatchers
    ClangTools
    HowToSetupToolingForLLVM
-   IntroductionToTheClangAST
    JSONCompilationDatabase
-   LibASTMatchersTutorial
-   PTHInternals
-   RAVFrontendAction
-   UsersManual
-   AutomaticReferenceCounting
+
+Design Documents
+================
+
+.. toctree::
+   :maxdepth: 1
+
    InternalsManual
    DriverInternals
-   BlockLanguageSpec
-   ObjectiveCLiterals
-   ReleaseNotes
+   PTHInternals
+   PCHInternals
+
 
 Indices and tables
 ==================

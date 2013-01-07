@@ -37,11 +37,11 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/CallingConv.h"
-#include "llvm/DataLayout.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/Module.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/Mangler.h"
@@ -576,7 +576,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
 
   // (noinline wins over always_inline, and we can't specify both in IR)
   if ((D->hasAttr<AlwaysInlineAttr>() || D->hasAttr<ForceInlineAttr>()) &&
-      !F->getFnAttributes().hasAttribute(llvm::Attribute::NoInline))
+      !F->getAttributes().hasAttribute(llvm::AttributeSet::FunctionIndex,
+                                       llvm::Attribute::NoInline))
     F->addFnAttr(llvm::Attribute::AlwaysInline);
 
   // FIXME: Communicate hot and cold attributes to LLVM more directly.

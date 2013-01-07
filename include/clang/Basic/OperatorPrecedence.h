@@ -45,7 +45,7 @@ namespace prec {
 
 /// \brief Return the precedence of the specified binary operator token.
 prec::Level getBinOpPrecedence(tok::TokenKind Kind, bool GreaterThanIsOperator,
-                               bool CPlusPlus0x, bool EllipsisOperatorSupport = false);
+                               bool CPlusPlus11, bool EllipsisOperatorSupport = false);
 
 }  // end namespace clang
 

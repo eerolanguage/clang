@@ -41,7 +41,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'Clang'
-copyright = u'2012, The Clang Team'
+copyright = u'2007-2013, The Clang Team'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -64,7 +64,7 @@ release = '3.3'
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
-exclude_patterns = ['_build']
+exclude_patterns = ['_build', 'analyzer']
 
 # The reST default role (used for this markup: `text`) to use for all documents.
 #default_role = None

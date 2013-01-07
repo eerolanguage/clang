@@ -28,6 +28,7 @@ protected:
         CharSourceRange::getCharRange(Start, Start.getLocWithOffset(Length)));
     LangOptions LangOpts;
     LangOpts.CPlusPlus = 1;
+    LangOpts.CPlusPlus11 = 1;
     Lexer Lex(ID, Context.Sources.getBuffer(ID), Context.Sources, LangOpts);
     tooling::Replacements Replace =
         reformat(Style, Lex, Context.Sources, Ranges);
@@ -49,8 +50,8 @@ protected:
         if (JustReplacedNewline)
           MessedUp[i - 1] = '\n';
         InComment = true;
-      } else if (MessedUp[i] != ' ') {
-        JustReplacedNewline = false;
+      } else if (MessedUp[i] == '\\' && MessedUp[i + 1] == '\n') {
+        MessedUp[i] = ' ';
       } else if (MessedUp[i] == '\n') {
         if (InComment) {
           InComment = false;
@@ -58,17 +59,26 @@ protected:
           JustReplacedNewline = true;
           MessedUp[i] = ' ';
         }
+      } else if (MessedUp[i] != ' ') {
+        JustReplacedNewline = false;
       }
     }
     return MessedUp;
   }
 
-  void verifyFormat(llvm::StringRef Code) {
-    EXPECT_EQ(Code.str(), format(messUp(Code)));
+  FormatStyle getLLVMStyleWithColumns(unsigned ColumnLimit) {
+    FormatStyle Style = getLLVMStyle();
+    Style.ColumnLimit = ColumnLimit;
+    return Style;
+  }
+
+  void verifyFormat(llvm::StringRef Code,
+                    const FormatStyle &Style = getLLVMStyle()) {
+    EXPECT_EQ(Code.str(), format(messUp(Code), Style));
   }
 
   void verifyGoogleFormat(llvm::StringRef Code) {
-    EXPECT_EQ(Code.str(), format(messUp(Code), getGoogleStyle()));
+    verifyFormat(Code, getGoogleStyle());
   }
 };
 
@@ -349,6 +359,13 @@ TEST_F(FormatTest, FormatsNamespaces) {
                "  f();\n"
                "}\n"
                "}");
+  verifyFormat("inline namespace X {\n"
+               "class A {\n"
+               "};\n"
+               "void f() {\n"
+               "  f();\n"
+               "}\n"
+               "}");
   verifyFormat("using namespace some_namespace;\n"
                "class A {\n"
                "};\n"
@@ -364,6 +381,101 @@ TEST_F(FormatTest, StaticInitializers) {
   verifyFormat(
       "static SomeClass WithALoooooooooooooooooooongName = { 100000000,\n"
       "    \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" };");
+}
+
+TEST_F(FormatTest, FormatsSmallMacroDefinitionsInSingleLine) {
+  verifyFormat("#define ALooooooooooooooooooooooooooooooooooooooongMacro("
+               "                      \\\n"
+               "    aLoooooooooooooooooooooooongFuuuuuuuuuuuuuunctiooooooooo)");
+}
+
+TEST_F(FormatTest, BreaksOnHashWhenDirectiveIsInvalid) {
+  EXPECT_EQ("#\n;", format("#;"));
+}
+
+TEST_F(FormatTest, UnescapedEndOfLineEndsPPDirective) {
+  EXPECT_EQ("#line 42 \"test\"\n",
+            format("#  \\\n  line  \\\n  42  \\\n  \"test\"\n"));
+  EXPECT_EQ("#define A  \\\n  B\n",
+            format("#  \\\n define  \\\n    A  \\\n       B\n",
+                   getLLVMStyleWithColumns(12)));
+}
+
+TEST_F(FormatTest, EndOfFileEndsPPDirective) {
+  EXPECT_EQ("#line 42 \"test\"",
+            format("#  \\\n  line  \\\n  42  \\\n  \"test\""));
+  EXPECT_EQ("#define A  \\\n  B",
+            format("#  \\\n define  \\\n    A  \\\n       B",
+                   getLLVMStyleWithColumns(12)));
+}
+
+TEST_F(FormatTest, IndentsPPDirectiveInReducedSpace) {
+  // If the macro fits in one line, we have the full width.
+  verifyFormat("#define A(B)", getLLVMStyleWithColumns(12));
+
+  verifyFormat("#define A(\\\n    B)", getLLVMStyleWithColumns(11));
+  verifyFormat("#define AA(\\\n    B)", getLLVMStyleWithColumns(11));
+  verifyFormat("#define A( \\\n    A, B)", getLLVMStyleWithColumns(12));
+}
+
+TEST_F(FormatTest, HandlePreprocessorDirectiveContext) {
+  EXPECT_EQ("// some comment\n"
+            "#include \"a.h\"\n"
+            "#define A(A,\\\n"
+            "          B)\n"
+            "#include \"b.h\"\n"
+            "// some comment\n",
+            format("  // some comment\n"
+                   "  #include \"a.h\"\n"
+                   "#define A(A,\\\n"
+                   "    B)\n"
+                   "    #include \"b.h\"\n"
+                   " // some comment\n", getLLVMStyleWithColumns(13)));
+}
+
+TEST_F(FormatTest, LayoutSingleHash) {
+  EXPECT_EQ("#\na;", format("#\na;"));
+}
+
+TEST_F(FormatTest, LayoutCodeInMacroDefinitions) {
+  EXPECT_EQ("#define A    \\\n"
+            "  c;         \\\n"
+            "  e;\n"
+            "f;", format("#define A c; e;\n"
+                         "f;", getLLVMStyleWithColumns(14)));
+}
+
+TEST_F(FormatTest, LayoutRemainingTokens) {
+  EXPECT_EQ("{\n}", format("{}"));
+}
+
+TEST_F(FormatTest, LayoutSingleUnwrappedLineInMacro) {
+  EXPECT_EQ("#define A \\\n  b;",
+            format("#define A b;", 10, 2, getLLVMStyleWithColumns(11)));
+}
+
+TEST_F(FormatTest, MacroDefinitionInsideStatement) {
+  EXPECT_EQ("int x,\n#define A\ny;", format("int x,\n#define A\ny;"));
+}
+
+// FIXME: write test for unbalanced braces in macros...
+// FIXME: test { { #include "a.h" } }
+// FIXME: test # in the middle of a statement without \n before it
+
+TEST_F(FormatTest, MixingPreprocessorDirectivesAndNormalCode) {
+  EXPECT_EQ(
+      "#define ALooooooooooooooooooooooooooooooooooooooongMacro("
+      "                      \\\n"
+      "    aLoooooooooooooooooooooooongFuuuuuuuuuuuuuunctiooooooooo)\n"
+      "\n"
+      "AlooooooooooooooooooooooooooooooooooooooongCaaaaaaaaaal(\n"
+      "    aLooooooooooooooooooooooonPaaaaaaaaaaaaaaaaaaaaarmmmm);\n",
+      format("  #define   ALooooooooooooooooooooooooooooooooooooooongMacro("
+             "\\\n"
+             "aLoooooooooooooooooooooooongFuuuuuuuuuuuuuunctiooooooooo)\n"
+             "  \n"
+             "   AlooooooooooooooooooooooooooooooooooooooongCaaaaaaaaaal(\n"
+             "  aLooooooooooooooooooooooonPaaaaaaaaaaaaaaaaaaaaarmmmm);\n"));
 }
 
 //===----------------------------------------------------------------------===//
@@ -447,6 +559,10 @@ TEST_F(FormatTest, BreaksDesireably) {
 
   verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n"
                "    (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n"
+      "                                 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
 
   // This test case breaks on an incorrect memoization, i.e. an optimization not
   // taking into account the StopAt value.
@@ -583,6 +699,24 @@ TEST_F(FormatTest, WrapsAtFunctionCallsIfNecessary) {
                "}");
 }
 
+TEST_F(FormatTest, WrapsTemplateDeclarations) {
+  verifyFormat("template <typename T>\n"
+               "virtual void loooooooooooongFunction(int Param1, int Param2);");
+  verifyFormat(
+      "template <typename T> void f(int Paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaram1,\n"
+      "                             int Paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaram2);");
+  verifyFormat(
+      "template <typename T>\n"
+      "void looooooooooooooooooooongFunction(int Paaaaaaaaaaaaaaaaaaaaram1,\n"
+      "                                      int Paaaaaaaaaaaaaaaaaaaaram2);");
+  verifyFormat(
+      "template <typename T>\n"
+      "aaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaa,\n"
+      "                    aaaaaaaaaaaaaaaaaaaaaaaaaa<T>::aaaaaaaaaa,\n"
+      "                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+
+}
+
 TEST_F(FormatTest, UnderstandsTemplateParameters) {
   verifyFormat("A<int> a;");
   verifyFormat("A<A<A<int> > > a;");
@@ -621,7 +755,15 @@ TEST_F(FormatTest, UnderstandsUnaryOperators) {
   verifyFormat("a-- > b;");
   verifyFormat("b ? -a : c;");
   verifyFormat("n * sizeof char16;");
+  verifyFormat("n * alignof char16;");
   verifyFormat("sizeof(char);");
+  verifyFormat("alignof(char);");
+
+  verifyFormat("return -1;");
+  verifyFormat("switch (a) {\n"
+               "case -1:\n"
+               "  break;\n"
+               "}");
 }
 
 TEST_F(FormatTest, UndestandsOverloadedOperators) {
@@ -643,7 +785,7 @@ TEST_F(FormatTest, UndestandsOverloadedOperators) {
   verifyFormat("void operator delete[](void *ptr);");
 }
 
-TEST_F(FormatTest, UnderstandsUsesOfStar) {
+TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyFormat("int *f(int *a) {\n}");
   verifyFormat("f(a, *a);");
   verifyFormat("f(*a);");
@@ -661,18 +803,44 @@ TEST_F(FormatTest, UnderstandsUsesOfStar) {
   verifyFormat("return 10 * b;");
   verifyFormat("return *b * *c;");
   verifyFormat("return a & ~b;");
+  verifyFormat("f(b ? *c : *d);");
+  verifyFormat("int a = b ? *c : *d;");
+  verifyFormat("*b = a;");
+  verifyFormat("a * ~b;");
+  verifyFormat("a * !b;");
+  verifyFormat("a * +b;");
+  verifyFormat("a * -b;");
+  verifyFormat("a * ++b;");
+  verifyFormat("a * --b;");
+
+  verifyFormat("InvalidRegions[*R] = 0;");
 
   // FIXME: Is this desired for LLVM? Fix if not.
   verifyFormat("A<int *> a;");
   verifyFormat("A<int **> a;");
   verifyFormat("A<int *, int *> a;");
   verifyFormat("A<int **, int **> a;");
+  verifyFormat("Type *A = static_cast<Type *>(P);");
+  verifyFormat("Type *A = (Type *) P;");
+  verifyFormat("Type *A = (vector<Type *, int *>) P;");
 
   verifyGoogleFormat("int main(int argc, char** argv) {\n}");
   verifyGoogleFormat("A<int*> a;");
   verifyGoogleFormat("A<int**> a;");
   verifyGoogleFormat("A<int*, int*> a;");
   verifyGoogleFormat("A<int**, int**> a;");
+  verifyGoogleFormat("f(b ? *c : *d);");
+  verifyGoogleFormat("int a = b ? *c : *d;");
+}
+
+TEST_F(FormatTest, DoesNotBreakBeforePointerOrReference) {
+  verifyFormat(
+      "int *someFunction(int LoooooooooooooooongParam1,\n"
+      "                  int LoooooooooooooooongParam2) {\n}");
+  verifyFormat(
+      "TypeSpecDecl *TypeSpecDecl::Create(ASTContext &C, DeclContext *DC,\n"
+      "                                   SourceLocation L, IdentifierIn *II,\n"
+      "                                   Type *T) {\n}");
 }
 
 TEST_F(FormatTest, LineStartsWithSpecialCharacter) {
@@ -736,6 +904,11 @@ TEST_F(FormatTest, IncorrectCodeDoNoWhile) {
   verifyFormat("do {\n"
                "  f();\n"
                "};");
+}
+
+TEST_F(FormatTest, DoesNotTouchUnwrappedLinesWithErrors) {
+  verifyFormat("namespace {\n"
+               "class Foo {  Foo  ( }; }  // comment");
 }
 
 TEST_F(FormatTest, IncorrectCodeErrorDetection) {

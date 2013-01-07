@@ -21,10 +21,10 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/Builtins.h"
-#include "llvm/Constants.h"
-#include "llvm/DataLayout.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -905,10 +905,8 @@ public:
         if (!VD->hasLocalStorage()) {
           if (VD->isFileVarDecl() || VD->hasExternalStorage())
             return CGM.GetAddrOfGlobalVar(VD);
-          else if (VD->isLocalVarDecl()) {
-            assert(CGF && "Can't access static local vars without CGF");
-            return CGF->GetAddrOfStaticLocalVar(VD);
-          }
+          else if (VD->isLocalVarDecl())
+            return CGM.getStaticLocalDeclAddress(VD);
         }
       }
       return 0;
