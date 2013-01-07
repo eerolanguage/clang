@@ -27,10 +27,11 @@ public:
   ScopedMacroState(UnwrappedLine &Line, FormatTokenSource *&TokenSource,
                    FormatToken &ResetToken)
       : Line(Line), TokenSource(TokenSource), ResetToken(ResetToken),
-        PreviousTokenSource(TokenSource) {
+        PreviousLineLevel(Line.Level), PreviousTokenSource(TokenSource) {
     TokenSource = this;
     // FIXME: Back up all other state (errors, line indent, etc) and reset after
     // parsing the macro.
+    Line.Level = 0;
     Line.InPPDirective = true;
   }
 
@@ -38,7 +39,7 @@ public:
     TokenSource = PreviousTokenSource;
     ResetToken = Token;
     Line.InPPDirective = false;
-    Line.Level = 0;  // FIXME: Test + this is obviously incorrect
+    Line.Level = PreviousLineLevel;
   }
 
   virtual FormatToken getNextToken() {
@@ -65,7 +66,7 @@ private:
   UnwrappedLine &Line;
   FormatTokenSource *&TokenSource;
   FormatToken &ResetToken;
-
+  unsigned PreviousLineLevel;
   FormatTokenSource *PreviousTokenSource;
 
   FormatToken Token;
@@ -83,13 +84,13 @@ bool UnwrappedLineParser::parse() {
 }
 
 bool UnwrappedLineParser::parseFile() {
-  bool Error = parseLevel();
+  bool Error = parseLevel(/*HasOpeningBrace=*/false);
   // Make sure to format the remaining tokens.
   addUnwrappedLine();
   return Error;
 }
 
-bool UnwrappedLineParser::parseLevel() {
+bool UnwrappedLineParser::parseLevel(bool HasOpeningBrace) {
   bool Error = false;
   do {
     switch (FormatTok.Tok.getKind()) {
@@ -102,8 +103,15 @@ bool UnwrappedLineParser::parseLevel() {
       addUnwrappedLine();
       break;
     case tok::r_brace:
-      // Stray '}' is an error.
-      return true;
+      if (HasOpeningBrace) {
+        return false;
+      } else {
+        // Stray '}' is an error.
+        Error = true;
+        nextToken();
+        addUnwrappedLine();
+      }
+      break;
     default:
       parseStatement();
       break;
@@ -119,7 +127,7 @@ bool UnwrappedLineParser::parseBlock(unsigned AddLevels) {
   addUnwrappedLine();
 
   Line.Level += AddLevels;
-  parseLevel();
+  parseLevel(/*HasOpeningBrace=*/true);
   Line.Level -= AddLevels;
 
   // FIXME: Add error handling.
@@ -469,7 +477,9 @@ void UnwrappedLineParser::nextToken() {
 
 void UnwrappedLineParser::readToken() {
   FormatTok = Tokens->getNextToken();
-  while (FormatTok.Tok.is(tok::hash)) {
+  while (!Line.InPPDirective && FormatTok.Tok.is(tok::hash) &&
+         ((FormatTok.NewlinesBefore > 0 && FormatTok.HasUnescapedNewline) ||
+          FormatTok.IsFirst)) {
     // FIXME: This is incorrect - the correct way is to create a
     // data structure that will construct the parts around the preprocessor
     // directive as a structured \c UnwrappedLine.

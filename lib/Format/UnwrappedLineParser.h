@@ -31,7 +31,8 @@ namespace format {
 /// whitespace characters preceeding it.
 struct FormatToken {
   FormatToken()
-      : NewlinesBefore(0), HasUnescapedNewline(false), WhiteSpaceLength(0) {
+      : NewlinesBefore(0), HasUnescapedNewline(false), WhiteSpaceLength(0),
+        IsFirst(false) {
   }
 
   /// \brief The \c Token.
@@ -56,6 +57,9 @@ struct FormatToken {
   /// \brief The length in characters of the whitespace immediately preceeding
   /// the \c Token.
   unsigned WhiteSpaceLength;
+
+  /// \brief Indicates that this is the first token.
+  bool IsFirst;
 };
 
 /// \brief An unwrapped line is a sequence of \c Token, that we would like to
@@ -102,7 +106,7 @@ public:
 
 private:
   bool parseFile();
-  bool parseLevel();
+  bool parseLevel(bool HasOpeningBrace);
   bool parseBlock(unsigned AddLevels = 1);
   void parsePPDirective();
   void parsePPDefine();
@@ -124,6 +128,9 @@ private:
   void nextToken();
   void readToken();
 
+  // FIXME: We are constantly running into bugs where Line.Level is incorrectly
+  // subtracted from beyond 0. Introduce a method to subtract from Line.Level
+  // and use that everywhere in the Parser.
   UnwrappedLine Line;
   FormatToken FormatTok;
 
