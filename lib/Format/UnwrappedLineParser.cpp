@@ -29,8 +29,6 @@ public:
       : Line(Line), TokenSource(TokenSource), ResetToken(ResetToken),
         PreviousLineLevel(Line.Level), PreviousTokenSource(TokenSource) {
     TokenSource = this;
-    // FIXME: Back up all other state (errors, line indent, etc) and reset after
-    // parsing the macro.
     Line.Level = 0;
     Line.InPPDirective = true;
   }
@@ -43,8 +41,9 @@ public:
   }
 
   virtual FormatToken getNextToken() {
-    // FIXME: Write test that breaks due to a missing
-    // if (eof()) return createEOF();
+    // The \c UnwrappedLineParser guards against this by never calling
+    // \c getNextToken() after it has encountered the first eof token.
+    assert(!eof());
     Token = PreviousTokenSource->getNextToken();
     if (eof())
       return createEOF();
@@ -113,7 +112,7 @@ bool UnwrappedLineParser::parseLevel(bool HasOpeningBrace) {
       }
       break;
     default:
-      parseStatement();
+      parseStructuralElement();
       break;
     }
   } while (!eof());
@@ -130,13 +129,10 @@ bool UnwrappedLineParser::parseBlock(unsigned AddLevels) {
   parseLevel(/*HasOpeningBrace=*/true);
   Line.Level -= AddLevels;
 
-  // FIXME: Add error handling.
   if (!FormatTok.Tok.is(tok::r_brace))
     return true;
 
-  nextToken();
-  if (FormatTok.Tok.is(tok::semi))
-    nextToken();
+  nextToken();  // Munch the closing brace.
   return false;
 }
 
@@ -173,6 +169,12 @@ void UnwrappedLineParser::parsePPDefine() {
   }
   addUnwrappedLine();
   Line.Level = 1;
+
+  // Errors during a preprocessor directive can only affect the layout of the
+  // preprocessor directive, and thus we ignore them. An alternative approach
+  // would be to use the same approach we use on the file level (no
+  // re-indentation if there was a structural error) within the macro
+  // definition.
   parseFile();
 }
 
@@ -191,11 +193,23 @@ void UnwrappedLineParser::parseComments() {
   }
 }
 
-void UnwrappedLineParser::parseStatement() {
+void UnwrappedLineParser::parseStructuralElement() {
   parseComments();
 
   int TokenNumber = 0;
   switch (FormatTok.Tok.getKind()) {
+  case tok::at:
+    nextToken();
+    switch (FormatTok.Tok.getObjCKeywordID()) {
+    case tok::objc_public:
+    case tok::objc_protected:
+    case tok::objc_package:
+    case tok::objc_private:
+      return parseAccessSpecifier();
+    default:
+      break;
+    }
+    break;
   case tok::kw_namespace:
     parseNamespace();
     return;
@@ -240,6 +254,10 @@ void UnwrappedLineParser::parseStatement() {
     switch (FormatTok.Tok.getKind()) {
     case tok::kw_enum:
       parseEnum();
+      return;
+    case tok::kw_struct:  // fallthrough
+    case tok::kw_class:
+      parseStructOrClass();
       return;
     case tok::semi:
       nextToken();
@@ -301,7 +319,7 @@ void UnwrappedLineParser::parseIfThenElse() {
   } else {
     addUnwrappedLine();
     ++Line.Level;
-    parseStatement();
+    parseStructuralElement();
     --Line.Level;
   }
   if (FormatTok.Tok.is(tok::kw_else)) {
@@ -314,7 +332,7 @@ void UnwrappedLineParser::parseIfThenElse() {
     } else {
       addUnwrappedLine();
       ++Line.Level;
-      parseStatement();
+      parseStructuralElement();
       --Line.Level;
     }
   } else if (NeedsUnwrappedLine) {
@@ -345,7 +363,7 @@ void UnwrappedLineParser::parseForOrWhileLoop() {
   } else {
     addUnwrappedLine();
     ++Line.Level;
-    parseStatement();
+    parseStructuralElement();
     --Line.Level;
   }
 }
@@ -358,7 +376,7 @@ void UnwrappedLineParser::parseDoWhile() {
   } else {
     addUnwrappedLine();
     ++Line.Level;
-    parseStatement();
+    parseStructuralElement();
     --Line.Level;
   }
 
@@ -369,7 +387,7 @@ void UnwrappedLineParser::parseDoWhile() {
   }
 
   nextToken();
-  parseStatement();
+  parseStructuralElement();
 }
 
 void UnwrappedLineParser::parseLabel() {
@@ -405,7 +423,7 @@ void UnwrappedLineParser::parseSwitch() {
   } else {
     addUnwrappedLine();
     Line.Level += (Style.IndentCaseLabels ? 2 : 1);
-    parseStatement();
+    parseStructuralElement();
     Line.Level -= (Style.IndentCaseLabels ? 2 : 1);
   }
 }
@@ -454,6 +472,26 @@ void UnwrappedLineParser::parseEnum() {
   } while (!eof());
 }
 
+void UnwrappedLineParser::parseStructOrClass() {
+  nextToken();
+  do {
+    switch (FormatTok.Tok.getKind()) {
+    case tok::l_brace:
+      // FIXME: Think about how to resolve the error handling here.
+      parseBlock();
+      parseStructuralElement();
+      return;
+    case tok::semi:
+      nextToken();
+      addUnwrappedLine();
+      return;
+    default:
+      nextToken();
+      break;
+    }
+  } while (!eof());
+}
+
 void UnwrappedLineParser::addUnwrappedLine() {
   // Consume trailing comments.
   while (!eof() && FormatTok.NewlinesBefore == 0 &&
@@ -488,5 +526,5 @@ void UnwrappedLineParser::readToken() {
   }
 }
 
-}  // end namespace format
-}  // end namespace clang
+} // end namespace format
+} // end namespace clang

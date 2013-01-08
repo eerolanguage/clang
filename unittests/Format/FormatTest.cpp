@@ -29,9 +29,11 @@ protected:
     LangOptions LangOpts;
     LangOpts.CPlusPlus = 1;
     LangOpts.CPlusPlus11 = 1;
+    LangOpts.ObjC1 = 1;
+    LangOpts.ObjC2 = 1;
     Lexer Lex(ID, Context.Sources.getBuffer(ID), Context.Sources, LangOpts);
-    tooling::Replacements Replace =
-        reformat(Style, Lex, Context.Sources, Ranges);
+    tooling::Replacements Replace = reformat(Style, Lex, Context.Sources,
+                                             Ranges);
     EXPECT_TRUE(applyAllReplacements(Replace, Context.Rewrite));
     return Context.getRewrittenText(ID);
   }
@@ -109,7 +111,6 @@ TEST_F(FormatTest, FormatsNestedCall) {
   verifyFormat("Method(f1, f2(f3));");
   verifyFormat("Method(f1(f2, f3()));");
 }
-
 
 //===----------------------------------------------------------------------===//
 // Tests for control statements.
@@ -264,7 +265,6 @@ TEST_F(FormatTest, FormatsLabels) {
                "some_other_code();");
 }
 
-
 //===----------------------------------------------------------------------===//
 // Tests for comments.
 //===----------------------------------------------------------------------===//
@@ -278,24 +278,28 @@ TEST_F(FormatTest, UnderstandsSingleLineComments) {
                "  // Doesn't do anything\n"
                "}");
 
-  verifyFormat("int i  // This is a fancy variable\n"
+  verifyFormat("int i // This is a fancy variable\n"
                "    = 5;");
 
   verifyFormat("enum E {\n"
                "  // comment\n"
-               "  VAL_A,  // comment\n"
+               "  VAL_A, // comment\n"
                "  VAL_B\n"
                "};");
 
   verifyFormat(
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n"
-      "    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;  // Trailing comment");
+      "    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; // Trailing comment");
+
+  EXPECT_EQ("int i; // single line trailing comment",
+            format("int i;\\\n// single line trailing comment"));
+
+  verifyGoogleFormat("int a;  // Trailing comment.");
 }
 
 TEST_F(FormatTest, UnderstandsMultiLineComments) {
   verifyFormat("f(/*test=*/ true);");
 }
-
 
 //===----------------------------------------------------------------------===//
 // Tests for classes, namespaces, etc.
@@ -327,6 +331,13 @@ TEST_F(FormatTest, FormatsDerivedClass) {
                "};");
   verifyFormat("class A : public ::B {\n"
                "};");
+}
+
+TEST_F(FormatTest, FormatsVariableDeclarationsAfterStructOrClass) {
+  verifyFormat("class A {\n"
+               "} a, b;");
+  verifyFormat("struct A {\n"
+               "} a, b;");
 }
 
 TEST_F(FormatTest, FormatsEnum) {
@@ -374,13 +385,81 @@ TEST_F(FormatTest, FormatsNamespaces) {
                "}");
 }
 
+TEST_F(FormatTest, FormatTryCatch) {
+  verifyFormat("try {\n"
+               "  throw a * b;\n"
+               "}\n"
+               "catch (int a) {\n"
+               "  // Do nothing.\n"
+               "}\n"
+               "catch (...) {\n"
+               "  exit(42);\n"
+               "}");
+
+  // Function-level try statements.
+  verifyFormat("int f() try {\n"
+               "  return 4;\n"
+               "}\n"
+               "catch (...) {\n"
+               "  return 5;\n"
+               "}");
+  verifyFormat("class A {\n"
+               "  int a;\n"
+               "  A() try : a(0) {\n"
+               "  }\n"
+               "  catch (...) {\n"
+               "    throw;\n"
+               "  }\n"
+               "};\n");
+}
+
+TEST_F(FormatTest, FormatObjCTryCatch) {
+  verifyFormat("@try {\n"
+               "  f();\n"
+               "}\n"
+               "@catch (NSException e) {\n"
+               "  @throw;\n"
+               "}\n"
+               "@finally {\n"
+               "  exit(42);\n"
+               "}");
+}
+
+TEST_F(FormatTest, FormatObjCInterface) {
+  verifyFormat("@interface Foo : NSObject<NSSomeDelegate> {\n"
+               "@public\n"
+               "  int field1;\n"
+               "@protected\n"
+               "  int field2;\n"
+               "@private\n"
+               "  int field3;\n"
+               "@package\n"
+               "  int field4;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyGoogleFormat("@interface Foo : NSObject<NSSomeDelegate> {\n"
+                     " @public\n"
+                     "  int field1;\n"
+                     " @protected\n"
+                     "  int field2;\n"
+                     " @private\n"
+                     "  int field3;\n"
+                     " @package\n"
+                     "  int field4;\n"
+                     "}\n"
+                     "+ (id)init;\n"
+                     "@end");
+}
+
 TEST_F(FormatTest, StaticInitializers) {
   verifyFormat("static SomeClass SC = { 1, 'a' };");
 
   // FIXME: Format like enums if the static initializer does not fit on a line.
   verifyFormat(
-      "static SomeClass WithALoooooooooooooooooooongName = { 100000000,\n"
-      "    \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" };");
+      "static SomeClass WithALoooooooooooooooooooongName = {\n"
+      "  100000000, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" };");
 }
 
 TEST_F(FormatTest, FormatsSmallMacroDefinitionsInSingleLine) {
@@ -389,8 +468,14 @@ TEST_F(FormatTest, FormatsSmallMacroDefinitionsInSingleLine) {
                "    aLoooooooooooooooooooooooongFuuuuuuuuuuuuuunctiooooooooo)");
 }
 
+TEST_F(FormatTest, DoesNotBreakPureVirtualFunctionDefinition) {
+  verifyFormat("virtual void write(ELFWriter *writerrr,\n"
+               "                   OwningPtr<FileOutputBuffer> &buffer) = 0;");
+}
+
 TEST_F(FormatTest, BreaksOnHashWhenDirectiveIsInvalid) {
   EXPECT_EQ("#\n;", format("#;"));
+  verifyFormat("#\n;\n;\n;");
 }
 
 TEST_F(FormatTest, UnescapedEndOfLineEndsPPDirective) {
@@ -410,11 +495,13 @@ TEST_F(FormatTest, EndOfFileEndsPPDirective) {
 }
 
 TEST_F(FormatTest, IndentsPPDirectiveInReducedSpace) {
-  // If the macro fits in one line, we have the full width.
-  verifyFormat("#define A(B)", getLLVMStyleWithColumns(12));
+  // If the macro fits in one line, we still do not get the full
+  // line, as only the next line decides whether we need an escaped newline and
+  // thus use the last column.
+  verifyFormat("#define A(B)", getLLVMStyleWithColumns(13));
 
-  verifyFormat("#define A(\\\n    B)", getLLVMStyleWithColumns(11));
-  verifyFormat("#define AA(\\\n    B)", getLLVMStyleWithColumns(11));
+  verifyFormat("#define A( \\\n    B)", getLLVMStyleWithColumns(12));
+  verifyFormat("#define AA(\\\n    B)", getLLVMStyleWithColumns(12));
   verifyFormat("#define A( \\\n    A, B)", getLLVMStyleWithColumns(12));
 }
 
@@ -479,6 +566,19 @@ TEST_F(FormatTest, FormatUnbalancedStructuralElements) {
             format("#define A { {\nint i;", getLLVMStyleWithColumns(11)));
   EXPECT_EQ("#define A \\\n  }       \\\n  }\nint i;",
             format("#define A } }\nint i;", getLLVMStyleWithColumns(11)));
+}
+
+TEST_F(FormatTest, EscapedNewlineAtStartOfTokenInMacroDefinition) {
+  EXPECT_EQ(
+      "#define A \\\n  int i;  \\\n  int j;",
+      format("#define A \\\nint i;\\\n  int j;", getLLVMStyleWithColumns(11)));
+}
+
+TEST_F(FormatTest, CalculateSpaceOnConsecutiveLinesInMacro) {
+  verifyFormat("#define A \\\n"
+               "  int v(  \\\n"
+               "      a); \\\n"
+               "  int i;", getLLVMStyleWithColumns(11));
 }
 
 TEST_F(FormatTest, MixingPreprocessorDirectivesAndNormalCode) {
@@ -560,7 +660,7 @@ TEST_F(FormatTest, BreaksAsHighAsPossible) {
 TEST_F(FormatTest, BreaksDesireably) {
   verifyFormat("if (aaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaa) ||\n"
                "    aaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaa) ||\n"
-               "    aaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaa)) {\n};");
+               "    aaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaa)) {\n}");
 
   verifyFormat(
       "aaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
@@ -591,46 +691,54 @@ TEST_F(FormatTest, BreaksDesireably) {
       "       aaaaaaaaaaaaaaaaaaaaaaaaa || aaaaaaaaaaaaaaaaaaaaaaa ||\n"
       "       (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
 
-  verifyFormat(
-      "{\n  {\n    {\n"
-      "      Annotation.SpaceRequiredBefore =\n"
-      "          Line.Tokens[i - 1].Tok.isNot(tok::l_paren) &&\n"
-      "          Line.Tokens[i - 1].Tok.isNot(tok::l_square);\n"
-      "    }\n  }\n}");
+  verifyFormat("{\n  {\n    {\n"
+               "      Annotation.SpaceRequiredBefore =\n"
+               "          Line.Tokens[i - 1].Tok.isNot(tok::l_paren) &&\n"
+               "          Line.Tokens[i - 1].Tok.isNot(tok::l_square);\n"
+               "    }\n  }\n}");
 }
 
 TEST_F(FormatTest, BreaksAccordingToOperatorPrecedence) {
   verifyFormat(
       "if (aaaaaaaaaaaaaaaaaaaaaaaaa ||\n"
       "    bbbbbbbbbbbbbbbbbbbbbbbbb && ccccccccccccccccccccccccc) {\n}");
-  verifyFormat(
-      "if (aaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbb ||\n"
-      "    ccccccccccccccccccccccccc) {\n}");
-  verifyFormat(
-      "if (aaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbb ||\n"
-      "    ccccccccccccccccccccccccc) {\n}");
+  verifyFormat("if (aaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbb ||\n"
+               "    ccccccccccccccccccccccccc) {\n}");
+  verifyFormat("if (aaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbb ||\n"
+               "    ccccccccccccccccccccccccc) {\n}");
   verifyFormat(
       "if ((aaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbb) &&\n"
       "    ccccccccccccccccccccccccc) {\n}");
 }
 
+TEST_F(FormatTest, PrefersNotToBreakAfterAssignments) {
+  verifyFormat(
+      "unsigned Cost = TTI.getMemoryOpCost(I->getOpcode(), VectorTy,\n"
+      "                                    SI->getAlignment(),\n"
+      "                                    SI->getPointerAddressSpaceee());\n");
+  verifyFormat(
+      "CharSourceRange LineRange = CharSourceRange::getTokenRange(\n"
+      "                                Line.Tokens.front().Tok.getLocation(),\n"
+      "                                Line.Tokens.back().Tok.getLocation());");
+}
+
 TEST_F(FormatTest, AlignsAfterAssignments) {
   verifyFormat(
       "int Result = aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
-      "             aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+      "             aaaaaaaaaaaaaaaaaaaaaaaaa;");
   verifyFormat(
       "Result += aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
-      "          aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+      "          aaaaaaaaaaaaaaaaaaaaaaaaa;");
   verifyFormat(
       "Result >>= aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
-      "           aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+      "           aaaaaaaaaaaaaaaaaaaaaaaaa;");
   verifyFormat(
       "int Result = (aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
-      "              aaaaaaaaaaaaaaaaaaaaaaaaa);"); 
+      "              aaaaaaaaaaaaaaaaaaaaaaaaa);");
   verifyFormat(
-      "double LooooooooooooooooooooooooongResult =\n"
-      "    aaaaaaaaaaaaaaaaaaaaaaaaa + aaaaaaaaaaaaaaaaaaaaaaaaa +\n"
-      "    aaaaaaaaaaaaaaaaaaaaaaaaa;"); 
+      "double LooooooooooooooooooooooooongResult = aaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "                                            aaaaaaaaaaaaaaaaaaaaaaaa +\n"
+      "                                            aaaaaaaaaaaaaaaaaaaaaaaa;");
 }
 
 TEST_F(FormatTest, AlignsAfterReturn) {
@@ -686,8 +794,10 @@ TEST_F(FormatTest, UnderstandsEquals) {
       "               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) {\n"
       "}");
 
-  verifyFormat("if (int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n"
-               "        100000000 + 100000000) {\n}");
+  verifyFormat(
+      "if (int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 100000000 +\n"
+      "                                                           10000000) {\n"
+      "}");
 }
 
 TEST_F(FormatTest, WrapsAtFunctionCallsIfNecessary) {
@@ -713,9 +823,14 @@ TEST_F(FormatTest, WrapsAtFunctionCallsIfNecessary) {
       "function(LoooooooooooooooooooooooooooooooooooongObject\n"
       "             ->loooooooooooooooooooooooooooooooooooooooongFunction());");
 
+  // Here, it is not necessary to wrap at "." or "->".
   verifyFormat("if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaa) ||\n"
                "    aaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) {\n"
                "}");
+  verifyFormat(
+      "aaaaaaaaaaa->aaaaaaaaa(\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+      "    aaaaaaaaaaaaaaaaaa->aaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaa));\n");
 }
 
 TEST_F(FormatTest, WrapsTemplateDeclarations) {
@@ -853,9 +968,8 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
 }
 
 TEST_F(FormatTest, DoesNotBreakBeforePointerOrReference) {
-  verifyFormat(
-      "int *someFunction(int LoooooooooooooooongParam1,\n"
-      "                  int LoooooooooooooooongParam2) {\n}");
+  verifyFormat("int *someFunction(int LoooooooooooooooongParam1,\n"
+               "                  int LoooooooooooooooongParam2) {\n}");
   verifyFormat(
       "TypeSpecDecl *TypeSpecDecl::Create(ASTContext &C, DeclContext *DC,\n"
       "                                   SourceLocation L, IdentifierIn *II,\n"
@@ -881,7 +995,6 @@ TEST_F(FormatTest, HandlesIncludeDirectives) {
   EXPECT_EQ("#import \"string.h\"\n", format("#import \"string.h\"\n"));
 }
 
-
 //===----------------------------------------------------------------------===//
 // Error recovery tests.
 //===----------------------------------------------------------------------===//
@@ -897,14 +1010,14 @@ TEST_F(FormatTest, IncorrectAccessSpecifier) {
                "int qwerty;");
   verifyFormat("public\n"
                "B {\n"
-               "};");
+               "}");
   verifyFormat("public\n"
                "{\n"
-               "};");
+               "}");
   verifyFormat("public\n"
                "B {\n"
                "  int x;\n"
-               "};");
+               "}");
 }
 
 TEST_F(FormatTest, IncorrectCodeUnbalancedBraces) {
@@ -913,16 +1026,16 @@ TEST_F(FormatTest, IncorrectCodeUnbalancedBraces) {
 
 TEST_F(FormatTest, IncorrectCodeDoNoWhile) {
   verifyFormat("do {\n"
-               "};");
+               "}");
   verifyFormat("do {\n"
-               "};\n"
+               "}\n"
                "f();");
   verifyFormat("do {\n"
                "}\n"
                "wheeee(fun);");
   verifyFormat("do {\n"
                "  f();\n"
-               "};");
+               "}");
 }
 
 TEST_F(FormatTest, DoesNotTouchUnwrappedLinesWithErrors) {
@@ -953,8 +1066,7 @@ TEST_F(FormatTest, FormatForObjectiveCMethodDecls) {
   verifyFormat("- (void)sendAction:(SEL)aSelector to:(BOOL)anObject;");
   EXPECT_EQ("- (NSUInteger)indexOfObject:(id)anObject;",
             format("-(NSUInteger)indexOfObject:(id)anObject;"));
-  EXPECT_EQ("- (NSInteger)Mthod1;",
-            format("-(NSInteger)Mthod1;"));
+  EXPECT_EQ("- (NSInteger)Mthod1;", format("-(NSInteger)Mthod1;"));
   EXPECT_EQ("+ (id)Mthod2;", format("+(id)Mthod2;"));
   EXPECT_EQ("- (NSInteger)Method3:(id)anObject;",
             format("-(NSInteger)Method3:(id)anObject;"));
@@ -964,24 +1076,60 @@ TEST_F(FormatTest, FormatForObjectiveCMethodDecls) {
             format("-(NSInteger)Method5:(id)anObject:(id)AnotherObject;"));
   EXPECT_EQ("- (id)Method6:(id)A:(id)B:(id)C:(id)D;",
             format("- (id)Method6:(id)A:(id)B:(id)C:(id)D;"));
-  EXPECT_EQ("- (void)sendAction:(SEL)aSelector to:(id)anObject forAllCells:(BOOL)flag;",
-            format("- (void)sendAction:(SEL)aSelector to:(id)anObject forAllCells:(BOOL)flag;"));
+  EXPECT_EQ(
+      "- (void)sendAction:(SEL)aSelector to:(id)anObject forAllCells:(BOOL)flag;",
+      format("- (void)sendAction:(SEL)aSelector to:(id)anObject forAllCells:(BOOL)flag;"));
 
   // Very long objectiveC method declaration.
-  EXPECT_EQ("- (NSUInteger)indexOfObject:(id)anObject inRange:(NSRange)range\n    "
-            "outRange:(NSRange)out_range outRange1:(NSRange)out_range1\n    "
-            "outRange2:(NSRange)out_range2 outRange3:(NSRange)out_range3\n    "
-            "outRange4:(NSRange)out_range4 outRange5:(NSRange)out_range5\n    "
-            "outRange6:(NSRange)out_range6 outRange7:(NSRange)out_range7\n    "
-            "outRange8:(NSRange)out_range8 outRange9:(NSRange)out_range9;",
-
-            format("- (NSUInteger)indexOfObject:(id)anObject inRange:(NSRange)range "
-                   "outRange:(NSRange) out_range outRange1:(NSRange) out_range1 "
-                   "outRange2:(NSRange) out_range2  outRange3:(NSRange) out_range3  "
-                   "outRange4:(NSRange) out_range4  outRange5:(NSRange) out_range5 "
-                   "outRange6:(NSRange) out_range6  outRange7:(NSRange) out_range7  "
-                   "outRange8:(NSRange) out_range8  outRange9:(NSRange) out_range9;"));
+  EXPECT_EQ(
+      "- (NSUInteger)indexOfObject:(id)anObject inRange:(NSRange)range\n    "
+      "outRange:(NSRange)out_range outRange1:(NSRange)out_range1\n    "
+      "outRange2:(NSRange)out_range2 outRange3:(NSRange)out_range3\n    "
+      "outRange4:(NSRange)out_range4 outRange5:(NSRange)out_range5\n    "
+      "outRange6:(NSRange)out_range6 outRange7:(NSRange)out_range7\n    "
+      "outRange8:(NSRange)out_range8 outRange9:(NSRange)out_range9;",
+      format(
+          "- (NSUInteger)indexOfObject:(id)anObject inRange:(NSRange)range "
+          "outRange:(NSRange) out_range outRange1:(NSRange) out_range1 "
+          "outRange2:(NSRange) out_range2  outRange3:(NSRange) out_range3  "
+          "outRange4:(NSRange) out_range4  outRange5:(NSRange) out_range5 "
+          "outRange6:(NSRange) out_range6  outRange7:(NSRange) out_range7  "
+          "outRange8:(NSRange) out_range8  outRange9:(NSRange) out_range9;"));
 }
 
-}  // end namespace tooling
-}  // end namespace clang
+TEST_F(FormatTest, ObjCAt) {
+  verifyFormat("@autoreleasepool");
+  verifyFormat("@catch");
+  verifyFormat("@class");
+  verifyFormat("@compatibility_alias");
+  verifyFormat("@defs");
+  verifyFormat("@dynamic");
+  verifyFormat("@encode");
+  verifyFormat("@end");
+  verifyFormat("@finally");
+  verifyFormat("@implementation");
+  verifyFormat("@import");
+  verifyFormat("@interface");
+  verifyFormat("@optional");
+  verifyFormat("@package");
+  verifyFormat("@private");
+  verifyFormat("@property");
+  verifyFormat("@protected");
+  verifyFormat("@protocol");
+  verifyFormat("@public");
+  verifyFormat("@required");
+  verifyFormat("@selector");
+  verifyFormat("@synchronized");
+  verifyFormat("@synthesize");
+  verifyFormat("@throw");
+  verifyFormat("@try");
+
+  EXPECT_EQ("@interface", format("@ interface"));
+
+  // The precise formatting of this doesn't matter, nobody writes code like
+  // this.
+  verifyFormat("@ /*foo*/ interface");
+}
+
+} // end namespace tooling
+} // end namespace clang

@@ -498,9 +498,22 @@ void PlistDiagnostics::FlushDiagnosticsImpl(
           FullSourceLoc Loc(SM->getExpansionLoc(D->getLocation().asLocation()),
                             *SM);
           FullSourceLoc FunLoc(SM->getExpansionLoc(Body->getLocStart()), *SM);
-          o << "  <key>issue_hash</key><integer>"
-              << Loc.getExpansionLineNumber() - FunLoc.getExpansionLineNumber()
-              << "</integer>\n";
+          o << "  <key>issue_hash</key><string>"
+            << Loc.getExpansionLineNumber() - FunLoc.getExpansionLineNumber();
+          
+          // Augment the hash with the bug uniqueing location. For example, 
+          // this ensures that two leaks reported on the same line will have 
+          // different issue_hashes.
+          PathDiagnosticLocation UPDLoc = D->getUniqueingLoc();
+          if (UPDLoc.isValid()) {
+            FullSourceLoc UL(SM->getExpansionLoc(UPDLoc.asLocation()),
+                             *SM);
+            FullSourceLoc UFunL(SM->getExpansionLoc(
+              D->getUniqueingDecl()->getBody()->getLocStart()), *SM);
+            o << "_" 
+              << UL.getExpansionLineNumber() - UFunL.getExpansionLineNumber();
+          }
+          o << "</string>\n";
         }
       }
     }
