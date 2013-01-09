@@ -10578,7 +10578,17 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
     if (old.isInvalid()) old = Loc;
   }
 
-  Func->setUsed(true);
+  // Normally the must current decl is marked used while processing the use and
+  // any subsequent decls are marked used by decl merging. This fails with
+  // template instantiation since marking can happen at the end of the file
+  // and, because of the two phase lookup, this function is called with at
+  // decl in the middle of a decl chain. We loop to maintain the invariant
+  // that once a decl is used, all decls after it are also used.
+  for (FunctionDecl *F = Func->getMostRecentDecl();; F = F->getPreviousDecl()) {
+    F->setUsed(true);
+    if (F == Func)
+      break;
+  }
 }
 
 static void
@@ -10832,7 +10842,22 @@ bool Sema::tryCaptureVariable(VarDecl *Var, SourceLocation Loc,
       }
       return true;
     }
-
+    // Prohibit structs with flexible array members too.
+    // We cannot capture what is in the tail end of the struct.
+    if (const RecordType *VTTy = Var->getType()->getAs<RecordType>()) {
+      if (VTTy->getDecl()->hasFlexibleArrayMember()) {
+        if (BuildAndDiagnose) {
+          if (IsBlock)
+            Diag(Loc, diag::err_ref_flexarray_type);
+          else
+            Diag(Loc, diag::err_lambda_capture_flexarray_type)
+              << Var->getDeclName();
+          Diag(Var->getLocation(), diag::note_previous_decl)
+            << Var->getDeclName();
+        }
+        return true;
+      }
+    }
     // Lambdas are not allowed to capture __block variables; they don't
     // support the expected semantics.
     if (IsLambda && HasBlocksAttr) {

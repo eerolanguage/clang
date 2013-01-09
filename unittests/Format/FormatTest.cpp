@@ -537,8 +537,8 @@ TEST_F(FormatTest, LayoutRemainingTokens) {
 }
 
 TEST_F(FormatTest, LayoutSingleUnwrappedLineInMacro) {
-  EXPECT_EQ("#define A \\\n  b;",
-            format("#define A b;", 10, 2, getLLVMStyleWithColumns(11)));
+  EXPECT_EQ("# define A\\\n  b;",
+            format("# define A b;", 11, 2, getLLVMStyleWithColumns(11)));
 }
 
 TEST_F(FormatTest, MacroDefinitionInsideStatement) {
@@ -551,6 +551,15 @@ TEST_F(FormatTest, HashInMacroDefinition) {
                "  {       \\\n"
                "    f(#c);\\\n"
                "  }", getLLVMStyleWithColumns(11));
+
+  verifyFormat("#define A(X)         \\\n"
+               "  void function##X()", getLLVMStyleWithColumns(22));
+
+  verifyFormat("#define A(a, b, c)   \\\n"
+               "  void a##b##c()", getLLVMStyleWithColumns(22));
+
+  verifyFormat("#define A            \\\n"
+               "  void # ## #", getLLVMStyleWithColumns(22));
 }
 
 TEST_F(FormatTest, IndentPreprocessorDirectivesAtZero) {
@@ -949,7 +958,6 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
 
   verifyFormat("InvalidRegions[*R] = 0;");
 
-  // FIXME: Is this desired for LLVM? Fix if not.
   verifyFormat("A<int *> a;");
   verifyFormat("A<int **> a;");
   verifyFormat("A<int *, int *> a;");
@@ -957,6 +965,10 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyFormat("Type *A = static_cast<Type *>(P);");
   verifyFormat("Type *A = (Type *) P;");
   verifyFormat("Type *A = (vector<Type *, int *>) P;");
+
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaaaaaa, *aaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
 
   verifyGoogleFormat("int main(int argc, char** argv) {\n}");
   verifyGoogleFormat("A<int*> a;");
@@ -1062,6 +1074,10 @@ TEST_F(FormatTest, IncorrectCodeErrorDetection) {
 
 }
 
+//===----------------------------------------------------------------------===//
+// Objective-C tests.
+//===----------------------------------------------------------------------===//
+
 TEST_F(FormatTest, FormatForObjectiveCMethodDecls) {
   verifyFormat("- (void)sendAction:(SEL)aSelector to:(BOOL)anObject;");
   EXPECT_EQ("- (NSUInteger)indexOfObject:(id)anObject;",
@@ -1124,11 +1140,45 @@ TEST_F(FormatTest, ObjCAt) {
   verifyFormat("@throw");
   verifyFormat("@try");
 
+  // FIXME: Make the uncommented lines below pass.
+  verifyFormat("@\"String\"");
+  verifyFormat("@1");
+  //verifyFormat("@+4.8");
+  //verifyFormat("@-4");
+  verifyFormat("@1LL");
+  verifyFormat("@.5");
+  verifyFormat("@'c'");
+  verifyFormat("@true");
+  verifyFormat("NSNumber *smallestInt = @(-INT_MAX - 1);");
+  verifyFormat("@[");
+  verifyFormat("@{");
+
+
   EXPECT_EQ("@interface", format("@ interface"));
 
   // The precise formatting of this doesn't matter, nobody writes code like
   // this.
   verifyFormat("@ /*foo*/ interface");
+}
+
+TEST_F(FormatTest, ObjCSnippets) {
+  // FIXME: Make the uncommented lines below pass.
+  verifyFormat("@autoreleasepool {\n"
+               "  foo();\n"
+               "}");
+  verifyFormat("@class Foo, Bar;");
+  verifyFormat("@compatibility_alias AliasName ExistingClass;");
+  verifyFormat("@dynamic textColor;");
+  //verifyFormat("char *buf1 = @encode(int **);");
+  verifyFormat("Protocol *proto = @protocol(p1);");
+  //verifyFormat("SEL s = @selector(foo:);");
+  verifyFormat("@synchronized(self) {\n"
+               "  f();\n"
+               "}");
+  verifyFormat("@synthesize dropArrowPosition = dropArrowPosition_;");
+
+  // FIXME: "getter=bar" should not be surround by spaces in @property.
+  verifyFormat("@property(assign, nonatomic) CGFloat hoverAlpha;");
 }
 
 } // end namespace tooling

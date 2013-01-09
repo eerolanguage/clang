@@ -2032,7 +2032,7 @@ static bool checkAvailabilityAttr(Sema &S, SourceRange Range,
   return false;
 }
 
-AvailabilityAttr *Sema::mergeAvailabilityAttr(Decl *D, SourceRange Range,
+AvailabilityAttr *Sema::mergeAvailabilityAttr(NamedDecl *D, SourceRange Range,
                                               IdentifierInfo *Platform,
                                               VersionTuple Introduced,
                                               VersionTuple Deprecated,
@@ -2043,6 +2043,7 @@ AvailabilityAttr *Sema::mergeAvailabilityAttr(Decl *D, SourceRange Range,
   VersionTuple MergedDeprecated = Deprecated;
   VersionTuple MergedObsoleted = Obsoleted;
   bool FoundAny = false;
+  bool DroppedAny = false;
 
   if (D->hasAttrs()) {
     AttrVec &Attrs = D->getAttrs();
@@ -2077,6 +2078,7 @@ AvailabilityAttr *Sema::mergeAvailabilityAttr(Decl *D, SourceRange Range,
         Diag(OldAA->getLocation(), diag::warn_mismatched_availability);
         Diag(Range.getBegin(), diag::note_previous_attribute);
         Attrs.erase(Attrs.begin() + i);
+        DroppedAny = true;
         --e;
         continue;
       }
@@ -2096,6 +2098,7 @@ AvailabilityAttr *Sema::mergeAvailabilityAttr(Decl *D, SourceRange Range,
                                 MergedIntroduced2, MergedDeprecated2,
                                 MergedObsoleted2)) {
         Attrs.erase(Attrs.begin() + i);
+        DroppedAny = true;
         --e;
         continue;
       }
@@ -2106,6 +2109,9 @@ AvailabilityAttr *Sema::mergeAvailabilityAttr(Decl *D, SourceRange Range,
       ++i;
     }
   }
+
+  if (DroppedAny)
+    D->ClearLVCache();
 
   if (FoundAny &&
       MergedIntroduced == Introduced &&
@@ -2131,6 +2137,12 @@ static void handleAvailabilityAttr(Sema &S, Decl *D,
     S.Diag(PlatformLoc, diag::warn_availability_unknown_platform)
       << Platform;
 
+  NamedDecl *ND = dyn_cast<NamedDecl>(D);
+  if (!ND) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
+    return;
+  }
+
   AvailabilityChange Introduced = Attr.getAvailabilityIntroduced();
   AvailabilityChange Deprecated = Attr.getAvailabilityDeprecated();
   AvailabilityChange Obsoleted = Attr.getAvailabilityObsoleted();
@@ -2141,7 +2153,7 @@ static void handleAvailabilityAttr(Sema &S, Decl *D,
   if (SE)
     Str = SE->getString();
 
-  AvailabilityAttr *NewAttr = S.mergeAvailabilityAttr(D, Attr.getRange(),
+  AvailabilityAttr *NewAttr = S.mergeAvailabilityAttr(ND, Attr.getRange(),
                                                       Platform,
                                                       Introduced.Version,
                                                       Deprecated.Version,
@@ -2149,7 +2161,6 @@ static void handleAvailabilityAttr(Sema &S, Decl *D,
                                                       IsUnavailable, Str);
   if (NewAttr) {
     D->addAttr(NewAttr);
-    NamedDecl *ND = cast<NamedDecl>(D);
     ND->ClearLVCache();
   }
 }
