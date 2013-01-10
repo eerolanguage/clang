@@ -116,6 +116,7 @@ FormatStyle getGoogleStyle() {
 struct OptimizationParameters {
   unsigned PenaltyIndentLevel;
   unsigned PenaltyLevelDecrease;
+  unsigned PenaltyExcessCharacter;
 };
 
 class UnwrappedLineFormatter {
@@ -131,6 +132,7 @@ public:
         Replaces(Replaces), StructuralError(StructuralError) {
     Parameters.PenaltyIndentLevel = 15;
     Parameters.PenaltyLevelDecrease = 30;
+    Parameters.PenaltyExcessCharacter = 1000000;
   }
 
   /// \brief Formats an \c UnwrappedLine.
@@ -269,30 +271,33 @@ private:
   /// If \p DryRun is \c false, also creates and stores the required
   /// \c Replacement.
   void addTokenToState(bool Newline, bool DryRun, IndentState &State) {
-    const FormatToken &Current = State.NextToken->FormatTok;
-    const FormatToken &Previous = State.NextToken->Parent->FormatTok;
+    const AnnotatedToken &Current = *State.NextToken;
+    const AnnotatedToken &Previous = *State.NextToken->Parent;
+    assert(State.Indent.size());
     unsigned ParenLevel = State.Indent.size() - 1;
 
     if (Newline) {
       unsigned WhitespaceStartColumn = State.Column;
-      if (Previous.Tok.is(tok::l_brace)) {
+      if (Previous.is(tok::l_brace)) {
         // FIXME: This does not work with nested static initializers.
         // Implement a better handling for static initializers and similar
         // constructs.
         State.Column = Line.Level * 2 + 2;
-      } else if (Current.Tok.is(tok::string_literal) &&
-                 Previous.Tok.is(tok::string_literal)) {
-        State.Column = State.Column - Previous.TokenLength;
-      } else if (Current.Tok.is(tok::lessless) &&
+      } else if (Current.is(tok::string_literal) &&
+                 Previous.is(tok::string_literal)) {
+        State.Column = State.Column - Previous.FormatTok.TokenLength;
+      } else if (Current.is(tok::lessless) &&
                  State.FirstLessLess[ParenLevel] != 0) {
         State.Column = State.FirstLessLess[ParenLevel];
       } else if (ParenLevel != 0 &&
-                 (Previous.Tok.is(tok::equal) || Current.Tok.is(tok::arrow) ||
-                  Current.Tok.is(tok::period))) {
-        // Indent and extra 4 spaces after '=' as it continues an expression.
-        // Don't do that on the top level, as we already indent 4 there.
+                 (Previous.is(tok::equal) || Current.is(tok::arrow) ||
+                  Current.is(tok::period) || Previous.is(tok::question) ||
+                  Previous.Type == TT_ConditionalExpr)) {
+        // Indent and extra 4 spaces after if we know the current expression is
+        // continued.  Don't do that on the top level, as we already indent 4
+        // there.
         State.Column = State.Indent[ParenLevel] + 4;
-      } else if (RootToken.is(tok::kw_for) && Previous.Tok.is(tok::comma)) {
+      } else if (RootToken.is(tok::kw_for) && Previous.is(tok::comma)) {
         State.Column = State.ForLoopVariablePos;
       } else if (State.NextToken->Parent->ClosesTemplateDeclaration) {
         State.Column = State.Indent[ParenLevel] - 4;
@@ -303,23 +308,24 @@ private:
       State.StartOfLineLevel = ParenLevel + 1;
 
       if (RootToken.is(tok::kw_for))
-        State.LineContainsContinuedForLoopSection =
-            Previous.Tok.isNot(tok::semi);
+        State.LineContainsContinuedForLoopSection = Previous.isNot(tok::semi);
 
       if (!DryRun) {
         if (!Line.InPPDirective)
-          replaceWhitespace(Current, 1, State.Column);
+          replaceWhitespace(Current.FormatTok, 1, State.Column);
         else
-          replacePPWhitespace(Current, 1, State.Column, WhitespaceStartColumn);
+          replacePPWhitespace(Current.FormatTok, 1, State.Column,
+                              WhitespaceStartColumn);
       }
 
-      State.LastSpace[ParenLevel] = State.Indent[ParenLevel];
-      if (Current.Tok.is(tok::colon) && CurrentLineType != LT_ObjCMethodDecl &&
+      State.LastSpace[ParenLevel] = State.Column;
+      if (Current.is(tok::colon) && CurrentLineType != LT_ObjCMethodDecl &&
           State.NextToken->Type != TT_ConditionalExpr)
         State.Indent[ParenLevel] += 2;
     } else {
-      if (Current.Tok.is(tok::equal) && RootToken.is(tok::kw_for))
-        State.ForLoopVariablePos = State.Column - Previous.TokenLength;
+      if (Current.is(tok::equal) && RootToken.is(tok::kw_for))
+        State.ForLoopVariablePos = State.Column -
+                                   Previous.FormatTok.TokenLength;
 
       unsigned Spaces = State.NextToken->SpaceRequiredBefore ? 1 : 0;
       if (State.NextToken->Type == TT_LineComment)
@@ -328,11 +334,13 @@ private:
       if (!DryRun)
         replaceWhitespace(Current, 0, Spaces);
 
-      if (RootToken.isNot(tok::kw_for) &&
+      // FIXME: Do we need to do this for assignments nested in other
+      // expressions?
+      if (RootToken.isNot(tok::kw_for) && ParenLevel == 0 &&
           (getPrecedence(Previous) == prec::Assignment ||
-           Previous.Tok.is(tok::kw_return)))
+           Previous.is(tok::kw_return)))
         State.Indent[ParenLevel] = State.Column + Spaces;
-      if (Previous.Tok.is(tok::l_paren) ||
+      if (Previous.is(tok::l_paren) ||
           State.NextToken->Parent->Type == TT_TemplateOpener)
         State.Indent[ParenLevel] = State.Column;
 
@@ -350,6 +358,7 @@ private:
   /// accordingly.
   void moveStateToNextToken(IndentState &State) {
     const AnnotatedToken &Current = *State.NextToken;
+    assert(State.Indent.size());
     unsigned ParenLevel = State.Indent.size() - 1;
 
     if (Current.is(tok::lessless) && State.FirstLessLess[ParenLevel] == 0)
@@ -398,6 +407,8 @@ private:
     if (Left.is(tok::l_paren))
       return 20;
 
+    if (Left.is(tok::question) || Left.Type == TT_ConditionalExpr)
+      return prec::Assignment;
     prec::Level Level = getPrecedence(Left);
 
     // Breaking after an assignment leads to a bad result as the two sides of
@@ -412,6 +423,10 @@ private:
       return 150;
 
     return 3;
+  }
+
+  unsigned getColumnLimit() {
+    return Style.ColumnLimit - (Line.InPPDirective ? 1 : 0);
   }
 
   /// \brief Calculate the number of lines needed to format the remaining part
@@ -449,9 +464,11 @@ private:
 
     addTokenToState(NewLine, true, State);
 
-    // Exceeding column limit is bad.
-    if (State.Column > Style.ColumnLimit - (Line.InPPDirective ? 1 : 0))
-      return UINT_MAX;
+    // Exceeding column limit is bad, assign penalty.
+    if (State.Column > getColumnLimit()) {
+      unsigned ExcessCharacters = State.Column - getColumnLimit();
+      CurrentPenalty += Parameters.PenaltyExcessCharacter * ExcessCharacters;
+    }
 
     if (StopAt <= CurrentPenalty)
       return UINT_MAX;
@@ -484,10 +501,11 @@ private:
 
   /// \brief Replaces the whitespace in front of \p Tok. Only call once for
   /// each \c FormatToken.
-  void replaceWhitespace(const FormatToken &Tok, unsigned NewLines,
+  void replaceWhitespace(const AnnotatedToken &Tok, unsigned NewLines,
                          unsigned Spaces) {
     Replaces.insert(tooling::Replacement(
-        SourceMgr, Tok.WhiteSpaceStart, Tok.WhiteSpaceLength,
+        SourceMgr, Tok.FormatTok.WhiteSpaceStart,
+        Tok.FormatTok.WhiteSpaceLength,
         std::string(NewLines, '\n') + std::string(Spaces, ' ')));
   }
 
@@ -496,7 +514,7 @@ private:
   ///
   /// This function and \c replaceWhitespace have the same behavior if
   /// \c Newlines == 0.
-  void replacePPWhitespace(const FormatToken &Tok, unsigned NewLines,
+  void replacePPWhitespace(const AnnotatedToken &Tok, unsigned NewLines,
                            unsigned Spaces, unsigned WhitespaceStartColumn) {
     std::string NewLineText;
     if (NewLines > 0) {
@@ -508,9 +526,10 @@ private:
         Offset = 0;
       }
     }
-    Replaces.insert(tooling::Replacement(SourceMgr, Tok.WhiteSpaceStart,
-                                         Tok.WhiteSpaceLength, NewLineText +
-                                         std::string(Spaces, ' ')));
+    Replaces.insert(
+        tooling::Replacement(SourceMgr, Tok.FormatTok.WhiteSpaceStart,
+                             Tok.FormatTok.WhiteSpaceLength,
+                             NewLineText + std::string(Spaces, ' ')));
   }
 
   /// \brief Add a new line and the required indent before the first Token
@@ -786,18 +805,17 @@ public:
   void calculateExtraInformation(AnnotatedToken &Current) {
     Current.SpaceRequiredBefore = spaceRequiredBefore(Current);
 
-    if (Current.Type == TT_CtorInitializerColon || Current.Parent->Type ==
-        TT_LineComment || (Current.is(tok::string_literal) &&
-                           Current.Parent->is(tok::string_literal))) {
-      Current.MustBreakBefore = true;
-    } else if (Current.is(tok::at) && Current.Parent->Parent->is(tok::at)) {
-      // Don't put two objc's '@' on the same line. This could happen,
-      // as in, @optional @property ...
+    if (Current.FormatTok.MustBreakBefore) {
       Current.MustBreakBefore = true;
     } else {
-      Current.MustBreakBefore = false;
+      if (Current.Type == TT_CtorInitializerColon || Current.Parent->Type ==
+          TT_LineComment || (Current.is(tok::string_literal) &&
+                             Current.Parent->is(tok::string_literal))) {
+        Current.MustBreakBefore = true;
+      } else {
+        Current.MustBreakBefore = false;
+      }
     }
-
     Current.CanBreakBefore = Current.MustBreakBefore || canBreakBefore(Current);
 
     if (!Current.Children.empty())
@@ -839,8 +857,9 @@ private:
     if (Current.Type == TT_Unknown) {
       if (Current.is(tok::star) || Current.is(tok::amp)) {
         Current.Type = determineStarAmpUsage(Current, IsRHS);
-      } else if (Current.is(tok::minus) || Current.is(tok::plus)) {
-        Current.Type = determinePlusMinusUsage(Current);
+      } else if (Current.is(tok::minus) || Current.is(tok::plus) ||
+                 Current.is(tok::caret)) {
+        Current.Type = determinePlusMinusCaretUsage(Current);
       } else if (Current.is(tok::minusminus) || Current.is(tok::plusplus)) {
         Current.Type = determineIncrementUsage(Current);
       } else if (Current.is(tok::exclaim)) {
@@ -898,7 +917,7 @@ private:
     return TT_PointerOrReference;
   }
 
-  TokenType determinePlusMinusUsage(const AnnotatedToken &Tok) {
+  TokenType determinePlusMinusCaretUsage(const AnnotatedToken &Tok) {
     // At the start of the line, +/- specific ObjectiveC method declarations.
     if (Tok.Parent == NULL)
       return TT_ObjCMethodSpecifier;
@@ -1054,14 +1073,17 @@ private:
     if (Left.is(tok::equal) && CurrentLineType == LT_VirtualFunctionDecl)
       return false;
 
+    if (Right.is(tok::comment))
+      return !Right.Children.empty();
     if (Right.is(tok::r_paren) || Right.is(tok::l_brace) ||
-        Right.is(tok::comment) || Right.is(tok::greater))
+        Right.is(tok::greater))
       return false;
     return (isBinaryOperator(Left) && Left.isNot(tok::lessless)) ||
            Left.is(tok::comma) || Right.is(tok::lessless) ||
            Right.is(tok::arrow) || Right.is(tok::period) ||
            Right.is(tok::colon) || Left.is(tok::semi) ||
-           Left.is(tok::l_brace) ||
+           Left.is(tok::l_brace) || Left.is(tok::question) ||
+           Left.Type == TT_ConditionalExpr ||
            (Left.is(tok::l_paren) && !Right.is(tok::r_paren));
   }
 

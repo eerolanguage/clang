@@ -236,10 +236,6 @@ public:
 
   // Parsing methods.
 
-  /// ParseTranslationUnit - All in one method that initializes parses, and
-  /// shuts down the parser.
-  void ParseTranslationUnit();
-
   /// Initialize - Warm up the parser.
   ///
   void Initialize();

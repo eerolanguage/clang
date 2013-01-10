@@ -34,7 +34,7 @@ namespace format {
 struct FormatToken {
   FormatToken()
       : NewlinesBefore(0), HasUnescapedNewline(false), WhiteSpaceLength(0),
-        TokenLength(0), IsFirst(false) {
+        TokenLength(0), IsFirst(false), MustBreakBefore(false) {
   }
 
   /// \brief The \c Token.
@@ -67,6 +67,12 @@ struct FormatToken {
 
   /// \brief Indicates that this is the first token.
   bool IsFirst;
+
+  /// \brief Whether there must be a line break before this token.
+  ///
+  /// This happens for example when a preprocessor directive ended directly
+  /// before the token.
+  bool MustBreakBefore;
 
   // FIXME: We currently assume that there is exactly one token in this vector
   // except for the very last token that does not have any children.
@@ -136,6 +142,10 @@ private:
   void parseAccessSpecifier();
   void parseEnum();
   void parseStructOrClass();
+  void parseObjCProtocolList();
+  void parseObjCUntilAtEnd();
+  void parseObjCInterfaceOrImplementation();
+  void parseObjCProtocol();
   void addUnwrappedLine();
   bool eof() const;
   void nextToken();
@@ -144,10 +154,11 @@ private:
   // FIXME: We are constantly running into bugs where Line.Level is incorrectly
   // subtracted from beyond 0. Introduce a method to subtract from Line.Level
   // and use that everywhere in the Parser.
-  UnwrappedLine Line;
+  llvm::OwningPtr<UnwrappedLine> Line;
   bool RootTokenInitialized;
   FormatToken *LastInCurrentLine;
   FormatToken FormatTok;
+  bool MustBreakBeforeNextToken;
 
   const FormatStyle &Style;
   FormatTokenSource *Tokens;

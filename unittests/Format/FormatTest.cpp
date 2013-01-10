@@ -46,17 +46,24 @@ protected:
   std::string messUp(llvm::StringRef Code) {
     std::string MessedUp(Code.str());
     bool InComment = false;
+    bool InPreprocessorDirective = false;
     bool JustReplacedNewline = false;
     for (unsigned i = 0, e = MessedUp.size() - 1; i != e; ++i) {
       if (MessedUp[i] == '/' && MessedUp[i + 1] == '/') {
         if (JustReplacedNewline)
           MessedUp[i - 1] = '\n';
         InComment = true;
+      } else if (MessedUp[i] == '#' && JustReplacedNewline) {
+        MessedUp[i - 1] = '\n';
+        InPreprocessorDirective = true;
       } else if (MessedUp[i] == '\\' && MessedUp[i + 1] == '\n') {
         MessedUp[i] = ' ';
+        MessedUp[i + 1] = ' ';
       } else if (MessedUp[i] == '\n') {
         if (InComment) {
           InComment = false;
+        } else if (InPreprocessorDirective) {
+          InPreprocessorDirective = false;
         } else {
           JustReplacedNewline = true;
           MessedUp[i] = ' ';
@@ -83,6 +90,14 @@ protected:
     verifyFormat(Code, getGoogleStyle());
   }
 };
+
+TEST_F(FormatTest, MessUp) {
+  EXPECT_EQ("1 2 3", messUp("1 2 3"));
+  EXPECT_EQ("1 2 3\n", messUp("1\n2\n3\n"));
+  EXPECT_EQ("a\n//b\nc", messUp("a\n//b\nc"));
+  EXPECT_EQ("a\n#b\nc", messUp("a\n#b\nc"));
+  EXPECT_EQ("a\n#b  c  d\ne", messUp("a\n#b\\\nc\\\nd\ne"));
+}
 
 //===----------------------------------------------------------------------===//
 // Basic function tests.
@@ -290,6 +305,9 @@ TEST_F(FormatTest, UnderstandsSingleLineComments) {
   verifyFormat(
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n"
       "    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; // Trailing comment");
+  verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n"
+               "    // Comment inside a statement.\n"
+               "    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;");
 
   EXPECT_EQ("int i; // single line trailing comment",
             format("int i;\\\n// single line trailing comment"));
@@ -425,34 +443,6 @@ TEST_F(FormatTest, FormatObjCTryCatch) {
                "}");
 }
 
-TEST_F(FormatTest, FormatObjCInterface) {
-  verifyFormat("@interface Foo : NSObject<NSSomeDelegate> {\n"
-               "@public\n"
-               "  int field1;\n"
-               "@protected\n"
-               "  int field2;\n"
-               "@private\n"
-               "  int field3;\n"
-               "@package\n"
-               "  int field4;\n"
-               "}\n"
-               "+ (id)init;\n"
-               "@end");
-
-  verifyGoogleFormat("@interface Foo : NSObject<NSSomeDelegate> {\n"
-                     " @public\n"
-                     "  int field1;\n"
-                     " @protected\n"
-                     "  int field2;\n"
-                     " @private\n"
-                     "  int field3;\n"
-                     " @package\n"
-                     "  int field4;\n"
-                     "}\n"
-                     "+ (id)init;\n"
-                     "@end");
-}
-
 TEST_F(FormatTest, StaticInitializers) {
   verifyFormat("static SomeClass SC = { 1, 'a' };");
 
@@ -542,7 +532,9 @@ TEST_F(FormatTest, LayoutSingleUnwrappedLineInMacro) {
 }
 
 TEST_F(FormatTest, MacroDefinitionInsideStatement) {
-  EXPECT_EQ("int x,\n#define A\ny;", format("int x,\n#define A\ny;"));
+  EXPECT_EQ("int x,\n"
+            "#define A\n"
+            "    y;", format("int x,\n#define A\ny;"));
 }
 
 TEST_F(FormatTest, HashInMacroDefinition) {
@@ -604,6 +596,23 @@ TEST_F(FormatTest, MixingPreprocessorDirectivesAndNormalCode) {
              "  \n"
              "   AlooooooooooooooooooooooooooooooooooooooongCaaaaaaaaaal(\n"
              "  aLooooooooooooooooooooooonPaaaaaaaaaaaaaaaaaaaaarmmmm);\n"));
+}
+
+TEST_F(FormatTest, LayoutStatementsAroundPreprocessorDirectives) {
+  EXPECT_EQ("int\n"
+            "#define A\n"
+            "    a;",
+            format("int\n#define A\na;"));
+  verifyFormat(
+      "functionCallTo(someOtherFunction(\n"
+      "    withSomeParameters, whichInSequence,\n"
+      "    areLongerThanALine(andAnotherCall,\n"
+      "#define A                                                           \\\n"
+      "  B\n"
+      "                       withMoreParamters,\n"
+      "                       whichStronglyInfluenceTheLayout),\n"
+      "    andMoreParameters),\n"
+      "               trailing);", getLLVMStyleWithColumns(69));
 }
 
 //===----------------------------------------------------------------------===//
@@ -759,6 +768,15 @@ TEST_F(FormatTest, AlignsAfterReturn) {
       "        aaaaaaaaaaaaaaaaaaaaaaaaa);");
 }
 
+TEST_F(FormatTest, BreaksConditionalExpressions) {
+  verifyFormat(
+      "aaaa(aaaaaaaaaaaaaaaaaaaa,\n"
+      "     aaaaaaaaaaaaaaaaaaaaaaaaaa ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa :\n"
+      "         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+  verifyFormat("aaaa(aaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaaaa ?\n"
+               "         aaaaaaaaaaaaaaaaaaaaaaa : aaaaaaaaaaaaaaaaaaaaa);");
+}
+
 TEST_F(FormatTest, AlignsStringLiterals) {
   verifyFormat("loooooooooooooooooooooooooongFunction(\"short literal \"\n"
                "                                      \"short literal\");");
@@ -804,8 +822,9 @@ TEST_F(FormatTest, UnderstandsEquals) {
       "}");
 
   verifyFormat(
+      // FIXME: Does an expression like this ever make sense? If yes, fix.
       "if (int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 100000000 +\n"
-      "                                                           10000000) {\n"
+      "    10000000) {\n"
       "}");
 }
 
@@ -857,7 +876,13 @@ TEST_F(FormatTest, WrapsTemplateDeclarations) {
       "aaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaa,\n"
       "                    aaaaaaaaaaaaaaaaaaaaaaaaaa<T>::aaaaaaaaaa,\n"
       "                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
-
+  verifyFormat("template <typename T>\n"
+               "void aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "    int aaaaaaaaaaaaaaaaa);");
+  verifyFormat(
+      "template <typename T1, typename T2 = char, typename T3 = char,\n"
+      "          typename T4 = char>\n"
+      "void f();");
 }
 
 TEST_F(FormatTest, UnderstandsTemplateParameters) {
@@ -1011,6 +1036,15 @@ TEST_F(FormatTest, HandlesIncludeDirectives) {
 // Error recovery tests.
 //===----------------------------------------------------------------------===//
 
+TEST_F(FormatTest, IndentationWithinColumnLimitNotPossible) {
+  verifyFormat("int aaaaaaaa =\n"
+               "    // Overly long comment\n"
+               "    b;", getLLVMStyleWithColumns(20));
+  verifyFormat("function(\n"
+               "    ShortArgument,\n"
+               "    LoooooooooooongArgument);\n", getLLVMStyleWithColumns(20));
+}
+
 TEST_F(FormatTest, IncorrectAccessSpecifier) {
   verifyFormat("public:");
   verifyFormat("class A {\n"
@@ -1111,6 +1145,211 @@ TEST_F(FormatTest, FormatForObjectiveCMethodDecls) {
           "outRange4:(NSRange) out_range4  outRange5:(NSRange) out_range5 "
           "outRange6:(NSRange) out_range6  outRange7:(NSRange) out_range7  "
           "outRange8:(NSRange) out_range8  outRange9:(NSRange) out_range9;"));
+}
+
+TEST_F(FormatTest, FormatObjCBlocks) {
+  verifyFormat("int (^Block) (int, int);");
+  verifyFormat("int (^Block1) (int, int) = ^(int i, int j)");
+}
+
+TEST_F(FormatTest, FormatObjCInterface) {
+  // FIXME: Handle comments like in "@interface /* wait for it */ Foo", PR14875
+  // FIXME: In google style, it's "+(id) init", not "+ (id)init".
+  verifyFormat("@interface Foo : NSObject<NSSomeDelegate> {\n"
+               "@public\n"
+               "  int field1;\n"
+               "@protected\n"
+               "  int field2;\n"
+               "@private\n"
+               "  int field3;\n"
+               "@package\n"
+               "  int field4;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+
+  // FIXME: In LLVM style, there should be a space before '<' for protocols.
+  verifyGoogleFormat("@interface Foo : NSObject<NSSomeDelegate> {\n"
+                     " @public\n"
+                     "  int field1;\n"
+                     " @protected\n"
+                     "  int field2;\n"
+                     " @private\n"
+                     "  int field3;\n"
+                     " @package\n"
+                     "  int field4;\n"
+                     "}\n"
+                     "+ (id)init;\n"
+                     "@end");
+
+  verifyFormat("@interface Foo\n"
+               "+ (id)init;\n"
+               "// Look, a comment!\n"
+               "- (int)answerWith:(int)i;\n"
+               "@end");
+
+  verifyFormat("@interface Foo\n"
+               "@end\n"
+               "@interface Bar\n"
+               "@end");
+
+  verifyFormat("@interface Foo : Bar\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo : Bar<Baz, Quux>\n"
+               "+ (id)init;\n"
+               "@end");
+
+  // FIXME: there should be a space before '(' for categories.
+  verifyFormat("@interface Foo(HackStuff)\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo()\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo(HackStuff)<MyProtocol>\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo : Bar {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo : Bar<Baz, Quux> {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo(HackStuff) {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo() {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+
+  verifyFormat("@interface Foo(HackStuff)<MyProtocol> {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init;\n"
+               "@end");
+}
+
+TEST_F(FormatTest, FormatObjCImplementation) {
+  verifyFormat("@implementation Foo : NSObject {\n"
+               "@public\n"
+               "  int field1;\n"
+               "@protected\n"
+               "  int field2;\n"
+               "@private\n"
+               "  int field3;\n"
+               "@package\n"
+               "  int field4;\n"
+               "}\n"
+               "+ (id)init {\n"
+               "}\n"
+               "@end");
+
+  verifyGoogleFormat("@implementation Foo : NSObject {\n"
+                     " @public\n"
+                     "  int field1;\n"
+                     " @protected\n"
+                     "  int field2;\n"
+                     " @private\n"
+                     "  int field3;\n"
+                     " @package\n"
+                     "  int field4;\n"
+                     "}\n"
+                     "+ (id)init {\n"
+                     "}\n"
+                     "@end");
+
+  verifyFormat("@implementation Foo\n"
+               "+ (id)init {\n"
+               "  if (true)\n"
+               "    return nil;\n"
+               "}\n"
+               "// Look, a comment!\n"
+               "- (int)answerWith:(int)i {\n"
+               "  return i;\n"
+               "}\n"
+               "@end");
+
+  verifyFormat("@implementation Foo\n"
+               "@end\n"
+               "@implementation Bar\n"
+               "@end");
+
+  verifyFormat("@implementation Foo : Bar\n"
+               "+ (id)init {\n"
+               "}\n"
+               "@end");
+
+  verifyFormat("@implementation Foo {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init {\n"
+               "}\n"
+               "@end");
+
+  verifyFormat("@implementation Foo : Bar {\n"
+               "  int _i;\n"
+               "}\n"
+               "+ (id)init {\n"
+               "}\n"
+               "@end");
+
+  // FIXME: there should be a space before '(' for categories.
+  verifyFormat("@implementation Foo(HackStuff)\n"
+               "+ (id)init {\n"
+               "}\n"
+               "@end");
+}
+
+TEST_F(FormatTest, FormatObjCProtocol) {
+  verifyFormat("@protocol Foo\n"
+               "@property(weak) id delegate;\n"
+               "- (NSUInteger)numberOfThings;\n"
+               "@end");
+
+  // FIXME: In LLVM style, there should be a space before '<' for protocols.
+  verifyFormat("@protocol MyProtocol<NSObject>\n"
+               "- (NSUInteger)numberOfThings;\n"
+               "@end");
+
+  verifyFormat("@protocol Foo;\n"
+               "@protocol Bar;\n");
+
+  verifyFormat("@protocol Foo\n"
+               "@end\n"
+               "@protocol Bar\n"
+               "@end");
+
+  verifyFormat("@protocol myProtocol\n"
+               "- (void)mandatoryWithInt:(int)i;\n"
+               "@optional\n"
+               "- (void)optional;\n"
+               "@required\n"
+               "- (void)required;\n"
+               "@optional\n"
+               "@property(assign) int madProp;\n"
+               "@end\n");
 }
 
 TEST_F(FormatTest, ObjCAt) {
