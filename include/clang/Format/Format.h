@@ -55,6 +55,14 @@ struct FormatStyle {
 
   /// \brief The number of spaces to before trailing line comments.
   unsigned SpacesBeforeTrailingComments;
+
+  /// \brief Add a space in front of an Objective-C protocol list, i.e. use
+  /// Foo <Protocol> instead of Foo<Protocol>.
+  bool ObjCSpaceBeforeProtocolList;
+
+  /// \brief Add a space in front method return types, i.e. use
+  /// + (id)init instead of +(id) init
+  bool ObjCSpaceBeforeReturnType;
 };
 
 /// \brief Returns a format style complying with the LLVM coding standards:
@@ -77,6 +85,9 @@ FormatStyle getGoogleStyle();
 tooling::Replacements reformat(const FormatStyle &Style, Lexer &Lex,
                                SourceManager &SourceMgr,
                                std::vector<CharSourceRange> Ranges);
+
+/// \brief Returns the \c LangOpts that the formatter expects you to set.
+LangOptions getFormattingLangOpts();
 
 } // end namespace format
 } // end namespace clang

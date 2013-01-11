@@ -1,4 +1,10 @@
 // RUN: %clang_cc1 -analyze -analyzer-checker=core,alpha.osx.cocoa.InstanceVariableInvalidation -fobjc-default-synthesize-properties -verify %s
+extern void __assert_fail (__const char *__assertion, __const char *__file,
+    unsigned int __line, __const char *__function)
+     __attribute__ ((__noreturn__));
+
+#define assert(expr) \
+  ((expr)  ? (void)(0)  : __assert_fail (#expr, __FILE__, __LINE__, __func__))
 
 @protocol NSObject
 @end
@@ -29,10 +35,20 @@ extern void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 
 - (void) invalidate2 __attribute__((annotate("objc_instance_variable_invalidator")));
 @end
 
+@protocol Invalidation3;
+@protocol Invalidation2;
+
 @interface Invalidation2Class <Invalidation2>
 @end
 
 @interface Invalidation1Class <Invalidation1>
+@end
+
+@interface ClassWithInvalidationMethodInCategory <NSObject>
+@end
+
+@interface ClassWithInvalidationMethodInCategory ()
+- (void) invalidate __attribute__((annotate("objc_instance_variable_invalidator")));
 @end
 
 @interface SomeInvalidationImplementingObject: NSObject <Invalidation3, Invalidation2> {
@@ -101,6 +117,7 @@ extern void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 
 @implementation SomeSubclassInvalidatableObject{
   @private
   SomeInvalidationImplementingObject *Ivar5;
+  ClassWithInvalidationMethodInCategory *Ivar13;
 }
 
 @synthesize Prop7 = _propIvar;
@@ -150,6 +167,7 @@ extern void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 
  // expected-warning@-5 {{Instance variable _Ivar3 needs to be invalidated}}
  // expected-warning@-6 {{Instance variable _Ivar4 needs to be invalidated}}
  // expected-warning@-7 {{Instance variable Ivar5 needs to be invalidated or set to nil}}
+// expected-warning@-8 {{Instance variable Ivar13 needs to be invalidated or set to nil}}
 @end
 
 // Example, where the same property is inherited through 
@@ -168,10 +186,24 @@ extern void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 
 @interface Child: Parent <Invalidation2, IDEBuildable> 
 @end
 
-@implementation Parent
+@implementation Parent{
+  @private
+  Invalidation2Class *Ivar10;
+  Invalidation2Class *Ivar11;
+  Invalidation2Class *Ivar12;
+}
+
 @synthesize ObjB = _ObjB;
 - (void)invalidate{
   _ObjB = ((void*)0);
+  
+  assert(Ivar10 == 0);
+
+  if (__builtin_expect(!(Ivar11 == ((void*)0)), 0))
+    assert(0);
+
+  assert(0 == Ivar12);
+
 }
 @end
 
@@ -179,4 +211,44 @@ extern void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 
 - (void)invalidate{ 
   // no-warning
 } 
+@end
+
+@protocol Invalidation <NSObject>
+- (void)invalidate __attribute__((annotate("objc_instance_variable_invalidator")));
+@end
+
+@interface Foo : NSObject <Invalidation>
+@end
+
+@class FooBar;
+@protocol FooBar_Protocol <NSObject>
+@end
+
+@interface MissingInvalidationMethod : Foo <FooBar_Protocol>
+@property (assign) MissingInvalidationMethod *foobar15_warn; // expected-warning {{Property foobar15_warn needs to be invalidated; No invalidation method is defined in the @implementation for MissingInvalidationMethod}}
+@end
+@implementation MissingInvalidationMethod
+@end
+
+@interface MissingInvalidationMethod2 : Foo <FooBar_Protocol> {
+  Foo *Ivar1;// expected-warning {{Instance variable Ivar1 needs to be invalidated; No invalidation method is defined in the @implementation for MissingInvalidationMethod2}}
+}
+@end
+@implementation MissingInvalidationMethod2
+@end
+
+@interface MissingInvalidationMethodDecl : NSObject {
+  Foo *Ivar1;// expected-warning {{Instance variable Ivar1 needs to be invalidated; No invalidation method is declared for MissingInvalidationMethodDecl}}
+}
+@end
+@implementation MissingInvalidationMethodDecl
+@end
+
+@interface MissingInvalidationMethodDecl2 : NSObject {
+@private
+    Foo *_foo1; // expected-warning {{Instance variable _foo1 needs to be invalidated; No invalidation method is declared for MissingInvalidationMethodDecl2}} 
+}
+@property (strong) Foo *bar1; 
+@end
+@implementation MissingInvalidationMethodDecl2
 @end

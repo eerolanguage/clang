@@ -17,7 +17,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "UnwrappedLineParser.h"
+#include "clang/Basic/Diagnostic.h"
 #include "llvm/Support/raw_ostream.h"
+
+// Uncomment to get debug output from the UnwrappedLineParser.
+// Use in combination with --gtest_filter=*TestName* to limit the output to a
+// single test.
+// #define UNWRAPPED_LINE_PARSER_DEBUG_OUTPUT
 
 namespace clang {
 namespace format {
@@ -71,15 +77,52 @@ private:
   FormatToken Token;
 };
 
-UnwrappedLineParser::UnwrappedLineParser(const FormatStyle &Style,
-                                         FormatTokenSource &Tokens,
-                                         UnwrappedLineConsumer &Callback)
+class ScopedLineState {
+public:
+  ScopedLineState(UnwrappedLineParser &Parser) : Parser(Parser) {
+    PreBlockLine = Parser.Line.take();
+    Parser.Line.reset(new UnwrappedLine(*PreBlockLine));
+    assert(Parser.LastInCurrentLine == NULL ||
+           Parser.LastInCurrentLine->Children.empty());
+    PreBlockLastToken = Parser.LastInCurrentLine;
+    PreBlockRootTokenInitialized = Parser.RootTokenInitialized;
+    Parser.RootTokenInitialized = false;
+    Parser.LastInCurrentLine = NULL;
+  }
+
+  ~ScopedLineState() {
+    if (Parser.RootTokenInitialized) {
+      Parser.addUnwrappedLine();
+    }
+    assert(!Parser.RootTokenInitialized);
+    Parser.Line.reset(PreBlockLine);
+    Parser.RootTokenInitialized = PreBlockRootTokenInitialized;
+    Parser.LastInCurrentLine = PreBlockLastToken;
+    assert(Parser.LastInCurrentLine == NULL ||
+           Parser.LastInCurrentLine->Children.empty());
+    Parser.MustBreakBeforeNextToken = true;
+  }
+
+private:
+  UnwrappedLineParser &Parser;
+
+  UnwrappedLine *PreBlockLine;
+  FormatToken* PreBlockLastToken;
+  bool PreBlockRootTokenInitialized;
+};
+
+UnwrappedLineParser::UnwrappedLineParser(
+    clang::DiagnosticsEngine &Diag, const FormatStyle &Style,
+    FormatTokenSource &Tokens, UnwrappedLineConsumer &Callback)
     : Line(new UnwrappedLine), RootTokenInitialized(false),
-      LastInCurrentLine(NULL), MustBreakBeforeNextToken(false), Style(Style),
-      Tokens(&Tokens), Callback(Callback) {
+      LastInCurrentLine(NULL), MustBreakBeforeNextToken(false), Diag(Diag),
+      Style(Style), Tokens(&Tokens), Callback(Callback) {
 }
 
 bool UnwrappedLineParser::parse() {
+#ifdef UNWRAPPED_LINE_PARSER_DEBUG_OUTPUT
+  llvm::errs() << "----\n";
+#endif
   readToken();
   return parseFile();
 }
@@ -107,7 +150,9 @@ bool UnwrappedLineParser::parseLevel(bool HasOpeningBrace) {
       if (HasOpeningBrace) {
         return false;
       } else {
-        // Stray '}' is an error.
+        Diag.Report(FormatTok.Tok.getLocation(),
+                    Diag.getCustomDiagID(clang::DiagnosticsEngine::Error,
+                                         "Stray '}' found"));
         Error = true;
         nextToken();
         addUnwrappedLine();
@@ -125,15 +170,17 @@ bool UnwrappedLineParser::parseBlock(unsigned AddLevels) {
   assert(FormatTok.Tok.is(tok::l_brace) && "'{' expected");
   nextToken();
 
-  addUnwrappedLine();
+  if (!FormatTok.Tok.is(tok::r_brace)) {
+    addUnwrappedLine();
 
-  Line->Level += AddLevels;
-  parseLevel(/*HasOpeningBrace=*/true);
-  Line->Level -= AddLevels;
+    Line->Level += AddLevels;
+    parseLevel(/*HasOpeningBrace=*/true);
+    Line->Level -= AddLevels;
 
-  if (!FormatTok.Tok.is(tok::r_brace))
-    return true;
+    if (!FormatTok.Tok.is(tok::r_brace))
+      return true;
 
+  }
   nextToken();  // Munch the closing brace.
   return false;
 }
@@ -196,6 +243,7 @@ void UnwrappedLineParser::parseComments() {
 }
 
 void UnwrappedLineParser::parseStructuralElement() {
+  assert(!FormatTok.Tok.is(tok::l_brace));
   parseComments();
 
   int TokenNumber = 0;
@@ -281,6 +329,10 @@ void UnwrappedLineParser::parseStructuralElement() {
       parseParens();
       break;
     case tok::l_brace:
+      // A block outside of parentheses must be the last part of a
+      // structural element.
+      // FIXME: Figure out cases where this is not true, and add projections for
+      // them (the one we know is missing are lambdas).
       parseBlock();
       addUnwrappedLine();
       return;
@@ -293,10 +345,28 @@ void UnwrappedLineParser::parseStructuralElement() {
       break;
     case tok::equal:
       nextToken();
-      // Skip initializers as they will be formatted by a later step.
-      if (FormatTok.Tok.is(tok::l_brace))
-        nextToken();
+      if (FormatTok.Tok.is(tok::l_brace)) {
+        parseBracedList();
+      }
       break;
+    default:
+      nextToken();
+      break;
+    }
+  } while (!eof());
+}
+
+void UnwrappedLineParser::parseBracedList() {
+  nextToken();
+
+  do {
+    switch (FormatTok.Tok.getKind()) {
+    case tok::l_brace:
+      parseBracedList();
+      break;
+    case tok::r_brace:
+      nextToken();
+      return;
     default:
       nextToken();
       break;
@@ -315,6 +385,15 @@ void UnwrappedLineParser::parseParens() {
     case tok::r_paren:
       nextToken();
       return;
+    case tok::l_brace:
+      {
+        nextToken();
+        ScopedLineState LineState(*this);
+        Line->Level += 1;
+        parseLevel(/*HasOpeningBrace=*/true);
+        Line->Level -= 1;
+      }
+      break;
     default:
       nextToken();
       break;
@@ -576,6 +655,15 @@ void UnwrappedLineParser::addUnwrappedLine() {
          FormatTok.Tok.is(tok::comment)) {
     nextToken();
   }
+#ifdef UNWRAPPED_LINE_PARSER_DEBUG_OUTPUT
+  FormatToken* NextToken = &Line->RootToken;
+  llvm::errs() << "Line: ";
+  while (NextToken) {
+    llvm::errs() << NextToken->Tok.getName() << " ";
+    NextToken = NextToken->Children.empty() ? NULL : &NextToken->Children[0];
+  }
+  llvm::errs() << "\n";
+#endif
   Callback.consumeUnwrappedLine(*Line);
   RootTokenInitialized = false;
   LastInCurrentLine = NULL;
@@ -609,22 +697,8 @@ void UnwrappedLineParser::readToken() {
   while (!Line->InPPDirective && FormatTok.Tok.is(tok::hash) &&
          ((FormatTok.NewlinesBefore > 0 && FormatTok.HasUnescapedNewline) ||
           FormatTok.IsFirst)) {
-    UnwrappedLine* StoredLine = Line.take();
-    Line.reset(new UnwrappedLine(*StoredLine));
-    assert(LastInCurrentLine == NULL || LastInCurrentLine->Children.empty());
-    FormatToken *StoredLastInCurrentLine = LastInCurrentLine;
-    bool PreviousInitialized = RootTokenInitialized;
-    RootTokenInitialized = false;
-    LastInCurrentLine = NULL;
-
+    ScopedLineState BlockState(*this);
     parsePPDirective();
-
-    assert(!RootTokenInitialized);
-    Line.reset(StoredLine);
-    RootTokenInitialized = PreviousInitialized;
-    LastInCurrentLine = StoredLastInCurrentLine;
-    assert(LastInCurrentLine == NULL || LastInCurrentLine->Children.empty());
-    MustBreakBeforeNextToken = true;
   }
 }
 

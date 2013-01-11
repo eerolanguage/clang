@@ -27,6 +27,9 @@
 #include <vector>
 
 namespace clang {
+
+class DiagnosticsEngine;
+
 namespace format {
 
 /// \brief A wrapper around a \c Token storing information about the
@@ -116,7 +119,8 @@ public:
 
 class UnwrappedLineParser {
 public:
-  UnwrappedLineParser(const FormatStyle &Style, FormatTokenSource &Tokens,
+  UnwrappedLineParser(clang::DiagnosticsEngine &Diag, const FormatStyle &Style,
+                      FormatTokenSource &Tokens,
                       UnwrappedLineConsumer &Callback);
 
   /// Returns true in case of a structural error.
@@ -131,6 +135,7 @@ private:
   void parsePPUnknown();
   void parseComments();
   void parseStructuralElement();
+  void parseBracedList();
   void parseParens();
   void parseIfThenElse();
   void parseForOrWhileLoop();
@@ -160,9 +165,12 @@ private:
   FormatToken FormatTok;
   bool MustBreakBeforeNextToken;
 
+  clang::DiagnosticsEngine &Diag;
   const FormatStyle &Style;
   FormatTokenSource *Tokens;
   UnwrappedLineConsumer &Callback;
+
+  friend class ScopedLineState;
 };
 
 } // end namespace format

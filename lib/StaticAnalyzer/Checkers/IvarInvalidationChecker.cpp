@@ -30,6 +30,7 @@
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallString.h"
 
 using namespace clang;
@@ -37,9 +38,9 @@ using namespace ento;
 
 namespace {
 class IvarInvalidationChecker :
-  public Checker<check::ASTDecl<ObjCMethodDecl> > {
+  public Checker<check::ASTDecl<ObjCImplementationDecl> > {
 
-  typedef llvm::DenseSet<const ObjCMethodDecl*> MethodSet;
+  typedef llvm::SmallSetVector<const ObjCMethodDecl*, 2> MethodSet;
   typedef llvm::DenseMap<const ObjCMethodDecl*,
                          const ObjCIvarDecl*> MethToIvarMapTy;
   typedef llvm::DenseMap<const ObjCPropertyDecl*,
@@ -48,14 +49,14 @@ class IvarInvalidationChecker :
                          const ObjCPropertyDecl*> IvarToPropMapTy;
 
 
-  struct IvarInfo {
+  struct InvalidationInfo {
     /// Has the ivar been invalidated?
     bool IsInvalidated;
 
     /// The methods which can be used to invalidate the ivar.
     MethodSet InvalidationMethods;
 
-    IvarInfo() : IsInvalidated(false) {}
+    InvalidationInfo() : IsInvalidated(false) {}
     void addInvalidationMethod(const ObjCMethodDecl *MD) {
       InvalidationMethods.insert(MD);
     }
@@ -86,7 +87,7 @@ class IvarInvalidationChecker :
     }
   };
 
-  typedef llvm::DenseMap<const ObjCIvarDecl*, IvarInfo> IvarSet;
+  typedef llvm::DenseMap<const ObjCIvarDecl*, InvalidationInfo> IvarSet;
 
   /// Statement visitor, which walks the method body and flags the ivars
   /// referenced in it (either directly or via property).
@@ -170,11 +171,12 @@ class IvarInvalidationChecker :
   /// Check if the any of the methods inside the interface are annotated with
   /// the invalidation annotation, update the IvarInfo accordingly.
   static void containsInvalidationMethod(const ObjCContainerDecl *D,
-                                         IvarInfo &Out);
+                                         InvalidationInfo &Out);
 
   /// Check if ivar should be tracked and add to TrackedIvars if positive.
   /// Returns true if ivar should be tracked.
-  static bool trackIvar(const ObjCIvarDecl *Iv, IvarSet &TrackedIvars);
+  static bool trackIvar(const ObjCIvarDecl *Iv, IvarSet &TrackedIvars,
+                        const ObjCIvarDecl **FirstIvarDecl);
 
   /// Given the property declaration, and the list of tracked ivars, finds
   /// the ivar backing the property when possible. Returns '0' when no such
@@ -182,13 +184,16 @@ class IvarInvalidationChecker :
   static const ObjCIvarDecl *findPropertyBackingIvar(
       const ObjCPropertyDecl *Prop,
       const ObjCInterfaceDecl *InterfaceD,
-      IvarSet &TrackedIvars);
+      IvarSet &TrackedIvars,
+      const ObjCIvarDecl **FirstIvarDecl);
 
+  /// Print ivar name or the property if the given ivar backs a property.
+  static void printIvar(llvm::raw_svector_ostream &os,
+                        const ObjCIvarDecl *IvarDecl,
+                        IvarToPropMapTy &IvarToPopertyMap);
 public:
-  void checkASTDecl(const ObjCMethodDecl *D, AnalysisManager& Mgr,
+  void checkASTDecl(const ObjCImplementationDecl *D, AnalysisManager& Mgr,
                     BugReporter &BR) const;
-
-  // TODO: We are currently ignoring the ivars coming from class extensions.
 };
 
 static bool isInvalidationMethod(const ObjCMethodDecl *M) {
@@ -203,12 +208,13 @@ static bool isInvalidationMethod(const ObjCMethodDecl *M) {
 }
 
 void IvarInvalidationChecker::containsInvalidationMethod(
-    const ObjCContainerDecl *D, IvarInfo &OutInfo) {
-
-  // TODO: Cache the results.
+    const ObjCContainerDecl *D, InvalidationInfo &OutInfo) {
 
   if (!D)
     return;
+
+  assert(!isa<ObjCImplementationDecl>(D));
+  // TODO: Cache the results.
 
   // Check all methods.
   for (ObjCContainerDecl::method_iterator
@@ -221,15 +227,23 @@ void IvarInvalidationChecker::containsInvalidationMethod(
   }
 
   // If interface, check all parent protocols and super.
-  // TODO: Visit all categories in case the invalidation method is declared in
-  // a category.
-  if (const ObjCInterfaceDecl *InterfaceD = dyn_cast<ObjCInterfaceDecl>(D)) {
+  if (const ObjCInterfaceDecl *InterfD = dyn_cast<ObjCInterfaceDecl>(D)) {
+
+    // Visit all protocols.
     for (ObjCInterfaceDecl::protocol_iterator
-        I = InterfaceD->protocol_begin(),
-        E = InterfaceD->protocol_end(); I != E; ++I) {
-      containsInvalidationMethod(*I, OutInfo);
+        I = InterfD->protocol_begin(),
+        E = InterfD->protocol_end(); I != E; ++I) {
+      containsInvalidationMethod((*I)->getDefinition(), OutInfo);
     }
-    containsInvalidationMethod(InterfaceD->getSuperClass(), OutInfo);
+
+    // Visit all categories in case the invalidation method is declared in
+    // a category.
+    for (const ObjCCategoryDecl *I = InterfD->getFirstClassExtension(); I;
+        I = I->getNextClassExtension()) {
+      containsInvalidationMethod(I, OutInfo);
+    }
+
+    containsInvalidationMethod(InterfD->getSuperClass(), OutInfo);
     return;
   }
 
@@ -238,26 +252,30 @@ void IvarInvalidationChecker::containsInvalidationMethod(
     for (ObjCInterfaceDecl::protocol_iterator
         I = ProtD->protocol_begin(),
         E = ProtD->protocol_end(); I != E; ++I) {
-      containsInvalidationMethod(*I, OutInfo);
+      containsInvalidationMethod((*I)->getDefinition(), OutInfo);
     }
     return;
   }
 
-  llvm_unreachable("One of the casts above should have succeeded.");
+  return;
 }
 
 bool IvarInvalidationChecker::trackIvar(const ObjCIvarDecl *Iv,
-                                        IvarSet &TrackedIvars) {
+                                        IvarSet &TrackedIvars,
+                                        const ObjCIvarDecl **FirstIvarDecl) {
   QualType IvQTy = Iv->getType();
   const ObjCObjectPointerType *IvTy = IvQTy->getAs<ObjCObjectPointerType>();
   if (!IvTy)
     return false;
   const ObjCInterfaceDecl *IvInterf = IvTy->getInterfaceDecl();
 
-  IvarInfo Info;
+  InvalidationInfo Info;
   containsInvalidationMethod(IvInterf, Info);
   if (Info.needsInvalidation()) {
-    TrackedIvars[cast<ObjCIvarDecl>(Iv->getCanonicalDecl())] = Info;
+    const ObjCIvarDecl *I = cast<ObjCIvarDecl>(Iv->getCanonicalDecl());
+    TrackedIvars[I] = Info;
+    if (!*FirstIvarDecl)
+      *FirstIvarDecl = I;
     return true;
   }
   return false;
@@ -266,7 +284,8 @@ bool IvarInvalidationChecker::trackIvar(const ObjCIvarDecl *Iv,
 const ObjCIvarDecl *IvarInvalidationChecker::findPropertyBackingIvar(
                         const ObjCPropertyDecl *Prop,
                         const ObjCInterfaceDecl *InterfaceD,
-                        IvarSet &TrackedIvars) {
+                        IvarSet &TrackedIvars,
+                        const ObjCIvarDecl **FirstIvarDecl) {
   const ObjCIvarDecl *IvarD = 0;
 
   // Lookup for the synthesized case.
@@ -278,7 +297,7 @@ const ObjCIvarDecl *IvarInvalidationChecker::findPropertyBackingIvar(
       return IvarD;
     }
     // If the ivar is synthesized we still want to track it.
-    if (trackIvar(IvarD, TrackedIvars))
+    if (trackIvar(IvarD, TrackedIvars, FirstIvarDecl))
       return IvarD;
   }
 
@@ -307,22 +326,36 @@ const ObjCIvarDecl *IvarInvalidationChecker::findPropertyBackingIvar(
   return 0;
 }
 
-void IvarInvalidationChecker::checkASTDecl(const ObjCMethodDecl *D,
+void IvarInvalidationChecker::printIvar(llvm::raw_svector_ostream &os,
+                                        const ObjCIvarDecl *IvarDecl,
+                                        IvarToPropMapTy &IvarToPopertyMap) {
+  if (IvarDecl->getSynthesize()) {
+    const ObjCPropertyDecl *PD = IvarToPopertyMap[IvarDecl];
+    assert(PD &&"Do we synthesize ivars for something other than properties?");
+    os << "Property "<< PD->getName() << " ";
+  } else {
+    os << "Instance variable "<< IvarDecl->getName() << " ";
+  }
+}
+
+// Check that the invalidatable interfaces with ivars/properties implement the
+// invalidation methods.
+void IvarInvalidationChecker::checkASTDecl(const ObjCImplementationDecl *ImplD,
                                           AnalysisManager& Mgr,
                                           BugReporter &BR) const {
-  // We are only interested in checking the cleanup methods.
-  if (!D->hasBody() || !isInvalidationMethod(D))
-    return;
-
   // Collect all ivars that need cleanup.
   IvarSet Ivars;
-  const ObjCInterfaceDecl *InterfaceD = D->getClassInterface();
+  // Record the first Ivar needing invalidation; used in reporting when only
+  // one ivar is sufficient. Cannot grab the first on the Ivars set to ensure
+  // deterministic output.
+  const ObjCIvarDecl *FirstIvarDecl = 0;
+  const ObjCInterfaceDecl *InterfaceD = ImplD->getClassInterface();
 
   // Collect ivars declared in this class, its extensions and its implementation
   ObjCInterfaceDecl *IDecl = const_cast<ObjCInterfaceDecl *>(InterfaceD);
   for (const ObjCIvarDecl *Iv = IDecl->all_declared_ivar_begin(); Iv;
        Iv= Iv->getNextIvar())
-    trackIvar(Iv, Ivars);
+    trackIvar(Iv, Ivars, &FirstIvarDecl);
 
   // Construct Property/Property Accessor to Ivar maps to assist checking if an
   // ivar which is backing a property has been reset.
@@ -338,7 +371,8 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCMethodDecl *D,
       I = PropMap.begin(), E = PropMap.end(); I != E; ++I) {
     const ObjCPropertyDecl *PD = I->second;
 
-    const ObjCIvarDecl *ID = findPropertyBackingIvar(PD, InterfaceD, Ivars);
+    const ObjCIvarDecl *ID = findPropertyBackingIvar(PD, InterfaceD, Ivars,
+                                                     &FirstIvarDecl);
     if (!ID) {
       continue;
     }
@@ -362,48 +396,94 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCMethodDecl *D,
     }
   }
 
-
-  // Check which ivars have been invalidated in the method body.
-  bool CalledAnotherInvalidationMethod = false;
-  MethodCrawler(Ivars,
-                CalledAnotherInvalidationMethod,
-                PropSetterToIvarMap,
-                PropGetterToIvarMap,
-                PropertyToIvarMap,
-                BR.getContext()).VisitStmt(D->getBody());
-
-  if (CalledAnotherInvalidationMethod)
+  // If no ivars need invalidation, there is nothing to check here.
+  if (Ivars.empty())
     return;
 
-  // Warn on the ivars that were not accessed by the method.
-  for (IvarSet::const_iterator I = Ivars.begin(), E = Ivars.end(); I != E; ++I){
-    if (!I->second.isInvalidated()) {
-      const ObjCIvarDecl *IvarDecl = I->first;
+  // Find all invalidation methods in this @interface declaration and parents.
+  InvalidationInfo Info;
+  containsInvalidationMethod(InterfaceD, Info);
 
-      PathDiagnosticLocation IvarDecLocation =
-          PathDiagnosticLocation::createEnd(D->getBody(), BR.getSourceManager(),
-                                            Mgr.getAnalysisDeclContext(D));
+  // Report an error in case none of the invalidation methods are declared.
+  if (!Info.needsInvalidation()) {
+    SmallString<128> sbuf;
+    llvm::raw_svector_ostream os(sbuf);
+    assert(FirstIvarDecl);
+    printIvar(os, FirstIvarDecl, IvarToPopertyMap);
+    os << "needs to be invalidated; ";
+    os << "No invalidation method is declared for " << InterfaceD->getName();
 
-      SmallString<128> sbuf;
-      llvm::raw_svector_ostream os(sbuf);
+    PathDiagnosticLocation IvarDecLocation =
+      PathDiagnosticLocation::createBegin(FirstIvarDecl, BR.getSourceManager());
 
-      // Construct the warning message.
-      if (IvarDecl->getSynthesize()) {
-        const ObjCPropertyDecl *PD = IvarToPopertyMap[IvarDecl];
-        assert(PD &&
-               "Do we synthesize ivars for something other than properties?");
-        os << "Property "<< PD->getName() <<
-              " needs to be invalidated or set to nil";
-      } else {
-        os << "Instance variable "<< IvarDecl->getName()
-             << " needs to be invalidated or set to nil";
-      }
+    BR.EmitBasicReport(FirstIvarDecl, "Incomplete invalidation",
+                       categories::CoreFoundationObjectiveC, os.str(),
+                       IvarDecLocation);
+    return;
+  }
 
-      BR.EmitBasicReport(D,
-          "Incomplete invalidation",
-          categories::CoreFoundationObjectiveC, os.str(),
-          IvarDecLocation);
+  // Check that all ivars are invalidated by the invalidation methods.
+  bool AtImplementationContainsAtLeastOneInvalidationMethod = false;
+  for (MethodSet::iterator I = Info.InvalidationMethods.begin(),
+                           E = Info.InvalidationMethods.end(); I != E; ++I) {
+    const ObjCMethodDecl *InterfD = *I;
+
+    // Get the corresponding method in the @implementation.
+    const ObjCMethodDecl *D = ImplD->getMethod(InterfD->getSelector(),
+                                               InterfD->isInstanceMethod());
+    if (D && D->hasBody()) {
+      AtImplementationContainsAtLeastOneInvalidationMethod = true;
+
+      // Get a copy of ivars needing invalidation.
+      IvarSet IvarsI = Ivars;
+
+      bool CalledAnotherInvalidationMethod = false;
+      MethodCrawler(IvarsI,
+                    CalledAnotherInvalidationMethod,
+                    PropSetterToIvarMap,
+                    PropGetterToIvarMap,
+                    PropertyToIvarMap,
+                    BR.getContext()).VisitStmt(D->getBody());
+      // If another invalidation method was called, trust that full invalidation
+      // has occurred.
+      if (CalledAnotherInvalidationMethod)
+        continue;
+
+      // Warn on the ivars that were not invalidated by the method.
+      for (IvarSet::const_iterator I = IvarsI.begin(),
+                                   E = IvarsI.end(); I != E; ++I)
+        if (!I->second.isInvalidated()) {
+          SmallString<128> sbuf;
+          llvm::raw_svector_ostream os(sbuf);
+          printIvar(os, I->first, IvarToPopertyMap);
+          os << "needs to be invalidated or set to nil";
+          PathDiagnosticLocation MethodDecLocation =
+              PathDiagnosticLocation::createEnd(D->getBody(),
+                                                BR.getSourceManager(),
+                                                Mgr.getAnalysisDeclContext(D));
+          BR.EmitBasicReport(D, "Incomplete invalidation",
+                             categories::CoreFoundationObjectiveC, os.str(),
+                             MethodDecLocation);
+        }
     }
+  }
+
+  // Report an error in case none of the invalidation methods are implemented.
+  if (!AtImplementationContainsAtLeastOneInvalidationMethod) {
+    SmallString<128> sbuf;
+    llvm::raw_svector_ostream os(sbuf);
+    assert(FirstIvarDecl);
+    printIvar(os, FirstIvarDecl, IvarToPopertyMap);
+    os << "needs to be invalidated; ";
+    os << "No invalidation method is defined in the @implementation for "
+       << InterfaceD->getName();
+
+    PathDiagnosticLocation IvarDecLocation =
+        PathDiagnosticLocation::createBegin(FirstIvarDecl,
+                                            BR.getSourceManager());
+    BR.EmitBasicReport(FirstIvarDecl, "Incomplete invalidation",
+                       categories::CoreFoundationObjectiveC, os.str(),
+                       IvarDecLocation);
   }
 }
 
@@ -503,19 +583,27 @@ void IvarInvalidationChecker::MethodCrawler::VisitBinaryOperator(
     const BinaryOperator *BO) {
   VisitStmt(BO);
 
-  if (BO->getOpcode() != BO_Assign)
+  // Do we assign/compare against zero? If yes, check the variable we are
+  // assigning to.
+  BinaryOperatorKind Opcode = BO->getOpcode();
+  if (Opcode != BO_Assign &&
+      Opcode != BO_EQ &&
+      Opcode != BO_NE)
     return;
 
-  // Do we assign zero?
-  if (!isZero(BO->getRHS()))
-    return;
+  if (isZero(BO->getRHS())) {
+      check(BO->getLHS());
+      return;
+  }
 
-  // Check the variable we are assigning to.
-  check(BO->getLHS());
+  if (Opcode != BO_Assign && isZero(BO->getLHS())) {
+    check(BO->getRHS());
+    return;
+  }
 }
 
 void IvarInvalidationChecker::MethodCrawler::VisitObjCMessageExpr(
-    const ObjCMessageExpr *ME) {
+  const ObjCMessageExpr *ME) {
   const ObjCMethodDecl *MD = ME->getMethodDecl();
   const Expr *Receiver = ME->getInstanceReceiver();
 
