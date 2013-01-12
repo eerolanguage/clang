@@ -14,6 +14,9 @@
 #ifndef LLVM_CLANG_AST_STMTCXX_H
 #define LLVM_CLANG_AST_STMTCXX_H
 
+#include "clang/AST/DeclarationName.h"
+#include "clang/AST/Expr.h"
+#include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/Stmt.h"
 #include "llvm/Support/Compiler.h"
 
@@ -91,18 +94,18 @@ public:
   }
 
   CompoundStmt *getTryBlock() {
-    return llvm::cast<CompoundStmt>(getStmts()[0]);
+    return cast<CompoundStmt>(getStmts()[0]);
   }
   const CompoundStmt *getTryBlock() const {
-    return llvm::cast<CompoundStmt>(getStmts()[0]);
+    return cast<CompoundStmt>(getStmts()[0]);
   }
 
   unsigned getNumHandlers() const { return NumHandlers; }
   CXXCatchStmt *getHandler(unsigned i) {
-    return llvm::cast<CXXCatchStmt>(getStmts()[i + 1]);
+    return cast<CXXCatchStmt>(getStmts()[i + 1]);
   }
   const CXXCatchStmt *getHandler(unsigned i) const {
-    return llvm::cast<CXXCatchStmt>(getStmts()[i + 1]);
+    return cast<CXXCatchStmt>(getStmts()[i + 1]);
   }
 
   static bool classof(const Stmt *T) {

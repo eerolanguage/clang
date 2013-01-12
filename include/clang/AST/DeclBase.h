@@ -242,7 +242,7 @@ private:
   SourceLocation Loc;
 
   /// DeclKind - This indicates which class this is.
-  unsigned DeclKind : 6;
+  unsigned DeclKind : 8;
 
   /// InvalidDecl - This indicates a semantic error occurred.
   unsigned InvalidDecl :  1;
@@ -284,16 +284,15 @@ protected:
   /// IdentifierNamespace - This specifies what IDNS_* namespace this lives in.
   unsigned IdentifierNamespace : 12;
 
-  /// These fields are only valid for NamedDecls subclasses.
+  /// \brief Whether the \c CachedLinkage field is active.
   ///
-  /// \brief Nonzero if the cache (i.e. the bitfields here starting
-  /// with 'Cache') is valid.  If so, then this is a
-  /// LangOptions::VisibilityMode+1.
-  mutable unsigned CacheValidAndVisibility : 2;
-  /// \brief the linkage of this declaration.
+  /// This field is only valid for NamedDecls subclasses.
+  mutable unsigned HasCachedLinkage : 1;
+
+  /// \brief If \c HasCachedLinkage, the linkage of this declaration.
+  ///
+  /// This field is only valid for NamedDecls subclasses.
   mutable unsigned CachedLinkage : 2;
-  /// \brief true if the visibility is explicit.
-  mutable unsigned CachedVisibilityExplicit : 1;
 
   friend class ASTDeclWriter;
   friend class ASTDeclReader;
@@ -310,7 +309,7 @@ protected:
       HasAttrs(false), Implicit(false), Used(false), Referenced(false),
       Access(AS_none), FromASTFile(0), Hidden(0),
       IdentifierNamespace(getIdentifierNamespaceForKind(DK)),
-      CacheValidAndVisibility(0)
+      HasCachedLinkage(0)
   {
     if (StatisticsEnabled) add(DK);
   }
@@ -320,7 +319,7 @@ protected:
       HasAttrs(false), Implicit(false), Used(false), Referenced(false),
       Access(AS_none), FromASTFile(0), Hidden(0),
       IdentifierNamespace(getIdentifierNamespaceForKind(DK)),
-      CacheValidAndVisibility(0)
+      HasCachedLinkage(0)
   {
     if (StatisticsEnabled) add(DK);
   }
@@ -905,7 +904,7 @@ public:
 
 typedef llvm::MutableArrayRef<NamedDecl*> DeclContextLookupResult;
 
-typedef llvm::ArrayRef<NamedDecl*> DeclContextLookupConstResult;
+typedef ArrayRef<NamedDecl *> DeclContextLookupConstResult;
 
 /// DeclContext - This is used only as base class of specific decl types that
 /// can act as declaration contexts. These decls are (only the top classes
@@ -1152,7 +1151,7 @@ public:
   /// contexts that are semanticaly connected to this declaration context,
   /// in source order, including this context (which may be the only result,
   /// for non-namespace contexts).
-  void collectAllContexts(llvm::SmallVectorImpl<DeclContext *> &Contexts);
+  void collectAllContexts(SmallVectorImpl<DeclContext *> &Contexts);
 
   /// decl_iterator - Iterates through the declarations stored
   /// within this context.
@@ -1415,7 +1414,7 @@ public:
   /// usual relationship between a DeclContext and the external source.
   /// See the ASTImporter for the (few, but important) use cases.
   void localUncachedLookup(DeclarationName Name,
-                           llvm::SmallVectorImpl<NamedDecl *> &Results);
+                           SmallVectorImpl<NamedDecl *> &Results);
 
   /// @brief Makes a declaration visible within this context.
   ///

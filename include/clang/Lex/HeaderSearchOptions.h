@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_LEX_HEADERSEARCHOPTIONS_H
 #define LLVM_CLANG_LEX_HEADERSEARCHOPTIONS_H
 
+#include "clang/Basic/LLVM.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/StringRef.h"
 #include <vector>
@@ -37,7 +38,7 @@ namespace frontend {
 
 /// HeaderSearchOptions - Helper class for storing options related to the
 /// initialization of the HeaderSearch object.
-class HeaderSearchOptions : public llvm::RefCountedBase<HeaderSearchOptions> {
+class HeaderSearchOptions : public RefCountedBase<HeaderSearchOptions> {
 public:
   struct Entry {
     std::string Path;

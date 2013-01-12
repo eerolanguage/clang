@@ -109,6 +109,7 @@ class NamedDecl : public Decl {
 
 private:
   NamedDecl *getUnderlyingDeclImpl();
+  void verifyLinkage() const;
 
 protected:
   NamedDecl(Kind DK, DeclContext *DC, SourceLocation L, DeclarationName N)
@@ -228,12 +229,6 @@ public:
              "Enum truncated!");
     }
 
-    bool operator==(const LinkageInfo &Other) {
-      return linkage_ == Other.linkage_ &&
-	visibility_ == Other.visibility_ &&
-	explicit_ == Other.explicit_;
-    }
-
     static LinkageInfo external() {
       return LinkageInfo();
     }
@@ -329,7 +324,7 @@ public:
 
   /// \brief Clear the linkage cache in response to a change
   /// to the declaration.
-  void ClearLVCache();
+  void ClearLinkageCache();
 
   /// \brief Looks through UsingDecls and ObjCCompatibleAliasDecls for
   /// the underlying named decl.
@@ -1098,8 +1093,7 @@ public:
   /// not a constant expression. Returns a pointer to the value if evaluation
   /// succeeded, 0 otherwise.
   APValue *evaluateValue() const;
-  APValue *evaluateValue(
-    llvm::SmallVectorImpl<PartialDiagnosticAt> &Notes) const;
+  APValue *evaluateValue(SmallVectorImpl<PartialDiagnosticAt> &Notes) const;
 
   /// \brief Return the already-evaluated value of this variable's
   /// initializer, or NULL if the value is not yet known. Returns pointer
@@ -1462,7 +1456,7 @@ private:
   /// DeclsInPrototypeScope - Array of pointers to NamedDecls for
   /// decls defined in the function prototype that are not parameters. E.g.
   /// 'enum Y' in 'void f(enum Y {AA} x) {}'.
-  llvm::ArrayRef<NamedDecl*> DeclsInPrototypeScope;
+  ArrayRef<NamedDecl *> DeclsInPrototypeScope;
 
   LazyDeclStmtPtr Body;
 
@@ -1553,7 +1547,7 @@ private:
   void setInstantiationOfMemberFunction(ASTContext &C, FunctionDecl *FD,
                                         TemplateSpecializationKind TSK);
 
-  void setParams(ASTContext &C, llvm::ArrayRef<ParmVarDecl *> NewParamInfo);
+  void setParams(ASTContext &C, ArrayRef<ParmVarDecl *> NewParamInfo);
 
 protected:
   FunctionDecl(Kind DK, DeclContext *DC, SourceLocation StartLoc,
@@ -1840,14 +1834,14 @@ public:
     assert(i < getNumParams() && "Illegal param #");
     return ParamInfo[i];
   }
-  void setParams(llvm::ArrayRef<ParmVarDecl *> NewParamInfo) {
+  void setParams(ArrayRef<ParmVarDecl *> NewParamInfo) {
     setParams(getASTContext(), NewParamInfo);
   }
 
-  const llvm::ArrayRef<NamedDecl*> &getDeclsInPrototypeScope() const {
+  const ArrayRef<NamedDecl *> &getDeclsInPrototypeScope() const {
     return DeclsInPrototypeScope;
   }
-  void setDeclsInPrototypeScope(llvm::ArrayRef<NamedDecl *> NewDecls);
+  void setDeclsInPrototypeScope(ArrayRef<NamedDecl *> NewDecls);
 
   /// getMinRequiredArguments - Returns the minimum number of arguments
   /// needed to call this function. This may be fewer than the number of
@@ -3187,7 +3181,7 @@ public:
     assert(i < getNumParams() && "Illegal param #");
     return ParamInfo[i];
   }
-  void setParams(llvm::ArrayRef<ParmVarDecl *> NewParamInfo);
+  void setParams(ArrayRef<ParmVarDecl *> NewParamInfo);
 
   /// hasCaptures - True if this block (or its nested blocks) captures
   /// anything of local storage from its enclosing scopes.
@@ -3328,7 +3322,7 @@ void Redeclarable<decl_type>::setPreviousDeclaration(decl_type *PrevDecl) {
     First = PrevDecl->getFirstDeclaration();
     assert(First->RedeclLink.NextIsLatest() && "Expected first");
     decl_type *MostRecent = First->RedeclLink.getNext();
-    RedeclLink = PreviousDeclLink(llvm::cast<decl_type>(MostRecent));
+    RedeclLink = PreviousDeclLink(cast<decl_type>(MostRecent));
   } else {
     // Make this first.
     First = static_cast<decl_type*>(this);
@@ -3337,7 +3331,7 @@ void Redeclarable<decl_type>::setPreviousDeclaration(decl_type *PrevDecl) {
   // First one will point to this one as latest.
   First->RedeclLink = LatestDeclLink(static_cast<decl_type*>(this));
   if (NamedDecl *ND = dyn_cast<NamedDecl>(static_cast<decl_type*>(this)))
-    ND->ClearLVCache();
+    ND->ClearLinkageCache();
 }
 
 // Inline function definitions.

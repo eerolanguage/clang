@@ -681,6 +681,24 @@ TEST_F(FormatTest, ConstructorInitializers) {
                      "    : some_var_(var),  // 4 space indent\n"
                      "      some_other_var_(var + 1) {  // lined up\n"
                      "}");
+
+  // This test takes VERY long when memoization is broken.
+  verifyGoogleFormat(
+      "Constructor()\n"
+      "    : aaaa(a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a,"
+      " a, a, a,\n"
+      "           a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a,"
+      " a, a, a,\n"
+      "           a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a,"
+      " a, a, a,\n"
+      "           a, a, a, a, a, a, a, a, a, a, a)\n"
+      "      aaaa(a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a,"
+      " a, a, a,\n"
+      "           a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a,"
+      " a, a, a,\n"
+      "           a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a,"
+      " a, a, a,\n"
+      "           a, a, a, a, a, a, a, a, a, a, a) {}\n");
 }
 
 TEST_F(FormatTest, BreaksAsHighAsPossible) {
@@ -956,6 +974,9 @@ TEST_F(FormatTest, UnderstandsUnaryOperators) {
                "case -1:\n"
                "  break;\n"
                "}");
+
+  verifyFormat("const NSPoint kBrowserFrameViewPatternOffset = { -5, +3 };");
+  verifyFormat("const NSPoint kBrowserFrameViewPatternOffset = { +5, -3 };");
 }
 
 TEST_F(FormatTest, UndestandsOverloadedOperators) {
@@ -1011,6 +1032,11 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyFormat("a * -b;");
   verifyFormat("a * ++b;");
   verifyFormat("a * --b;");
+  verifyFormat("a[4] * b;");
+  verifyFormat("f() * b;");
+  verifyFormat("a * [self dostuff];");
+  verifyFormat("a * (a + b);");
+  verifyFormat("(a *)(a + b);");
   verifyFormat("int *pa = (int *)&a;");
 
   verifyFormat("InvalidRegions[*R] = 0;");
@@ -1458,6 +1484,66 @@ TEST_F(FormatTest, FormatObjCProtocol) {
                "@optional\n"
                "@property(assign) int madProp;\n"
                "@end\n");
+}
+
+TEST_F(FormatTest, FormatObjCMethodExpr) {
+  verifyFormat("[foo bar:baz];");
+  verifyFormat("return [foo bar:baz];");
+  verifyFormat("f([foo bar:baz]);");
+  verifyFormat("f(2, [foo bar:baz]);");
+  verifyFormat("f(2, a ? b : c);");
+  verifyFormat("[[self initWithInt:4] bar:[baz quux:arrrr]];");
+
+  verifyFormat("[foo bar:baz], [foo bar:baz];");
+  verifyFormat("[foo bar:baz] = [foo bar:baz];");
+  verifyFormat("[foo bar:baz] *= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] /= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] %= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] += [foo bar:baz];");
+  verifyFormat("[foo bar:baz] -= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] <<= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] >>= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] &= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] ^= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] |= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] ? [foo bar:baz] : [foo bar:baz];");
+  verifyFormat("[foo bar:baz] || [foo bar:baz];");
+  verifyFormat("[foo bar:baz] && [foo bar:baz];");
+  verifyFormat("[foo bar:baz] | [foo bar:baz];");
+  verifyFormat("[foo bar:baz] ^ [foo bar:baz];");
+  verifyFormat("[foo bar:baz] & [foo bar:baz];");
+  verifyFormat("[foo bar:baz] == [foo bar:baz];");
+  verifyFormat("[foo bar:baz] != [foo bar:baz];");
+  verifyFormat("[foo bar:baz] >= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] <= [foo bar:baz];");
+  verifyFormat("[foo bar:baz] > [foo bar:baz];");
+  verifyFormat("[foo bar:baz] < [foo bar:baz];");
+  verifyFormat("[foo bar:baz] >> [foo bar:baz];");
+  verifyFormat("[foo bar:baz] << [foo bar:baz];");
+  verifyFormat("[foo bar:baz] - [foo bar:baz];");
+  verifyFormat("[foo bar:baz] + [foo bar:baz];");
+  verifyFormat("[foo bar:baz] * [foo bar:baz];");
+  verifyFormat("[foo bar:baz] / [foo bar:baz];");
+  verifyFormat("[foo bar:baz] % [foo bar:baz];");
+  // Whew!
+
+  verifyFormat("[self stuffWithInt:(4 + 2) float:4.5];");
+  verifyFormat("[self stuffWithInt:a ? b : c float:4.5];");
+  verifyFormat("[self stuffWithInt:a ? [self foo:bar] : c];");
+  verifyFormat("[self stuffWithInt:a ? (e ? f : g) : c];");
+  verifyFormat("[cond ? obj1 : obj2 methodWithParam:param]");
+  
+  verifyFormat("arr[[self indexForFoo:a]];");
+  verifyFormat("throw [self errorFor:a];");
+  verifyFormat("@throw [self errorFor:a];");
+
+  // The formatting of this isn't ideal yet. It tests that the formatter doesn't
+  // break after "backing" but before ":", which would be at 80 columns.
+  verifyFormat(
+      "void f() {\n"
+      "  if ((self = [super initWithContentRect:contentRect styleMask:\n"
+      "                  styleMask backing:NSBackingStoreBuffered defer:YES]))");
+  
 }
 
 TEST_F(FormatTest, ObjCAt) {

@@ -1126,8 +1126,6 @@ def note_nontrivial_variadic : Note<"because it is a variadic function">;
 def note_nontrivial_subobject : Note<
   "because the function selected to %select{construct|copy|move|copy|move|"
   "destroy}2 %select{base class|field}0 of type %1 is not trivial">;
-def note_nontrivial_user_declared_ctor : Note<
-  "because type %0 has a user-declared constructor">;
 def note_nontrivial_objc_ownership : Note<
   "because type %0 has a member with %select{no|no|__strong|__weak|"
   "__autoreleasing}1 ownership">;
@@ -4333,8 +4331,6 @@ def error_no_super_class_message : Error<
   "no @interface declaration found in class messaging of %0">;
 def error_root_class_cannot_use_super : Error<
   "%0 cannot use 'super' because it is a root class">;
-def err_invalid_receiver_to_message : Error<
-  "invalid receiver to message expression">;
 def err_invalid_receiver_to_message_super : Error<
   "'super' is only valid in a method body">;
 def err_invalid_receiver_class_message : Error<
@@ -4637,8 +4633,6 @@ let CategoryName = "Lambda Issue" in {
     "cannot deduce lambda return type from initializer list">;
   def err_lambda_capture_default_arg : Error<
     "lambda expression in default argument cannot capture any entity">;
-  def err_lambda_unexpanded_pack : Error<
-    "unexpanded function parameter pack capture is unsupported">;
   def err_lambda_incomplete_result : Error<
     "incomplete result type %0 in lambda expression">;
   def err_lambda_objc_object_result : Error<

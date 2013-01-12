@@ -851,7 +851,7 @@ private:
   };
 
   // A list of late-parsed attributes.  Used by ParseGNUAttributes.
-  class LateParsedAttrList: public llvm::SmallVector<LateParsedAttribute*, 2> {
+  class LateParsedAttrList: public SmallVector<LateParsedAttribute *, 2> {
   public:
     LateParsedAttrList(bool PSoon = false) : ParseSoon(PSoon) { }
 
@@ -1349,7 +1349,7 @@ private:
                            SmallVectorImpl<SourceLocation> &CommaLocs,
                            void (Sema::*Completer)(Scope *S,
                                                    Expr *Data,
-                                             llvm::ArrayRef<Expr *> Args) = 0,
+                                                   ArrayRef<Expr *> Args) = 0,
                            Expr *Data = 0);
 
   /// ParenParseOption - Control what ParseParenExpression will parse.
@@ -2026,7 +2026,7 @@ private:
                                   ParsedAttributes &attrs,
                                   SourceLocation *endLoc);
 
-  bool IsThreadSafetyAttribute(llvm::StringRef AttrName);
+  bool IsThreadSafetyAttribute(StringRef AttrName);
   void ParseThreadSafetyAttribute(IdentifierInfo &AttrName,
                                   SourceLocation AttrNameLoc,
                                   ParsedAttributes &Attrs,
