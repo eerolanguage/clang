@@ -655,7 +655,8 @@ ASTDeclContextNameLookupTrait::ReadData(internal_key_type,
                                         unsigned DataLen) {
   using namespace clang::io;
   unsigned NumDecls = ReadUnalignedLE16(d);
-  LE32DeclID *Start = (LE32DeclID *)d;
+  LE32DeclID *Start = reinterpret_cast<LE32DeclID *>(
+                        const_cast<unsigned char *>(d));
   return std::make_pair(Start, Start + NumDecls);
 }
 
@@ -6199,7 +6200,11 @@ Module *ASTReader::getSubmodule(SubmoduleID GlobalID) {
   
   return SubmodulesLoaded[GlobalID - NUM_PREDEF_SUBMODULE_IDS];
 }
-                               
+
+Module *ASTReader::getModule(unsigned ID) {
+  return getSubmodule(ID);
+}
+
 Selector ASTReader::getLocalSelector(ModuleFile &M, unsigned LocalID) {
   return DecodeSelector(getGlobalSelectorID(M, LocalID));
 }

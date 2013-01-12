@@ -5725,7 +5725,7 @@ def warn_case_value_overflow : Warning<
   "overflow converting case value to switch condition type (%0 to %1)">,
   InGroup<Switch>;
 def warn_case_constant_overflow : Warning<
-  "overflow in case constant expression results in new value (%0)">,
+  "overflow in case constant expression results in value %0">,
   InGroup<Switch>;
 def err_duplicate_case : Error<"duplicate case value '%0'">;
 def err_duplicate_case_differing_expr : Error<
@@ -6099,7 +6099,7 @@ def err_module_private_local_class : Error<
   "local %select{struct|interface|union|class|enum}0 cannot be declared "
   "__module_private__">;
 def err_module_private_definition : Error<
-  "definition of %0 must be imported before it is required">;
+  "definition of %0 must be imported from module '%1' before it is required">;
 }
 
 let CategoryName = "Documentation Issue" in {

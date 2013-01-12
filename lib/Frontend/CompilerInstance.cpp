@@ -1254,3 +1254,9 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
   LastModuleImportResult = ModuleLoadResult(Module, false);
   return LastModuleImportResult;
 }
+
+void CompilerInstance::makeModuleVisible(Module *Mod,
+                                         Module::NameVisibilityKind Visibility){
+  ModuleManager->makeModuleVisible(Mod, Visibility);
+}
+

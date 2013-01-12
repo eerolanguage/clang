@@ -362,30 +362,24 @@ TEST_F(FormatTest, FormatsEnum) {
 TEST_F(FormatTest, FormatsNamespaces) {
   verifyFormat("namespace some_namespace {\n"
                "class A {};\n"
-               "void f() {\n"
-               "  f();\n"
-               "}\n"
+               "void f() { f(); }\n"
                "}");
   verifyFormat("namespace {\n"
                "class A {};\n"
-               "void f() {\n"
-               "  f();\n"
-               "}\n"
+               "void f() { f(); }\n"
                "}");
   verifyFormat("inline namespace X {\n"
                "class A {};\n"
-               "void f() {\n"
-               "  f();\n"
-               "}\n"
+               "void f() { f(); }\n"
                "}");
   verifyFormat("using namespace some_namespace;\n"
                "class A {};\n"
-               "void f() {\n"
-               "  f();\n"
-               "}");
+               "void f() { f(); }");
 }
 
 TEST_F(FormatTest, FormatTryCatch) {
+  // FIXME: Handle try-catch explicitly in the UnwrappedLineParser, then we'll
+  // also not create single-line-blocks.
   verifyFormat("try {\n"
                "  throw a * b;\n"
                "}\n"
@@ -397,9 +391,7 @@ TEST_F(FormatTest, FormatTryCatch) {
                "}");
 
   // Function-level try statements.
-  verifyFormat("int f() try {\n"
-               "  return 4;\n"
-               "}\n"
+  verifyFormat("int f() try { return 4; }\n"
                "catch (...) {\n"
                "  return 5;\n"
                "}");
@@ -546,7 +538,7 @@ TEST_F(FormatTest, IndentPreprocessorDirectivesAtZero) {
 }
 
 TEST_F(FormatTest, FormatHashIfNotAtStartOfLine) {
-  verifyFormat("{\n  {\n    a #c;\n  }\n}");
+  verifyFormat("{\n  { a #c; }\n}");
 }
 
 TEST_F(FormatTest, FormatUnbalancedStructuralElements) {
@@ -609,9 +601,7 @@ TEST_F(FormatTest, LayoutBlockInsideParens) {
 }
 
 TEST_F(FormatTest, LayoutBlockInsideStatement) {
-  EXPECT_EQ("SOME_MACRO {\n"
-            "  int i;\n"
-            "}\n"
+  EXPECT_EQ("SOME_MACRO { int i; }\n"
             "int i;", format("  SOME_MACRO  {int i;}  int i;"));
 }
 
@@ -649,10 +639,25 @@ TEST_F(FormatTest, FormatsAwesomeMethodCall) {
 
 TEST_F(FormatTest, ConstructorInitializers) {
   verifyFormat("Constructor() : Initializer(FitsOnTheLine) {}");
+  verifyFormat("Constructor() : Inttializer(FitsOnTheLine) {}",
+               getLLVMStyleWithColumns(45));
+  verifyFormat("Constructor()\n"
+               "    : Inttializer(FitsOnTheLine) {}",
+               getLLVMStyleWithColumns(44));
 
   verifyFormat(
       "SomeClass::Constructor()\n"
       "    : aaaaaaaaaaaaa(aaaaaaaaaaaaaa), aaaaaaaaaaaaaaa(aaaaaaaaaaaa) {}");
+
+  verifyFormat(
+      "SomeClass::Constructor()\n"
+      "    : aaaaaaaaaaaaa(aaaaaaaaaaaaaa), aaaaaaaaaaaaa(aaaaaaaaaaaaaa),\n"
+      "      aaaaaaaaaaaaa(aaaaaaaaaaaaaa) {}");
+  verifyGoogleFormat(
+      "SomeClass::Constructor()\n"
+      "    : aaaaaaaaaaaaa(aaaaaaaaaaaaaa),\n"
+      "      aaaaaaaaaaaaa(aaaaaaaaaaaaaa),\n"
+      "      aaaaaaaaaaaaa(aaaaaaaaaaaaaa) {}");
 
   verifyFormat(
       "SomeClass::Constructor()\n"
@@ -726,6 +731,11 @@ TEST_F(FormatTest, BreaksDesireably) {
                "    }\n  }\n}");
 }
 
+TEST_F(FormatTest, DoesNotBreakTrailingAnnotation) {
+  verifyFormat("void aaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+               "    GUARDED_BY(aaaaaaaaaaaaa);");
+}
+
 TEST_F(FormatTest, BreaksAccordingToOperatorPrecedence) {
   verifyFormat(
       "if (aaaaaaaaaaaaaaaaaaaaaaaaa ||\n"
@@ -785,6 +795,13 @@ TEST_F(FormatTest, BreaksConditionalExpressions) {
       "         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
   verifyFormat("aaaa(aaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaaaa ?\n"
                "         aaaaaaaaaaaaaaaaaaaaaaa : aaaaaaaaaaaaaaaaaaaaa);");
+}
+
+TEST_F(FormatTest, ConditionalExpressionsInBrackets) {
+  verifyFormat("arr[foo ? bar : baz];");
+  verifyFormat("f()[foo ? bar : baz];");
+  verifyFormat("(a + b)[foo ? bar : baz];");
+  verifyFormat("arr[foo ? (4 > 5 ? 4 : 5) : 5 < 5 ? 5 : 7];");
 }
 
 TEST_F(FormatTest, AlignsStringLiterals) {
@@ -960,6 +977,13 @@ TEST_F(FormatTest, UndestandsOverloadedOperators) {
   verifyFormat("void operator delete[](void *ptr);");
 }
 
+TEST_F(FormatTest, UnderstandsNewAndDelete) {
+  verifyFormat("A *a = new A;");
+  verifyFormat("A *a = new (placement) A;");
+  verifyFormat("delete a;");
+  verifyFormat("delete (A *)a;");
+}
+
 TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyFormat("int *f(int *a) {}");
   verifyFormat("f(a, *a);");
@@ -1079,9 +1103,7 @@ TEST_F(FormatTest, IncorrectAccessSpecifier) {
   verifyFormat("public\n"
                "{}");
   verifyFormat("public\n"
-               "B {\n"
-               "  int x;\n"
-               "}");
+               "B { int x; }");
 }
 
 TEST_F(FormatTest, IncorrectCodeUnbalancedBraces) {
@@ -1097,6 +1119,14 @@ TEST_F(FormatTest, IncorrectCodeDoNoWhile) {
   verifyFormat("do {\n"
                "  f();\n"
                "}");
+}
+
+TEST_F(FormatTest, IncorrectCodeMissingParens) {
+  verifyFormat("if {\n  foo;\n  foo();\n}");
+  verifyFormat("switch {\n  foo;\n  foo();\n}");
+  verifyFormat("for {\n  foo;\n  foo();\n}");
+  verifyFormat("while {\n  foo;\n  foo();\n}");
+  verifyFormat("do {\n  foo;\n  foo();\n} while;");
 }
 
 TEST_F(FormatTest, DoesNotTouchUnwrappedLinesWithErrors) {
@@ -1138,6 +1168,34 @@ TEST_F(FormatTest, LayoutTokensFollowingBlockInParentheses) {
       "}, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,\n"
       "                                    ccccccccccccccccc));");
 }
+
+TEST_F(FormatTest, PullTrivialFunctionDefinitionsIntoSingleLine) {
+  verifyFormat("void f() { return 42; }");
+  verifyFormat("void f() {\n"
+               "  // Comment\n"
+               "}");
+  verifyFormat("{\n"
+               "#error {\n"
+               "  int a;\n"
+               "}");
+  verifyFormat("{\n"
+               "  int a;\n"
+               "#error {\n"
+               "}");
+}
+
+TEST_F(FormatTest, BracedInitListWithElaboratedTypeSpecifier) {
+  verifyFormat("struct foo a = { bar };\nint n;");
+}
+
+// FIXME: This breaks the order of the unwrapped lines:
+// TEST_F(FormatTest, OrderUnwrappedLines) {
+//   verifyFormat("{\n"
+//                "  bool a; //\n"
+//                "#error {\n"
+//                "  int a;\n"
+//                "}");
+// }
 
 //===----------------------------------------------------------------------===//
 // Objective-C tests.
@@ -1337,6 +1395,9 @@ TEST_F(FormatTest, FormatObjCImplementation) {
                "- (int)answerWith:(int)i {\n"
                "  return i;\n"
                "}\n"
+               "+ (int)answerWith:(int)i {\n"
+               "  return i;\n"
+               "}\n"
                "@end");
 
   verifyFormat("@implementation Foo\n"
@@ -1346,6 +1407,7 @@ TEST_F(FormatTest, FormatObjCImplementation) {
 
   verifyFormat("@implementation Foo : Bar\n"
                "+ (id)init {}\n"
+               "- (void)foo {}\n"
                "@end");
 
   verifyFormat("@implementation Foo {\n"
