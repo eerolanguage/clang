@@ -1532,17 +1532,22 @@ TEST_F(FormatTest, FormatObjCMethodExpr) {
   verifyFormat("[self stuffWithInt:a ? [self foo:bar] : c];");
   verifyFormat("[self stuffWithInt:a ? (e ? f : g) : c];");
   verifyFormat("[cond ? obj1 : obj2 methodWithParam:param]");
+  verifyFormat("[button setAction:@selector(zoomOut:)];");
+  verifyFormat("[color getRed:&r green:&g blue:&b alpha:&a];");
   
   verifyFormat("arr[[self indexForFoo:a]];");
   verifyFormat("throw [self errorFor:a];");
   verifyFormat("@throw [self errorFor:a];");
 
-  // The formatting of this isn't ideal yet. It tests that the formatter doesn't
-  // break after "backing" but before ":", which would be at 80 columns.
+  // This tests that the formatter doesn't break after "backing" but before ":",
+  // which would be at 80 columns.
   verifyFormat(
       "void f() {\n"
-      "  if ((self = [super initWithContentRect:contentRect styleMask:\n"
-      "                  styleMask backing:NSBackingStoreBuffered defer:YES]))");
+      "  if ((self = [super initWithContentRect:contentRect styleMask:styleMask\n"
+      "                  backing:NSBackingStoreBuffered defer:YES]))");
+  
+  verifyFormat("[foo checkThatBreakingAfterColonWorksOk:\n"
+               "    [bar ifItDoes:reduceOverallLineLengthLikeInThisCase]];");
   
 }
 
@@ -1582,6 +1587,7 @@ TEST_F(FormatTest, ObjCAt) {
   verifyFormat("@'c'");
   verifyFormat("@true");
   verifyFormat("NSNumber *smallestInt = @(-INT_MAX - 1);");
+  // FIXME: Array and dictionary literals need more work.
   verifyFormat("@[");
   verifyFormat("@{");
 
