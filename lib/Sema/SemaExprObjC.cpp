@@ -1213,6 +1213,9 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
     return false;
   }
 
+  // For restoring
+  bool instancetype = false;
+
   bool IsError = false;
   for (unsigned i = 0; i < NumNamedArgs; i++) {
     // We can't do any type-checking on a type-dependent argument.
@@ -1223,6 +1226,18 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
 
     ParmVarDecl *param = Method->param_begin()[i];
     assert(argExpr && "CheckMessageArgumentTypes(): missing expression");
+
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+        param->getType() == Context.getObjCInstanceType() &&
+        !ReceiverType->isObjCIdType()) {
+      if (const ObjCObjectPointerType *ObjT =
+          ReceiverType->getAs<ObjCObjectPointerType>()) {
+        QualType baseObjType =
+            Context.getObjCObjectPointerType(ObjT->getObjectType()->getBaseType());
+        param->setType(baseObjType);
+        instancetype = true;
+      }
+    }
 
     // Strip the unbridged-cast placeholder expression off unless it's
     // a consumed argument.
@@ -1251,6 +1266,18 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
     InitializedEntity Entity = InitializedEntity::InitializeParameter(Context,
                                                                       param);
     ExprResult ArgE = PerformCopyInitialization(Entity, lbrac, Owned(argExpr));
+    
+    if (instancetype) {
+      // Make the param type 'id' for the code generator's benefit
+      param->setType(Context.getObjCIdType());
+      Entity = InitializedEntity::InitializeParameter(Context, param);
+      ExprResult PrevArgE = ArgE;
+      ArgE = PerformCopyInitialization(Entity, lbrac, Owned(argExpr));
+      PrevArgE.release();
+      // Reset the param type to 'instancetype' for the next user
+      param->setType(Context.getObjCInstanceType());
+    }
+
     if (ArgE.isInvalid())
       IsError = true;
     else

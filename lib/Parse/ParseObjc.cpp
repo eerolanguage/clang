@@ -994,7 +994,8 @@ ParsedType Parser::ParseObjCTypeName(ObjCDeclSpec &DS,
       if (context == Declarator::ObjCParameterContext)
         takeDeclAttributes(*paramAttrs, declarator);
     }
-  } else if (context == Declarator::ObjCResultContext &&
+  } else if ((context == Declarator::ObjCResultContext ||
+              (isEero && context == Declarator::ObjCParameterContext)) &&
              Tok.is(tok::identifier)) {
     if (!Ident_instancetype)
       Ident_instancetype = PP.getIdentifierInfo("instancetype");
