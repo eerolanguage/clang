@@ -837,7 +837,14 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
     resultStr += " ";
     resultStr += name.substr(lastPos, pos - lastPos);
     resultStr += ":(";
-    resultStr += (*PI)->getType().getAsString(*Policy);
+
+    string typeName = (*PI)->getType().getAsString(*Policy);
+    if (typeName == "instancetype") {
+      resultStr += "id";
+    } else {
+      resultStr += typeName;
+    }
+
     resultStr += ")";
     resultStr += (*PI)->getNameAsString();
 
