@@ -2677,6 +2677,9 @@ public:
                                   BuildForRangeKind Kind);
   StmtResult FinishCXXForRangeStmt(Stmt *ForRange, Stmt *Body);
 
+  // Eero support for Python-like for-in-enumerate counter
+  ExprResult ActOnForIndexStatement(StmtResult &IndexStmt);
+
   StmtResult ActOnGotoStmt(SourceLocation GotoLoc,
                            SourceLocation LabelLoc,
                            LabelDecl *TheDecl);

@@ -74,6 +74,7 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteForCollectionStatement(ObjCForCollectionStmt* S);
     void RewriteCXXForRangeStmtStatement(CXXForRangeStmt* S);
     void RewriteForCArrayStmtStatement(CXXForRangeStmt* S);
+    void RewriteForEnumerateCounter(SourceLocation Forloc, CompoundStmt* Body, string& Str);
     void RewriteWhileStatement(WhileStmt* S);
     void RewriteDoStatement(DoStmt* S);
     void RewriteSwitchStatement(SwitchStmt* S);
@@ -84,7 +85,6 @@ class TranslatorVisitor : public RecursiveASTVisitor<TranslatorVisitor> {
     void RewriteSynchronizedStmt(ObjCAtSynchronizedStmt* S);
     void RewriteTryStmt(ObjCAtTryStmt* S);
     void RewriteThrowStmt(ObjCAtThrowStmt* S);
-
     enum StatementStringMode {
         ADD_TRAILING_SEMICOLON_IF_NOT_PRESENT,
         REMOVE_TRAILING_SEMICOLON,
@@ -1275,7 +1275,7 @@ void TranslatorVisitor::RewriteStatement(Stmt* S) {
 
   } else {
     string Str = GetStatementString(S);
-    if (!Str.empty()) {
+    if (!Str.empty() && S->getLocStart().isValid() && S->getLocEnd().isValid()) {
       TheRewriter.ReplaceText(GetRange(S), GetStatementString(S));
     }
   }
@@ -1288,7 +1288,10 @@ void TranslatorVisitor::RewriteCompoundStatement(CompoundStmt* S) {
   for (CompoundStmt::const_body_iterator BI = S->body_begin(),
        E = S->body_end(); BI != E; ++BI) {
     if (!BlockStmtMap || !BlockStmtMap->hasParent(*BI)) { // don't rewrite block statements here
-      RewriteStatement(*BI);
+      // Also skip any non-compound statements with invalid locations
+      if (isa<CompoundStmt>(*BI) || (*BI)->getLocStart().isValid()) {
+        RewriteStatement(*BI);
+      }
     }
   }
 }
@@ -1321,7 +1324,7 @@ void TranslatorVisitor::RewriteIfStatement(IfStmt* S) {
 //
 void TranslatorVisitor::RewriteForStatement(ForStmt* S) {
 
-  string initStr = "(";
+  string initStr = "for (";
 
   Stmt* initStmt = S->getInit();
   SourceLocation InitEnd = Lexer::getLocForEndOfToken(initStmt->getLocEnd(), 0, *SM, LangOpts);
@@ -1344,7 +1347,10 @@ void TranslatorVisitor::RewriteForStatement(ForStmt* S) {
 
   incStr += " {";
 
-  TheRewriter.ReplaceText(GetRange(S->getLParenLoc(), initStmt->getLocEnd()), initStr);
+  // If applicable, handle generated index counter, which is similar to Python's "for-in-enumerate"
+  RewriteForEnumerateCounter(S->getForLoc(), cast<CompoundStmt>(S->getBody()), incStr);
+
+  TheRewriter.ReplaceText(GetRange(S->getForLoc(), initStmt->getLocEnd()), initStr);
   TheRewriter.ReplaceText(GetRange(condStmt), condStr);
   TheRewriter.ReplaceText(GetRange(incStmt->getLocStart(), S->getRParenLoc()), incStr);
 
@@ -1366,6 +1372,9 @@ void TranslatorVisitor::RewriteForCollectionStatement(ObjCForCollectionStmt* S) 
   str += GetStatementString(S->getCollection(), REMOVE_TRAILING_SEMICOLON);
   str += ") {";
 
+  // If applicable, handle generated index counter, which is similar to Python's "for-in-enumerate"
+  RewriteForEnumerateCounter(S->getForLoc(), cast<CompoundStmt>(S->getBody()), str);
+
   TheRewriter.ReplaceText(GetRange(S->getForLoc(), S->getRParenLoc()), str);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
@@ -1377,7 +1386,7 @@ void TranslatorVisitor::RewriteCXXForRangeStmtStatement(CXXForRangeStmt* S) {
 
   // Handle C array for-in loops when not translating to Objective-C++
   //
-  if (!LangOpts.CPlusPlus and S->getRangeInit()->getType()->isArrayType()) {
+  if (!LangOpts.CPlusPlus && S->getRangeInit()->getType()->isArrayType()) {
     RewriteForCArrayStmtStatement(S);
 
   } else { // Objective-C++
@@ -1393,6 +1402,9 @@ void TranslatorVisitor::RewriteCXXForRangeStmtStatement(CXXForRangeStmt* S) {
     str += " : ";
     str += GetStatementString(S->getRangeInit(), REMOVE_TRAILING_SEMICOLON);
     str += ") {";
+
+    // If applicable, handle generated index counter, which is similar to Python's "for-in-enumerate"
+    RewriteForEnumerateCounter(S->getForLoc(), cast<CompoundStmt>(S->getBody()), str);
 
     TheRewriter.ReplaceText(GetRange(S->getForLoc(), S->getRParenLoc()), str);
 
@@ -1450,6 +1462,31 @@ void TranslatorVisitor::RewriteForCArrayStmtStatement(CXXForRangeStmt* S) {
   TheRewriter.ReplaceText(GetRange(S->getRangeInit()->getLocStart(), S->getRParenLoc()), incStr);
 
   DeferredInsertTextAtEndOfLine(S->getLocEnd(), "\n}");
+}
+
+//------------------------------------------------------------------------------------------------
+//
+void TranslatorVisitor::RewriteForEnumerateCounter(SourceLocation ForLoc,
+                                                   CompoundStmt* Body,
+                                                   string& Str) {
+  if (Body) {
+    Stmt* firstStmt = *(Body->body_begin());
+    if (firstStmt->getLocStart().isInvalid()) {
+      // Add counter statement to for string
+      Str += " ";
+      Str += GetStatementString(firstStmt);
+      // Replace original "for" with "{"
+      const FileID MainFileID = SM->getMainFileID();
+      const SourceLocation& LocStart = SM->getLocForStartOfFile(MainFileID);
+      const char* startBuf = SM->getCharacterData(LocStart);
+      const char* endBuf = SM->getCharacterData(ForLoc);
+      std::string bufferStr(startBuf, endBuf - startBuf);
+      const size_t pos = bufferStr.rfind("for");
+      TheRewriter.ReplaceText(GetRange(LocStart.getLocWithOffset(pos),
+                                       LocStart.getLocWithOffset(pos+strlen("for"))),
+                                       "{");
+    }
+  }
 }
 
 //------------------------------------------------------------------------------------------------

@@ -721,6 +721,7 @@ StmtResult Parser::ParseDefaultStatement() {
   }
 
   StmtResult SubStmt;
+
   if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     SubStmt = ParseCompoundStatement();
     if (!SubStmt.isInvalid() && isEero)
@@ -777,7 +778,6 @@ StmtResult Parser::ParseCompoundStatement(bool isStmtExpr) {
 ///
 StmtResult Parser::ParseCompoundStatement(bool isStmtExpr,
                                           unsigned ScopeFlags) {
-
   assert((Tok.is(tok::l_brace) ||
           (getLangOpts().OffSideRule && !PP.isInLegacyHeader())) &&
          "Not a compount stmt!");
@@ -1009,6 +1009,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       Diag(Tok, diag::err_not_allowed) << "'}'";
     }
   }
+
   if (Tok.isNot(tok::r_brace) && !T.isIgnored()) {
     Diag(Tok, diag::err_expected_rbrace);
     Diag(T.getOpenLocation(), diag::note_matching) << "{";
@@ -1576,6 +1577,11 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   ParsedAttributesWithRange attrs(AttrFactory);
   MaybeParseCXX11Attributes(attrs);
 
+  // Eero: For generated index counter, similar to Python's "for-in-enumerate"
+  //
+  StmtResult indexStmt;
+  ExprResult indexIncExpr;
+
   // Parse the first part of the for specifier.
   if (Tok.is(tok::semi)) {  // for (;
     ProhibitAttributes(attrs);
@@ -1602,15 +1608,31 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     FirstPart = Actions.ActOnDeclStmt(DG, DeclStart,
                                       isEero ? PrevTokLocation : Tok.getLocation());
 
+    // Generated index counter, like Python's "for-in-enumerate."
+    // Looks like "for int index : id elem in collection".
+    if (isEero && Tok.is(tok::colon)) {
+      ForLoc = ConsumeToken(); // eat the colon, move the "for" forward
+      indexIncExpr = Actions.ActOnForIndexStatement(FirstPart);
+      if (indexIncExpr.isUsable()) {
+        ForEach = true;
+        indexStmt = FirstPart;
+        // Now get the real FirstPart
+        FirstPart = ParseForEachFirstPart(attrs, DG,
+                                          MightBeForRangeStmt, ForRangeInit);
+      }
+    }
+
     if (ForRangeInit.ParsedForRangeDecl()) {
       if (!isEero)
         Diag(ForRangeInit.ColonLoc, getLangOpts(). CPlusPlus11 ?
            diag::warn_cxx98_compat_for_range : diag::ext_for_range);
 
       ForRange = true;
+      ForEach = false;
     } else if (Tok.is(tok::semi)) {  // for (int x = 4;
       ConsumeToken();
-    } else if ((ForEach = isTokIdentifier_in())) {
+    } else if (ForEach || (ForEach = isTokIdentifier_in())) {
+     if (!indexStmt.isUsable())
       Actions.ActOnForEachDeclStmt(DG);
       // ObjC: for (id x in expr)
       InLoc = Tok.getLocation();
@@ -1638,6 +1660,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     }
 
     ForEach = isTokIdentifier_in();
+    ForEach = ForEach || (isEero && Tok.is(tok::colon));
 
     // Turn the expression into a stmt.
     if (!Value.isInvalid()) {
@@ -1645,6 +1668,20 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
         FirstPart = Actions.ActOnForEachLValueExpr(Value.get());
       else
         FirstPart = Actions.ActOnExprStmt(Actions.MakeFullExpr(Value.get()));
+
+      // Generated index counter, like Python's "for-in-enumerate."
+      // Looks like "for index : id elem in collection".
+      if (isEero && Tok.is(tok::colon)) {
+        ForLoc = ConsumeToken(); // eat the colon, move the "for" forward
+        indexIncExpr = Actions.ActOnForIndexStatement(FirstPart);
+        if (indexIncExpr.isUsable()) {
+          indexStmt = FirstPart;
+          // Now get the real FirstPart
+          DeclGroupPtrTy DG;
+          FirstPart = ParseForEachFirstPart(attrs, DG, getLangOpts().CPlusPlus,
+                                            ForRangeInit);
+        }
+      }
     }
 
     if (Tok.is(tok::semi)) {
@@ -1719,16 +1756,36 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   // Match the ')'.
   T.consumeClose();
 
-  bool isCollectionAnNSRange = false;
-  if (isEero && ForEach && !Collection.isInvalid()) {
-    ParsedType NSRangeType = 
-        Actions.getTypeName(PP.getIdentifierTable().get("NSRange"), 
-                            SourceLocation(), getCurScope());
-    if (!NSRangeType.get().isNull() && 
-        Actions.Context.getCanonicalType(
-            Collection.get()->getType().getUnqualifiedType()) ==
-          Actions.Context.getCanonicalType(NSRangeType.get())) {
-      isCollectionAnNSRange = true;
+  bool ForNSRange = false;
+  ExprResult NSRangeExpr;
+  if (isEero) {
+    if (ForRange) {
+      NSRangeExpr = ForRangeInit.RangeExpr;
+      InLoc = ForRangeInit.ColonLoc;
+    } else if (ForEach) {
+      NSRangeExpr = Collection;
+    }
+    if (NSRangeExpr.isUsable()) {
+      // This handles the case where "for-in" looks like a C++ range loop, but
+      // is really a collection loop
+      if (ForRange && NSRangeExpr.get()->getType()->isObjCObjectPointerType()) {
+        ForEach = true;
+        Collection = NSRangeExpr;
+        ForNSRange = false;
+        ForRange = false;
+      } else { // check for NSRange
+        ParsedType NSRangeType =
+            Actions.getTypeName(PP.getIdentifierTable().get("NSRange"), 
+                                SourceLocation(), getCurScope());
+        if (!NSRangeType.get().isNull() &&
+            Actions.Context.getCanonicalType(
+                NSRangeExpr.get()->getType().getUnqualifiedType()) ==
+              Actions.Context.getCanonicalType(NSRangeType.get())) {
+          ForNSRange = true;
+          ForEach = false;
+          ForRange = false;
+        }
+      }
     }
   }
 
@@ -1748,7 +1805,18 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
 
   // Similarly, we need to do the semantic analysis for a for-range
   // statement immediately in order to close over temporaries correctly.
-  } else if (ForEach && !isCollectionAnNSRange) {
+  } else if (ForEach) {
+    // Check if user tried to write the reasonable, but ill-formed,
+    // for-range-statement: "for expr in expr  ..."
+    if (isEero && getLangOpts().CPlusPlus &&
+        Collection.isUsable() &&
+        !Collection.get()->getType()->isObjCObjectPointerType()) {
+      Diag(FirstPart.get()->getLocStart(), diag::err_for_range_expected_decl)
+        << Collection.get()->getSourceRange();
+      SkipUntil(tok::r_paren, false, true);
+      return StmtError();
+    }
+
     ForEachStmt = Actions.ActOnObjCForCollectionStmt(ForLoc,
                                                      FirstPart.take(),
                                                      Collection.take(),
@@ -1785,25 +1853,79 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   if (Body.isInvalid())
     return StmtError();
 
-  // If we have an NSRange expression after the "in"
-  if (ForEach && isCollectionAnNSRange)
-    return Actions.ActOnForNSRangeStmt(ForLoc, 
-                                       T.getOpenLocation(),
-                                       FirstPart.take(), 
-                                       InLoc,
-                                       Collection.take(), 
-                                       T.getCloseLocation(),
-                                       Body.take());
-  if (ForEach)
-   return Actions.FinishObjCForCollectionStmt(ForEachStmt.take(),
-                                              Body.take());
+  if (ForEach || ForRange || ForNSRange) {
+    if (indexStmt.isUsable()) {
+      StmtVector indexAndBodyStmts;
+      indexAndBodyStmts.push_back(dyn_cast<Stmt>(indexIncExpr.take()));
+      indexAndBodyStmts.push_back(Body.take());
+      Body = Actions.ActOnCompoundStmt(Body.get()->getLocStart(),
+                                       Body.get()->getLocEnd(),
+                                       indexAndBodyStmts, false);
+    }
+    StmtResult forStmt;
+    if (ForEach) {
+      forStmt = Actions.FinishObjCForCollectionStmt(ForEachStmt.take(),
+                                                    Body.take());
+    } else if (ForRange) {
+      forStmt = Actions.FinishCXXForRangeStmt(ForRangeStmt.take(), Body.take());
 
-  if (ForRange)
-    return Actions.FinishCXXForRangeStmt(ForRangeStmt.take(), Body.take());
+    } else if (ForNSRange) {
+      forStmt = Actions.ActOnForNSRangeStmt(ForLoc,
+                                            T.getOpenLocation(),
+                                            FirstPart.take(),
+                                            InLoc,
+                                            NSRangeExpr.take(),
+                                            T.getCloseLocation(),
+                                            Body.take());
+    }
+    if (indexStmt.isUsable()) {
+      StmtVector indexAndForStmts;
+      indexAndForStmts.push_back(indexStmt.take());
+      indexAndForStmts.push_back(forStmt.take());
+      forStmt = Actions.ActOnCompoundStmt(Body.get()->getLocStart(),
+                                          Body.get()->getLocEnd(),
+                                          indexAndForStmts, false);
+    }
+    return forStmt;
+  }
 
   return Actions.ActOnForStmt(ForLoc, T.getOpenLocation(), FirstPart.take(),
                               SecondPart, SecondVar, ThirdPart,
                               T.getCloseLocation(), Body.take());
+}
+
+StmtResult Parser::ParseForEachFirstPart(ParsedAttributesWithRange &attrs,
+                                      DeclGroupPtrTy &DG,
+                                      bool MightBeForRangeStmt,
+                                      ForRangeInit &ForRangeInit) {
+  StmtResult FirstPart;
+  if (isDeclarationStatement()) {
+    SourceLocation DeclStart = Tok.getLocation();
+    SourceLocation DeclEnd;
+    StmtVector Stmts;
+    DG = ParseSimpleDeclaration(Stmts, Declarator::ForContext,
+                                DeclEnd, attrs, false,
+                                MightBeForRangeStmt ?
+                                  &ForRangeInit : 0);
+    FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, PrevTokLocation);
+    if (!isTokIdentifier_in() && !ForRangeInit.ParsedForRangeDecl()) {
+      Diag(Tok, diag::err_expected) << "'in'";
+      return StmtError();
+    }
+  } else { // existing variable
+    // Need to prevent "in" from looking like a msg send
+    ExprResult Value = ParseCXXIdExpression();
+    // Turn the expression into a stmt.
+    if (!Value.isInvalid()) {
+      FirstPart = Actions.ActOnForEachLValueExpr(Value.get());
+
+      if (!isTokIdentifier_in()) {
+        Diag(Tok, diag::err_expected) << "'in'";
+        return StmtError();
+      }
+    }
+  }
+  return FirstPart;
 }
 
 /// ParseGotoStatement
@@ -1888,8 +2010,7 @@ StmtResult Parser::ParseReturnStatement() {
              diag::warn_cxx98_compat_generalized_initializer_lists :
              diag::ext_generalized_initializer_lists)
           << R.get()->getSourceRange();
-    } else //if (!getLangOpts().OptionalSemicolons || !PP.isInLegacyHeader() &&
-           //    Tok.isNot(tok::eof)))
+    } else
         R = ParseExpression();
     if (R.isInvalid()) {  // Skip to the semicolon, but don't consume it.
       SkipUntil(tok::semi, false, true);

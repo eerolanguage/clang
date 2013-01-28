@@ -1573,6 +1573,11 @@ private:
   StmtResult ParseWhileStatement(SourceLocation *TrailingElseLoc);
   StmtResult ParseDoStatement();
   StmtResult ParseForStatement(SourceLocation *TrailingElseLoc);
+  struct ForRangeInit;
+  StmtResult ParseForEachFirstPart(ParsedAttributesWithRange &attrs,
+                                   DeclGroupPtrTy &DG,
+                                   bool MightBeForRangeStmt,
+                                   ForRangeInit &ForRangeInit);
   StmtResult ParseGotoStatement();
   StmtResult ParseContinueStatement();
   StmtResult ParseBreakStatement();

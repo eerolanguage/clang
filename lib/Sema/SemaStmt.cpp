@@ -2280,6 +2280,66 @@ Sema::ActOnIndirectGotoStmt(SourceLocation GotoLoc, SourceLocation StarLoc,
   return Owned(new (Context) IndirectGotoStmt(GotoLoc, StarLoc, E));
 }
 
+/// Eero support for Python-like for-in-enumerate counter
+///
+ExprResult Sema::ActOnForIndexStatement(StmtResult &IndexStmt) {
+  ExprResult indexIncExpr;
+  if (!IndexStmt.isInvalid()) {
+    DeclStmt *indexDecl = dyn_cast<DeclStmt>(IndexStmt.get());
+    Expr *indexExpr = dyn_cast<Expr>(IndexStmt.get());
+
+    VarDecl *indexVar = 0;
+    QualType indexType;
+
+    if (indexDecl) { // it's a declaration
+      indexVar = cast<VarDecl>(indexDecl->getSingleDecl());
+      indexType = indexVar->getType();
+    } else { // it's a variable expression
+      indexType = indexExpr->getType();
+    }
+
+    if (!indexType->isIntegerType() || indexType->isEnumeralType()) {
+      Diag(IndexStmt.get()->getLocStart(), diag::err_expected) << "integer type"
+           << IndexStmt.get()->getSourceRange();
+      return ExprError();
+    }
+
+    llvm::APInt NegativeOne(Context.getTypeSize(indexType), -1);
+
+    if (indexDecl) { // it's a declaration
+      indexVar->setInit(IntegerLiteral::Create(Context,
+                                               NegativeOne,
+                                               indexVar->getType(),
+                                               indexVar->getLocEnd()));
+      ExprResult IncVarExpr = BuildDeclRefExpr(indexVar,
+                                               indexVar->getType(),
+                                               VK_LValue,
+                                               SourceLocation());
+      indexIncExpr = ActOnUnaryOp(getCurScope(),
+                                  SourceLocation(),
+                                  tok::plusplus,
+                                  IncVarExpr.take());
+    } else { // a pre-declared variable
+      const SourceLocation litEndLoc =
+          IndexStmt.get()->getLocEnd().getLocWithOffset(1);
+      Expr *negOneExpr = IntegerLiteral::Create(Context,
+                                                NegativeOne,
+                                                indexType,
+                                                litEndLoc);
+      ExprResult initExpr = ActOnBinOp(getCurScope(),
+                                       SourceLocation(),
+                                       tok::equal,
+                                       indexExpr, negOneExpr);
+      indexIncExpr = ActOnUnaryOp(getCurScope(),
+                                  SourceLocation(),
+                                  tok::plusplus,
+                                  indexExpr);
+      IndexStmt = StmtResult(initExpr.take());
+    }
+  }
+  return indexIncExpr;
+}
+
 StmtResult
 Sema::ActOnContinueStmt(SourceLocation ContinueLoc, Scope *CurScope) {
   Scope *S = CurScope->getContinueParent();

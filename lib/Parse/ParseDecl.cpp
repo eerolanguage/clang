@@ -1417,6 +1417,9 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
                                               bool AllowFunctionDefinitions,
                                               SourceLocation *DeclEnd,
                                               ForRangeInit *FRI) {
+
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   // Parse the first declarator.
   ParsingDeclarator D(*this, DS, static_cast<Declarator::TheContext>(Context));
   ParseDeclarator(D);
@@ -1469,6 +1472,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
 
   // Eero "nested functions" (const blocks, really)
   if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+      Context == Declarator::BlockContext &&
       !AllowFunctionDefinitions &&
        D.isFunctionDeclarator() && isStartOfFunctionDefinition(D)) {
 
@@ -1496,7 +1500,8 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   // C++0x [stmt.iter]p1: Check if we have a for-range-declarator. If so, we
   // must parse and analyze the for-range-initializer before the declaration is
   // analyzed.
-  if (FRI && Tok.is(tok::colon)) {
+  if (FRI && ((!isEero && Tok.is(tok::colon)) ||
+              (isEero && isTokIdentifier_in()))) {
     FRI->ColonLoc = ConsumeToken();
     if (Tok.is(tok::l_brace))
       FRI->RangeExpr = ParseBraceInitializer();
