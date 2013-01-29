@@ -24,6 +24,7 @@
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/DelayedDiagnostic.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/Scope.h"
 #include "llvm/ADT/StringExtras.h"
 using namespace clang;
 using namespace sema;
@@ -1815,13 +1816,25 @@ static void handleVecReturnAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                            Attr.getAttributeSpellingListIndex()));
 }
 
-static void handleDependencyAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  if (!isa<FunctionDecl>(D) && !isa<ParmVarDecl>(D)) {
+static void handleDependencyAttr(Sema &S, Scope *Scope, Decl *D,
+                                 const AttributeList &Attr) {
+  if (isa<ParmVarDecl>(D)) {
+    // [[carries_dependency]] can only be applied to a parameter if it is a
+    // parameter of a function declaration or lambda.
+    if (!(Scope->getFlags() & clang::Scope::FunctionDeclarationScope)) {
+      S.Diag(Attr.getLoc(),
+             diag::err_carries_dependency_param_not_function_decl);
+      return;
+    }
+  } else if (!isa<FunctionDecl>(D)) {
     S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
       << Attr.getName() << ExpectedFunctionMethodOrParameter;
     return;
   }
-  // FIXME: Actually store the attribute on the declaration
+
+  D->addAttr(::new (S.Context) CarriesDependencyAttr(
+                                   Attr.getRange(), S.Context,
+                                   Attr.getAttributeSpellingListIndex()));
 }
 
 static void handleUnusedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
@@ -3317,11 +3330,11 @@ void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E,
 }
 
 void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, TypeSourceInfo *TS, 
-                          bool isDeclSpec) {
+                          bool isDeclSpec, unsigned SpellingListIndex) {
   // FIXME: Cache the number on the Attr object if non-dependent?
   // FIXME: Perform checking of type validity
   D->addAttr(::new (Context) AlignedAttr(AttrRange, Context, false, TS, 
-                                         isDeclSpec));
+                                         isDeclSpec, SpellingListIndex));
   return;
 }
 
@@ -4494,7 +4507,8 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_Annotate:    handleAnnotateAttr    (S, D, Attr); break;
   case AttributeList::AT_Availability:handleAvailabilityAttr(S, D, Attr); break;
   case AttributeList::AT_CarriesDependency:
-                                      handleDependencyAttr  (S, D, Attr); break;
+    handleDependencyAttr(S, scope, D, Attr);
+    break;
   case AttributeList::AT_Common:      handleCommonAttr      (S, D, Attr); break;
   case AttributeList::AT_CUDAConstant:handleConstantAttr    (S, D, Attr); break;
   case AttributeList::AT_Constructor: handleConstructorAttr (S, D, Attr); break;
@@ -4743,13 +4757,6 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
                                  bool NonInheritable, bool Inheritable,
                                  bool IncludeCXX11Attributes) {
   if (Attr.isInvalid())
-    return;
-
-  // Type attributes are still treated as declaration attributes by 
-  // ParseMicrosoftTypeAttributes and ParseBorlandTypeAttributes.  We don't 
-  // want to process them, however, because we will simply warn about ignoring 
-  // them.  So instead, we will bail out early.
-  if (Attr.isMSTypespecAttribute())
     return;
 
   // Ignore C++11 attributes on declarator chunks: they appertain to the type

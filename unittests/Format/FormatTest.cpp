@@ -239,6 +239,25 @@ TEST_F(FormatTest, FormatsForLoop) {
   verifyFormat(
       "for (MachineFun::iterator IIII = PrevIt, EEEE = F.end(); IIII != EEEE;\n"
       "     ++IIIII) {\n}");
+  verifyFormat(
+      "for (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaa =\n"
+      "         aaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaa;\n"
+      "     aaaaaaaaaaa != aaaaaaaaaaaaaaaaaaa; ++aaaaaaaaaaa) {\n}");
+
+  // FIXME: Not sure whether we want extra identation in line 3 here:
+  verifyFormat(
+      "for (aaaaaaaaaaaaaaaaa aaaaaaaaaaa = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\n"
+      "     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa !=\n"
+      "     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+      "         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);\n"
+      "     ++aaaaaaaaaaa) {\n}");
+}
+
+TEST_F(FormatTest, RangeBasedForLoops) {
+  verifyFormat("for (auto aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa :\n"
+               "     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) {\n}");
+  verifyFormat("for (auto aaaaaaaaaaaaaaaaaaaaa :\n"
+               "     aaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaa, aaaaaaaaaaaaa)) {\n}");
 }
 
 TEST_F(FormatTest, FormatsWhileLoop) {
@@ -796,13 +815,15 @@ TEST_F(FormatTest, LayoutStatementsAroundPreprocessorDirectives) {
             "    a;",
             format("int\n#define A\na;"));
   verifyFormat(
-      "functionCallTo(someOtherFunction(\n"
-      "    withSomeParameters, whichInSequence,\n"
-      "    areLongerThanALine(andAnotherCall,\n"
+      "functionCallTo(\n"
+      "    someOtherFunction(\n"
+      "        withSomeParameters, whichInSequence,\n"
+      "        areLongerThanALine(andAnotherCall,\n"
       "#define A B\n"
-      "                       withMoreParamters,\n"
-      "                       whichStronglyInfluenceTheLayout),\n"
-      "    andMoreParameters), trailing);", getLLVMStyleWithColumns(69));
+      "                           withMoreParamters,\n"
+      "                           whichStronglyInfluenceTheLayout),\n"
+      "        andMoreParameters), trailing);",
+      getLLVMStyleWithColumns(69));
 }
 
 TEST_F(FormatTest, LayoutBlockInsideParens) {
@@ -849,9 +870,30 @@ TEST_F(FormatTest, FormatsFunctionDefinition) {
 
 TEST_F(FormatTest, FormatsAwesomeMethodCall) {
   verifyFormat(
-      "SomeLongMethodName(SomeReallyLongMethod(\n"
-      "    CallOtherReallyLongMethod(parameter, parameter, parameter)),\n"
+      "SomeLongMethodName(SomeReallyLongMethod(CallOtherReallyLongMethod(\n"
+      "                       parameter, parameter, parameter)),\n"
       "                   SecondLongCall(parameter));");
+}
+
+TEST_F(FormatTest, PreventConfusingIndents) {
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaa(\n"
+      "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa),\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaa);");
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaa[\n"
+      "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa],\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaa];");
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaa<\n"
+      "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>,\n"
+      "    aaaaaaaaaaaaaaaaaaaaaaaa>;");
+  verifyFormat("int a = bbbb && ccc && fffff(\n"
+               "#define A Just forcing a new line\n"
+               "                           ddd);");
 }
 
 TEST_F(FormatTest, ConstructorInitializers) {
@@ -893,6 +935,10 @@ TEST_F(FormatTest, ConstructorInitializers) {
                "      aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
                "                               aaaaaaaaaaaaaaaaaaaaaaaaaaa),\n"
                "      aaaaaaaaaaaaaaaaaaaaaaa() {\n}");
+
+  verifyFormat("Constructor()\n"
+               "    : aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "          aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) {\n}");
 
   // Here a line could be saved by splitting the second initializer onto two
   // lines, but that is not desireable.
@@ -1088,13 +1134,31 @@ TEST_F(FormatTest, AlignsAfterReturn) {
 TEST_F(FormatTest, BreaksConditionalExpressions) {
   verifyFormat(
       "aaaa(aaaaaaaaaaaaaaaaaaaa,\n"
-      "     aaaaaaaaaaaaaaaaaaaaaaaaaa ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa :\n"
-      "         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
-  verifyFormat("aaaa(aaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaaaa ?\n"
-               "         aaaaaaaaaaaaaaaaaaaaaaa : aaaaaaaaaaaaaaaaaaaaa);");
+      "     aaaaaaaaaaaaaaaaaaaaaaaaaa ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "                                : aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
   verifyFormat(
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaa ? aaaa(aaaaaa) :\n"
-      "                                   aaaaaaaaaaaaa);");
+      "aaaa(aaaaaaaaaaaaaaaaaaaa, aaaaaaa ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "                                   : aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaa ? aaaa(aaaaaa)\n"
+      "                                                    : aaaaaaaaaaaaa);");
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+      "                   aaaaaaaaaaaaaaaa ? aaaaaaaaaaaaaaaaaaaaaaa\n"
+      "                                    : aaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+      "                   aaaaaaaaaaaaa);");
+  verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "          aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+               "    : aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "          aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+  verifyFormat("aaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "       aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "           ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "                 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+               "           : aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "                 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa),\n"
+               "       aaaaaaaaaaaaaaaaaaaaaaaaaaa);");
 }
 
 TEST_F(FormatTest, ConditionalExpressionsInBrackets) {
@@ -1232,12 +1296,18 @@ TEST_F(FormatTest, WrapsAtNestedNameSpecifiers) {
   // "bbbbb..." here instead of what we are doing now.
   verifyFormat(
       "aaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb::\n"
-      "                cccccccccccccccccccccccccccccccccccccccccccccccccc());");
+      "                    cccccccccccccccccccccccccccccccccccccccccccccc());");
 
   // Breaking at nested name specifiers is generally not desirable.
   verifyFormat(
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
       "    aaaaaaaaaaaaaaaaaaaaaaa);");
+
+  verifyFormat(
+      "aaaaaaaaaaaaaaaaaa(aaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa::\n"
+      "                                 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+      "                   aaaaaaaaaaaaaaaaaaaaa);",
+      getLLVMStyleWithColumns(74));
 }
 
 TEST_F(FormatTest, UnderstandsTemplateParameters) {
@@ -1446,13 +1516,16 @@ TEST_F(FormatTest, FormatsFunctionTypes) {
   verifyFormat("int(*func)(void *);");
 }
 
-TEST_F(FormatTest, DoesNotBreakBeforePointerOrReference) {
-  verifyFormat("int *someFunction(int LoooooooooooooooongParam1,\n"
-               "                  int LoooooooooooooooongParam2) {\n}");
+TEST_F(FormatTest, BreaksFunctionDeclarations) {
+  verifyFormat("int *someFunction(int LoooooooooooooooooooongParam1,\n"
+               "                  int LoooooooooooooooooooongParam2) {\n}");
   verifyFormat(
-      "TypeSpecDecl *TypeSpecDecl::Create(ASTContext &C, DeclContext *DC,\n"
-      "                                   SourceLocation L, IdentifierIn *II,\n"
-      "                                   Type *T) {\n}");
+      "TypeSpecDecl *\n"
+      "TypeSpecDecl::Create(ASTContext &C, DeclContext *DC, SourceLocation L,\n"
+      "                     IdentifierIn *II, Type *T) {\n}");
+  verifyGoogleFormat(
+      "TypeSpecDecl* TypeSpecDecl::Create(\n"
+      "    ASTContext& C, DeclContext* DC, SourceLocation L) {\n}");
 }
 
 TEST_F(FormatTest, LineStartsWithSpecialCharacter) {

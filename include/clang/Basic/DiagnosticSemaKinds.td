@@ -3704,8 +3704,9 @@ def err_arc_mismatched_cast : Error<
   " to %3 is disallowed with ARC">;
 def err_arc_nolifetime_behavior : Error<
   "explicit ownership qualifier on cast result has no effect">;
-def err_arc_objc_object_in_struct : Error<
-  "ARC forbids %select{Objective-C objects|blocks}0 in structs or unions">;
+def err_arc_objc_object_in_tag : Error<
+  "ARC forbids %select{Objective-C objects|blocks}0 in "
+  "%select{struct|interface|union|<<ERROR>>|enum}1">;
 def err_arc_objc_property_default_assign_on_object : Error<
   "ARC forbids synthesizing a property of an Objective-C object "
   "with unspecified ownership or storage attribute">;
@@ -5909,6 +5910,14 @@ def err_noreturn_missing_on_first_decl : Error<
   "function declared '[[noreturn]]' after its first declaration">;
 def note_noreturn_missing_first_decl : Note<
   "declaration missing '[[noreturn]]' attribute is here">;
+def err_carries_dependency_missing_on_first_decl : Error<
+  "%select{function|parameter}0 declared '[[carries_dependency]]' "
+  "after its first declaration">;
+def note_carries_dependency_missing_first_decl : Note<
+  "declaration missing '[[carries_dependency]]' attribute is here">;
+def err_carries_dependency_param_not_function_decl : Error<
+  "'[[carries_dependency]]' attribute only allowed on parameter in a function "
+  "declaration or lambda">;
 def err_block_on_nonlocal : Error<
   "__block attribute not allowed, only allowed on local variables">;
 def err_block_on_vm : Error<

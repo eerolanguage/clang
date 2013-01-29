@@ -1916,6 +1916,9 @@ static void checkNewAttributesAfterDef(Sema &S, Decl *New, const Decl *Old) {
 /// mergeDeclAttributes - Copy attributes from the Old decl to the New one.
 void Sema::mergeDeclAttributes(NamedDecl *New, Decl *Old,
                                AvailabilityMergeKind AMK) {
+  if (!Old->hasAttrs() && !New->hasAttrs())
+    return;
+
   // attributes declared post-definition are currently ignored
   checkNewAttributesAfterDef(*this, New, Old);
 
@@ -1961,7 +1964,25 @@ void Sema::mergeDeclAttributes(NamedDecl *New, Decl *Old,
 /// to the new one.
 static void mergeParamDeclAttributes(ParmVarDecl *newDecl,
                                      const ParmVarDecl *oldDecl,
-                                     ASTContext &C) {
+                                     Sema &S) {
+  // C++11 [dcl.attr.depend]p2:
+  //   The first declaration of a function shall specify the
+  //   carries_dependency attribute for its declarator-id if any declaration
+  //   of the function specifies the carries_dependency attribute.
+  if (newDecl->hasAttr<CarriesDependencyAttr>() &&
+      !oldDecl->hasAttr<CarriesDependencyAttr>()) {
+    S.Diag(newDecl->getAttr<CarriesDependencyAttr>()->getLocation(),
+           diag::err_carries_dependency_missing_on_first_decl) << 1/*Param*/;
+    // Find the first declaration of the parameter.
+    // FIXME: Should we build redeclaration chains for function parameters?
+    const FunctionDecl *FirstFD =
+      cast<FunctionDecl>(oldDecl->getDeclContext())->getFirstDeclaration();
+    const ParmVarDecl *FirstVD =
+      FirstFD->getParamDecl(oldDecl->getFunctionScopeIndex());
+    S.Diag(FirstVD->getLocation(),
+           diag::note_carries_dependency_missing_first_decl) << 1/*Param*/;
+  }
+
   if (!oldDecl->hasAttrs())
     return;
 
@@ -1975,7 +1996,8 @@ static void mergeParamDeclAttributes(ParmVarDecl *newDecl,
        i = oldDecl->specific_attr_begin<InheritableParamAttr>(),
        e = oldDecl->specific_attr_end<InheritableParamAttr>(); i != e; ++i) {
     if (!DeclHasAttr(newDecl, *i)) {
-      InheritableAttr *newAttr = cast<InheritableParamAttr>((*i)->clone(C));
+      InheritableAttr *newAttr =
+        cast<InheritableParamAttr>((*i)->clone(S.Context));
       newAttr->setInherited(true);
       newDecl->addAttr(newAttr);
       foundAny = true;
@@ -2300,6 +2322,18 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S) {
            diag::note_noreturn_missing_first_decl);
     }
 
+    // C++11 [dcl.attr.depend]p2:
+    //   The first declaration of a function shall specify the
+    //   carries_dependency attribute for its declarator-id if any declaration
+    //   of the function specifies the carries_dependency attribute.
+    if (New->hasAttr<CarriesDependencyAttr>() &&
+        !Old->hasAttr<CarriesDependencyAttr>()) {
+      Diag(New->getAttr<CarriesDependencyAttr>()->getLocation(),
+           diag::err_carries_dependency_missing_on_first_decl) << 0/*Function*/;
+      Diag(Old->getFirstDeclaration()->getLocation(),
+           diag::note_carries_dependency_missing_first_decl) << 0/*Function*/;
+    }
+
     // (C++98 8.3.5p3):
     //   All declarations for a function shall agree exactly in both the
     //   return type and the parameter-type-list.
@@ -2492,7 +2526,7 @@ bool Sema::MergeCompatibleFunctionDecls(FunctionDecl *New, FunctionDecl *Old,
   if (New->getNumParams() == Old->getNumParams())
     for (unsigned i = 0, e = New->getNumParams(); i != e; ++i)
       mergeParamDeclAttributes(New->getParamDecl(i), Old->getParamDecl(i),
-                               Context);
+                               *this);
 
   if (getLangOpts().CPlusPlus)
     return MergeCXXFunctionDecl(New, Old, S);
@@ -2519,7 +2553,7 @@ void Sema::mergeObjCMethodDecls(ObjCMethodDecl *newMethod,
   for (ObjCMethodDecl::param_iterator
          ni = newMethod->param_begin(), ne = newMethod->param_end();
        ni != ne && oi != oe; ++ni, ++oi)
-    mergeParamDeclAttributes(*ni, *oi, Context);
+    mergeParamDeclAttributes(*ni, *oi, *this);
 
   CheckObjCMethodOverride(newMethod, oldMethod);
 }
@@ -6670,7 +6704,8 @@ void Sema::CheckMain(FunctionDecl* FD, const DeclSpec& DS) {
       const PointerType* PT;
       if ((PT = qs.strip(AT)->getAs<PointerType>()) &&
           (PT = qs.strip(PT->getPointeeType())->getAs<PointerType>()) &&
-          (QualType(qs.strip(PT->getPointeeType()), 0) == Context.CharTy)) {
+          Context.hasSameType(QualType(qs.strip(PT->getPointeeType()), 0),
+                              Context.CharTy)) {
         qs.removeConst();
         mismatch = !qs.empty();
       }
@@ -10566,44 +10601,42 @@ void Sema::ActOnFields(Scope* S,
       // Eero objects are always pointers
       QualType T = Context.getObjCObjectPointerType(FD->getType());
       FD->setType(T);
-    } else if (!getLangOpts().CPlusPlus) {
-      if (getLangOpts().ObjCAutoRefCount && Record && !ARCErrReported) {
-        // It's an error in ARC if a field has lifetime.
-        // We don't want to report this in a system header, though,
-        // so we just make the field unavailable.
-        // FIXME: that's really not sufficient; we need to make the type
-        // itself invalid to, say, initialize or copy.
-        QualType T = FD->getType();
-        Qualifiers::ObjCLifetime lifetime = T.getObjCLifetime();
-        if (lifetime && lifetime != Qualifiers::OCL_ExplicitNone) {
-          SourceLocation loc = FD->getLocation();
-          if (getSourceManager().isInSystemHeader(loc)) {
-            if (!FD->hasAttr<UnavailableAttr>()) {
-              FD->addAttr(new (Context) UnavailableAttr(loc, Context,
-                                "this system field has retaining ownership"));
-            }
-          } else {
-            Diag(FD->getLocation(), diag::err_arc_objc_object_in_struct) 
-              << T->isBlockPointerType();
+    } else if (getLangOpts().ObjCAutoRefCount && Record && !ARCErrReported &&
+               (!getLangOpts().CPlusPlus || Record->isUnion())) {
+      // It's an error in ARC if a field has lifetime.
+      // We don't want to report this in a system header, though,
+      // so we just make the field unavailable.
+      // FIXME: that's really not sufficient; we need to make the type
+      // itself invalid to, say, initialize or copy.
+      QualType T = FD->getType();
+      Qualifiers::ObjCLifetime lifetime = T.getObjCLifetime();
+      if (lifetime && lifetime != Qualifiers::OCL_ExplicitNone) {
+        SourceLocation loc = FD->getLocation();
+        if (getSourceManager().isInSystemHeader(loc)) {
+          if (!FD->hasAttr<UnavailableAttr>()) {
+            FD->addAttr(new (Context) UnavailableAttr(loc, Context,
+                              "this system field has retaining ownership"));
           }
-          ARCErrReported = true;
+        } else {
+          Diag(FD->getLocation(), diag::err_arc_objc_object_in_tag) 
+            << T->isBlockPointerType() << Record->getTagKind();
         }
+        ARCErrReported = true;
       }
-      else if (getLangOpts().ObjC1 &&
+    } else if (getLangOpts().ObjC1 &&
                getLangOpts().getGC() != LangOptions::NonGC &&
                Record && !Record->hasObjectMember()) {
-        if (FD->getType()->isObjCObjectPointerType() ||
-            FD->getType().isObjCGCStrong())
+      if (FD->getType()->isObjCObjectPointerType() ||
+          FD->getType().isObjCGCStrong())
+        Record->setHasObjectMember(true);
+      else if (Context.getAsArrayType(FD->getType())) {
+        QualType BaseType = Context.getBaseElementType(FD->getType());
+        if (BaseType->isRecordType() && 
+            BaseType->getAs<RecordType>()->getDecl()->hasObjectMember())
           Record->setHasObjectMember(true);
-        else if (Context.getAsArrayType(FD->getType())) {
-          QualType BaseType = Context.getBaseElementType(FD->getType());
-          if (BaseType->isRecordType() && 
-              BaseType->getAs<RecordType>()->getDecl()->hasObjectMember())
-            Record->setHasObjectMember(true);
-          else if (BaseType->isObjCObjectPointerType() ||
-                   BaseType.isObjCGCStrong())
-                 Record->setHasObjectMember(true);
-        }
+        else if (BaseType->isObjCObjectPointerType() ||
+                 BaseType.isObjCGCStrong())
+               Record->setHasObjectMember(true);
       }
     }
     if (Record && FD->getType().isVolatileQualified())
