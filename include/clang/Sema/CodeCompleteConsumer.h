@@ -121,7 +121,7 @@ SimplifiedTypeClass getSimplifiedTypeClass(CanQualType T);
 
 /// \brief Determine the type that this declaration will have if it is used
 /// as a type or in an expression.
-QualType getDeclUsageType(ASTContext &C, NamedDecl *ND);
+QualType getDeclUsageType(ASTContext &C, const NamedDecl *ND);
 
 /// \brief Determine the priority to be given to a macro code completion result
 /// with the given name.
@@ -530,7 +530,7 @@ class GlobalCodeCompletionAllocator
 };
 
 class CodeCompletionTUInfo {
-  llvm::DenseMap<DeclContext *, StringRef> ParentNames;
+  llvm::DenseMap<const DeclContext *, StringRef> ParentNames;
   IntrusiveRefCntPtr<GlobalCodeCompletionAllocator> AllocatorRef;
 
 public:
@@ -546,7 +546,7 @@ public:
     return *AllocatorRef;
   }
 
-  StringRef getParentName(DeclContext *DC);
+  StringRef getParentName(const DeclContext *DC);
 };
 
 } // end namespace clang
@@ -629,7 +629,7 @@ public:
   void AddAnnotation(const char *A) { Annotations.push_back(A); }
 
   /// \brief Add the parent context information to this code completion.
-  void addParentContext(DeclContext *DC);
+  void addParentContext(const DeclContext *DC);
 
   void addBriefComment(StringRef Comment);
   
@@ -649,7 +649,7 @@ public:
 
   /// \brief When Kind == RK_Declaration or RK_Pattern, the declaration we are
   /// referring to. In the latter case, the declaration might be NULL.
-  NamedDecl *Declaration;
+  const NamedDecl *Declaration;
 
   union {
     /// \brief When Kind == RK_Keyword, the string representing the keyword
@@ -661,7 +661,7 @@ public:
     CodeCompletionString *Pattern;
 
     /// \brief When Kind == RK_Macro, the identifier that refers to a macro.
-    IdentifierInfo *Macro;
+    const IdentifierInfo *Macro;
   };
 
   /// \brief The priority of this particular code-completion result.
@@ -704,7 +704,7 @@ public:
   NestedNameSpecifier *Qualifier;
 
   /// \brief Build a result that refers to a declaration.
-  CodeCompletionResult(NamedDecl *Declaration,
+  CodeCompletionResult(const NamedDecl *Declaration,
                        NestedNameSpecifier *Qualifier = 0,
                        bool QualifierIsInformative = false,
                        bool Accessible = true)
@@ -728,7 +728,8 @@ public:
   }
 
   /// \brief Build a result that refers to a macro.
-  CodeCompletionResult(IdentifierInfo *Macro, unsigned Priority = CCP_Macro)
+  CodeCompletionResult(const IdentifierInfo *Macro,
+                       unsigned Priority = CCP_Macro)
     : Declaration(0), Macro(Macro), Priority(Priority), StartParameter(0),
       Kind(RK_Macro), CursorKind(CXCursor_MacroDefinition),
       Availability(CXAvailability_Available), Hidden(false),
@@ -763,7 +764,7 @@ public:
   }  
   
   /// \brief Retrieve the declaration stored in this result.
-  NamedDecl *getDeclaration() const {
+  const NamedDecl *getDeclaration() const {
     assert(Kind == RK_Declaration && "Not a declaration result");
     return Declaration;
   }
@@ -792,7 +793,7 @@ public:
                                            bool IncludeBriefComments);
 
   /// \brief Determine a base priority for the given declaration.
-  static unsigned getPriorityFromDecl(NamedDecl *ND);
+  static unsigned getPriorityFromDecl(const NamedDecl *ND);
 
 private:
   void computeCursorKindAndAvailability(bool Accessible = true);

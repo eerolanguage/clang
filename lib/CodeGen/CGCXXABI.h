@@ -294,16 +294,14 @@ public:
   /// \param addr - a pointer to pass to the destructor function.
   virtual void registerGlobalDtor(CodeGenFunction &CGF, llvm::Constant *dtor,
                                   llvm::Constant *addr);
-
-  /***************************** Virtual Tables *******************************/
-
-  /// Generates and emits the virtual tables for a class.
-  virtual void EmitVTables(const CXXRecordDecl *Class) = 0;
 };
 
-/// Creates an instance of a C++ ABI class.
-CGCXXABI *CreateARMCXXABI(CodeGenModule &CGM);
+// Create an instance of a C++ ABI class:
+
+/// Creates an Itanium-family ABI.
 CGCXXABI *CreateItaniumCXXABI(CodeGenModule &CGM);
+
+/// Creates a Microsoft-family ABI.
 CGCXXABI *CreateMicrosoftCXXABI(CodeGenModule &CGM);
 
 }

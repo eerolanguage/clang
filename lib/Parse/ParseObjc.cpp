@@ -2604,7 +2604,7 @@ StmtResult Parser::ParseObjCAtStatement(SourceLocation AtLoc) {
   
   // Otherwise, eat the semicolon.
   ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
-  return Actions.ActOnExprStmt(Actions.MakeFullExpr(Res.take()));
+  return Actions.ActOnExprStmt(Res);
 }
 
 ExprResult Parser::ParseObjCAtExpression(SourceLocation AtLoc) {
@@ -2989,7 +2989,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
   // Parse objc-selector
   SourceLocation Loc;
   IdentifierInfo *selIdent = ParseObjCSelectorPiece(Loc);
-
+  
   SmallVector<IdentifierInfo *, 12> KeyIdents;
   SmallVector<SourceLocation, 12> KeyLocs;
   ExprVector KeyExprs;

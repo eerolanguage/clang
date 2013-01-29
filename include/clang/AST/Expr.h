@@ -570,6 +570,9 @@ public:
   /// integer.
   llvm::APSInt EvaluateKnownConstInt(const ASTContext &Ctx,
                           SmallVectorImpl<PartialDiagnosticAt> *Diag=0) const;
+  
+  void EvaluateForOverflow(const ASTContext &Ctx,
+                           SmallVectorImpl<PartialDiagnosticAt> *Diag) const;
 
   /// EvaluateAsLValue - Evaluate an expression to see if we can fold it to an
   /// lvalue with link time known address, with no side-effects.
@@ -1214,8 +1217,8 @@ public:
 
 class APFloatStorage : private APNumericStorage {
 public:
-  llvm::APFloat getValue(bool IsIEEE) const {
-    return llvm::APFloat(getIntValue(), IsIEEE);
+  llvm::APFloat getValue(const llvm::fltSemantics &Semantics) const {
+    return llvm::APFloat(Semantics, getIntValue());
   }
   void setValue(ASTContext &C, const llvm::APFloat &Val) {
     setIntValue(C, Val.bitcastToAPInt());
@@ -1322,11 +1325,30 @@ public:
   static FloatingLiteral *Create(ASTContext &C, EmptyShell Empty);
 
   llvm::APFloat getValue() const {
-    return APFloatStorage::getValue(FloatingLiteralBits.IsIEEE);
+    return APFloatStorage::getValue(getSemantics());
   }
   void setValue(ASTContext &C, const llvm::APFloat &Val) {
+    assert(&getSemantics() == &Val.getSemantics() && "Inconsistent semantics");
     APFloatStorage::setValue(C, Val);
   }
+
+  /// Get a raw enumeration value representing the floating-point semantics of
+  /// this literal (32-bit IEEE, x87, ...), suitable for serialisation.
+  APFloatSemantics getRawSemantics() const {
+    return static_cast<APFloatSemantics>(FloatingLiteralBits.Semantics);
+  }
+
+  /// Set the raw enumeration value representing the floating-point semantics of
+  /// this literal (32-bit IEEE, x87, ...), suitable for serialisation.
+  void setRawSemantics(APFloatSemantics Sem) {
+    FloatingLiteralBits.Semantics = Sem;
+  }
+
+  /// Return the APFloat semantics this literal uses.
+  const llvm::fltSemantics &getSemantics() const;
+
+  /// Set the APFloat semantics this literal uses.
+  void setSemantics(const llvm::fltSemantics &Sem);
 
   bool isExact() const { return FloatingLiteralBits.IsExact; }
   void setExact(bool E) { FloatingLiteralBits.IsExact = E; }
@@ -2192,6 +2214,10 @@ public:
   /// isBuiltinCall - If this is a call to a builtin, return the builtin ID.  If
   /// not, return 0.
   unsigned isBuiltinCall() const;
+
+  /// \brief Returns \c true if this is a call to a builtin which does not
+  /// evaluate side-effects within its arguments.
+  bool isUnevaluatedBuiltinCall(ASTContext &Ctx) const;
 
   /// getCallReturnType - Get the return type of the call expr. This is not
   /// always the type of the expr itself, if the return type is a reference
@@ -4011,9 +4037,9 @@ public:
   void setDesignators(ASTContext &C, const Designator *Desigs,
                       unsigned NumDesigs);
 
-  Expr *getArrayIndex(const Designator& D);
-  Expr *getArrayRangeStart(const Designator& D);
-  Expr *getArrayRangeEnd(const Designator& D);
+  Expr *getArrayIndex(const Designator &D) const;
+  Expr *getArrayRangeStart(const Designator &D) const;
+  Expr *getArrayRangeEnd(const Designator &D) const;
 
   /// @brief Retrieve the location of the '=' that precedes the
   /// initializer value itself, if present.

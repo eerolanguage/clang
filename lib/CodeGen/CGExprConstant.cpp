@@ -747,6 +747,7 @@ public:
     case CK_FloatingToIntegral:
     case CK_FloatingToBoolean:
     case CK_FloatingCast:
+    case CK_ZeroToOCLEvent:
       return 0;
     }
     llvm_unreachable("Invalid CastKind");
@@ -1139,7 +1140,8 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
   }
   case APValue::Float: {
     const llvm::APFloat &Init = Value.getFloat();
-    if (&Init.getSemantics() == &llvm::APFloat::IEEEhalf)
+    if (&Init.getSemantics() == &llvm::APFloat::IEEEhalf &&
+         !Context.getLangOpts().NativeHalfType)
       return llvm::ConstantInt::get(VMContext, Init.bitcastToAPInt());
     else
       return llvm::ConstantFP::get(VMContext, Init);

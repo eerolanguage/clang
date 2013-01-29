@@ -68,6 +68,7 @@ class NestedNameSpecifier;
 class CXXBaseSpecifier;
 class CXXConstructorDecl;
 class CXXCtorInitializer;
+class GlobalModuleIndex;
 class GotoStmt;
 class MacroDefinition;
 class NamedDecl;
@@ -291,6 +292,9 @@ private:
 
   /// \brief The module manager which manages modules and their dependencies
   ModuleManager ModuleMgr;
+
+  /// \brief The global module index, if loaded.
+  llvm::OwningPtr<GlobalModuleIndex> GlobalIndex;
 
   /// \brief A map of global bit offsets to the module that stores entities
   /// at those bit offsets.
@@ -673,6 +677,9 @@ private:
   /// \brief A list of the namespaces we've seen.
   SmallVector<uint64_t, 4> KnownNamespaces;
 
+  /// \brief A list of undefined decls with internal linkage.
+  SmallVector<uint64_t, 8> UndefinedInternals;
+
   /// \brief A list of modules that were imported by precompiled headers or
   /// any other non-module AST file.
   SmallVector<serialization::SubmoduleID, 2> ImportedModules;
@@ -691,6 +698,12 @@ private:
 
   /// \brief Whether to accept an AST file with compiler errors.
   bool AllowASTWithCompilerErrors;
+
+  /// \brief Whether we are allowed to use the global module index.
+  bool UseGlobalIndex;
+
+  /// \brief Whether we have tried loading the global module index yet.
+  bool TriedLoadingGlobalIndex;
 
   /// \brief The current "generation" of the module file import stack, which 
   /// indicates how many separate module file load operations have occurred.
@@ -725,6 +738,12 @@ private:
 
   /// \brief The total number of macros stored in the chain.
   unsigned TotalNumMacros;
+
+  /// \brief The number of lookups into identifier tables.
+  unsigned NumIdentifierLookups;
+
+  /// \brief The number of lookups into identifier tables that succeed.
+  unsigned NumIdentifierLookupHits;
 
   /// \brief The number of selectors that have been read.
   unsigned NumSelectorsRead;
@@ -1075,9 +1094,13 @@ public:
   /// \param AllowASTWithCompilerErrors If true, the AST reader will accept an
   /// AST file the was created out of an AST with compiler errors,
   /// otherwise it will reject it.
+  ///
+  /// \param UseGlobalIndex If true, the AST reader will try to load and use
+  /// the global module index.
   ASTReader(Preprocessor &PP, ASTContext &Context, StringRef isysroot = "",
             bool DisableValidation = false,
-            bool AllowASTWithCompilerErrors = false);
+            bool AllowASTWithCompilerErrors = false,
+            bool UseGlobalIndex = true);
 
   ~ASTReader();
 
@@ -1141,6 +1164,18 @@ public:
   /// \brief Set the AST deserialization listener.
   void setDeserializationListener(ASTDeserializationListener *Listener);
 
+  /// \brief Determine whether this AST reader has a global index.
+  bool hasGlobalIndex() const { return GlobalIndex; }
+
+  /// \brief Attempts to load the global index.
+  ///
+  /// \returns true if loading the global index has failed for any reason.
+  bool loadGlobalIndex();
+
+  /// \brief Determine whether we tried to load the global index, but failed,
+  /// e.g., because it is out-of-date or does not exist.
+  bool isGlobalIndexUnavailable() const;
+  
   /// \brief Initializes the ASTContext
   void InitializeContext();
 
@@ -1311,7 +1346,7 @@ public:
 
   /// \brief Retrieve the module file that owns the given declaration, or NULL
   /// if the declaration is not from a module file.
-  ModuleFile *getOwningModuleFile(Decl *D);
+  ModuleFile *getOwningModuleFile(const Decl *D);
   
   /// \brief Returns the source location for the decl \p ID.
   SourceLocation getSourceLocationForDeclID(serialization::GlobalDeclID ID);
@@ -1472,6 +1507,9 @@ public:
   /// which will be used during typo correction.
   virtual void ReadKnownNamespaces(
                            SmallVectorImpl<NamespaceDecl *> &Namespaces);
+
+  virtual void ReadUndefinedInternals(
+                       llvm::MapVector<NamedDecl *, SourceLocation> &Undefined);
 
   virtual void ReadTentativeDefinitions(
                  SmallVectorImpl<VarDecl *> &TentativeDefs);
@@ -1643,13 +1681,13 @@ public:
 
   /// \brief Read a source location.
   SourceLocation ReadSourceLocation(ModuleFile &ModuleFile,
-                                    const RecordData &Record, unsigned& Idx) {
+                                    const RecordData &Record, unsigned &Idx) {
     return ReadSourceLocation(ModuleFile, Record[Idx++]);
   }
 
   /// \brief Read a source range.
   SourceRange ReadSourceRange(ModuleFile &F,
-                              const RecordData &Record, unsigned& Idx);
+                              const RecordData &Record, unsigned &Idx);
 
   /// \brief Read an integral value
   llvm::APInt ReadAPInt(const RecordData &Record, unsigned &Idx);
@@ -1658,7 +1696,8 @@ public:
   llvm::APSInt ReadAPSInt(const RecordData &Record, unsigned &Idx);
 
   /// \brief Read a floating-point value
-  llvm::APFloat ReadAPFloat(const RecordData &Record, unsigned &Idx);
+  llvm::APFloat ReadAPFloat(const RecordData &Record,
+                            const llvm::fltSemantics &Sem, unsigned &Idx);
 
   // \brief Read a string
   static std::string ReadString(const RecordData &Record, unsigned &Idx);
@@ -1757,7 +1796,7 @@ public:
 /// then restores it when destroyed.
 struct SavedStreamPosition {
   explicit SavedStreamPosition(llvm::BitstreamCursor &Cursor)
-  : Cursor(Cursor), Offset(Cursor.GetCurrentBitNo()) { }
+    : Cursor(Cursor), Offset(Cursor.GetCurrentBitNo()) { }
 
   ~SavedStreamPosition() {
     Cursor.JumpToBit(Offset);

@@ -112,6 +112,33 @@ static unsigned deduceWeakPropertyFromType(Sema &S, QualType T) {
   return 0;
 }
 
+/// \brief Check this Objective-C property against a property declared in the
+/// given protocol.
+static void
+CheckPropertyAgainstProtocol(Sema &S, ObjCPropertyDecl *Prop,
+                             ObjCProtocolDecl *Proto,
+                             llvm::SmallPtrSet<ObjCProtocolDecl *, 16> &Known) {
+  // Have we seen this protocol before?
+  if (!Known.insert(Proto))
+    return;
+
+  // Look for a property with the same name.
+  DeclContext::lookup_result R = Proto->lookup(Prop->getDeclName());
+  for (unsigned I = 0, N = R.size(); I != N; ++I) {
+    if (ObjCPropertyDecl *ProtoProp = dyn_cast<ObjCPropertyDecl>(R[I])) {
+      S.DiagnosePropertyMismatch(Prop, ProtoProp, Proto->getIdentifier());
+      return;
+    }
+  }
+
+  // Check this property against any protocols we inherit.
+  for (ObjCProtocolDecl::protocol_iterator P = Proto->protocol_begin(),
+                                        PEnd = Proto->protocol_end();
+       P != PEnd; ++P) {
+    CheckPropertyAgainstProtocol(S, Prop, *P, Known);
+  }
+}
+
 Decl *Sema::ActOnProperty(Scope *S, SourceLocation AtLoc,
                           SourceLocation LParenLoc,
                           FieldDeclarator &FD,
@@ -139,34 +166,31 @@ Decl *Sema::ActOnProperty(Scope *S, SourceLocation AtLoc,
                     !(Attributes & ObjCDeclSpec::DQ_PR_unsafe_unretained) &&
                     !(Attributes & ObjCDeclSpec::DQ_PR_weak)));
 
-  // Proceed with constructing the ObjCPropertDecls.
+  // Proceed with constructing the ObjCPropertyDecls.
   ObjCContainerDecl *ClassDecl = cast<ObjCContainerDecl>(CurContext);
-  if (ObjCCategoryDecl *CDecl = dyn_cast<ObjCCategoryDecl>(ClassDecl))
+  ObjCPropertyDecl *Res = 0;
+  if (ObjCCategoryDecl *CDecl = dyn_cast<ObjCCategoryDecl>(ClassDecl)) {
     if (CDecl->IsClassExtension()) {
-      Decl *Res = HandlePropertyInClassExtension(S, AtLoc, LParenLoc,
+      Res = HandlePropertyInClassExtension(S, AtLoc, LParenLoc,
                                            FD, GetterSel, SetterSel,
                                            isAssign, isReadWrite,
                                            Attributes,
                                            ODS.getPropertyAttributes(),
                                            isOverridingProperty, TSI,
                                            MethodImplKind);
-      if (Res) {
-        CheckObjCPropertyAttributes(Res, AtLoc, Attributes, false);
-        if (getLangOpts().ObjCAutoRefCount)
-          checkARCPropertyDecl(*this, cast<ObjCPropertyDecl>(Res));
-      }
-      ActOnDocumentableDecl(Res);
-      return Res;
+      if (!Res)
+        return 0;
     }
-  
-  ObjCPropertyDecl *Res = CreatePropertyDecl(S, ClassDecl, AtLoc, LParenLoc, FD,
-                                             GetterSel, SetterSel,
-                                             isAssign, isReadWrite,
-                                             Attributes,
-                                             ODS.getPropertyAttributes(),
-                                             TSI, MethodImplKind);
-  if (lexicalDC)
-    Res->setLexicalDeclContext(lexicalDC);
+  }
+
+  if (!Res) {
+    Res = CreatePropertyDecl(S, ClassDecl, AtLoc, LParenLoc, FD,
+                             GetterSel, SetterSel, isAssign, isReadWrite,
+                             Attributes, ODS.getPropertyAttributes(),
+                             TSI, MethodImplKind);
+    if (lexicalDC)
+      Res->setLexicalDeclContext(lexicalDC);
+  }
 
   // Validate the attributes on the @property.
   CheckObjCPropertyAttributes(Res, AtLoc, Attributes, 
@@ -175,6 +199,52 @@ Decl *Sema::ActOnProperty(Scope *S, SourceLocation AtLoc,
 
   if (getLangOpts().ObjCAutoRefCount)
     checkARCPropertyDecl(*this, Res);
+
+  llvm::SmallPtrSet<ObjCProtocolDecl *, 16> KnownProtos;
+  if (ObjCInterfaceDecl *IFace = dyn_cast<ObjCInterfaceDecl>(ClassDecl)) {
+    // For a class, compare the property against a property in our superclass.
+    bool FoundInSuper = false;
+    if (ObjCInterfaceDecl *Super = IFace->getSuperClass()) {
+      DeclContext::lookup_result R = Super->lookup(Res->getDeclName());
+      for (unsigned I = 0, N = R.size(); I != N; ++I) {
+        if (ObjCPropertyDecl *SuperProp = dyn_cast<ObjCPropertyDecl>(R[I])) {
+          DiagnosePropertyMismatch(Res, SuperProp, Super->getIdentifier());
+          FoundInSuper = true;
+          break;
+        }
+      }
+    }
+
+    if (FoundInSuper) {
+      // Also compare the property against a property in our protocols.
+      for (ObjCInterfaceDecl::protocol_iterator P = IFace->protocol_begin(),
+                                             PEnd = IFace->protocol_end();
+           P != PEnd; ++P) {
+        CheckPropertyAgainstProtocol(*this, Res, *P, KnownProtos);
+      }
+    } else {
+      // Slower path: look in all protocols we referenced.
+      for (ObjCInterfaceDecl::all_protocol_iterator
+             P = IFace->all_referenced_protocol_begin(),
+             PEnd = IFace->all_referenced_protocol_end();
+           P != PEnd; ++P) {
+        CheckPropertyAgainstProtocol(*this, Res, *P, KnownProtos);
+      }
+    }
+  } else if (ObjCCategoryDecl *Cat = dyn_cast<ObjCCategoryDecl>(ClassDecl)) {
+    for (ObjCCategoryDecl::protocol_iterator P = Cat->protocol_begin(),
+                                          PEnd = Cat->protocol_end();
+         P != PEnd; ++P) {
+      CheckPropertyAgainstProtocol(*this, Res, *P, KnownProtos);
+    }
+  } else {
+    ObjCProtocolDecl *Proto = cast<ObjCProtocolDecl>(ClassDecl);
+    for (ObjCProtocolDecl::protocol_iterator P = Proto->protocol_begin(),
+                                          PEnd = Proto->protocol_end();
+         P != PEnd; ++P) {
+      CheckPropertyAgainstProtocol(*this, Res, *P, KnownProtos);
+    }
+  }
 
   ActOnDocumentableDecl(Res);
   return Res;
@@ -251,7 +321,7 @@ static unsigned getOwnershipRule(unsigned attr) {
                  ObjCPropertyDecl::OBJC_PR_unsafe_unretained);
 }
 
-Decl *
+ObjCPropertyDecl *
 Sema::HandlePropertyInClassExtension(Scope *S,
                                      SourceLocation AtLoc,
                                      SourceLocation LParenLoc,
@@ -270,20 +340,22 @@ Sema::HandlePropertyInClassExtension(Scope *S,
   IdentifierInfo *PropertyId = FD.D.getIdentifier();
   ObjCInterfaceDecl *CCPrimary = CDecl->getClassInterface();
   
-  if (CCPrimary)
+  if (CCPrimary) {
     // Check for duplicate declaration of this property in current and
     // other class extensions.
-    for (const ObjCCategoryDecl *ClsExtDecl = 
-         CCPrimary->getFirstClassExtension();
-         ClsExtDecl; ClsExtDecl = ClsExtDecl->getNextClassExtension()) {
-      if (ObjCPropertyDecl *prevDecl =
-          ObjCPropertyDecl::findPropertyDecl(ClsExtDecl, PropertyId)) {
+    for (ObjCInterfaceDecl::known_extensions_iterator
+           Ext = CCPrimary->known_extensions_begin(),
+           ExtEnd = CCPrimary->known_extensions_end();
+         Ext != ExtEnd; ++Ext) {
+      if (ObjCPropertyDecl *prevDecl
+            = ObjCPropertyDecl::findPropertyDecl(*Ext, PropertyId)) {
         Diag(AtLoc, diag::err_duplicate_property);
         Diag(prevDecl->getLocation(), diag::note_property_declare);
         return 0;
       }
     }
-  
+  }
+
   // Create a new ObjCPropertyDecl with the DeclContext being
   // the class extension.
   // FIXME. We should really be using CreatePropertyDecl for this.
@@ -653,16 +725,18 @@ DiagnoseClassAndClassExtPropertyMismatch(Sema &S, ObjCInterfaceDecl *ClassDecl,
                                          ObjCPropertyDecl *property) {
   unsigned Attributes = property->getPropertyAttributesAsWritten();
   bool warn = (Attributes & ObjCDeclSpec::DQ_PR_readonly);
-  for (const ObjCCategoryDecl *CDecl = ClassDecl->getFirstClassExtension();
-       CDecl; CDecl = CDecl->getNextClassExtension()) {
+  for (ObjCInterfaceDecl::known_extensions_iterator
+         Ext = ClassDecl->known_extensions_begin(),
+         ExtEnd = ClassDecl->known_extensions_end();
+       Ext != ExtEnd; ++Ext) {
     ObjCPropertyDecl *ClassExtProperty = 0;
-    for (ObjCContainerDecl::prop_iterator P = CDecl->prop_begin(),
-         E = CDecl->prop_end(); P != E; ++P) {
-      if ((*P)->getIdentifier() == property->getIdentifier()) {
-        ClassExtProperty = *P;
+    DeclContext::lookup_result R = Ext->lookup(property->getDeclName());
+    for (unsigned I = 0, N = R.size(); I != N; ++I) {
+      ClassExtProperty = dyn_cast<ObjCPropertyDecl>(R[0]);
+      if (ClassExtProperty)
         break;
-      }
     }
+
     if (ClassExtProperty) {
       warn = false;
       unsigned classExtPropertyAttr = 
@@ -1279,119 +1353,56 @@ bool Sema::DiagnosePropertyAccessorMismatch(ObjCPropertyDecl *property,
   return false;
 }
 
-/// ComparePropertiesInBaseAndSuper - This routine compares property
-/// declarations in base and its super class, if any, and issues
-/// diagnostics in a variety of inconsistent situations.
-///
-void Sema::ComparePropertiesInBaseAndSuper(ObjCInterfaceDecl *IDecl) {
-  ObjCInterfaceDecl *SDecl = IDecl->getSuperClass();
-  if (!SDecl)
-    return;
-  // FIXME: O(N^2)
-  for (ObjCInterfaceDecl::prop_iterator S = SDecl->prop_begin(),
-       E = SDecl->prop_end(); S != E; ++S) {
-    ObjCPropertyDecl *SuperPDecl = *S;
-    // Does property in super class has declaration in current class?
-    for (ObjCInterfaceDecl::prop_iterator I = IDecl->prop_begin(),
-         E = IDecl->prop_end(); I != E; ++I) {
-      ObjCPropertyDecl *PDecl = *I;
-      if (SuperPDecl->getIdentifier() == PDecl->getIdentifier())
-          DiagnosePropertyMismatch(PDecl, SuperPDecl,
-                                   SDecl->getIdentifier());
-    }
-  }
-}
-
 /// MatchOneProtocolPropertiesInClass - This routine goes thru the list
 /// of properties declared in a protocol and compares their attribute against
 /// the same property declared in the class or category.
 void
-Sema::MatchOneProtocolPropertiesInClass(Decl *CDecl,
-                                          ObjCProtocolDecl *PDecl) {
-  ObjCInterfaceDecl *IDecl = dyn_cast_or_null<ObjCInterfaceDecl>(CDecl);
-  if (!IDecl) {
-    // Category
-    ObjCCategoryDecl *CatDecl = static_cast<ObjCCategoryDecl*>(CDecl);
+Sema::MatchOneProtocolPropertiesInClass(Decl *CDecl, ObjCProtocolDecl *PDecl) {
+  if (!CDecl)
+    return;
+
+  // Category case.
+  if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(CDecl)) {
+    // FIXME: We should perform this check when the property in the category
+    // is declared.
     assert (CatDecl && "MatchOneProtocolPropertiesInClass");
     if (!CatDecl->IsClassExtension())
       for (ObjCProtocolDecl::prop_iterator P = PDecl->prop_begin(),
            E = PDecl->prop_end(); P != E; ++P) {
-        ObjCPropertyDecl *Pr = *P;
-        ObjCCategoryDecl::prop_iterator CP, CE;
-        // Is this property already in  category's list of properties?
-        for (CP = CatDecl->prop_begin(), CE = CatDecl->prop_end(); CP!=CE; ++CP)
-          if (CP->getIdentifier() == Pr->getIdentifier())
-            break;
-        if (CP != CE)
-          // Property protocol already exist in class. Diagnose any mismatch.
-          DiagnosePropertyMismatch(*CP, Pr, PDecl->getIdentifier());
+        ObjCPropertyDecl *ProtoProp = *P;
+        DeclContext::lookup_result R
+          = CatDecl->lookup(ProtoProp->getDeclName());
+        for (unsigned I = 0, N = R.size(); I != N; ++I) {
+          if (ObjCPropertyDecl *CatProp = dyn_cast<ObjCPropertyDecl>(R[I])) {
+            if (CatProp != ProtoProp) {
+              // Property protocol already exist in class. Diagnose any mismatch.
+              DiagnosePropertyMismatch(CatProp, ProtoProp,
+                                       PDecl->getIdentifier());
+            }
+          }
+        }
       }
     return;
   }
+
+  // Class
+  // FIXME: We should perform this check when the property in the class
+  // is declared.
+  ObjCInterfaceDecl *IDecl = cast<ObjCInterfaceDecl>(CDecl);
   for (ObjCProtocolDecl::prop_iterator P = PDecl->prop_begin(),
-       E = PDecl->prop_end(); P != E; ++P) {
-    ObjCPropertyDecl *Pr = *P;
-    ObjCInterfaceDecl::prop_iterator CP, CE;
-    // Is this property already in  class's list of properties?
-    for (CP = IDecl->prop_begin(), CE = IDecl->prop_end(); CP != CE; ++CP)
-      if (CP->getIdentifier() == Pr->getIdentifier())
-        break;
-    if (CP != CE)
-      // Property protocol already exist in class. Diagnose any mismatch.
-      DiagnosePropertyMismatch(*CP, Pr, PDecl->getIdentifier());
+                                       E = PDecl->prop_end(); P != E; ++P) {
+    ObjCPropertyDecl *ProtoProp = *P;
+    DeclContext::lookup_result R
+      = IDecl->lookup(ProtoProp->getDeclName());
+    for (unsigned I = 0, N = R.size(); I != N; ++I) {
+      if (ObjCPropertyDecl *ClassProp = dyn_cast<ObjCPropertyDecl>(R[I])) {
+        if (ClassProp != ProtoProp) {
+          // Property protocol already exist in class. Diagnose any mismatch.
+          DiagnosePropertyMismatch(ClassProp, ProtoProp,
+                                   PDecl->getIdentifier());
+        }
+      }
     }
-}
-
-/// CompareProperties - This routine compares properties
-/// declared in 'ClassOrProtocol' objects (which can be a class or an
-/// inherited protocol with the list of properties for class/category 'CDecl'
-///
-void Sema::CompareProperties(Decl *CDecl, Decl *ClassOrProtocol) {
-  Decl *ClassDecl = ClassOrProtocol;
-  ObjCInterfaceDecl *IDecl = dyn_cast_or_null<ObjCInterfaceDecl>(CDecl);
-
-  if (!IDecl) {
-    // Category
-    ObjCCategoryDecl *CatDecl = static_cast<ObjCCategoryDecl*>(CDecl);
-    assert (CatDecl && "CompareProperties");
-    if (ObjCCategoryDecl *MDecl = dyn_cast<ObjCCategoryDecl>(ClassDecl)) {
-      for (ObjCCategoryDecl::protocol_iterator P = MDecl->protocol_begin(),
-           E = MDecl->protocol_end(); P != E; ++P)
-      // Match properties of category with those of protocol (*P)
-      MatchOneProtocolPropertiesInClass(CatDecl, *P);
-
-      // Go thru the list of protocols for this category and recursively match
-      // their properties with those in the category.
-      for (ObjCCategoryDecl::protocol_iterator P = CatDecl->protocol_begin(),
-           E = CatDecl->protocol_end(); P != E; ++P)
-        CompareProperties(CatDecl, *P);
-    } else {
-      ObjCProtocolDecl *MD = cast<ObjCProtocolDecl>(ClassDecl);
-      for (ObjCProtocolDecl::protocol_iterator P = MD->protocol_begin(),
-           E = MD->protocol_end(); P != E; ++P)
-        MatchOneProtocolPropertiesInClass(CatDecl, *P);
-    }
-    return;
-  }
-
-  if (ObjCInterfaceDecl *MDecl = dyn_cast<ObjCInterfaceDecl>(ClassDecl)) {
-    for (ObjCInterfaceDecl::all_protocol_iterator
-          P = MDecl->all_referenced_protocol_begin(),
-          E = MDecl->all_referenced_protocol_end(); P != E; ++P)
-      // Match properties of class IDecl with those of protocol (*P).
-      MatchOneProtocolPropertiesInClass(IDecl, *P);
-
-    // Go thru the list of protocols for this class and recursively match
-    // their properties with those declared in the class.
-    for (ObjCInterfaceDecl::all_protocol_iterator
-          P = IDecl->all_referenced_protocol_begin(),
-          E = IDecl->all_referenced_protocol_end(); P != E; ++P)
-      CompareProperties(IDecl, *P);
-  } else {
-    ObjCProtocolDecl *MD = cast<ObjCProtocolDecl>(ClassDecl);
-    for (ObjCProtocolDecl::protocol_iterator P = MD->protocol_begin(),
-         E = MD->protocol_end(); P != E; ++P)
-      MatchOneProtocolPropertiesInClass(IDecl, *P);
   }
 }
 
@@ -1411,14 +1422,14 @@ bool Sema::isPropertyReadonly(ObjCPropertyDecl *PDecl,
   // Main class has the property as 'readonly'. Must search
   // through the category list to see if the property's
   // attribute has been over-ridden to 'readwrite'.
-  for (ObjCCategoryDecl *Category = IDecl->getCategoryList();
-       Category; Category = Category->getNextClassCategory()) {
-    // Even if property is ready only, if a category has a user defined setter,
-    // it is not considered read only.
-    if (Category->getInstanceMethod(PDecl->getSetterName()))
+  for (ObjCInterfaceDecl::visible_categories_iterator
+         Cat = IDecl->visible_categories_begin(),
+         CatEnd = IDecl->visible_categories_end();
+       Cat != CatEnd; ++Cat) {
+    if (Cat->getInstanceMethod(PDecl->getSetterName()))
       return false;
     ObjCPropertyDecl *P =
-      Category->FindPropertyDeclaration(PDecl->getIdentifier());
+      Cat->FindPropertyDeclaration(PDecl->getIdentifier());
     if (P && !P->isReadOnly())
       return false;
   }
@@ -1447,7 +1458,7 @@ bool Sema::isPropertyReadonly(ObjCPropertyDecl *PDecl,
 }
 
 /// CollectImmediateProperties - This routine collects all properties in
-/// the class and its conforming protocols; but not those it its super class.
+/// the class and its conforming protocols; but not those in its super class.
 void Sema::CollectImmediateProperties(ObjCContainerDecl *CDecl,
             ObjCContainerDecl::PropertyMap &PropMap,
             ObjCContainerDecl::PropertyMap &SuperPropMap) {

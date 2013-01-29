@@ -286,6 +286,7 @@ bool Declarator::isDeclarationOfFunction() const {
     case TST_image2d_t:
     case TST_image2d_array_t:
     case TST_image3d_t:
+    case TST_event_t:
       return false;
 
     case TST_decltype:
@@ -329,7 +330,8 @@ unsigned DeclSpec::getParsedSpecifiers() const {
   if (hasTypeSpecifier())
     Res |= PQ_TypeSpecifier;
 
-  if (FS_inline_specified || FS_virtual_specified || FS_explicit_specified)
+  if (FS_inline_specified || FS_virtual_specified || FS_explicit_specified ||
+      FS_noreturn_specified)
     Res |= PQ_FunctionSpecifier;
   return Res;
 }
@@ -426,6 +428,7 @@ const char *DeclSpec::getSpecifierName(DeclSpec::TST T) {
   case DeclSpec::TST_image2d_t:   return "image2d_t";
   case DeclSpec::TST_image2d_array_t: return "image2d_array_t";
   case DeclSpec::TST_image3d_t:   return "image3d_t";
+  case DeclSpec::TST_event_t:     return "event_t";
   case DeclSpec::TST_error:       return "(error)";
   }
   llvm_unreachable("Unknown typespec!");
@@ -734,6 +737,13 @@ bool DeclSpec::setFunctionSpecExplicit(SourceLocation Loc) {
   return false;
 }
 
+bool DeclSpec::setFunctionSpecNoreturn(SourceLocation Loc) {
+  // '_Noreturn _Noreturn' is ok.
+  FS_noreturn_specified = true;
+  FS_noreturnLoc = Loc;
+  return false;
+}
+
 bool DeclSpec::SetFriendSpec(SourceLocation Loc, const char *&PrevSpec,
                              unsigned &DiagID) {
   if (Friend_specified) {
@@ -772,9 +782,10 @@ void DeclSpec::setProtocolQualifiers(Decl * const *Protos,
                                      SourceLocation *ProtoLocs,
                                      SourceLocation LAngleLoc) {
   if (NP == 0) return;
-  ProtocolQualifiers = new Decl*[NP];
+  Decl **ProtoQuals = new Decl*[NP];
+  memcpy(ProtoQuals, Protos, sizeof(Decl*)*NP);
+  ProtocolQualifiers = ProtoQuals;
   ProtocolLocs = new SourceLocation[NP];
-  memcpy((void*)ProtocolQualifiers, Protos, sizeof(Decl*)*NP);
   memcpy(ProtocolLocs, ProtoLocs, sizeof(SourceLocation)*NP);
   NumProtocolQualifiers = NP;
   ProtocolLAngleLoc = LAngleLoc;

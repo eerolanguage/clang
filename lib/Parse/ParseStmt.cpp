@@ -394,7 +394,7 @@ StmtResult Parser::ParseExprStatement() {
 
   // Otherwise, eat the semicolon.
   ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
-  return Actions.ActOnExprStmt(Actions.MakeFullExpr(Expr.get()));
+  return Actions.ActOnExprStmt(Expr);
 }
 
 StmtResult Parser::ParseSEHTryBlock() {
@@ -991,7 +991,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
         // Eat the semicolon at the end of stmt and convert the expr into a
         // statement.
         ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
-        R = Actions.ActOnExprStmt(Actions.MakeFullExpr(Res.get()));
+        R = Actions.ActOnExprStmt(Res);
       }
     }
 
@@ -1644,7 +1644,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
       if (ForEach)
         FirstPart = Actions.ActOnForEachLValueExpr(Value.get());
       else
-        FirstPart = Actions.ActOnExprStmt(Actions.MakeFullExpr(Value.get()));
+        FirstPart = Actions.ActOnExprStmt(Value);
     }
 
     if (Tok.is(tok::semi)) {
@@ -1713,7 +1713,9 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     // Parse the third part of the for specifier.
     if (Tok.isNot(tok::r_paren)) {   // for (...;...;)
       ExprResult Third = ParseExpression();
-      ThirdPart = Actions.MakeFullExpr(Third.take());
+      // FIXME: The C++11 standard doesn't actually say that this is a
+      // discarded-value expression, but it clearly should be.
+      ThirdPart = Actions.MakeFullDiscardedValueExpr(Third.take());
     }
   }
   // Match the ')'.
@@ -1915,9 +1917,6 @@ StmtResult Parser::ParseReturnStatement() {
 ///         ms-asm-line '\n' ms-asm-instruction-block
 ///
 StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
-  // MS-style inline assembly is not fully supported, so emit a warning.
-  Diag(AsmLoc, diag::warn_unsupported_msasm);
-
   SourceManager &SrcMgr = PP.getSourceManager();
   SourceLocation EndLoc = AsmLoc;
   SmallVector<Token, 4> AsmToks;
@@ -2008,21 +2007,6 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
     // Empty __asm.
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
-  }
-
-  // If MS-style inline assembly is disabled, then build an empty asm.
-  if (!getLangOpts().EmitMicrosoftInlineAsm) {
-    Token t;
-    t.setKind(tok::string_literal);
-    t.setLiteralData("\"/*FIXME: not done*/\"");
-    t.clearFlag(Token::NeedsCleaning);
-    t.setLength(21);
-    ExprResult AsmString(Actions.ActOnStringLiteral(&t, 1));
-    ExprVector Constraints;
-    ExprVector Exprs;
-    ExprVector Clobbers;
-    return Actions.ActOnGCCAsmStmt(AsmLoc, true, true, 0, 0, 0, Constraints,
-                                   Exprs, AsmString.take(), Clobbers, EndLoc);
   }
 
   // FIXME: We should be passing source locations for better diagnostics.

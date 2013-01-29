@@ -814,7 +814,7 @@ bool CGRecordLayoutBuilder::LayoutFields(const RecordDecl *D) {
 
     // Lay out the virtual bases.  The MS ABI uses a different
     // algorithm here due to the lack of primary virtual bases.
-    if (Types.getContext().getTargetInfo().getCXXABI() != CXXABI_Microsoft) {
+    if (Types.getContext().getTargetInfo().getCXXABI().hasPrimaryVBases()) {
       RD->getIndirectPrimaryBases(IndirectPrimaryBases);
       if (Layout.isPrimaryBaseVirtual())
         IndirectPrimaryBases.insert(Layout.getPrimaryBase());
@@ -1075,7 +1075,8 @@ CGRecordLayout *CodeGenTypes::ComputeRecordLayout(const RecordDecl *D,
       // the size + offset should match the storage size in that case as it
       // "starts" at the back.
       if (getDataLayout().isBigEndian())
-        assert((Info.Offset + Info.Size) == Info.StorageSize &&
+        assert(static_cast<unsigned>(Info.Offset + Info.Size) ==
+               Info.StorageSize &&
                "Big endian union bitfield does not end at the back");
       else
         assert(Info.Offset == 0 &&

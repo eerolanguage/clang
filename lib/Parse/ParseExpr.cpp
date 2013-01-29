@@ -1071,6 +1071,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_image2d_t:
   case tok::kw_image2d_array_t:
   case tok::kw_image3d_t: {
+  case tok::kw_event_t:
     if (!getLangOpts().CPlusPlus) {
       Diag(Tok, diag::err_expected_expression);
       if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())

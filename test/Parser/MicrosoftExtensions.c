@@ -1,3 +1,4 @@
+// REQUIRES: disabled
 // RUN: %clang_cc1 -triple i386-mingw32 -fsyntax-only -verify -fms-extensions  -Wno-missing-declarations -x objective-c++ %s
 __stdcall int func0();
 int __stdcall func();
@@ -20,7 +21,7 @@ void * __ptr32 PtrToPtr32(const void *p)
 
 void __forceinline InterlockedBitTestAndSet (long *Base, long Bit)
 {
-  __asm { // expected-warning {{MS-style inline assembly is not supported}}
+  __asm {
     mov eax, Bit
     mov ecx, Base
     lock bts [ecx], eax

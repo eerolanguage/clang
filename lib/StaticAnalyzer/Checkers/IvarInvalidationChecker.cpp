@@ -238,9 +238,11 @@ void IvarInvalidationChecker::containsInvalidationMethod(
 
     // Visit all categories in case the invalidation method is declared in
     // a category.
-    for (const ObjCCategoryDecl *I = InterfD->getFirstClassExtension(); I;
-        I = I->getNextClassExtension()) {
-      containsInvalidationMethod(I, OutInfo);
+    for (ObjCInterfaceDecl::visible_extensions_iterator
+           Ext = InterfD->visible_extensions_begin(),
+           ExtEnd = InterfD->visible_extensions_end();
+         Ext != ExtEnd; ++Ext) {
+      containsInvalidationMethod(*Ext, OutInfo);
     }
 
     containsInvalidationMethod(InterfD->getSuperClass(), OutInfo);
@@ -411,7 +413,7 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCImplementationDecl *ImplD,
     assert(FirstIvarDecl);
     printIvar(os, FirstIvarDecl, IvarToPopertyMap);
     os << "needs to be invalidated; ";
-    os << "No invalidation method is declared for " << InterfaceD->getName();
+    os << "no invalidation method is declared for " << InterfaceD->getName();
 
     PathDiagnosticLocation IvarDecLocation =
       PathDiagnosticLocation::createBegin(FirstIvarDecl, BR.getSourceManager());
@@ -475,7 +477,7 @@ void IvarInvalidationChecker::checkASTDecl(const ObjCImplementationDecl *ImplD,
     assert(FirstIvarDecl);
     printIvar(os, FirstIvarDecl, IvarToPopertyMap);
     os << "needs to be invalidated; ";
-    os << "No invalidation method is defined in the @implementation for "
+    os << "no invalidation method is defined in the @implementation for "
        << InterfaceD->getName();
 
     PathDiagnosticLocation IvarDecLocation =

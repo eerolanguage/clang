@@ -593,6 +593,7 @@ void USRGenerator::VisitType(QualType T) {
         case BuiltinType::OCLImage2d:
         case BuiltinType::OCLImage2dArray:
         case BuiltinType::OCLImage3d:
+        case BuiltinType::OCLEvent:
           IgnoreResults = true;
           return;
         case BuiltinType::ObjCId:
@@ -820,7 +821,7 @@ CXString clang_getCursorUSR(CXCursor C) {
   const CXCursorKind &K = clang_getCursorKind(C);
 
   if (clang_isDeclaration(K)) {
-    Decl *D = cxcursor::getCursorDecl(C);
+    const Decl *D = cxcursor::getCursorDecl(C);
     if (!D)
       return createCXString("");
 
@@ -834,7 +835,7 @@ CXString clang_getCursorUSR(CXCursor C) {
 
     bool Ignore = cxcursor::getDeclCursorUSR(D, buf->Data);
     if (Ignore) {
-      disposeCXStringBuf(buf);
+      buf->dispose();
       return createCXString("");
     }
 

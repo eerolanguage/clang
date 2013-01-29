@@ -140,7 +140,8 @@ Include File Checking Macros
 Not all developments systems have the same include files.  The
 :ref:`langext-__has_include` and :ref:`langext-__has_include_next` macros allow
 you to check for the existence of an include file before doing a possibly
-failing ``#include`` directive.
+failing ``#include`` directive.  Include file checking macros must be used
+as expressions in ``#if`` or ``#elif`` preprocessing directives.
 
 .. _langext-__has_include:
 
@@ -439,7 +440,7 @@ succeeds but Clang emits a warning specifying that the function is deprecated.
 Finally, if Clang is instructed to compile code for Mac OS X 10.7, the call
 fails because ``f()`` is no longer available.
 
-The availablility attribute is a comma-separated list starting with the
+The availability attribute is a comma-separated list starting with the
 platform name and then including clauses specifying important milestones in the
 declaration's lifetime (in any order) along with additional information.  Those
 clauses can be:
@@ -487,6 +488,33 @@ as if the ``weak_import`` attribute were added to the declaration.  A
 weakly-linked declaration may or may not be present a run-time, and a program
 can determine whether the declaration is present by checking whether the
 address of that declaration is non-NULL.
+
+If there are multiple declarations of the same entity, the availability
+attributes must either match on a per-platform basis or later
+declarations must not have availability attributes for that
+platform. For example:
+
+.. code-block:: c
+
+  void g(void) __attribute__((availability(macosx,introduced=10.4)));
+  void g(void) __attribute__((availability(macosx,introduced=10.4))); // okay, matches
+  void g(void) __attribute__((availability(ios,introduced=4.0))); // okay, adds a new platform
+  void g(void); // okay, inherits both macosx and ios availability from above.
+  void g(void) __attribute__((availability(macosx,introduced=10.5))); // error: mismatch
+
+When one method overrides another, the overriding method can be more widely available than the overridden method, e.g.,:
+
+.. code-block:: objc
+
+  @interface A
+  - (id)method __attribute__((availability(macosx,introduced=10.4)));
+  - (id)method2 __attribute__((availability(macosx,introduced=10.4)));
+  @end
+
+  @interface B : A
+  - (id)method __attribute__((availability(macosx,introduced=10.3))); // okay: method moved into base class later
+  - (id)method __attribute__((availability(macosx,introduced=10.5))); // error: this method was available via the base class in 10.4
+  @end
 
 Checks for Standard Language Features
 =====================================
@@ -1395,6 +1423,43 @@ correct code by avoiding expensive loops around
 implementation details of ``__sync_lock_test_and_set()``.  The
 ``__sync_swap()`` builtin is a full barrier.
 
+Multiprecision Arithmetic Builtins
+----------------------------------
+
+Clang provides a set of builtins which expose multiprecision arithmetic in a
+manner amenable to C. They all have the following form:
+
+.. code-block:: c
+
+  unsigned x = ..., y = ..., carryin = ..., carryout;
+  unsigned sum = __builtin_addc(x, y, carryin, &carryout);
+
+Thus one can form a multiprecision addition chain in the following manner:
+
+.. code-block:: c
+
+  unsigned *x, *y, *z, carryin=0, carryout;
+  z[0] = __builtin_addc(x[0], y[0], carryin, &carryout);
+  carryin = carryout;
+  z[1] = __builtin_addc(x[1], y[1], carryin, &carryout);
+  carryin = carryout;
+  z[2] = __builtin_addc(x[2], y[2], carryin, &carryout);
+  carryin = carryout;
+  z[3] = __builtin_addc(x[3], y[3], carryin, &carryout);
+
+The complete list of builtins are:
+
+.. code-block:: c
+
+  unsigned short     __builtin_addcs (unsigned short x, unsigned short y, unsigned short carryin, unsigned short *carryout);
+  unsigned           __builtin_addc  (unsigned x, unsigned y, unsigned carryin, unsigned *carryout);
+  unsigned long      __builtin_addcl (unsigned long x, unsigned long y, unsigned long carryin, unsigned long *carryout);
+  unsigned long long __builtin_addcll(unsigned long long x, unsigned long long y, unsigned long long carryin, unsigned long long *carryout);
+  unsigned short     __builtin_subcs (unsigned short x, unsigned short y, unsigned short carryin, unsigned short *carryout);
+  unsigned           __builtin_subc  (unsigned x, unsigned y, unsigned carryin, unsigned *carryout);
+  unsigned long      __builtin_subcl (unsigned long x, unsigned long y, unsigned long carryin, unsigned long *carryout);
+  unsigned long long __builtin_subcll(unsigned long long x, unsigned long long y, unsigned long long carryin, unsigned long long *carryout);
+
 .. _langext-__c11_atomic:
 
 __c11_atomic builtins
@@ -1823,4 +1888,62 @@ expression is compared to the type tag.  There are two supported flags:
     MPI_Send(buffer, 1, MPI_DATATYPE_NULL /*, ...  */); // warning: MPI_DATATYPE_NULL
                                                         // was specified but buffer
                                                         // is not a null pointer
+
+Format String Checking
+======================
+
+Clang supports the ``format`` attribute, which indicates that the function
+accepts a ``printf`` or ``scanf``-like format string and corresponding
+arguments or a ``va_list`` that contains these arguments.
+
+Please see `GCC documentation about format attribute
+<http://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html>`_ to find details
+about attribute syntax.
+
+Clang implements two kinds of checks with this attribute.
+
+#. Clang checks that the function with the ``format`` attribute is called with
+   a format string that uses format specifiers that are allowed, and that
+   arguments match the format string.  This is the ``-Wformat`` warning, it is
+   on by default.
+
+#. Clang checks that the format string argument is a literal string.  This is
+   the ``-Wformat-nonliteral`` warning, it is off by default.
+
+   Clang implements this mostly the same way as GCC, but there is a difference
+   for functions that accept a ``va_list`` argument (for example, ``vprintf``).
+   GCC does not emit ``-Wformat-nonliteral`` warning for calls to such
+   fuctions.  Clang does not warn if the format string comes from a function
+   parameter, where function is annotated with a compatible attribute,
+   otherwise it warns.  For example:
+
+   .. code-block:: c
+
+     __attribute__((__format__ (__scanf__, 1, 3)))
+     void foo(const char* s, char *buf, ...) {
+       va_list ap;
+       va_start(ap, buf);
+
+       vprintf(s, ap); // warning: format string is not a string literal
+     }
+
+   In this case we warn because ``s`` contains a format string for a
+   ``scanf``-like function, but it is passed it to a ``printf``-like function.
+
+   If the attribute is removed, clang still warns, because the format string is
+   not a string literal.
+
+   But in this case Clang does not warn because the format string ``s`` and
+   corresponding arguments are annotated.  If the arguments are incorrect,
+   caller of ``foo`` will get a warning.
+
+   .. code-block: c
+
+     __attribute__((__format__ (__printf__, 1, 3)))
+     void foo(const char* s, char *buf, ...) {
+       va_list ap;
+       va_start(ap, buf);
+
+       vprintf(s, ap); // warning
+     }
 

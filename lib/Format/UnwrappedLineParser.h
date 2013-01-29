@@ -23,8 +23,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Format/Format.h"
 #include "clang/Lex/Lexer.h"
-
-#include <vector>
+#include <list>
 
 namespace clang {
 
@@ -76,11 +75,6 @@ struct FormatToken {
   /// This happens for example when a preprocessor directive ended directly
   /// before the token.
   bool MustBreakBefore;
-
-  // FIXME: We currently assume that there is exactly one token in this vector
-  // except for the very last token that does not have any children.
-  /// \brief All tokens that logically follow this token.
-  std::vector<FormatToken> Children;
 };
 
 /// \brief An unwrapped line is a sequence of \c Token, that we would like to
@@ -90,17 +84,20 @@ struct FormatToken {
 /// \c UnwrappedLineFormatter. The key property is that changing the formatting
 /// within an unwrapped line does not affect any other unwrapped lines.
 struct UnwrappedLine {
-  UnwrappedLine() : Level(0), InPPDirective(false) {
+  UnwrappedLine() : Level(0), InPPDirective(false), MustBeDeclaration(false) {
   }
 
-  /// \brief The \c Token comprising this \c UnwrappedLine.
-  FormatToken RootToken;
+  // FIXME: Don't use std::list here.
+  /// \brief The \c Tokens comprising this \c UnwrappedLine.
+  std::list<FormatToken> Tokens;
 
   /// \brief The indent level of the \c UnwrappedLine.
   unsigned Level;
 
   /// \brief Whether this \c UnwrappedLine is part of a preprocessor directive.
   bool InPPDirective;
+
+  bool MustBeDeclaration;
 };
 
 class UnwrappedLineConsumer {
@@ -129,13 +126,13 @@ public:
 private:
   bool parseFile();
   bool parseLevel(bool HasOpeningBrace);
-  bool parseBlock(unsigned AddLevels = 1);
+  bool parseBlock(bool MustBeDeclaration, unsigned AddLevels = 1);
   void parsePPDirective();
   void parsePPDefine();
   void parsePPUnknown();
-  void parseComments();
   void parseStructuralElement();
   void parseBracedList();
+  void parseReturn();
   void parseParens();
   void parseIfThenElse();
   void parseForOrWhileLoop();
@@ -146,7 +143,7 @@ private:
   void parseNamespace();
   void parseAccessSpecifier();
   void parseEnum();
-  void parseStructClassOrBracedList();
+  void parseRecord();
   void parseObjCProtocolList();
   void parseObjCUntilAtEnd();
   void parseObjCInterfaceOrImplementation();
@@ -155,15 +152,39 @@ private:
   bool eof() const;
   void nextToken();
   void readToken();
+  void flushComments(bool NewlineBeforeNext);
+  void pushToken(const FormatToken &Tok);
 
   // FIXME: We are constantly running into bugs where Line.Level is incorrectly
   // subtracted from beyond 0. Introduce a method to subtract from Line.Level
   // and use that everywhere in the Parser.
   OwningPtr<UnwrappedLine> Line;
-  bool RootTokenInitialized;
-  FormatToken *LastInCurrentLine;
+
+  // Comments are sorted into unwrapped lines by whether they are in the same
+  // line as the previous token, or not. If not, they belong to the next token.
+  // Since the next token might already be in a new unwrapped line, we need to
+  // store the comments belonging to that token.
+  SmallVector<FormatToken, 1> CommentsBeforeNextToken;
   FormatToken FormatTok;
   bool MustBreakBeforeNextToken;
+
+  // The parsed lines. Only added to through \c CurrentLines.
+  std::vector<UnwrappedLine> Lines;
+
+  // Preprocessor directives are parsed out-of-order from other unwrapped lines.
+  // Thus, we need to keep a list of preprocessor directives to be reported
+  // after an unwarpped line that has been started was finished.
+  std::vector<UnwrappedLine> PreprocessorDirectives;
+
+  // New unwrapped lines are added via CurrentLines.
+  // Usually points to \c &Lines. While parsing a preprocessor directive when
+  // there is an unfinished previous unwrapped line, will point to
+  // \c &PreprocessorDirectives.
+  std::vector<UnwrappedLine> *CurrentLines;
+
+  // We store for each line whether it must be a declaration depending on
+  // whether we are in a compound statement or not.
+  std::vector<bool> DeclarationScopeStack;
 
   clang::DiagnosticsEngine &Diag;
   const FormatStyle &Style;

@@ -24,6 +24,7 @@
 #include "clang/Lex/Pragma.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/SaveAndRestore.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -1389,7 +1390,7 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
       if (Callbacks->FileNotFound(Filename, RecoveryPath)) {
         if (const DirectoryEntry *DE = FileMgr.getDirectory(RecoveryPath)) {
           // Add the recovery path to the list of search paths.
-          DirectoryLookup DL(DE, SrcMgr::C_User, true, false);
+          DirectoryLookup DL(DE, SrcMgr::C_User, false);
           HeaderInfo.AddSearchPath(DL, isAngled);
           
           // Try the lookup again, skipping the cache.
@@ -1662,6 +1663,12 @@ bool Preprocessor::ReadMacroDefinitionArgList(MacroInfo *MI, Token &Tok) {
         Diag(Tok, LangOpts.CPlusPlus11 ? 
              diag::warn_cxx98_compat_variadic_macro :
              diag::ext_variadic_macro);
+
+      // OpenCL v1.2 s6.9.e: variadic macros are not supported.
+      if (LangOpts.OpenCL) {
+        Diag(Tok, diag::err_pp_opencl_variadic_macros);
+        return true;
+      }
 
       // Lex the token after the identifier.
       LexUnexpandedToken(Tok);
@@ -1982,15 +1989,16 @@ void Preprocessor::HandleUndefDirective(Token &UndefTok) {
   // Okay, we finally have a valid identifier to undef.
   MacroInfo *MI = getMacroInfo(MacroNameTok.getIdentifierInfo());
 
+  // If the callbacks want to know, tell them about the macro #undef.
+  // Note: no matter if the macro was defined or not.
+  if (Callbacks)
+    Callbacks->MacroUndefined(MacroNameTok, MI);
+
   // If the macro is not defined, this is a noop undef, just return.
   if (MI == 0) return;
 
   if (!MI->isUsed() && MI->isWarnIfUnused())
     Diag(MI->getDefinitionLoc(), diag::pp_macro_not_used);
-
-  // If the callbacks want to know, tell them about the macro #undef.
-  if (Callbacks)
-    Callbacks->MacroUndefined(MacroNameTok, MI);
 
   if (MI->isWarnIfUnused())
     WarnUnusedMacroLocs.erase(MI->getDefinitionLoc());
@@ -2085,6 +2093,7 @@ void Preprocessor::HandleIfdefDirective(Token &Result, bool isIfndef,
 ///
 void Preprocessor::HandleIfDirective(Token &IfToken,
                                      bool ReadAnyTokensBeforeDirective) {
+  SaveAndRestore<bool> PPDir(ParsingIfOrElifDirective, true);
   ++NumIf;
 
   // Parse and evaluate the conditional expression.
@@ -2176,6 +2185,7 @@ void Preprocessor::HandleElseDirective(Token &Result) {
 /// HandleElifDirective - Implements the \#elif directive.
 ///
 void Preprocessor::HandleElifDirective(Token &ElifToken) {
+  SaveAndRestore<bool> PPDir(ParsingIfOrElifDirective, true);
   ++NumElse;
 
   // #elif directive in a non-skipping conditional... start skipping.

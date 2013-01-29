@@ -788,51 +788,128 @@ void PathDiagnosticCallPiece::setCallee(const CallEnter &CE,
   callEnter = getLocationForCaller(CalleeCtx, CE.getLocationContext(), SM);
 }
 
+static inline void describeClass(raw_ostream &Out, const CXXRecordDecl *D,
+                                 StringRef Prefix = StringRef()) {
+  if (!D->getIdentifier())
+    return;
+  Out << Prefix << '\'' << *D << '\'';
+}
+
+static bool describeCodeDecl(raw_ostream &Out, const Decl *D,
+                             bool ExtendedDescription,
+                             StringRef Prefix = StringRef()) {
+  if (!D)
+    return false;
+
+  if (isa<BlockDecl>(D)) {
+    if (ExtendedDescription)
+      Out << Prefix << "anonymous block";
+    return ExtendedDescription;
+  }
+
+  if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(D)) {
+    Out << Prefix;
+    if (ExtendedDescription && !MD->isUserProvided()) {
+      if (MD->isExplicitlyDefaulted())
+        Out << "defaulted ";
+      else
+        Out << "implicit ";
+    }
+
+    if (const CXXConstructorDecl *CD = dyn_cast<CXXConstructorDecl>(MD)) {
+      if (CD->isDefaultConstructor())
+        Out << "default ";
+      else if (CD->isCopyConstructor())
+        Out << "copy ";
+      else if (CD->isMoveConstructor())
+        Out << "move ";
+
+      Out << "constructor";
+      describeClass(Out, MD->getParent(), " for ");
+      
+    } else if (isa<CXXDestructorDecl>(MD)) {
+      if (!MD->isUserProvided()) {
+        Out << "destructor";
+        describeClass(Out, MD->getParent(), " for ");
+      } else {
+        // Use ~Foo for explicitly-written destructors.
+        Out << "'" << *MD << "'";
+      }
+
+    } else if (MD->isCopyAssignmentOperator()) {
+        Out << "copy assignment operator";
+        describeClass(Out, MD->getParent(), " for ");
+
+    } else if (MD->isMoveAssignmentOperator()) {
+        Out << "move assignment operator";
+        describeClass(Out, MD->getParent(), " for ");
+
+    } else {
+      if (MD->getParent()->getIdentifier())
+        Out << "'" << *MD->getParent() << "::" << *MD << "'";
+      else
+        Out << "'" << *MD << "'";
+    }
+
+    return true;
+  }
+
+  Out << Prefix << '\'' << cast<NamedDecl>(*D) << '\'';
+  return true;
+}
+
 IntrusiveRefCntPtr<PathDiagnosticEventPiece>
 PathDiagnosticCallPiece::getCallEnterEvent() const {
   if (!Callee)
     return 0;  
+
   SmallString<256> buf;
   llvm::raw_svector_ostream Out(buf);
-  if (isa<BlockDecl>(Callee))
-    Out << "Calling anonymous block";
-  else if (const NamedDecl *ND = dyn_cast<NamedDecl>(Callee))
-    Out << "Calling '" << *ND << "'";
-  StringRef msg = Out.str();
-  if (msg.empty())
-    return 0;
+
+  Out << "Calling ";
+  describeCodeDecl(Out, Callee, /*ExtendedDescription=*/true);
+
   assert(callEnter.asLocation().isValid());
-  return new PathDiagnosticEventPiece(callEnter, msg);
+  return new PathDiagnosticEventPiece(callEnter, Out.str());
 }
 
 IntrusiveRefCntPtr<PathDiagnosticEventPiece>
 PathDiagnosticCallPiece::getCallEnterWithinCallerEvent() const {
   if (!callEnterWithin.asLocation().isValid())
     return 0;
+  if (Callee->isImplicit())
+    return 0;
+  if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(Callee))
+    if (MD->isDefaulted())
+      return 0;
+
   SmallString<256> buf;
   llvm::raw_svector_ostream Out(buf);
-  if (const NamedDecl *ND = dyn_cast_or_null<NamedDecl>(Caller))
-    Out << "Entered call from '" << *ND << "'";
-  else
-    Out << "Entered call";
-  StringRef msg = Out.str();
-  if (msg.empty())
-    return 0;
-  return new PathDiagnosticEventPiece(callEnterWithin, msg);
+
+  Out << "Entered call";
+  describeCodeDecl(Out, Caller, /*ExtendedDescription=*/false, " from ");
+
+  return new PathDiagnosticEventPiece(callEnterWithin, Out.str());
 }
 
 IntrusiveRefCntPtr<PathDiagnosticEventPiece>
 PathDiagnosticCallPiece::getCallExitEvent() const {
   if (NoExit)
     return 0;
+
   SmallString<256> buf;
   llvm::raw_svector_ostream Out(buf);
-  if (!CallStackMessage.empty())
+
+  if (!CallStackMessage.empty()) {
     Out << CallStackMessage;
-  else if (const NamedDecl *ND = dyn_cast_or_null<NamedDecl>(Callee))
-    Out << "Returning from '" << *ND << "'";
-  else
-    Out << "Returning to caller";
+  } else {
+    bool DidDescribe = describeCodeDecl(Out, Callee,
+                                        /*ExtendedDescription=*/false,
+                                        "Returning from ");
+    if (!DidDescribe)
+      Out << "Returning to caller";
+  }
+
   assert(callReturn.asLocation().isValid());
   return new PathDiagnosticEventPiece(callReturn, Out.str());
 }

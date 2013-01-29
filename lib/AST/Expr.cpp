@@ -646,16 +646,14 @@ FloatingLiteral::FloatingLiteral(ASTContext &C, const llvm::APFloat &V,
                                  bool isexact, QualType Type, SourceLocation L)
   : Expr(FloatingLiteralClass, Type, VK_RValue, OK_Ordinary, false, false,
          false, false), Loc(L) {
-  FloatingLiteralBits.IsIEEE =
-    &C.getTargetInfo().getLongDoubleFormat() == &llvm::APFloat::IEEEquad;
+  setSemantics(V.getSemantics());
   FloatingLiteralBits.IsExact = isexact;
   setValue(C, V);
 }
 
 FloatingLiteral::FloatingLiteral(ASTContext &C, EmptyShell Empty)
   : Expr(FloatingLiteralClass, Empty) {
-  FloatingLiteralBits.IsIEEE =
-    &C.getTargetInfo().getLongDoubleFormat() == &llvm::APFloat::IEEEquad;
+  setRawSemantics(IEEEhalf);
   FloatingLiteralBits.IsExact = false;
 }
 
@@ -668,6 +666,41 @@ FloatingLiteral::Create(ASTContext &C, const llvm::APFloat &V,
 FloatingLiteral *
 FloatingLiteral::Create(ASTContext &C, EmptyShell Empty) {
   return new (C) FloatingLiteral(C, Empty);
+}
+
+const llvm::fltSemantics &FloatingLiteral::getSemantics() const {
+  switch(FloatingLiteralBits.Semantics) {
+  case IEEEhalf:
+    return llvm::APFloat::IEEEhalf;
+  case IEEEsingle:
+    return llvm::APFloat::IEEEsingle;
+  case IEEEdouble:
+    return llvm::APFloat::IEEEdouble;
+  case x87DoubleExtended:
+    return llvm::APFloat::x87DoubleExtended;
+  case IEEEquad:
+    return llvm::APFloat::IEEEquad;
+  case PPCDoubleDouble:
+    return llvm::APFloat::PPCDoubleDouble;
+  }
+  llvm_unreachable("Unrecognised floating semantics");
+}
+
+void FloatingLiteral::setSemantics(const llvm::fltSemantics &Sem) {
+  if (&Sem == &llvm::APFloat::IEEEhalf)
+    FloatingLiteralBits.Semantics = IEEEhalf;
+  else if (&Sem == &llvm::APFloat::IEEEsingle)
+    FloatingLiteralBits.Semantics = IEEEsingle;
+  else if (&Sem == &llvm::APFloat::IEEEdouble)
+    FloatingLiteralBits.Semantics = IEEEdouble;
+  else if (&Sem == &llvm::APFloat::x87DoubleExtended)
+    FloatingLiteralBits.Semantics = x87DoubleExtended;
+  else if (&Sem == &llvm::APFloat::IEEEquad)
+    FloatingLiteralBits.Semantics = IEEEquad;
+  else if (&Sem == &llvm::APFloat::PPCDoubleDouble)
+    FloatingLiteralBits.Semantics = PPCDoubleDouble;
+  else
+    llvm_unreachable("Unknown floating semantics");
 }
 
 /// getValueAsApproximateDouble - This returns the value as an inaccurate
@@ -1137,6 +1170,12 @@ unsigned CallExpr::isBuiltinCall() const {
   return FDecl->getBuiltinID();
 }
 
+bool CallExpr::isUnevaluatedBuiltinCall(ASTContext &Ctx) const {
+  if (unsigned BI = isBuiltinCall())
+    return Ctx.BuiltinInfo.isUnevaluated(BI);
+  return false;
+}
+
 QualType CallExpr::getCallReturnType() const {
   QualType CalleeType = getCallee()->getType();
   if (const PointerType *FnTypePtr = CalleeType->getAs<PointerType>())
@@ -1394,6 +1433,7 @@ void CastExpr::CheckCastConsistency() const {
   case CK_ARCConsumeObject:
   case CK_ARCReclaimReturnedObject:
   case CK_ARCExtendBlockObject:
+  case CK_ZeroToOCLEvent:
     assert(!getType()->isBooleanType() && "unheralded conversion to bool");
     goto CheckNoBasePath;
 
@@ -1525,6 +1565,8 @@ const char *CastExpr::getCastKindName() const {
     return "CopyAndAutoreleaseBlockObject";
   case CK_BuiltinFnToFnPtr:
     return "BuiltinFnToFnPtr";
+  case CK_ZeroToOCLEvent:
+    return "ZeroToOCLEvent";
   }
 
   llvm_unreachable("Unhandled cast kind!");
@@ -2099,10 +2141,6 @@ bool Expr::isUnusedResultAWarning(const Expr *&WarnE, SourceLocation &Loc,
       }
       return false;
     }
-
-    // Ignore casts within macro expansions.
-    if (getExprLoc().isMacroID())
-      return CE->getSubExpr()->isUnusedResultAWarning(WarnE, Loc, R1, R2, Ctx);
 
     // If this is a cast to a constructor conversion, check the operand.
     // Otherwise, the result of the cast is unused.
@@ -3691,27 +3729,30 @@ SourceLocation DesignatedInitExpr::getLocEnd() const {
   return getInit()->getLocEnd();
 }
 
-Expr *DesignatedInitExpr::getArrayIndex(const Designator& D) {
+Expr *DesignatedInitExpr::getArrayIndex(const Designator& D) const {
   assert(D.Kind == Designator::ArrayDesignator && "Requires array designator");
-  char* Ptr = static_cast<char*>(static_cast<void *>(this));
+  char *Ptr = static_cast<char *>(
+                  const_cast<void *>(static_cast<const void *>(this)));
   Ptr += sizeof(DesignatedInitExpr);
   Stmt **SubExprs = reinterpret_cast<Stmt**>(reinterpret_cast<void**>(Ptr));
   return cast<Expr>(*(SubExprs + D.ArrayOrRange.Index + 1));
 }
 
-Expr *DesignatedInitExpr::getArrayRangeStart(const Designator& D) {
+Expr *DesignatedInitExpr::getArrayRangeStart(const Designator &D) const {
   assert(D.Kind == Designator::ArrayRangeDesignator &&
          "Requires array range designator");
-  char* Ptr = static_cast<char*>(static_cast<void *>(this));
+  char *Ptr = static_cast<char *>(
+                  const_cast<void *>(static_cast<const void *>(this)));
   Ptr += sizeof(DesignatedInitExpr);
   Stmt **SubExprs = reinterpret_cast<Stmt**>(reinterpret_cast<void**>(Ptr));
   return cast<Expr>(*(SubExprs + D.ArrayOrRange.Index + 1));
 }
 
-Expr *DesignatedInitExpr::getArrayRangeEnd(const Designator& D) {
+Expr *DesignatedInitExpr::getArrayRangeEnd(const Designator &D) const {
   assert(D.Kind == Designator::ArrayRangeDesignator &&
          "Requires array range designator");
-  char* Ptr = static_cast<char*>(static_cast<void *>(this));
+  char *Ptr = static_cast<char *>(
+                  const_cast<void *>(static_cast<const void *>(this)));
   Ptr += sizeof(DesignatedInitExpr);
   Stmt **SubExprs = reinterpret_cast<Stmt**>(reinterpret_cast<void**>(Ptr));
   return cast<Expr>(*(SubExprs + D.ArrayOrRange.Index + 2));

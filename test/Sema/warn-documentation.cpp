@@ -377,6 +377,29 @@ using test_tparam14 = test_tparam13<T, int>;
 template<typename T>
 using test_tparam15 = test_tparam13<T, int>;
 
+// ----
+
+/// \tparam T Aaa
+template<typename T>
+class test_tparam16 { };
+
+typedef test_tparam16<int> test_tparam17;
+typedef test_tparam16<double> test_tparam18;
+
+// ----
+
+template<typename T>
+class test_tparam19;
+
+typedef test_tparam19<int> test_tparam20;
+typedef test_tparam19<double> test_tparam21;
+
+/// \tparam T Aaa
+template<typename T>
+class test_tparam19 { };
+
+// ----
+
 
 /// Aaa
 /// \deprecated Bbb
@@ -835,4 +858,32 @@ typedef const struct test_nocrash7 * test_nocrash8;
 
 /// aaa \unknown aaa \unknown aaa
 int test_nocrash9;
+
+
+// We used to crash on this.  PR15068
+
+// expected-warning@+2 {{empty paragraph passed to '\param' command}}
+// expected-warning@+2 {{empty paragraph passed to '\param' command}}
+///@param x
+///@param y
+int test_nocrash10(int x, int y);
+
+// expected-warning@+2 {{empty paragraph passed to '\param' command}} expected-warning@+2 {{parameter 'x' not found in the function declaration}}
+// expected-warning@+2 {{empty paragraph passed to '\param' command}} expected-warning@+2 {{parameter 'y' not found in the function declaration}}
+///@param x
+///@param y
+int test_nocrash11();
+
+// expected-warning@+3 {{empty paragraph passed to '\param' command}} expected-warning@+3 {{parameter 'x' not found in the function declaration}}
+// expected-warning@+3 {{empty paragraph passed to '\param' command}} expected-warning@+3 {{parameter 'y' not found in the function declaration}}
+/**
+@param x
+@param y
+**/
+int test_nocrash12();
+
+// expected-warning@+2 {{empty paragraph passed to '\param' command}}
+// expected-warning@+1 {{empty paragraph passed to '\param' command}}
+///@param x@param y
+int test_nocrash13(int x, int y);
 

@@ -186,6 +186,14 @@ Selector NSAPI::getNSDictionarySelector(
       Sel = Ctx.Selectors.getUnarySelector(
                                      &Ctx.Idents.get("initWithObjectsAndKeys"));
       break;
+    case NSDict_initWithObjectsForKeys: {
+      IdentifierInfo *KeyIdents[] = {
+        &Ctx.Idents.get("initWithObjects"),
+        &Ctx.Idents.get("forKeys")
+      };
+      Sel = Ctx.Selectors.getSelector(2, KeyIdents);
+      break;
+    }
     case NSDict_objectForKey:
       Sel = Ctx.Selectors.getUnarySelector(&Ctx.Idents.get("objectForKey"));
       break;
@@ -343,6 +351,7 @@ NSAPI::getNSNumberFactoryMethodKind(QualType T) const {
   case BuiltinType::OCLImage2d:
   case BuiltinType::OCLImage2dArray:
   case BuiltinType::OCLImage3d:
+  case BuiltinType::OCLEvent:
   case BuiltinType::BoundMember:
   case BuiltinType::Dependent:
   case BuiltinType::Overload:

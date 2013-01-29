@@ -18,6 +18,7 @@
 #include "clang/AST/CXXInheritance.h"
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/DeclObjC.h"
+#include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/TypeLoc.h"
@@ -5467,7 +5468,9 @@ ExprResult Sema::IgnoredValueConversions(Expr *E) {
   return Owned(E);
 }
 
-ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC) {
+ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC,
+                                     bool DiscardedValue,
+                                     bool IsConstexpr) {
   ExprResult FullExpr = Owned(FE);
 
   if (!FullExpr.get())
@@ -5477,23 +5480,25 @@ ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC) {
     return ExprError();
 
   // Top-level message sends default to 'id' when we're in a debugger.
-  if (getLangOpts().DebuggerCastResultToId &&
+  if (DiscardedValue && getLangOpts().DebuggerCastResultToId &&
       FullExpr.get()->getType() == Context.UnknownAnyTy &&
       isa<ObjCMessageExpr>(FullExpr.get())) {
     FullExpr = forceUnknownAnyToType(FullExpr.take(), Context.getObjCIdType());
     if (FullExpr.isInvalid())
       return ExprError();
   }
-  
-  FullExpr = CheckPlaceholderExpr(FullExpr.take());
-  if (FullExpr.isInvalid())
-    return ExprError();
 
-  FullExpr = IgnoredValueConversions(FullExpr.take());
-  if (FullExpr.isInvalid())
-    return ExprError();
+  if (DiscardedValue) {
+    FullExpr = CheckPlaceholderExpr(FullExpr.take());
+    if (FullExpr.isInvalid())
+      return ExprError();
 
-  CheckImplicitConversions(FullExpr.get(), CC);
+    FullExpr = IgnoredValueConversions(FullExpr.take());
+    if (FullExpr.isInvalid())
+      return ExprError();
+  }
+
+  CheckCompletedExpr(FullExpr.get(), CC, IsConstexpr);
   return MaybeCreateExprWithCleanups(FullExpr);
 }
 

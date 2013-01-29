@@ -10,11 +10,11 @@
 #include "IndexingContext.h"
 #include "CIndexDiagnostic.h"
 #include "CIndexer.h"
+#include "CLog.h"
 #include "CXCursor.h"
 #include "CXSourceLocation.h"
 #include "CXString.h"
 #include "CXTranslationUnit.h"
-#include "CLog.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/DeclVisitor.h"
 #include "clang/Frontend/ASTUnit.h"
@@ -543,8 +543,6 @@ static void clang_indexSourceFile_Impl(void *UserData) {
   // Configure the diagnostics.
   IntrusiveRefCntPtr<DiagnosticsEngine>
     Diags(CompilerInstance::createDiagnostics(new DiagnosticOptions,
-                                              num_command_line_args,
-                                              command_line_args,
                                               CaptureDiag,
                                               /*ShouldOwnClient=*/true,
                                               /*ShouldCloneClient=*/false));
@@ -761,7 +759,7 @@ static void clang_indexTranslationUnit_Impl(void *UserData) {
   if (!client_index_callbacks || index_callbacks_size == 0)
     return;
 
-  CIndexer *CXXIdx = (CIndexer*)TU->CIdx;
+  CIndexer *CXXIdx = TU->CIdx;
   if (CXXIdx->isOptEnabled(CXGlobalOpt_ThreadBackgroundPriorityForIndexing))
     setThreadBackgroundPriority();
 
@@ -785,7 +783,7 @@ static void clang_indexTranslationUnit_Impl(void *UserData) {
   llvm::CrashRecoveryContextCleanupRegistrar<IndexingConsumer>
     IndexConsumerCleanup(IndexConsumer.get());
 
-  ASTUnit *Unit = static_cast<ASTUnit *>(TU->TUData);
+  ASTUnit *Unit = cxtu::getASTUnit(TU);
   if (!Unit)
     return;
 

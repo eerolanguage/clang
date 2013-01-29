@@ -14,10 +14,10 @@
 
 #include "CIndexer.h"
 #include "CIndexDiagnostic.h"
+#include "CLog.h"
 #include "CXCursor.h"
 #include "CXString.h"
 #include "CXTranslationUnit.h"
-#include "CLog.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/Type.h"
@@ -688,11 +688,11 @@ void clang_codeCompleteAt_Impl(void *UserData) {
 
   bool EnableLogging = getenv("LIBCLANG_CODE_COMPLETION_LOGGING") != 0;
   
-  ASTUnit *AST = static_cast<ASTUnit *>(TU->TUData);
+  ASTUnit *AST = cxtu::getASTUnit(TU);
   if (!AST)
     return;
 
-  CIndexer *CXXIdx = (CIndexer*)TU->CIdx;
+  CIndexer *CXXIdx = TU->CIdx;
   if (CXXIdx->isOptEnabled(CXGlobalOpt_ThreadBackgroundPriorityForEditing))
     setThreadBackgroundPriority();
 
@@ -841,7 +841,7 @@ CXCodeCompleteResults *clang_codeCompleteAt(CXTranslationUnit TU,
 
   if (!RunSafely(CRC, clang_codeCompleteAt_Impl, &CCAI)) {
     fprintf(stderr, "libclang: crash detected in code completion\n");
-    static_cast<ASTUnit *>(TU->TUData)->setUnsafeToFree(true);
+    cxtu::getASTUnit(TU)->setUnsafeToFree(true);
     return 0;
   } else if (getenv("LIBCLANG_RESOURCE_USAGE"))
     PrintLibclangResourceUsage(TU);

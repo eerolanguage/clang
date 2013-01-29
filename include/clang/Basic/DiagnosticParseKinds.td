@@ -18,9 +18,6 @@ def w_asm_qualifier_ignored : Warning<"ignored %0 qualifier on asm">,
 def warn_file_asm_volatile : Warning<
   "meaningless 'volatile' on asm outside function">, CatInlineAsm;
 
-def warn_unsupported_msasm : Warning<
-  "MS-style inline assembly is not supported">, InGroup<Microsoft>;
-
 let CategoryName = "Parse Issue" in {
 
 def ext_empty_translation_unit : Extension<
@@ -112,6 +109,9 @@ def note_previous_default_assoc : Note<
 
 def ext_c11_alignment : Extension<
   "%0 is a C11-specific feature">, InGroup<C11>;
+
+def ext_c11_noreturn : Extension<
+  "_Noreturn functions are a C11-specific feature">, InGroup<C11>;
 
 def ext_gnu_indirect_goto : Extension<
   "use of GNU indirect-goto extension">, InGroup<GNU>;
@@ -426,6 +426,8 @@ def err_no_matching_param : Error<"parameter named %0 is missing">;
 def err_ambiguous_indentation : Error<"ambiguous indentation">;
 
 /// C++ parser diagnostics
+def err_invalid_operator_on_type : Error<
+  "cannot use %select{dot|arrow}0 operator on a type">;
 def err_expected_unqualified_id : Error<
   "expected %select{identifier|unqualified-id}0">;
 def err_func_def_no_params : Error<
@@ -505,6 +507,8 @@ def err_cxx11_attribute_forbids_arguments : Error<
   "attribute '%0' cannot have an argument list">;
 def err_cxx11_attribute_forbids_ellipsis : Error<
   "attribute '%0' cannot be used as an attribute pack">;
+def err_cxx11_attribute_repeated : Error<
+  "attribute %0 cannot appear multiple times in an attribute specifier">;
 def err_attributes_not_allowed : Error<"an attribute list cannot appear here">;
 def err_l_square_l_square_not_attribute : Error<
   "C++11 only allows consecutive left square brackets when "

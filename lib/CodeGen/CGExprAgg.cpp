@@ -648,6 +648,7 @@ void AggExprEmitter::VisitCastExpr(CastExpr *E) {
   case CK_ARCExtendBlockObject:
   case CK_CopyAndAutoreleaseBlockObject:
   case CK_BuiltinFnToFnPtr:
+  case CK_ZeroToOCLEvent:
     llvm_unreachable("cast kind invalid for aggregate types");
   }
 }
@@ -791,6 +792,11 @@ void AggExprEmitter::VisitBinAssign(const BinaryOperator *E) {
     AggValueSlot::forLValue(LHS, AggValueSlot::IsDestructed, 
                             needsGC(E->getLHS()->getType()),
                             AggValueSlot::IsAliased);
+  // A non-volatile aggregate destination might have volatile member.
+  if (!LHSSlot.isVolatile() &&
+      CGF.hasVolatileMember(E->getLHS()->getType()))
+    LHSSlot.setVolatile(true);
+      
   CGF.EmitAggExpr(E->getRHS(), LHSSlot);
 
   // Copy into the destination if the assignment isn't ignored.

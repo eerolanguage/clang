@@ -318,10 +318,7 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
 
   // Add Ubsan runtime library, if required.
   if (Sanitize.needsUbsanRt()) {
-    if (Args.hasArg(options::OPT_dynamiclib) ||
-        Args.hasArg(options::OPT_bundle)) {
-      // Assume the binary will provide the Ubsan runtime.
-    } else if (isTargetIPhoneOS()) {
+    if (isTargetIPhoneOS()) {
       getDriver().Diag(diag::err_drv_clang_unsupported_per_platform)
         << "-fsanitize=undefined";
     } else {
@@ -342,12 +339,10 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
       getDriver().Diag(diag::err_drv_clang_unsupported_per_platform)
         << "-fsanitize=address";
     } else {
-      AddLinkRuntimeLib(Args, CmdArgs, "libclang_rt.asan_osx.a", true);
+      AddLinkRuntimeLib(Args, CmdArgs, "libclang_rt.asan_osx_dynamic.dylib", true);
 
-      // The ASAN runtime library requires C++ and CoreFoundation.
+      // The ASAN runtime library requires C++.
       AddCXXStdlibLibArgs(Args, CmdArgs);
-      CmdArgs.push_back("-framework");
-      CmdArgs.push_back("CoreFoundation");
     }
   }
 
@@ -404,9 +399,10 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
       getDriver().Diag(clang::diag::warn_missing_sysroot) << A->getValue();
   } else {
     if (char *env = ::getenv("SDKROOT")) {
-      // We only use this value as the default if it is an absolute path and
-      // exists.
-      if (llvm::sys::path::is_absolute(env) && llvm::sys::fs::exists(env)) {
+      // We only use this value as the default if it is an absolute path,
+      // exists, and it is not the root path.
+      if (llvm::sys::path::is_absolute(env) && llvm::sys::fs::exists(env) &&
+          StringRef(env) != "/") {
         Args.append(Args.MakeSeparateArg(
                       0, Opts.getOption(options::OPT_isysroot), env));
       }
