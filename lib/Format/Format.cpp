@@ -16,14 +16,20 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "clang/Format/Format.h"
+#define DEBUG_TYPE "format-formatter"
+
 #include "UnwrappedLineParser.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/OperatorPrecedence.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Format/Format.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Lex/Lexer.h"
+#include "llvm/Support/Debug.h"
 #include <string>
+
+// Uncomment to get debug output from tests:
+// #define DEBUG_WITH_TYPE(T, X) do { X; } while(0)
 
 namespace clang {
 namespace format {
@@ -34,17 +40,18 @@ enum TokenType {
   TT_CastRParen,
   TT_ConditionalExpr,
   TT_CtorInitializerColon,
-  TT_DirectorySeparator,
+  TT_ImplicitStringLiteral,
   TT_LineComment,
   TT_ObjCBlockLParen,
   TT_ObjCDecl,
   TT_ObjCMethodSpecifier,
   TT_ObjCMethodExpr,
-  TT_ObjCSelectorStart,
   TT_ObjCProperty,
   TT_OverloadedOperator,
   TT_PointerOrReference,
   TT_PureVirtualSpecifier,
+  TT_RangeBasedForLoopColon,
+  TT_StartOfName,
   TT_TemplateCloser,
   TT_TemplateOpener,
   TT_TrailingUnaryOperator,
@@ -55,6 +62,7 @@ enum TokenType {
 enum LineType {
   LT_Invalid,
   LT_Other,
+  LT_BuilderTypeCall,
   LT_PreprocessorDirective,
   LT_VirtualFunctionDecl,
   LT_ObjCDecl, // An @interface, @implementation, or @protocol line.
@@ -64,17 +72,16 @@ enum LineType {
 
 class AnnotatedToken {
 public:
-  AnnotatedToken(const FormatToken &FormatTok)
+  explicit AnnotatedToken(const FormatToken &FormatTok)
       : FormatTok(FormatTok), Type(TT_Unknown), SpaceRequiredBefore(false),
         CanBreakBefore(false), MustBreakBefore(false),
-        ClosesTemplateDeclaration(false), Parent(NULL) {}
+        ClosesTemplateDeclaration(false), MatchingParen(NULL),
+        ParameterCount(1), Parent(NULL) {
+  }
 
-  bool is(tok::TokenKind Kind) const {
-    return FormatTok.Tok.is(Kind);
-  }
-  bool isNot(tok::TokenKind Kind) const {
-    return FormatTok.Tok.isNot(Kind);
-  }
+  bool is(tok::TokenKind Kind) const { return FormatTok.Tok.is(Kind); }
+  bool isNot(tok::TokenKind Kind) const { return FormatTok.Tok.isNot(Kind); }
+
   bool isObjCAtKeyword(tok::ObjCKeywordKind Kind) const {
     return FormatTok.Tok.isObjCAtKeyword(Kind);
   }
@@ -89,12 +96,73 @@ public:
 
   bool ClosesTemplateDeclaration;
 
+  AnnotatedToken *MatchingParen;
+
+  /// \brief Number of parameters, if this is "(", "[" or "<".
+  ///
+  /// This is initialized to 1 as we don't need to distinguish functions with
+  /// 0 parameters from functions with 1 parameter. Thus, we can simply count
+  /// the number of commas.
+  unsigned ParameterCount;
+
+  /// \brief The total length of the line up to and including this token.
+  unsigned TotalLength;
+
   std::vector<AnnotatedToken> Children;
   AnnotatedToken *Parent;
+
+  const AnnotatedToken *getPreviousNoneComment() const {
+    AnnotatedToken *Tok = Parent;
+    while (Tok != NULL && Tok->is(tok::comment))
+      Tok = Tok->Parent;
+    return Tok;
+  }
+};
+
+class AnnotatedLine {
+public:
+  AnnotatedLine(const UnwrappedLine &Line)
+      : First(Line.Tokens.front()), Level(Line.Level),
+        InPPDirective(Line.InPPDirective),
+        MustBeDeclaration(Line.MustBeDeclaration) {
+    assert(!Line.Tokens.empty());
+    AnnotatedToken *Current = &First;
+    for (std::list<FormatToken>::const_iterator I = ++Line.Tokens.begin(),
+                                                E = Line.Tokens.end();
+         I != E; ++I) {
+      Current->Children.push_back(AnnotatedToken(*I));
+      Current->Children[0].Parent = Current;
+      Current = &Current->Children[0];
+    }
+    Last = Current;
+  }
+  AnnotatedLine(const AnnotatedLine &Other)
+      : First(Other.First), Type(Other.Type), Level(Other.Level),
+        InPPDirective(Other.InPPDirective),
+        MustBeDeclaration(Other.MustBeDeclaration) {
+    Last = &First;
+    while (!Last->Children.empty()) {
+      Last->Children[0].Parent = Last;
+      Last = &Last->Children[0];
+    }
+  }
+
+  AnnotatedToken First;
+  AnnotatedToken *Last;
+
+  LineType Type;
+  unsigned Level;
+  bool InPPDirective;
+  bool MustBeDeclaration;
 };
 
 static prec::Level getPrecedence(const AnnotatedToken &Tok) {
   return getBinOpPrecedence(Tok.FormatTok.Tok.getKind(), true, true);
+}
+
+bool isBinaryOperator(const AnnotatedToken &Tok) {
+  // Comma is a binary operator, but does not behave as such wrt. formatting.
+  return getPrecedence(Tok) > prec::Comma;
 }
 
 FormatStyle getLLVMStyle() {
@@ -106,9 +174,12 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.SplitTemplateClosingGreater = true;
   LLVMStyle.IndentCaseLabels = false;
   LLVMStyle.SpacesBeforeTrailingComments = 1;
+  LLVMStyle.BinPackParameters = true;
+  LLVMStyle.AllowAllParametersOnNextLine = true;
+  LLVMStyle.AllowReturnTypeOnItsOwnLine = true;
   LLVMStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = false;
+  LLVMStyle.AllowShortIfStatementsOnASingleLine = false;
   LLVMStyle.ObjCSpaceBeforeProtocolList = true;
-  LLVMStyle.ObjCSpaceBeforeReturnType = true;
   return LLVMStyle;
 }
 
@@ -121,72 +192,147 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.SplitTemplateClosingGreater = false;
   GoogleStyle.IndentCaseLabels = true;
   GoogleStyle.SpacesBeforeTrailingComments = 2;
+  GoogleStyle.BinPackParameters = false;
+  GoogleStyle.AllowAllParametersOnNextLine = true;
+  GoogleStyle.AllowReturnTypeOnItsOwnLine = false;
   GoogleStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = true;
+  GoogleStyle.AllowShortIfStatementsOnASingleLine = false;
   GoogleStyle.ObjCSpaceBeforeProtocolList = false;
-  GoogleStyle.ObjCSpaceBeforeReturnType = false;
   return GoogleStyle;
+}
+
+FormatStyle getChromiumStyle() {
+  FormatStyle ChromiumStyle = getGoogleStyle();
+  ChromiumStyle.AllowAllParametersOnNextLine = false;
+  return ChromiumStyle;
 }
 
 struct OptimizationParameters {
   unsigned PenaltyIndentLevel;
-  unsigned PenaltyLevelDecrease;
   unsigned PenaltyExcessCharacter;
 };
 
-/// \brief Replaces the whitespace in front of \p Tok. Only call once for
-/// each \c FormatToken.
-static void replaceWhitespace(const AnnotatedToken &Tok, unsigned NewLines,
-                              unsigned Spaces, const FormatStyle &Style,
-                              SourceManager &SourceMgr,
-                              tooling::Replacements &Replaces) {
-  Replaces.insert(tooling::Replacement(
-      SourceMgr, Tok.FormatTok.WhiteSpaceStart, Tok.FormatTok.WhiteSpaceLength,
-      std::string(NewLines, '\n') + std::string(Spaces, ' ')));
-}
-
-/// \brief Like \c replaceWhitespace, but additionally adds right-aligned
-/// backslashes to escape newlines inside a preprocessor directive.
+/// \brief Manages the whitespaces around tokens and their replacements.
 ///
-/// This function and \c replaceWhitespace have the same behavior if
-/// \c Newlines == 0.
-static void replacePPWhitespace(
-    const AnnotatedToken &Tok, unsigned NewLines, unsigned Spaces,
-    unsigned WhitespaceStartColumn, const FormatStyle &Style,
-    SourceManager &SourceMgr, tooling::Replacements &Replaces) {
-  std::string NewLineText;
-  if (NewLines > 0) {
-    unsigned Offset = std::min<int>(Style.ColumnLimit - 1,
-                                    WhitespaceStartColumn);
-    for (unsigned i = 0; i < NewLines; ++i) {
-      NewLineText += std::string(Style.ColumnLimit - Offset - 1, ' ');
-      NewLineText += "\\\n";
-      Offset = 0;
-    }
-  }
-  Replaces.insert(tooling::Replacement(SourceMgr, Tok.FormatTok.WhiteSpaceStart,
-                                       Tok.FormatTok.WhiteSpaceLength,
-                                       NewLineText + std::string(Spaces, ' ')));
-}
+/// This includes special handling for certain constructs, e.g. the alignment of
+/// trailing line comments.
+class WhitespaceManager {
+public:
+  WhitespaceManager(SourceManager &SourceMgr) : SourceMgr(SourceMgr) {}
 
-/// \brief Checks whether the (remaining) \c UnwrappedLine starting with
-/// \p RootToken fits into \p Limit columns.
-static bool fitsIntoLimit(const AnnotatedToken &RootToken, unsigned Limit) {
-  unsigned Columns = RootToken.FormatTok.TokenLength;
-  bool FitsOnALine = true;
-  const AnnotatedToken *Tok = &RootToken;
-  while (!Tok->Children.empty()) {
-    Tok = &Tok->Children[0];
-    Columns += (Tok->SpaceRequiredBefore ? 1 : 0) + Tok->FormatTok.TokenLength;
-    // A special case for the colon of a constructor initializer as this only
-    // needs to be put on a new line if the line needs to be split.
-    if (Columns > Limit ||
-        (Tok->MustBreakBefore && Tok->Type != TT_CtorInitializerColon)) {
-      FitsOnALine = false;
-      break;
+  /// \brief Replaces the whitespace in front of \p Tok. Only call once for
+  /// each \c AnnotatedToken.
+  void replaceWhitespace(const AnnotatedToken &Tok, unsigned NewLines,
+                         unsigned Spaces, unsigned WhitespaceStartColumn,
+                         const FormatStyle &Style) {
+    // 2+ newlines mean an empty line separating logic scopes.
+    if (NewLines >= 2)
+      alignComments();
+
+    // Align line comments if they are trailing or if they continue other
+    // trailing comments.
+    if (Tok.Type == TT_LineComment &&
+        (Tok.Parent != NULL || !Comments.empty())) {
+      if (Style.ColumnLimit >=
+          Spaces + WhitespaceStartColumn + Tok.FormatTok.TokenLength) {
+        Comments.push_back(StoredComment());
+        Comments.back().Tok = Tok.FormatTok;
+        Comments.back().Spaces = Spaces;
+        Comments.back().NewLines = NewLines;
+        Comments.back().MinColumn = WhitespaceStartColumn + Spaces;
+        Comments.back().MaxColumn = Style.ColumnLimit -
+                                    Spaces - Tok.FormatTok.TokenLength;
+        return;
+      }
+    }
+
+    // If this line does not have a trailing comment, align the stored comments.
+    if (Tok.Children.empty() && Tok.Type != TT_LineComment)
+      alignComments();
+    storeReplacement(Tok.FormatTok,
+                     std::string(NewLines, '\n') + std::string(Spaces, ' '));
+  }
+
+  /// \brief Like \c replaceWhitespace, but additionally adds right-aligned
+  /// backslashes to escape newlines inside a preprocessor directive.
+  ///
+  /// This function and \c replaceWhitespace have the same behavior if
+  /// \c Newlines == 0.
+  void replacePPWhitespace(const AnnotatedToken &Tok, unsigned NewLines,
+                           unsigned Spaces, unsigned WhitespaceStartColumn,
+                           const FormatStyle &Style) {
+    std::string NewLineText;
+    if (NewLines > 0) {
+      unsigned Offset = std::min<int>(Style.ColumnLimit - 1,
+                                      WhitespaceStartColumn);
+      for (unsigned i = 0; i < NewLines; ++i) {
+        NewLineText += std::string(Style.ColumnLimit - Offset - 1, ' ');
+        NewLineText += "\\\n";
+        Offset = 0;
+      }
+    }
+    storeReplacement(Tok.FormatTok, NewLineText + std::string(Spaces, ' '));
+  }
+
+  /// \brief Returns all the \c Replacements created during formatting.
+  const tooling::Replacements &generateReplacements() {
+    alignComments();
+    return Replaces;
+  }
+
+private:
+  /// \brief Structure to store a comment for later layout and alignment.
+  struct StoredComment {
+    FormatToken Tok;
+    unsigned MinColumn;
+    unsigned MaxColumn;
+    unsigned NewLines;
+    unsigned Spaces;
+  };
+  SmallVector<StoredComment, 16> Comments;
+  typedef SmallVector<StoredComment, 16>::iterator comment_iterator;
+
+  /// \brief Try to align all stashed comments.
+  void alignComments() {
+    unsigned MinColumn = 0;
+    unsigned MaxColumn = UINT_MAX;
+    comment_iterator Start = Comments.begin();
+    for (comment_iterator I = Comments.begin(), E = Comments.end(); I != E;
+         ++I) {
+      if (I->MinColumn > MaxColumn || I->MaxColumn < MinColumn) {
+        alignComments(Start, I, MinColumn);
+        MinColumn = I->MinColumn;
+        MaxColumn = I->MaxColumn;
+        Start = I;
+      } else {
+        MinColumn = std::max(MinColumn, I->MinColumn);
+        MaxColumn = std::min(MaxColumn, I->MaxColumn);
+      }
+    }
+    alignComments(Start, Comments.end(), MinColumn);
+    Comments.clear();
+  }
+
+  /// \brief Put all the comments between \p I and \p E into \p Column.
+  void alignComments(comment_iterator I, comment_iterator E, unsigned Column) {
+    while (I != E) {
+      unsigned Spaces = I->Spaces + Column - I->MinColumn;
+      storeReplacement(I->Tok, std::string(I->NewLines, '\n') +
+                       std::string(Spaces, ' '));
+      ++I;
     }
   }
-  return FitsOnALine;
-}
+
+  /// \brief Stores \p Text as the replacement for the whitespace in front of
+  /// \p Tok.
+  void storeReplacement(const FormatToken &Tok, const std::string Text) {
+    Replaces.insert(tooling::Replacement(SourceMgr, Tok.WhiteSpaceStart,
+                                         Tok.WhiteSpaceLength, Text));
+  }
+
+  SourceManager &SourceMgr;
+  tooling::Replacements Replaces;
+};
 
 /// \brief Returns if a token is an Objective-C selector name.
 ///
@@ -200,14 +346,13 @@ static bool isObjCSelectorName(const AnnotatedToken &Tok) {
 class UnwrappedLineFormatter {
 public:
   UnwrappedLineFormatter(const FormatStyle &Style, SourceManager &SourceMgr,
-                         const UnwrappedLine &Line, unsigned FirstIndent,
-                         bool FitsOnALine, const AnnotatedToken &RootToken,
-                         tooling::Replacements &Replaces, bool StructuralError)
+                         const AnnotatedLine &Line, unsigned FirstIndent,
+                         const AnnotatedToken &RootToken,
+                         WhitespaceManager &Whitespaces, bool StructuralError)
       : Style(Style), SourceMgr(SourceMgr), Line(Line),
-        FirstIndent(FirstIndent), FitsOnALine(FitsOnALine),
-        RootToken(RootToken), Replaces(Replaces) {
-    Parameters.PenaltyIndentLevel = 15;
-    Parameters.PenaltyLevelDecrease = 30;
+        FirstIndent(FirstIndent), RootToken(RootToken),
+        Whitespaces(Whitespaces) {
+    Parameters.PenaltyIndentLevel = 20;
     Parameters.PenaltyExcessCharacter = 1000000;
   }
 
@@ -223,36 +368,77 @@ public:
     State.Stack.push_back(ParenState(FirstIndent + 4, FirstIndent));
     State.ForLoopVariablePos = 0;
     State.LineContainsContinuedForLoopSection = false;
-    State.StartOfLineLevel = 1;
+
+    DEBUG({
+      DebugTokenState(*State.NextToken);
+    });
 
     // The first token has already been indented and thus consumed.
     moveStateToNextToken(State);
 
     // Start iterating at 1 as we have correctly formatted of Token #0 above.
     while (State.NextToken != NULL) {
-      if (FitsOnALine) {
+      if (State.NextToken->Type == TT_ImplicitStringLiteral) {
+        // Calculating the column is important for aligning trailing comments.
+        // FIXME: This does not seem to happen in conjunction with escaped
+        // newlines. If it does, fix!
+        State.Column += State.NextToken->FormatTok.WhiteSpaceLength +
+                        State.NextToken->FormatTok.TokenLength;
+        State.NextToken = State.NextToken->Children.empty() ? NULL :
+                          &State.NextToken->Children[0];
+      } else if (Line.Last->TotalLength <= getColumnLimit() - FirstIndent) {
         addTokenToState(false, false, State);
       } else {
         unsigned NoBreak = calcPenalty(State, false, UINT_MAX);
         unsigned Break = calcPenalty(State, true, NoBreak);
+        DEBUG({
+          if (Break < NoBreak)
+            llvm::errs() << "\n";
+          else
+            llvm::errs() << " ";
+          llvm::errs() << "<";
+          DebugPenalty(Break, Break < NoBreak);
+          llvm::errs() << "/";
+          DebugPenalty(NoBreak, !(Break < NoBreak));
+          llvm::errs() << "> ";
+          DebugTokenState(*State.NextToken);
+        });
         addTokenToState(Break < NoBreak, false, State);
         if (State.NextToken != NULL &&
             State.NextToken->Parent->Type == TT_CtorInitializerColon) {
           if (Style.ConstructorInitializerAllOnOneLineOrOnePerLine &&
-              !fitsIntoLimit(*State.NextToken,
-                             getColumnLimit() - State.Column - 1))
+              Line.Last->TotalLength > getColumnLimit() - State.Column - 1)
             State.Stack.back().BreakAfterComma = true;
         }
       }
     }
+    DEBUG(llvm::errs() << "\n");
     return State.Column;
   }
 
 private:
+  void DebugTokenState(const AnnotatedToken &AnnotatedTok) {
+    const Token &Tok = AnnotatedTok.FormatTok.Tok;
+    llvm::errs()
+        << StringRef(SourceMgr.getCharacterData(Tok.getLocation()),
+                     Tok.getLength());
+    llvm::errs();
+  }
+
+  void DebugPenalty(unsigned Penalty, bool Winner) {
+    llvm::errs().changeColor(Winner ? raw_ostream::GREEN : raw_ostream::RED);
+    if (Penalty == UINT_MAX)
+      llvm::errs() << "MAX";
+    else
+      llvm::errs() << Penalty;
+    llvm::errs().resetColor();
+  }
+
   struct ParenState {
     ParenState(unsigned Indent, unsigned LastSpace)
-        : Indent(Indent), LastSpace(LastSpace), FirstLessLess(0),
-          BreakBeforeClosingBrace(false), BreakAfterComma(false) {}
+        : Indent(Indent), LastSpace(LastSpace), AssignmentColumn(0),
+          FirstLessLess(0), BreakBeforeClosingBrace(false), QuestionColumn(0),
+          BreakAfterComma(false), HasMultiParameterLine(false) {}
 
     /// \brief The position to which a specific parenthesis level needs to be
     /// indented.
@@ -264,6 +450,9 @@ private:
     /// functionCall(Parameter, otherCall(
     ///                             OtherParameter));
     unsigned LastSpace;
+
+    /// \brief This is the column of the first token after an assignment.
+    unsigned AssignmentColumn;
 
     /// \brief The position the first "<<" operator encountered on each level.
     ///
@@ -278,19 +467,29 @@ private:
     /// was a newline after the beginning left brace.
     bool BreakBeforeClosingBrace;
 
+    /// \brief The column of a \c ? in a conditional expression;
+    unsigned QuestionColumn;
+
     bool BreakAfterComma;
+    bool HasMultiParameterLine;
 
     bool operator<(const ParenState &Other) const {
       if (Indent != Other.Indent)
         return Indent < Other.Indent;
       if (LastSpace != Other.LastSpace)
         return LastSpace < Other.LastSpace;
+      if (AssignmentColumn != Other.AssignmentColumn)
+        return AssignmentColumn < Other.AssignmentColumn;
       if (FirstLessLess != Other.FirstLessLess)
         return FirstLessLess < Other.FirstLessLess;
       if (BreakBeforeClosingBrace != Other.BreakBeforeClosingBrace)
         return BreakBeforeClosingBrace;
+      if (QuestionColumn != Other.QuestionColumn)
+        return QuestionColumn < Other.QuestionColumn;
       if (BreakAfterComma != Other.BreakAfterComma)
         return BreakAfterComma;
+      if (HasMultiParameterLine != Other.HasMultiParameterLine)
+        return HasMultiParameterLine;
       return false;
     }
   };
@@ -304,9 +503,6 @@ private:
 
     /// \brief The token that needs to be next formatted.
     const AnnotatedToken *NextToken;
-
-    /// \brief The parenthesis level of the first token on the current line.
-    unsigned StartOfLineLevel;
 
     /// \brief The column of the first variable in a for-loop declaration.
     ///
@@ -326,8 +522,6 @@ private:
         return Other.NextToken > NextToken;
       if (Other.Column != Column)
         return Other.Column > Column;
-      if (Other.StartOfLineLevel != StartOfLineLevel)
-        return Other.StartOfLineLevel > StartOfLineLevel;
       if (Other.ForLoopVariablePos != ForLoopVariablePos)
         return Other.ForLoopVariablePos < ForLoopVariablePos;
       if (Other.LineContainsContinuedForLoopSection !=
@@ -362,40 +556,43 @@ private:
                  State.Stack[ParenLevel].FirstLessLess != 0) {
         State.Column = State.Stack[ParenLevel].FirstLessLess;
       } else if (ParenLevel != 0 &&
-                 (Previous.is(tok::equal) || Current.is(tok::arrow) ||
-                  Current.is(tok::period) || Previous.is(tok::question) ||
-                  Previous.Type == TT_ConditionalExpr)) {
+                 (Previous.is(tok::equal) || Previous.is(tok::coloncolon) ||
+                  Current.is(tok::period) || Current.is(tok::arrow) ||
+                  Current.is(tok::question))) {
         // Indent and extra 4 spaces after if we know the current expression is
         // continued.  Don't do that on the top level, as we already indent 4
         // there.
-        State.Column = State.Stack[ParenLevel].Indent + 4;
-      } else if (RootToken.is(tok::kw_for) && Previous.is(tok::comma)) {
+        State.Column = std::max(State.Stack.back().LastSpace,
+                                State.Stack.back().Indent) + 4;
+      } else if (Current.Type == TT_ConditionalExpr) {
+        State.Column = State.Stack.back().QuestionColumn;
+      } else if (RootToken.is(tok::kw_for) && ParenLevel == 1 &&
+                 Previous.is(tok::comma)) {
         State.Column = State.ForLoopVariablePos;
-      } else if (State.NextToken->Parent->ClosesTemplateDeclaration) {
+      } else if (State.NextToken->Parent->ClosesTemplateDeclaration ||
+                 Current.Type == TT_StartOfName) {
         State.Column = State.Stack[ParenLevel].Indent - 4;
+      } else if (Previous.Type == TT_BinaryOperator &&
+                 State.Stack.back().AssignmentColumn != 0) {
+        State.Column = State.Stack.back().AssignmentColumn;
       } else {
         State.Column = State.Stack[ParenLevel].Indent;
       }
-
-      // A line starting with a closing brace is assumed to be correct for the
-      // same level as before the opening brace.
-      State.StartOfLineLevel = ParenLevel + (Current.is(tok::r_brace) ? 0 : 1);
 
       if (RootToken.is(tok::kw_for))
         State.LineContainsContinuedForLoopSection = Previous.isNot(tok::semi);
 
       if (!DryRun) {
         if (!Line.InPPDirective)
-          replaceWhitespace(Current.FormatTok, 1, State.Column, Style,
-                            SourceMgr, Replaces);
+          Whitespaces.replaceWhitespace(Current, 1, State.Column,
+                                        WhitespaceStartColumn, Style);
         else
-          replacePPWhitespace(Current.FormatTok, 1, State.Column,
-                              WhitespaceStartColumn, Style, SourceMgr,
-                              Replaces);
+          Whitespaces.replacePPWhitespace(Current, 1, State.Column,
+                                          WhitespaceStartColumn, Style);
       }
 
       State.Stack[ParenLevel].LastSpace = State.Column;
-      if (Current.is(tok::colon) && State.NextToken->Type != TT_ConditionalExpr)
+      if (Current.is(tok::colon) && Current.Type != TT_ConditionalExpr)
         State.Stack[ParenLevel].Indent += 2;
     } else {
       if (Current.is(tok::equal) && RootToken.is(tok::kw_for))
@@ -407,29 +604,63 @@ private:
         Spaces = Style.SpacesBeforeTrailingComments;
 
       if (!DryRun)
-        replaceWhitespace(Current, 0, Spaces, Style, SourceMgr, Replaces);
+        Whitespaces.replaceWhitespace(Current, 0, Spaces, State.Column, Style);
 
       // FIXME: Do we need to do this for assignments nested in other
       // expressions?
       if (RootToken.isNot(tok::kw_for) && ParenLevel == 0 &&
           (getPrecedence(Previous) == prec::Assignment ||
            Previous.is(tok::kw_return)))
-        State.Stack[ParenLevel].Indent = State.Column + Spaces;
+        State.Stack.back().AssignmentColumn = State.Column + Spaces;
       if (Previous.is(tok::l_paren) || Previous.is(tok::l_brace) ||
           State.NextToken->Parent->Type == TT_TemplateOpener)
         State.Stack[ParenLevel].Indent = State.Column + Spaces;
+      if (Current.getPreviousNoneComment() != NULL &&
+          Current.getPreviousNoneComment()->is(tok::comma) &&
+          Current.isNot(tok::comment))
+        State.Stack[ParenLevel].HasMultiParameterLine = true;
 
-      // Top-level spaces that are not part of assignments are exempt as that
-      // mostly leads to better results.
       State.Column += Spaces;
-      if (Spaces > 0 &&
-          (ParenLevel != 0 || getPrecedence(Previous) == prec::Assignment))
-        State.Stack[ParenLevel].LastSpace = State.Column;
+      if (Current.is(tok::l_paren) && Previous.is(tok::kw_if))
+        // Treat the condition inside an if as if it was a second function
+        // parameter, i.e. let nested calls have an indent of 4.
+        State.Stack.back().LastSpace = State.Column + 1; // 1 is length of "(".
+      else if (Previous.is(tok::comma) && ParenLevel != 0)
+        // Top-level spaces are exempt as that mostly leads to better results.
+        State.Stack.back().LastSpace = State.Column;
+      else if ((Previous.Type == TT_BinaryOperator ||
+                Previous.Type == TT_ConditionalExpr ||
+                Previous.Type == TT_CtorInitializerColon) &&
+               getPrecedence(Previous) != prec::Assignment)
+        State.Stack.back().LastSpace = State.Column;
+      else if (Previous.ParameterCount > 1 &&
+               (Previous.is(tok::l_paren) || Previous.is(tok::l_square) ||
+                Previous.Type == TT_TemplateOpener))
+        // If this function has multiple parameters, indent nested calls from
+        // the start of the first parameter.
+        State.Stack.back().LastSpace = State.Column;
     }
-    moveStateToNextToken(State);
-    if (Newline && Previous.is(tok::l_brace)) {
+
+    // If we break after an {, we should also break before the corresponding }.
+    if (Newline && Previous.is(tok::l_brace))
       State.Stack.back().BreakBeforeClosingBrace = true;
+
+    if (!Style.BinPackParameters && Newline) {
+      // If we are breaking after '(', '{', '<', this is not bin packing unless
+      // AllowAllParametersOnNextLine is false.
+      if ((Previous.isNot(tok::l_paren) && Previous.isNot(tok::l_brace) &&
+           Previous.Type != TT_TemplateOpener) ||
+          !Style.AllowAllParametersOnNextLine)
+        State.Stack.back().BreakAfterComma = true;
+      
+      // Any break on this level means that the parent level has been broken
+      // and we need to avoid bin packing there.
+      for (unsigned i = 0, e = State.Stack.size() - 1; i != e; ++i) {
+        State.Stack[i].BreakAfterComma = true;
+      }
     }
+
+    moveStateToNextToken(State);
   }
 
   /// \brief Mark the next token as consumed in \p State and modify its stacks
@@ -440,6 +671,8 @@ private:
 
     if (Current.is(tok::lessless) && State.Stack.back().FirstLessLess == 0)
       State.Stack.back().FirstLessLess = State.Column;
+    if (Current.is(tok::question))
+      State.Stack.back().QuestionColumn = State.Column;
 
     // If we encounter an opening (, [, { or <, we add a level to our stacks to
     // prepare for the following tokens.
@@ -480,13 +713,28 @@ private:
     const AnnotatedToken &Left = Tok;
     const AnnotatedToken &Right = Tok.Children[0];
 
+    if (Left.is(tok::l_brace) && Right.isNot(tok::l_brace))
+      return 50;
+    if (Left.is(tok::equal) && Right.is(tok::l_brace))
+      return 150;
+    if (Left.is(tok::coloncolon))
+      return 500;
+
+    if (Left.Type == TT_RangeBasedForLoopColon)
+      return 5;
+
+    if (Right.is(tok::arrow) || Right.is(tok::period)) {
+      if (Left.is(tok::r_paren) && Line.Type == LT_BuilderTypeCall)
+        return 5; // Should be smaller than breaking at a nested comma.
+      return 150;
+    }
+
     // In for-loops, prefer breaking at ',' and ';'.
     if (RootToken.is(tok::kw_for) &&
         (Left.isNot(tok::comma) && Left.isNot(tok::semi)))
       return 20;
 
-    if (Left.is(tok::semi) || Left.is(tok::comma) ||
-        Left.ClosesTemplateDeclaration)
+    if (Left.is(tok::semi) || Left.is(tok::comma))
       return 0;
 
     // In Objective-C method expressions, prefer breaking before "param:" over
@@ -498,21 +746,18 @@ private:
 
     if (Left.is(tok::l_paren))
       return 20;
+    // FIXME: The penalty for a trailing "<" or "[" being higher than the
+    // penalty for a trainling "(" is a temporary workaround until we can
+    // properly avoid breaking in array subscripts or template parameters.
+    if (Left.is(tok::l_square) || Left.Type == TT_TemplateOpener)
+      return 50;
 
-    if (Left.is(tok::question) || Left.Type == TT_ConditionalExpr)
+    if (Left.Type == TT_ConditionalExpr)
       return prec::Assignment;
     prec::Level Level = getPrecedence(Left);
 
-    // Breaking after an assignment leads to a bad result as the two sides of
-    // the assignment are visually very close together.
-    if (Level == prec::Assignment)
-      return 50;
-
     if (Level != prec::Unknown)
       return Level;
-
-    if (Right.is(tok::arrow) || Right.is(tok::period))
-      return 150;
 
     return 3;
   }
@@ -538,7 +783,9 @@ private:
 
     if (!NewLine && State.NextToken->MustBreakBefore)
       return UINT_MAX;
-    if (NewLine && !State.NextToken->CanBreakBefore)
+    if (NewLine && !State.NextToken->CanBreakBefore &&
+        !(State.NextToken->is(tok::r_brace) &&
+          State.Stack.back().BreakBeforeClosingBrace))
       return UINT_MAX;
     if (!NewLine && State.NextToken->is(tok::r_brace) &&
         State.Stack.back().BreakBeforeClosingBrace)
@@ -547,19 +794,23 @@ private:
         State.LineContainsContinuedForLoopSection)
       return UINT_MAX;
     if (!NewLine && State.NextToken->Parent->is(tok::comma) &&
-        State.NextToken->Type != TT_LineComment &&
+        State.NextToken->isNot(tok::comment) &&
         State.Stack.back().BreakAfterComma)
+      return UINT_MAX;
+    // Trying to insert a parameter on a new line if there are already more than
+    // one parameter on the current line is bin packing.
+    if (NewLine && State.NextToken->Parent->is(tok::comma) &&
+        State.Stack.back().HasMultiParameterLine && !Style.BinPackParameters)
+      return UINT_MAX;
+    if (!NewLine && (State.NextToken->Type == TT_CtorInitializerColon ||
+                     (State.NextToken->Parent->ClosesTemplateDeclaration &&
+                      State.Stack.size() == 1)))
       return UINT_MAX;
 
     unsigned CurrentPenalty = 0;
-    if (NewLine) {
+    if (NewLine)
       CurrentPenalty += Parameters.PenaltyIndentLevel * State.Stack.size() +
                         splitPenalty(*State.NextToken->Parent);
-    } else {
-      if (State.Stack.size() < State.StartOfLineLevel)
-        CurrentPenalty += Parameters.PenaltyLevelDecrease *
-                          (State.StartOfLineLevel - State.Stack.size());
-    }
 
     addTokenToState(NewLine, true, State);
 
@@ -599,11 +850,10 @@ private:
 
   FormatStyle Style;
   SourceManager &SourceMgr;
-  const UnwrappedLine &Line;
+  const AnnotatedLine &Line;
   const unsigned FirstIndent;
-  const bool FitsOnALine;
   const AnnotatedToken &RootToken;
-  tooling::Replacements &Replaces;
+  WhitespaceManager &Whitespaces;
 
   // A map from an indent state to a pair (Result, Used-StopAt).
   typedef std::map<LineState, std::pair<unsigned, unsigned> > StateMap;
@@ -616,10 +866,9 @@ private:
 /// \c UnwrappedLine.
 class TokenAnnotator {
 public:
-  TokenAnnotator(const UnwrappedLine &Line, const FormatStyle &Style,
-                 SourceManager &SourceMgr, Lexer &Lex)
-      : Style(Style), SourceMgr(SourceMgr), Lex(Lex),
-        RootToken(Line.RootToken) {}
+  TokenAnnotator(const FormatStyle &Style, SourceManager &SourceMgr, Lexer &Lex,
+                 AnnotatedLine &Line)
+      : Style(Style), SourceMgr(SourceMgr), Lex(Lex), Line(Line) {}
 
   /// \brief A parser that gathers additional information about tokens.
   ///
@@ -630,11 +879,34 @@ public:
   public:
     AnnotatingParser(AnnotatedToken &RootToken)
         : CurrentToken(&RootToken), KeywordVirtualFound(false),
-          ColonIsObjCMethodExpr(false) {}
+          ColonIsObjCMethodExpr(false), ColonIsForRangeExpr(false) {}
+
+    /// \brief A helper class to manage AnnotatingParser::ColonIsObjCMethodExpr.
+    struct ObjCSelectorRAII {
+      AnnotatingParser &P;
+      bool ColonWasObjCMethodExpr;
+
+      ObjCSelectorRAII(AnnotatingParser &P)
+          : P(P), ColonWasObjCMethodExpr(P.ColonIsObjCMethodExpr) {}
+
+      ~ObjCSelectorRAII() { P.ColonIsObjCMethodExpr = ColonWasObjCMethodExpr; }
+
+      void markStart(AnnotatedToken &Left) {
+        P.ColonIsObjCMethodExpr = true;
+        Left.Type = TT_ObjCMethodExpr;
+      }
+
+      void markEnd(AnnotatedToken &Right) { Right.Type = TT_ObjCMethodExpr; }
+    };
 
     bool parseAngle() {
+      if (CurrentToken == NULL)
+        return false;
+      AnnotatedToken *Left = CurrentToken->Parent;
       while (CurrentToken != NULL) {
         if (CurrentToken->is(tok::greater)) {
+          Left->MatchingParen = CurrentToken;
+          CurrentToken->MatchingParen = Left;
           CurrentToken->Type = TT_TemplateCloser;
           next();
           return true;
@@ -645,22 +917,64 @@ public:
         if (CurrentToken->is(tok::pipepipe) || CurrentToken->is(tok::ampamp) ||
             CurrentToken->is(tok::question) || CurrentToken->is(tok::colon))
           return false;
+        if (CurrentToken->is(tok::comma))
+          ++Left->ParameterCount;
         if (!consumeToken())
           return false;
       }
       return false;
     }
 
-    bool parseParens() {
-      if (CurrentToken != NULL && CurrentToken->is(tok::caret))
-        CurrentToken->Parent->Type = TT_ObjCBlockLParen;
+    bool parseParens(bool LookForDecls = false) {
+      if (CurrentToken == NULL)
+        return false;
+      bool StartsObjCMethodExpr = false;
+      AnnotatedToken *Left = CurrentToken->Parent;
+      if (CurrentToken->is(tok::caret)) {
+        // ^( starts a block.
+        Left->Type = TT_ObjCBlockLParen;
+      } else if (AnnotatedToken *MaybeSel = Left->Parent) {
+        // @selector( starts a selector.
+        if (MaybeSel->isObjCAtKeyword(tok::objc_selector) && MaybeSel->Parent &&
+            MaybeSel->Parent->is(tok::at)) {
+          StartsObjCMethodExpr = true;
+        }
+      }
+
+      ObjCSelectorRAII objCSelector(*this);
+      if (StartsObjCMethodExpr)
+        objCSelector.markStart(*Left);
+
       while (CurrentToken != NULL) {
+        // LookForDecls is set when "if (" has been seen. Check for
+        // 'identifier' '*' 'identifier' followed by not '=' -- this
+        // '*' has to be a binary operator but determineStarAmpUsage() will
+        // categorize it as an unary operator, so set the right type here.
+        if (LookForDecls && !CurrentToken->Children.empty()) {
+          AnnotatedToken &Prev = *CurrentToken->Parent;
+          AnnotatedToken &Next = CurrentToken->Children[0];
+          if (Prev.Parent->is(tok::identifier) &&
+              (Prev.is(tok::star) || Prev.is(tok::amp)) &&
+              CurrentToken->is(tok::identifier) && Next.isNot(tok::equal)) {
+            Prev.Type = TT_BinaryOperator;
+            LookForDecls = false;
+          }
+        }
+
         if (CurrentToken->is(tok::r_paren)) {
+          Left->MatchingParen = CurrentToken;
+          CurrentToken->MatchingParen = Left;
+
+          if (StartsObjCMethodExpr)
+            objCSelector.markEnd(*CurrentToken);
+
           next();
           return true;
         }
         if (CurrentToken->is(tok::r_square) || CurrentToken->is(tok::r_brace))
           return false;
+        if (CurrentToken->is(tok::comma))
+          ++Left->ParameterCount;
         if (!consumeToken())
           return false;
       }
@@ -674,33 +988,38 @@ public:
       // A '[' could be an index subscript (after an indentifier or after
       // ')' or ']'), or it could be the start of an Objective-C method
       // expression.
-      AnnotatedToken *LSquare = CurrentToken->Parent;
+      AnnotatedToken *Left = CurrentToken->Parent;
       bool StartsObjCMethodExpr =
-          !LSquare->Parent || LSquare->Parent->is(tok::colon) ||
-          LSquare->Parent->is(tok::l_square) ||
-          LSquare->Parent->is(tok::l_paren) ||
-          LSquare->Parent->is(tok::kw_return) ||
-          LSquare->Parent->is(tok::kw_throw) ||
-          getBinOpPrecedence(LSquare->Parent->FormatTok.Tok.getKind(),
+          !Left->Parent || Left->Parent->is(tok::colon) ||
+          Left->Parent->is(tok::l_square) || Left->Parent->is(tok::l_paren) ||
+          Left->Parent->is(tok::kw_return) || Left->Parent->is(tok::kw_throw) ||
+          getBinOpPrecedence(Left->Parent->FormatTok.Tok.getKind(),
                              true, true) > prec::Unknown;
 
-      bool ColonWasObjCMethodExpr = ColonIsObjCMethodExpr;
-      if (StartsObjCMethodExpr) {
-        ColonIsObjCMethodExpr = true;
-        LSquare->Type = TT_ObjCMethodExpr;
-      }
+      ObjCSelectorRAII objCSelector(*this);
+      if (StartsObjCMethodExpr)
+        objCSelector.markStart(*Left);
 
       while (CurrentToken != NULL) {
         if (CurrentToken->is(tok::r_square)) {
-          if (StartsObjCMethodExpr) {
-            ColonIsObjCMethodExpr = ColonWasObjCMethodExpr;
-            CurrentToken->Type = TT_ObjCMethodExpr;
-          }
+          if (!CurrentToken->Children.empty() &&
+              CurrentToken->Children[0].is(tok::l_paren)) {
+            // An ObjC method call can't be followed by an open parenthesis.
+            // FIXME: Do we incorrectly label ":" with this?
+            StartsObjCMethodExpr = false;
+            Left->Type = TT_Unknown;
+	  }
+          if (StartsObjCMethodExpr)
+            objCSelector.markEnd(*CurrentToken);
+          Left->MatchingParen = CurrentToken;
+          CurrentToken->MatchingParen = Left;
           next();
           return true;
         }
         if (CurrentToken->is(tok::r_paren) || CurrentToken->is(tok::r_brace))
           return false;
+        if (CurrentToken->is(tok::comma))
+          ++Left->ParameterCount;
         if (!consumeToken())
           return false;
       }
@@ -708,8 +1027,14 @@ public:
     }
 
     bool parseBrace() {
+      // Lines are fine to end with '{'.
+      if (CurrentToken == NULL)
+        return true;
+      AnnotatedToken *Left = CurrentToken->Parent;
       while (CurrentToken != NULL) {
         if (CurrentToken->is(tok::r_brace)) {
+          Left->MatchingParen = CurrentToken;
+          CurrentToken->MatchingParen = Left;
           next();
           return true;
         }
@@ -718,7 +1043,6 @@ public:
         if (!consumeToken())
           return false;
       }
-      // Lines can currently end with '{'.
       return true;
     }
 
@@ -742,7 +1066,6 @@ public:
         if (!parseAngle())
           return false;
         CurrentToken->Parent->ClosesTemplateDeclaration = true;
-        parseLine();
         return true;
       }
       return false;
@@ -761,22 +1084,31 @@ public:
         break;
       case tok::colon:
         // Colons from ?: are handled in parseConditional().
-        if (ColonIsObjCMethodExpr)
+        if (Tok->Parent->is(tok::r_paren))
+          Tok->Type = TT_CtorInitializerColon;
+        else if (ColonIsObjCMethodExpr)
           Tok->Type = TT_ObjCMethodExpr;
+        else if (ColonIsForRangeExpr)
+          Tok->Type = TT_RangeBasedForLoopColon;
         break;
-      case tok::l_paren: {
-        bool ParensWereObjCReturnType =
-            Tok->Parent && Tok->Parent->Type == TT_ObjCMethodSpecifier;
+      case tok::kw_if:
+      case tok::kw_while:
+        if (CurrentToken != NULL && CurrentToken->is(tok::l_paren)) {
+          next();
+          if (!parseParens(/*LookForDecls=*/true))
+            return false;
+        }
+        break;
+      case tok::kw_for:
+        ColonIsForRangeExpr = true;
+        next();
         if (!parseParens())
           return false;
-        if (CurrentToken != NULL && CurrentToken->is(tok::colon)) {
-          CurrentToken->Type = TT_CtorInitializerColon;
-          next();
-        } else if (CurrentToken != NULL && ParensWereObjCReturnType) {
-          CurrentToken->Type = TT_ObjCSelectorStart;
-          next();
-        }
-      } break;
+        break;
+      case tok::l_paren:
+        if (!parseParens())
+          return false;
+        break;
       case tok::l_square:
         if (!parseSquare())
           return false;
@@ -806,7 +1138,7 @@ public:
         Tok->Type = TT_BinaryOperator;
         break;
       case tok::kw_operator:
-        if (CurrentToken->is(tok::l_paren)) {
+        if (CurrentToken != NULL && CurrentToken->is(tok::l_paren)) {
           CurrentToken->Type = TT_OverloadedOperator;
           next();
           if (CurrentToken != NULL && CurrentToken->is(tok::r_paren)) {
@@ -833,13 +1165,29 @@ public:
     }
 
     void parseIncludeDirective() {
+      next();
+      if (CurrentToken != NULL && CurrentToken->is(tok::less)) {
+        next();
+        while (CurrentToken != NULL) {
+          if (CurrentToken->isNot(tok::comment) ||
+              !CurrentToken->Children.empty())
+            CurrentToken->Type = TT_ImplicitStringLiteral;
+          next();
+        }
+      } else {
+        while (CurrentToken != NULL) {
+          next();
+        }
+      }
+    }
+
+    void parseWarningOrError() {
+      next();
+      // We still want to format the whitespace left of the first token of the
+      // warning or error.
+      next();
       while (CurrentToken != NULL) {
-        if (CurrentToken->is(tok::slash))
-          CurrentToken->Type = TT_DirectorySeparator;
-        else if (CurrentToken->is(tok::less))
-          CurrentToken->Type = TT_TemplateOpener;
-        else if (CurrentToken->is(tok::greater))
-          CurrentToken->Type = TT_TemplateCloser;
+        CurrentToken->Type = TT_ImplicitStringLiteral;
         next();
       }
     }
@@ -858,24 +1206,41 @@ public:
       case tok::pp_import:
         parseIncludeDirective();
         break;
+      case tok::pp_error:
+      case tok::pp_warning:
+        parseWarningOrError();
+        break;
       default:
         break;
       }
     }
 
     LineType parseLine() {
+      int PeriodsAndArrows = 0;
+      bool CanBeBuilderTypeStmt = true;
       if (CurrentToken->is(tok::hash)) {
         parsePreprocessorDirective();
         return LT_PreprocessorDirective;
       }
       while (CurrentToken != NULL) {
+        
         if (CurrentToken->is(tok::kw_virtual))
           KeywordVirtualFound = true;
+        if (CurrentToken->is(tok::period) || CurrentToken->is(tok::arrow))
+          ++PeriodsAndArrows;
+        if (getPrecedence(*CurrentToken) > prec::Assignment &&
+            CurrentToken->isNot(tok::less) && CurrentToken->isNot(tok::greater))
+          CanBeBuilderTypeStmt = false;
         if (!consumeToken())
           return LT_Invalid;
       }
       if (KeywordVirtualFound)
         return LT_VirtualFunctionDecl;
+
+      // Assume a builder-type call if there are 2 or more "." and "->".
+      if (PeriodsAndArrows >= 2 && CanBeBuilderTypeStmt)
+        return LT_BuilderTypeCall;
+
       return LT_Other;
     }
 
@@ -890,15 +1255,8 @@ public:
     AnnotatedToken *CurrentToken;
     bool KeywordVirtualFound;
     bool ColonIsObjCMethodExpr;
+    bool ColonIsForRangeExpr;
   };
-
-  void createAnnotatedTokens(AnnotatedToken &Current) {
-    if (!Current.FormatTok.Children.empty()) {
-      Current.Children.push_back(AnnotatedToken(Current.FormatTok.Children[0]));
-      Current.Children.back().Parent = &Current;
-      createAnnotatedTokens(Current.Children.back());
-    }
-  }
 
   void calculateExtraInformation(AnnotatedToken &Current) {
     Current.SpaceRequiredBefore = spaceRequiredBefore(Current);
@@ -906,58 +1264,79 @@ public:
     if (Current.FormatTok.MustBreakBefore) {
       Current.MustBreakBefore = true;
     } else {
-      if (Current.Type == TT_CtorInitializerColon || Current.Parent->Type ==
-          TT_LineComment || (Current.is(tok::string_literal) &&
-                             Current.Parent->is(tok::string_literal))) {
+      if (Current.Type == TT_LineComment) {
+        Current.MustBreakBefore = Current.FormatTok.NewlinesBefore > 0;
+      } else if ((Current.Parent->is(tok::comment) &&
+                  Current.FormatTok.NewlinesBefore > 0) ||
+                 (Current.is(tok::string_literal) &&
+                  Current.Parent->is(tok::string_literal))) {
         Current.MustBreakBefore = true;
       } else {
         Current.MustBreakBefore = false;
       }
     }
     Current.CanBreakBefore = Current.MustBreakBefore || canBreakBefore(Current);
+    if (Current.MustBreakBefore)
+      Current.TotalLength = Current.Parent->TotalLength + Style.ColumnLimit;
+    else
+      Current.TotalLength = Current.Parent->TotalLength +
+                            Current.FormatTok.TokenLength +
+                            (Current.SpaceRequiredBefore ? 1 : 0);
     if (!Current.Children.empty())
       calculateExtraInformation(Current.Children[0]);
   }
 
-  bool annotate() {
-    createAnnotatedTokens(RootToken);
+  void annotate() {
+    AnnotatingParser Parser(Line.First);
+    Line.Type = Parser.parseLine();
+    if (Line.Type == LT_Invalid)
+      return;
 
-    AnnotatingParser Parser(RootToken);
-    CurrentLineType = Parser.parseLine();
-    if (CurrentLineType == LT_Invalid)
-      return false;
+    bool LookForFunctionName = Line.MustBeDeclaration;
+    determineTokenTypes(Line.First, /*IsExpression=*/ false,
+                        LookForFunctionName);
 
-    determineTokenTypes(RootToken, /*IsRHS=*/false);
+    if (Line.First.Type == TT_ObjCMethodSpecifier)
+      Line.Type = LT_ObjCMethodDecl;
+    else if (Line.First.Type == TT_ObjCDecl)
+      Line.Type = LT_ObjCDecl;
+    else if (Line.First.Type == TT_ObjCProperty)
+      Line.Type = LT_ObjCProperty;
 
-    if (RootToken.Type == TT_ObjCMethodSpecifier)
-      CurrentLineType = LT_ObjCMethodDecl;
-    else if (RootToken.Type == TT_ObjCDecl)
-      CurrentLineType = LT_ObjCDecl;
-    else if (RootToken.Type == TT_ObjCProperty)
-      CurrentLineType = LT_ObjCProperty;
+    Line.First.SpaceRequiredBefore = true;
+    Line.First.MustBreakBefore = Line.First.FormatTok.MustBreakBefore;
+    Line.First.CanBreakBefore = Line.First.MustBreakBefore;
 
-    if (!RootToken.Children.empty())
-      calculateExtraInformation(RootToken.Children[0]);
-    return true;
-  }
-
-  LineType getLineType() {
-    return CurrentLineType;
-  }
-
-  const AnnotatedToken &getRootToken() {
-    return RootToken;
+    Line.First.TotalLength = Line.First.FormatTok.TokenLength;
+    if (!Line.First.Children.empty())
+      calculateExtraInformation(Line.First.Children[0]);
   }
 
 private:
-  void determineTokenTypes(AnnotatedToken &Current, bool IsRHS) {
-    if (getPrecedence(Current) == prec::Assignment ||
-        Current.is(tok::kw_return) || Current.is(tok::kw_throw))
-      IsRHS = true;
+  void determineTokenTypes(AnnotatedToken &Current, bool IsExpression,
+                           bool LookForFunctionName) {
+    if (getPrecedence(Current) == prec::Assignment) {
+      IsExpression = true;
+      AnnotatedToken *Previous = Current.Parent;
+      while (Previous != NULL) {
+        if (Previous->Type == TT_BinaryOperator &&
+            (Previous->is(tok::star) || Previous->is(tok::amp))) {
+          Previous->Type = TT_PointerOrReference;
+        }
+        Previous = Previous->Parent;
+      }
+    }
+    if (Current.is(tok::kw_return) || Current.is(tok::kw_throw) ||
+        (Current.is(tok::l_paren) && !Line.MustBeDeclaration &&
+         (Current.Parent == NULL || Current.Parent->isNot(tok::kw_for))))
+      IsExpression = true;
 
     if (Current.Type == TT_Unknown) {
-      if (Current.is(tok::star) || Current.is(tok::amp)) {
-        Current.Type = determineStarAmpUsage(Current, IsRHS);
+      if (LookForFunctionName && Current.is(tok::l_paren)) {
+        findFunctionName(&Current);
+        LookForFunctionName = false;
+      } else if (Current.is(tok::star) || Current.is(tok::amp)) {
+        Current.Type = determineStarAmpUsage(Current, IsExpression);
       } else if (Current.is(tok::minus) || Current.is(tok::plus) ||
                  Current.is(tok::caret)) {
         Current.Type = determinePlusMinusCaretUsage(Current);
@@ -976,7 +1355,11 @@ private:
           Current.Type = TT_BlockComment;
       } else if (Current.is(tok::r_paren) &&
                  (Current.Parent->Type == TT_PointerOrReference ||
-                  Current.Parent->Type == TT_TemplateCloser)) {
+                  Current.Parent->Type == TT_TemplateCloser) &&
+                 (Current.Children.empty() ||
+                  (Current.Children[0].isNot(tok::equal) &&
+                   Current.Children[0].isNot(tok::semi) &&
+                   Current.Children[0].isNot(tok::l_brace)))) {
         // FIXME: We need to get smarter and understand more cases of casts.
         Current.Type = TT_CastRParen;
       } else if (Current.is(tok::at) && Current.Children.size()) {
@@ -996,60 +1379,104 @@ private:
     }
 
     if (!Current.Children.empty())
-      determineTokenTypes(Current.Children[0], IsRHS);
+      determineTokenTypes(Current.Children[0], IsExpression,
+                          LookForFunctionName);
   }
 
-  bool isBinaryOperator(const AnnotatedToken &Tok) {
-    // Comma is a binary operator, but does not behave as such wrt. formatting.
-    return getPrecedence(Tok) > prec::Comma;
+  /// \brief Starting from \p Current, this searches backwards for an
+  /// identifier which could be the start of a function name and marks it.
+  void findFunctionName(AnnotatedToken *Current) {
+    AnnotatedToken *Parent = Current->Parent;
+    while (Parent != NULL && Parent->Parent != NULL) {
+      if (Parent->is(tok::identifier) &&
+          (Parent->Parent->is(tok::identifier) ||
+           Parent->Parent->Type == TT_PointerOrReference ||
+           Parent->Parent->Type == TT_TemplateCloser)) {
+        Parent->Type = TT_StartOfName;
+        break;
+      }
+      Parent = Parent->Parent;
+    }
   }
 
-  TokenType determineStarAmpUsage(const AnnotatedToken &Tok, bool IsRHS) {
-    if (Tok.Parent == NULL)
+  /// \brief Returns the previous token ignoring comments.
+  const AnnotatedToken *getPreviousToken(const AnnotatedToken &Tok) {
+    const AnnotatedToken *PrevToken = Tok.Parent;
+    while (PrevToken != NULL && PrevToken->is(tok::comment))
+      PrevToken = PrevToken->Parent;
+    return PrevToken;
+  }
+
+  /// \brief Returns the next token ignoring comments.
+  const AnnotatedToken *getNextToken(const AnnotatedToken &Tok) {
+    if (Tok.Children.empty())
+      return NULL;
+    const AnnotatedToken *NextToken = &Tok.Children[0];
+    while (NextToken->is(tok::comment)) {
+      if (NextToken->Children.empty())
+        return NULL;
+      NextToken = &NextToken->Children[0];
+    }
+    return NextToken;
+  }
+
+  /// \brief Return the type of the given token assuming it is * or &.
+  TokenType determineStarAmpUsage(const AnnotatedToken &Tok,
+                                  bool IsExpression) {
+    const AnnotatedToken *PrevToken = getPreviousToken(Tok);
+    if (PrevToken == NULL)
       return TT_UnaryOperator;
-    if (Tok.Children.size() == 0)
+
+    const AnnotatedToken *NextToken = getNextToken(Tok);
+    if (NextToken == NULL)
       return TT_Unknown;
-    const FormatToken &PrevToken = Tok.Parent->FormatTok;
-    const FormatToken &NextToken = Tok.Children[0].FormatTok;
 
-    if (PrevToken.Tok.is(tok::l_paren) || PrevToken.Tok.is(tok::l_square) ||
-        PrevToken.Tok.is(tok::comma) || PrevToken.Tok.is(tok::kw_return) ||
-        PrevToken.Tok.is(tok::colon) || Tok.Parent->Type == TT_BinaryOperator ||
-        Tok.Parent->Type == TT_CastRParen)
+    if (NextToken->is(tok::l_square) && NextToken->Type != TT_ObjCMethodExpr)
+      return TT_PointerOrReference;
+
+    if (PrevToken->is(tok::l_paren) || PrevToken->is(tok::l_square) ||
+        PrevToken->is(tok::l_brace) || PrevToken->is(tok::comma) ||
+        PrevToken->is(tok::kw_return) || PrevToken->is(tok::colon) ||
+        PrevToken->Type == TT_BinaryOperator ||
+        PrevToken->Type == TT_UnaryOperator || PrevToken->Type == TT_CastRParen)
       return TT_UnaryOperator;
 
-    if (PrevToken.Tok.isLiteral() || PrevToken.Tok.is(tok::r_paren) ||
-        PrevToken.Tok.is(tok::r_square) || NextToken.Tok.isLiteral() ||
-        NextToken.Tok.is(tok::plus) || NextToken.Tok.is(tok::minus) ||
-        NextToken.Tok.is(tok::plusplus) || NextToken.Tok.is(tok::minusminus) ||
-        NextToken.Tok.is(tok::tilde) || NextToken.Tok.is(tok::exclaim) ||
-        NextToken.Tok.is(tok::l_paren) || NextToken.Tok.is(tok::l_square) ||
-        NextToken.Tok.is(tok::kw_alignof) || NextToken.Tok.is(tok::kw_sizeof))
+    if (PrevToken->FormatTok.Tok.isLiteral() || PrevToken->is(tok::r_paren) ||
+        PrevToken->is(tok::r_square) || NextToken->FormatTok.Tok.isLiteral() ||
+        NextToken->is(tok::plus) || NextToken->is(tok::minus) ||
+        NextToken->is(tok::plusplus) || NextToken->is(tok::minusminus) ||
+        NextToken->is(tok::tilde) || NextToken->is(tok::exclaim) ||
+        NextToken->is(tok::l_paren) || NextToken->is(tok::l_square) ||
+        NextToken->is(tok::kw_alignof) || NextToken->is(tok::kw_sizeof))
       return TT_BinaryOperator;
 
-    if (NextToken.Tok.is(tok::comma) || NextToken.Tok.is(tok::r_paren) ||
-        NextToken.Tok.is(tok::greater))
+    if (NextToken->is(tok::comma) || NextToken->is(tok::r_paren) ||
+        NextToken->is(tok::greater))
       return TT_PointerOrReference;
 
     // It is very unlikely that we are going to find a pointer or reference type
     // definition on the RHS of an assignment.
-    if (IsRHS)
+    if (IsExpression)
       return TT_BinaryOperator;
 
     return TT_PointerOrReference;
   }
 
   TokenType determinePlusMinusCaretUsage(const AnnotatedToken &Tok) {
+    const AnnotatedToken *PrevToken = getPreviousToken(Tok);
+    if (PrevToken == NULL)
+      return TT_UnaryOperator;
+
     // Use heuristics to recognize unary operators.
-    if (Tok.Parent->is(tok::equal) || Tok.Parent->is(tok::l_paren) ||
-        Tok.Parent->is(tok::comma) || Tok.Parent->is(tok::l_square) ||
-        Tok.Parent->is(tok::question) || Tok.Parent->is(tok::colon) ||
-        Tok.Parent->is(tok::kw_return) || Tok.Parent->is(tok::kw_case) ||
-        Tok.Parent->is(tok::at) || Tok.Parent->is(tok::l_brace))
+    if (PrevToken->is(tok::equal) || PrevToken->is(tok::l_paren) ||
+        PrevToken->is(tok::comma) || PrevToken->is(tok::l_square) ||
+        PrevToken->is(tok::question) || PrevToken->is(tok::colon) ||
+        PrevToken->is(tok::kw_return) || PrevToken->is(tok::kw_case) ||
+        PrevToken->is(tok::at) || PrevToken->is(tok::l_brace))
       return TT_UnaryOperator;
 
     // There can't be to consecutive binary operators.
-    if (Tok.Parent->Type == TT_BinaryOperator)
+    if (PrevToken->Type == TT_BinaryOperator)
       return TT_UnaryOperator;
 
     // Fall back to marking the token as binary operator.
@@ -1058,7 +1485,11 @@ private:
 
   /// \brief Determine whether ++/-- are pre- or post-increments/-decrements.
   TokenType determineIncrementUsage(const AnnotatedToken &Tok) {
-    if (Tok.Parent != NULL && Tok.Parent->is(tok::identifier))
+    const AnnotatedToken *PrevToken = getPreviousToken(Tok);
+    if (PrevToken == NULL)
+      return TT_UnaryOperator;
+    if (PrevToken->is(tok::r_paren) || PrevToken->is(tok::r_square) ||
+        PrevToken->is(tok::identifier))
       return TT_TrailingUnaryOperator;
 
     return TT_UnaryOperator;
@@ -1074,7 +1505,7 @@ private:
       return false;
     if (Right.is(tok::less) &&
         (Left.is(tok::kw_template) ||
-         (CurrentLineType == LT_ObjCDecl && Style.ObjCSpaceBeforeProtocolList)))
+         (Line.Type == LT_ObjCDecl && Style.ObjCSpaceBeforeProtocolList)))
       return true;
     if (Left.is(tok::arrow) || Right.is(tok::arrow))
       return false;
@@ -1086,6 +1517,10 @@ private:
          Right.is(tok::l_paren) || Right.is(tok::l_brace) ||
          Right.is(tok::kw_true) || Right.is(tok::kw_false)))
       return false;
+    if (Left.is(tok::coloncolon))
+      return false;
+    if (Right.is(tok::coloncolon))
+      return Left.isNot(tok::identifier) && Left.isNot(tok::greater);
     if (Left.is(tok::less) || Right.is(tok::greater) || Right.is(tok::less))
       return false;
     if (Right.is(tok::amp) || Right.is(tok::star))
@@ -1101,10 +1536,6 @@ private:
       return false;
     if (Right.is(tok::l_square) && Right.Type != TT_ObjCMethodExpr)
       return false;
-    if (Left.is(tok::coloncolon) ||
-        (Right.is(tok::coloncolon) &&
-         (Left.is(tok::identifier) || Left.is(tok::greater))))
-      return false;
     if (Left.is(tok::period) || Right.is(tok::period))
       return false;
     if (Left.is(tok::colon))
@@ -1114,7 +1545,7 @@ private:
     if (Left.is(tok::l_paren))
       return false;
     if (Right.is(tok::l_paren)) {
-      return CurrentLineType == LT_ObjCDecl || Left.is(tok::kw_if) ||
+      return Line.Type == LT_ObjCDecl || Left.is(tok::kw_if) ||
              Left.is(tok::kw_for) || Left.is(tok::kw_while) ||
              Left.is(tok::kw_switch) || Left.is(tok::kw_return) ||
              Left.is(tok::kw_catch) || Left.is(tok::kw_new) ||
@@ -1129,16 +1560,14 @@ private:
   }
 
   bool spaceRequiredBefore(const AnnotatedToken &Tok) {
-    if (CurrentLineType == LT_ObjCMethodDecl) {
+    if (Line.Type == LT_ObjCMethodDecl) {
       if (Tok.is(tok::identifier) && !Tok.Children.empty() &&
           Tok.Children[0].is(tok::colon) && Tok.Parent->is(tok::identifier))
         return true;
       if (Tok.is(tok::colon))
         return false;
       if (Tok.Parent->Type == TT_ObjCMethodSpecifier)
-        return Style.ObjCSpaceBeforeReturnType || Tok.isNot(tok::l_paren);
-      if (Tok.Type == TT_ObjCSelectorStart)
-        return !Style.ObjCSpaceBeforeReturnType;
+        return true;
       if (Tok.Parent->is(tok::r_paren) && Tok.is(tok::identifier))
         // Don't space between ')' and <id>
         return false;
@@ -1146,10 +1575,12 @@ private:
         // Don't space between ':' and '('
         return false;
     }
-    if (CurrentLineType == LT_ObjCProperty &&
+    if (Line.Type == LT_ObjCProperty &&
         (Tok.is(tok::equal) || Tok.Parent->is(tok::equal)))
       return false;
 
+    if (Tok.Parent->is(tok::comma))
+      return true;
     if (Tok.Type == TT_CtorInitializerColon || Tok.Type == TT_ObjCBlockLParen)
       return true;
     if (Tok.Type == TT_OverloadedOperator)
@@ -1158,7 +1589,7 @@ private:
     if (Tok.Parent->Type == TT_OverloadedOperator)
       return false;
     if (Tok.is(tok::colon))
-      return RootToken.isNot(tok::kw_case) && !Tok.Children.empty() &&
+      return Line.First.isNot(tok::kw_case) && !Tok.Children.empty() &&
              Tok.Type != TT_ObjCMethodExpr;
     if (Tok.Parent->Type == TT_UnaryOperator ||
         Tok.Parent->Type == TT_CastRParen)
@@ -1172,14 +1603,11 @@ private:
       return Tok.Type == TT_TemplateCloser && Tok.Parent->Type ==
              TT_TemplateCloser && Style.SplitTemplateClosingGreater;
     }
-    if (Tok.Type == TT_DirectorySeparator ||
-        Tok.Parent->Type == TT_DirectorySeparator)
-      return false;
     if (Tok.Type == TT_BinaryOperator || Tok.Parent->Type == TT_BinaryOperator)
       return true;
     if (Tok.Parent->Type == TT_TemplateCloser && Tok.is(tok::l_paren))
       return false;
-    if (Tok.is(tok::less) && RootToken.is(tok::hash))
+    if (Tok.is(tok::less) && Line.First.is(tok::hash))
       return true;
     if (Tok.Type == TT_TrailingUnaryOperator)
       return false;
@@ -1188,7 +1616,7 @@ private:
 
   bool canBreakBefore(const AnnotatedToken &Right) {
     const AnnotatedToken &Left = *Right.Parent;
-    if (CurrentLineType == LT_ObjCMethodDecl) {
+    if (Line.Type == LT_ObjCMethodDecl) {
       if (Right.is(tok::identifier) && !Right.Children.empty() &&
           Right.Children[0].is(tok::colon) && Left.is(tok::identifier))
         return true;
@@ -1202,6 +1630,8 @@ private:
         // Don't break at ':' if identifier before it can beak.
         return false;
     }
+    if (Right.Type == TT_StartOfName && Style.AllowReturnTypeOnItsOwnLine)
+      return true;
     if (Right.is(tok::colon) && Right.Type == TT_ObjCMethodExpr)
       return false;
     if (Left.is(tok::colon) && Left.Type == TT_ObjCMethodExpr)
@@ -1210,33 +1640,51 @@ private:
       return true;
     if (Left.ClosesTemplateDeclaration)
       return true;
+    if (Right.Type == TT_ConditionalExpr || Right.is(tok::question))
+      return true;
+    if (Left.Type == TT_RangeBasedForLoopColon)
+      return true;
     if (Left.Type == TT_PointerOrReference || Left.Type == TT_TemplateCloser ||
-        Left.Type == TT_UnaryOperator || Right.Type == TT_ConditionalExpr)
+        Left.Type == TT_UnaryOperator || Left.Type == TT_ConditionalExpr ||
+        Left.is(tok::question))
       return false;
-    if (Left.is(tok::equal) && CurrentLineType == LT_VirtualFunctionDecl)
+    if (Left.is(tok::equal) && Line.Type == LT_VirtualFunctionDecl)
       return false;
 
-    if (Right.is(tok::comment))
-      return !Right.Children.empty();
-    if (Right.is(tok::r_paren) || Right.is(tok::l_brace) ||
-        Right.is(tok::greater))
+    if (Right.Type == TT_LineComment)
+      // We rely on MustBreakBefore being set correctly here as we should not
+      // change the "binding" behavior of a comment.
+      return false;
+
+    // Allow breaking after a trailing 'const', e.g. after a method declaration,
+    // unless it is follow by ';', '{' or '='.
+    if (Left.is(tok::kw_const) && Left.Parent != NULL &&
+        Left.Parent->is(tok::r_paren))
+      return Right.isNot(tok::l_brace) && Right.isNot(tok::semi) &&
+             Right.isNot(tok::equal);
+
+    // We only break before r_brace if there was a corresponding break before
+    // the l_brace, which is tracked by BreakBeforeClosingBrace.
+    if (Right.is(tok::r_brace))
+      return false;
+
+    if (Right.is(tok::r_paren) || Right.is(tok::greater))
       return false;
     return (isBinaryOperator(Left) && Left.isNot(tok::lessless)) ||
            Left.is(tok::comma) || Right.is(tok::lessless) ||
            Right.is(tok::arrow) || Right.is(tok::period) ||
-           Right.is(tok::colon) || Left.is(tok::semi) ||
-           Left.is(tok::l_brace) || Left.is(tok::question) ||
-           Right.is(tok::r_brace) || Left.Type == TT_ConditionalExpr ||
+           Right.is(tok::colon) || Left.is(tok::coloncolon) ||
+           Left.is(tok::semi) || Left.is(tok::l_brace) ||
            (Left.is(tok::r_paren) && Left.Type != TT_CastRParen &&
             Right.is(tok::identifier)) ||
-           (Left.is(tok::l_paren) && !Right.is(tok::r_paren));
+           (Left.is(tok::l_paren) && !Right.is(tok::r_paren)) ||
+           (Left.is(tok::l_square) && !Right.is(tok::r_square));
   }
 
   FormatStyle Style;
   SourceManager &SourceMgr;
   Lexer &Lex;
-  LineType CurrentLineType;
-  AnnotatedToken RootToken;
+  AnnotatedLine &Line;
 };
 
 class LexerBasedFormatTokenSource : public FormatTokenSource {
@@ -1288,6 +1736,7 @@ public:
     // FIXME: Add a more explicit test.
     unsigned i = 0;
     while (i + 1 < Text.size() && Text[i] == '\\' && Text[i + 1] == '\n') {
+      // FIXME: ++FormatTok.NewlinesBefore is missing...
       FormatTok.WhiteSpaceLength += 2;
       FormatTok.TokenLength -= 2;
       i += 2;
@@ -1323,11 +1772,11 @@ private:
 
 class Formatter : public UnwrappedLineConsumer {
 public:
-  Formatter(clang::DiagnosticsEngine &Diag, const FormatStyle &Style,
-            Lexer &Lex, SourceManager &SourceMgr,
+  Formatter(DiagnosticsEngine &Diag, const FormatStyle &Style, Lexer &Lex,
+            SourceManager &SourceMgr,
             const std::vector<CharSourceRange> &Ranges)
       : Diag(Diag), Style(Style), Lex(Lex), SourceMgr(SourceMgr),
-        Ranges(Ranges) {}
+        Whitespaces(SourceMgr), Ranges(Ranges) {}
 
   virtual ~Formatter() {}
 
@@ -1336,39 +1785,36 @@ public:
     UnwrappedLineParser Parser(Diag, Style, Tokens, *this);
     StructuralError = Parser.parse();
     unsigned PreviousEndOfLineColumn = 0;
-    for (std::vector<UnwrappedLine>::iterator I = UnwrappedLines.begin(),
-                                              E = UnwrappedLines.end();
+    for (unsigned i = 0, e = AnnotatedLines.size(); i != e; ++i) {
+      TokenAnnotator Annotator(Style, SourceMgr, Lex, AnnotatedLines[i]);
+      Annotator.annotate();
+    }
+    for (std::vector<AnnotatedLine>::iterator I = AnnotatedLines.begin(),
+                                              E = AnnotatedLines.end();
          I != E; ++I) {
-      const UnwrappedLine &TheLine = *I;
-      if (touchesRanges(TheLine)) {
-        OwningPtr<TokenAnnotator> AnnotatedLine(
-            new TokenAnnotator(TheLine, Style, SourceMgr, Lex));
-        if (!AnnotatedLine->annotate())
-          break;
-        unsigned Indent = formatFirstToken(AnnotatedLine->getRootToken(),
-                                           TheLine.Level, TheLine.InPPDirective,
+      const AnnotatedLine &TheLine = *I;
+      if (touchesRanges(TheLine) && TheLine.Type != LT_Invalid) {
+        unsigned Indent = formatFirstToken(TheLine.First, TheLine.Level,
+                                           TheLine.InPPDirective,
                                            PreviousEndOfLineColumn);
-
-        UnwrappedLine Line(TheLine);
-        bool FitsOnALine = tryFitMultipleLinesInOne(Indent, Line, AnnotatedLine,
-                                                    I, E);
-        UnwrappedLineFormatter Formatter(
-            Style, SourceMgr, Line, Indent, FitsOnALine,
-            AnnotatedLine->getRootToken(), Replaces, StructuralError);
+        tryFitMultipleLinesInOne(Indent, I, E);
+        UnwrappedLineFormatter Formatter(Style, SourceMgr, TheLine, Indent,
+                                         TheLine.First, Whitespaces,
+                                         StructuralError);
         PreviousEndOfLineColumn = Formatter.format();
       } else {
         // If we did not reformat this unwrapped line, the column at the end of
         // the last token is unchanged - thus, we can calculate the end of the
         // last token, and return the result.
-        const FormatToken *Last = getLastInLine(TheLine);
         PreviousEndOfLineColumn =
-            SourceMgr.getSpellingColumnNumber(Last->Tok.getLocation()) +
-            Lex.MeasureTokenLength(Last->Tok.getLocation(), SourceMgr,
-                                   Lex.getLangOpts()) -
+            SourceMgr.getSpellingColumnNumber(
+                TheLine.Last->FormatTok.Tok.getLocation()) +
+            Lex.MeasureTokenLength(TheLine.Last->FormatTok.Tok.getLocation(),
+                                   SourceMgr, Lex.getLangOpts()) -
             1;
       }
     }
-    return Replaces;
+    return Whitespaces.generateReplacements();
   }
 
 private:
@@ -1378,81 +1824,141 @@ private:
   /// if possible; note that \c I will be incremented when lines are merged.
   ///
   /// Returns whether the resulting \c Line can fit in a single line.
-  bool tryFitMultipleLinesInOne(unsigned Indent, UnwrappedLine &Line,
-                                OwningPtr<TokenAnnotator> &AnnotatedLine,
-                                std::vector<UnwrappedLine>::iterator &I,
-                                std::vector<UnwrappedLine>::iterator E) {
+  void tryFitMultipleLinesInOne(unsigned Indent,
+                                std::vector<AnnotatedLine>::iterator &I,
+                                std::vector<AnnotatedLine>::iterator E) {
     unsigned Limit = Style.ColumnLimit - (I->InPPDirective ? 1 : 0) - Indent;
+
+    // We can never merge stuff if there are trailing line comments.
+    if (I->Last->Type == TT_LineComment)
+      return;
 
     // Check whether the UnwrappedLine can be put onto a single line. If
     // so, this is bound to be the optimal solution (by definition) and we
     // don't need to analyze the entire solution space.
-    bool FitsOnALine = fitsIntoLimit(AnnotatedLine->getRootToken(), Limit);
-    if (!FitsOnALine || I + 1 == E || I + 2 == E)
-      return FitsOnALine;
+    if (I->Last->TotalLength > Limit)
+      return;
+    Limit -= I->Last->TotalLength;
 
-    // Try to merge the next two lines if possible.
-    UnwrappedLine Combined(Line);
+    if (I + 1 == E || (I + 1)->Type == LT_Invalid)
+      return;
 
+    if (I->Last->is(tok::l_brace)) {
+      tryMergeSimpleBlock(I, E, Limit);
+    } else if (I->First.is(tok::kw_if)) {
+      tryMergeSimpleIf(I, E, Limit);
+    } else if (I->InPPDirective && (I->First.FormatTok.HasUnescapedNewline ||
+                                    I->First.FormatTok.IsFirst)) {
+      tryMergeSimplePPDirective(I, E, Limit);
+    }
+    return;
+  }
+
+  void tryMergeSimplePPDirective(std::vector<AnnotatedLine>::iterator &I,
+                                 std::vector<AnnotatedLine>::iterator E,
+                                 unsigned Limit) {
+    AnnotatedLine &Line = *I;
+    if (!(I + 1)->InPPDirective || (I + 1)->First.FormatTok.HasUnescapedNewline)
+      return;
+    if (I + 2 != E && (I + 2)->InPPDirective &&
+        !(I + 2)->First.FormatTok.HasUnescapedNewline)
+      return;
+    if (1 + (I + 1)->Last->TotalLength > Limit)
+      return;
+    join(Line, *(++I));
+  }
+
+  void tryMergeSimpleIf(std::vector<AnnotatedLine>::iterator &I,
+                        std::vector<AnnotatedLine>::iterator E,
+                        unsigned Limit) {
+    if (!Style.AllowShortIfStatementsOnASingleLine)
+      return;
+    if ((I + 1)->InPPDirective != I->InPPDirective ||
+        ((I + 1)->InPPDirective &&
+         (I + 1)->First.FormatTok.HasUnescapedNewline))
+      return;
+    AnnotatedLine &Line = *I;
+    if (Line.Last->isNot(tok::r_paren))
+      return;
+    if (1 + (I + 1)->Last->TotalLength > Limit)
+      return;
+    if ((I + 1)->First.is(tok::kw_if) || (I + 1)->First.Type == TT_LineComment)
+      return;
+    // Only inline simple if's (no nested if or else).
+    if (I + 2 != E && (I + 2)->First.is(tok::kw_else))
+      return;
+    join(Line, *(++I));
+  }
+
+  void tryMergeSimpleBlock(std::vector<AnnotatedLine>::iterator &I,
+                        std::vector<AnnotatedLine>::iterator E,
+                        unsigned Limit){
     // First, check that the current line allows merging. This is the case if
     // we're not in a control flow statement and the last token is an opening
     // brace.
-    FormatToken *Last = &Combined.RootToken;
+    AnnotatedLine &Line = *I;
     bool AllowedTokens =
-        Last->Tok.isNot(tok::kw_if) && Last->Tok.isNot(tok::kw_while) &&
-        Last->Tok.isNot(tok::kw_do) && Last->Tok.isNot(tok::r_brace) &&
-        Last->Tok.isNot(tok::kw_else) && Last->Tok.isNot(tok::kw_try) &&
-        Last->Tok.isNot(tok::kw_catch) && Last->Tok.isNot(tok::kw_for) &&
+        Line.First.isNot(tok::kw_if) && Line.First.isNot(tok::kw_while) &&
+        Line.First.isNot(tok::kw_do) && Line.First.isNot(tok::r_brace) &&
+        Line.First.isNot(tok::kw_else) && Line.First.isNot(tok::kw_try) &&
+        Line.First.isNot(tok::kw_catch) && Line.First.isNot(tok::kw_for) &&
         // This gets rid of all ObjC @ keywords and methods.
-        Last->Tok.isNot(tok::at) && Last->Tok.isNot(tok::minus) &&
-        Last->Tok.isNot(tok::plus);
-    while (!Last->Children.empty())
-      Last = &Last->Children.back();
-    if (!Last->Tok.is(tok::l_brace))
-      return FitsOnALine;
+        Line.First.isNot(tok::at) && Line.First.isNot(tok::minus) &&
+        Line.First.isNot(tok::plus);
+    if (!AllowedTokens)
+      return;
 
-    // Second, check that the next line does not contain any braces - if it
-    // does, readability declines when putting it into a single line.
-    const FormatToken *Next = &(I + 1)->RootToken;
-    while (Next) {
-      AllowedTokens = AllowedTokens && !Next->Tok.is(tok::l_brace) &&
-                      !Next->Tok.is(tok::r_brace);
-      Last->Children.push_back(*Next);
-      Last = &Last->Children[0];
-      Last->Children.clear();
-      Next = Next->Children.empty() ? NULL : &Next->Children.back();
-    }
+    AnnotatedToken *Tok = &(I + 1)->First;
+    if (Tok->Children.empty() && Tok->is(tok::r_brace) &&
+        !Tok->MustBreakBefore && Tok->TotalLength <= Limit) {
+      Tok->SpaceRequiredBefore = false;
+      join(Line, *(I + 1));
+      I += 1;
+    } else {
+      // Check that we still have three lines and they fit into the limit.
+      if (I + 2 == E || (I + 2)->Type == LT_Invalid ||
+          !nextTwoLinesFitInto(I, Limit))
+        return;
 
-    // Last, check that the third line contains a single closing brace.
-    Next = &(I + 2)->RootToken;
-    AllowedTokens = AllowedTokens && Next->Tok.is(tok::r_brace);
-    if (!Next->Children.empty() || !AllowedTokens)
-      return FitsOnALine;
-    Last->Children.push_back(*Next);
+      // Second, check that the next line does not contain any braces - if it
+      // does, readability declines when putting it into a single line.
+      if ((I + 1)->Last->Type == TT_LineComment || Tok->MustBreakBefore)
+        return;
+      do {
+        if (Tok->is(tok::l_brace) || Tok->is(tok::r_brace))
+          return;
+        Tok = Tok->Children.empty() ? NULL : &Tok->Children.back();
+      } while (Tok != NULL);
 
-    OwningPtr<TokenAnnotator> CombinedAnnotator(
-        new TokenAnnotator(Combined, Style, SourceMgr, Lex));
-    if (CombinedAnnotator->annotate() &&
-        fitsIntoLimit(CombinedAnnotator->getRootToken(), Limit)) {
-      // If the merged line fits, we use that instead and skip the next two
-      // lines.
-      AnnotatedLine.reset(CombinedAnnotator.take());
-      Line = Combined;
+      // Last, check that the third line contains a single closing brace.
+      Tok = &(I + 2)->First;
+      if (!Tok->Children.empty() || Tok->isNot(tok::r_brace) ||
+          Tok->MustBreakBefore)
+        return;
+
+      join(Line, *(I + 1));
+      join(Line, *(I + 2));
       I += 2;
     }
-    return FitsOnALine;
   }
 
-  const FormatToken *getLastInLine(const UnwrappedLine &TheLine) {
-    const FormatToken *Last = &TheLine.RootToken;
-    while (!Last->Children.empty())
-      Last = &Last->Children.back();
-    return Last;
+  bool nextTwoLinesFitInto(std::vector<AnnotatedLine>::iterator I,
+                           unsigned Limit) {
+    return 1 + (I + 1)->Last->TotalLength + 1 + (I + 2)->Last->TotalLength <=
+           Limit;
   }
 
-  bool touchesRanges(const UnwrappedLine &TheLine) {
-    const FormatToken *First = &TheLine.RootToken;
-    const FormatToken *Last = getLastInLine(TheLine);
+  void join(AnnotatedLine &A, const AnnotatedLine &B) {
+    A.Last->Children.push_back(B.First);
+    while (!A.Last->Children.empty()) {
+      A.Last->Children[0].Parent = A.Last;
+      A.Last = &A.Last->Children[0];
+    }
+  }
+
+  bool touchesRanges(const AnnotatedLine &TheLine) {
+    const FormatToken *First = &TheLine.First.FormatTok;
+    const FormatToken *Last = &TheLine.Last->FormatTok;
     CharSourceRange LineRange = CharSourceRange::getTokenRange(
                                     First->Tok.getLocation(),
                                     Last->Tok.getLocation());
@@ -1467,7 +1973,7 @@ private:
   }
 
   virtual void consumeUnwrappedLine(const UnwrappedLine &TheLine) {
-    UnwrappedLines.push_back(TheLine);
+    AnnotatedLines.push_back(AnnotatedLine(TheLine));
   }
 
   /// \brief Add a new line and the required indent before the first Token
@@ -1501,33 +2007,38 @@ private:
         static_cast<int>(Indent) + Style.AccessModifierOffset >= 0)
       Indent += Style.AccessModifierOffset;
     if (!InPPDirective || Tok.HasUnescapedNewline) {
-      replaceWhitespace(Tok, Newlines, Indent, Style, SourceMgr, Replaces);
+      Whitespaces.replaceWhitespace(RootToken, Newlines, Indent, 0, Style);
     } else {
-      replacePPWhitespace(Tok, Newlines, Indent, PreviousEndOfLineColumn, Style,
-                          SourceMgr, Replaces);
+      Whitespaces.replacePPWhitespace(RootToken, Newlines, Indent,
+                                      PreviousEndOfLineColumn, Style);
     }
     return Indent;
   }
 
-  clang::DiagnosticsEngine &Diag;
+  DiagnosticsEngine &Diag;
   FormatStyle Style;
   Lexer &Lex;
   SourceManager &SourceMgr;
-  tooling::Replacements Replaces;
+  WhitespaceManager Whitespaces;
   std::vector<CharSourceRange> Ranges;
-  std::vector<UnwrappedLine> UnwrappedLines;
+  std::vector<AnnotatedLine> AnnotatedLines;
   bool StructuralError;
 };
 
 tooling::Replacements reformat(const FormatStyle &Style, Lexer &Lex,
                                SourceManager &SourceMgr,
-                               std::vector<CharSourceRange> Ranges) {
+                               std::vector<CharSourceRange> Ranges,
+                               DiagnosticConsumer *DiagClient) {
   IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
-  TextDiagnosticPrinter DiagnosticPrinter(llvm::errs(), &*DiagOpts);
-  DiagnosticPrinter.BeginSourceFile(Lex.getLangOpts(), Lex.getPP());
+  OwningPtr<DiagnosticConsumer> DiagPrinter;
+  if (DiagClient == 0) {
+    DiagPrinter.reset(new TextDiagnosticPrinter(llvm::errs(), &*DiagOpts));
+    DiagPrinter->BeginSourceFile(Lex.getLangOpts(), Lex.getPP());
+    DiagClient = DiagPrinter.get();
+  }
   DiagnosticsEngine Diagnostics(
       IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs()), &*DiagOpts,
-      &DiagnosticPrinter, false);
+      DiagClient, false);
   Diagnostics.setSourceManager(&SourceMgr);
   Formatter formatter(Diagnostics, Style, Lex, SourceMgr, Ranges);
   return formatter.format();

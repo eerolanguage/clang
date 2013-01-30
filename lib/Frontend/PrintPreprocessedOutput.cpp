@@ -139,11 +139,15 @@ public:
                                 diag::Mapping Map, StringRef Str);
 
   bool HandleFirstTokOnLine(Token &Tok);
+
+  /// Move to the line of the provided source location. This will
+  /// return true if the output stream required adjustment or if
+  /// the requested location is on the first line.
   bool MoveToLine(SourceLocation Loc) {
     PresumedLoc PLoc = SM.getPresumedLoc(Loc);
     if (PLoc.isInvalid())
       return false;
-    return MoveToLine(PLoc.getLine());
+    return MoveToLine(PLoc.getLine()) || (PLoc.getLine() == 1);
   }
   bool MoveToLine(unsigned LineNo);
 
@@ -565,7 +569,7 @@ static void PrintPreprocessedTokens(Preprocessor &PP, Token &Tok,
   }
 }
 
-typedef std::pair<IdentifierInfo*, MacroInfo*> id_macro_pair;
+typedef std::pair<const IdentifierInfo *, MacroInfo *> id_macro_pair;
 static int MacroIDCompare(const void* a, const void* b) {
   const id_macro_pair *LHS = static_cast<const id_macro_pair*>(a);
   const id_macro_pair *RHS = static_cast<const id_macro_pair*>(b);

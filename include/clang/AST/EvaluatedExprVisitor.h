@@ -49,6 +49,9 @@ public:
   }
   
   void VisitChooseExpr(ChooseExpr *E) {
+    // Don't visit either child expression if the condition is dependent.
+    if (E->getCond()->isValueDependent())
+      return;
     // Only the selected subexpression matters; the other one is not evaluated.
     return this->Visit(E->getChosenSubExpr(Context));
   }
@@ -58,12 +61,17 @@ public:
     // expressions.
     return this->Visit(E->getInit());
   }
-  
+
   void VisitCXXTypeidExpr(CXXTypeidExpr *E) {
     if (E->isPotentiallyEvaluated())
       return this->Visit(E->getExprOperand());
   }
-  
+
+  void VisitCallExpr(CallExpr *CE) {
+    if (!CE->isUnevaluatedBuiltinCall(Context))
+      return static_cast<ImplClass*>(this)->VisitExpr(CE);
+  }
+
   /// \brief The basis case walks all of the children of the statement or
   /// expression, assuming they are all potentially evaluated.
   void VisitStmt(Stmt *S) {

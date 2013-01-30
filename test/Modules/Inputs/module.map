@@ -37,10 +37,18 @@ module category_top { header "category_top.h" }
 module category_left { 
   header "category_left.h" 
   export category_top
+
+  explicit module sub {
+    header "category_left_sub.h"
+  }
 }
 module category_right { 
   header "category_right.h" 
   export category_top
+
+  explicit module sub {
+    header "category_right_sub.h"
+  }
 }
 module category_bottom { 
   header "category_bottom.h" 
@@ -107,9 +115,17 @@ module templates_right {
 }
 module MethodPoolA {
   header "MethodPoolA.h"
+
+  explicit module Sub {
+    header "MethodPoolASub.h"
+  }
 }
 module MethodPoolB {
   header "MethodPoolB.h"
+
+  explicit module Sub {
+    header "MethodPoolBSub.h"
+  }
 }
 module import_decl {
   header "import-decl.h"
@@ -122,5 +138,20 @@ framework module * {
 module linkage_merge_left {
   explicit module sub {
     header "linkage-merge-sub.h"
+  }
+}
+
+module autolink {
+  header "autolink.h"
+  link "autolink"
+
+  explicit module sub {
+    header "autolink-sub.h"
+    link "autolink_sub"
+  }
+
+  explicit module sub2 {
+    header "autolink-sub2.h"
+    link framework "autolink_framework"
   }
 }

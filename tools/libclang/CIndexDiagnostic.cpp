@@ -158,7 +158,7 @@ public:
 
 CXDiagnosticSetImpl *cxdiag::lazyCreateDiags(CXTranslationUnit TU,
                                              bool checkIfChanged) {
-  ASTUnit *AU = static_cast<ASTUnit *>(TU->TUData);
+  ASTUnit *AU = cxtu::getASTUnit(TU);
 
   if (TU->Diagnostics && checkIfChanged) {
     // In normal use, ASTUnit's diagnostics should not change unless we reparse.
@@ -209,7 +209,7 @@ CXDiagnosticSetImpl *cxdiag::lazyCreateDiags(CXTranslationUnit TU,
 extern "C" {
 
 unsigned clang_getNumDiagnostics(CXTranslationUnit Unit) {
-  if (!Unit->TUData)
+  if (!cxtu::getASTUnit(Unit))
     return 0;
   return lazyCreateDiags(Unit, /*checkIfChanged=*/true)->getNumDiagnostics();
 }
@@ -227,7 +227,7 @@ CXDiagnostic clang_getDiagnostic(CXTranslationUnit Unit, unsigned Index) {
 }
   
 CXDiagnosticSet clang_getDiagnosticSetFromTU(CXTranslationUnit Unit) {
-  if (!Unit->TUData)
+  if (!cxtu::getASTUnit(Unit))
     return 0;
   return static_cast<CXDiagnostic>(lazyCreateDiags(Unit));
 }

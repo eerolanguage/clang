@@ -80,15 +80,17 @@ void Sema::InstantiateAttrs(const MultiLevelTemplateArgumentList &TemplateArgs,
                                         TemplateArgs);
           if (!Result.isInvalid())
             AddAlignedAttr(Aligned->getLocation(), New, Result.takeAs<Expr>(), 
-                           Aligned->getIsMSDeclSpec());
+                           Aligned->getIsMSDeclSpec(),
+                           Aligned->getSpellingListIndex());
         } else {
           TypeSourceInfo *Result = SubstType(Aligned->getAlignmentType(),
                                              TemplateArgs,
                                              Aligned->getLocation(),
                                              DeclarationName());
           if (Result)
-            AddAlignedAttr(Aligned->getLocation(), New, Result, 
-                           Aligned->getIsMSDeclSpec());
+            AddAlignedAttr(Aligned->getLocation(), New, Result,
+                           Aligned->getIsMSDeclSpec(),
+                           Aligned->getSpellingListIndex());
         }
         continue;
       }
@@ -1120,6 +1122,9 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
                            D->isInlineSpecified(), D->hasWrittenPrototype(),
                            D->isConstexpr());
 
+  if (D->isInlined())
+    Function->setImplicitlyInline();
+
   if (QualifierLoc)
     Function->setQualifierInfo(QualifierLoc);
 
@@ -1484,6 +1489,9 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
                                    D->isInlineSpecified(),
                                    D->isConstexpr(), D->getLocEnd());
   }
+
+  if (D->isInlined())
+    Method->setImplicitlyInline();
 
   if (QualifierLoc)
     Method->setQualifierInfo(QualifierLoc);
@@ -2763,6 +2771,9 @@ void Sema::InstantiateFunctionDefinition(SourceLocation PointOfInstantiation,
       !PatternDecl->isInlined())
     return;
 
+  if (PatternDecl->isInlined())
+    Function->setImplicitlyInline();
+
   InstantiatingTemplate Inst(*this, PointOfInstantiation, Function);
   if (Inst)
     return;
@@ -3134,7 +3145,7 @@ Sema::InstantiateMemInitializers(CXXConstructorDecl *New,
   ActOnMemInitializers(New,
                        /*FIXME: ColonLoc */
                        SourceLocation(),
-                       NewInits.data(), NewInits.size(),
+                       NewInits,
                        AnyErrors);
 }
 

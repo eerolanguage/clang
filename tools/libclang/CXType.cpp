@@ -97,7 +97,7 @@ CXType cxtype::MakeCXType(QualType T, CXTranslationUnit TU) {
   CXTypeKind TK = CXType_Invalid;
 
   if (TU && !T.isNull()) {
-    ASTContext &Ctx = static_cast<ASTUnit *>(TU->TUData)->getASTContext();
+    ASTContext &Ctx = cxtu::getASTUnit(TU)->getASTContext();
     if (Ctx.getLangOpts().ObjC1) {
       QualType UnqualT = T.getUnqualifiedType();
       if (Ctx.isObjCIdType(UnqualT))
@@ -131,26 +131,29 @@ CXType clang_getCursorType(CXCursor C) {
   using namespace cxcursor;
   
   CXTranslationUnit TU = cxcursor::getCursorTU(C);
-  ASTContext &Context = static_cast<ASTUnit *>(TU->TUData)->getASTContext();
+  if (!TU)
+    return MakeCXType(QualType(), TU);
+
+  ASTContext &Context = cxtu::getASTUnit(TU)->getASTContext();
   if (clang_isExpression(C.kind)) {
     QualType T = cxcursor::getCursorExpr(C)->getType();
     return MakeCXType(T, TU);
   }
 
   if (clang_isDeclaration(C.kind)) {
-    Decl *D = cxcursor::getCursorDecl(C);
+    const Decl *D = cxcursor::getCursorDecl(C);
     if (!D)
       return MakeCXType(QualType(), TU);
 
-    if (TypeDecl *TD = dyn_cast<TypeDecl>(D))
+    if (const TypeDecl *TD = dyn_cast<TypeDecl>(D))
       return MakeCXType(Context.getTypeDeclType(TD), TU);
-    if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(D))
+    if (const ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(D))
       return MakeCXType(Context.getObjCInterfaceType(ID), TU);
-    if (ValueDecl *VD = dyn_cast<ValueDecl>(D))
+    if (const ValueDecl *VD = dyn_cast<ValueDecl>(D))
       return MakeCXType(VD->getType(), TU);
-    if (ObjCPropertyDecl *PD = dyn_cast<ObjCPropertyDecl>(D))
+    if (const ObjCPropertyDecl *PD = dyn_cast<ObjCPropertyDecl>(D))
       return MakeCXType(PD->getType(), TU);
-    if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
+    if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
       return MakeCXType(FD->getType(), TU);
     return MakeCXType(QualType(), TU);
   }
@@ -202,9 +205,9 @@ CXType clang_getTypedefDeclUnderlyingType(CXCursor C) {
   CXTranslationUnit TU = cxcursor::getCursorTU(C);
 
   if (clang_isDeclaration(C.kind)) {
-    Decl *D = cxcursor::getCursorDecl(C);
+    const Decl *D = cxcursor::getCursorDecl(C);
 
-    if (TypedefNameDecl *TD = dyn_cast_or_null<TypedefNameDecl>(D)) {
+    if (const TypedefNameDecl *TD = dyn_cast_or_null<TypedefNameDecl>(D)) {
       QualType T = TD->getUnderlyingType();
       return MakeCXType(T, TU);
     }
@@ -220,9 +223,9 @@ CXType clang_getEnumDeclIntegerType(CXCursor C) {
   CXTranslationUnit TU = cxcursor::getCursorTU(C);
 
   if (clang_isDeclaration(C.kind)) {
-    Decl *D = cxcursor::getCursorDecl(C);
+    const Decl *D = cxcursor::getCursorDecl(C);
 
-    if (EnumDecl *TD = dyn_cast_or_null<EnumDecl>(D)) {
+    if (const EnumDecl *TD = dyn_cast_or_null<EnumDecl>(D)) {
       QualType T = TD->getIntegerType();
       return MakeCXType(T, TU);
     }
@@ -237,9 +240,9 @@ long long clang_getEnumConstantDeclValue(CXCursor C) {
   using namespace cxcursor;
 
   if (clang_isDeclaration(C.kind)) {
-    Decl *D = cxcursor::getCursorDecl(C);
+    const Decl *D = cxcursor::getCursorDecl(C);
 
-    if (EnumConstantDecl *TD = dyn_cast_or_null<EnumConstantDecl>(D)) {
+    if (const EnumConstantDecl *TD = dyn_cast_or_null<EnumConstantDecl>(D)) {
       return TD->getInitVal().getSExtValue();
     }
 
@@ -253,9 +256,9 @@ unsigned long long clang_getEnumConstantDeclUnsignedValue(CXCursor C) {
   using namespace cxcursor;
 
   if (clang_isDeclaration(C.kind)) {
-    Decl *D = cxcursor::getCursorDecl(C);
+    const Decl *D = cxcursor::getCursorDecl(C);
 
-    if (EnumConstantDecl *TD = dyn_cast_or_null<EnumConstantDecl>(D)) {
+    if (const EnumConstantDecl *TD = dyn_cast_or_null<EnumConstantDecl>(D)) {
       return TD->getInitVal().getZExtValue();
     }
 
@@ -269,9 +272,9 @@ int clang_getFieldDeclBitWidth(CXCursor C) {
   using namespace cxcursor;
 
   if (clang_isDeclaration(C.kind)) {
-    Decl *D = getCursorDecl(C);
+    const Decl *D = getCursorDecl(C);
 
-    if (FieldDecl *FD = dyn_cast_or_null<FieldDecl>(D)) {
+    if (const FieldDecl *FD = dyn_cast_or_null<FieldDecl>(D)) {
       if (FD->isBitField())
         return FD->getBitWidthValue(getCursorContext(C));
     }
@@ -290,8 +293,9 @@ CXType clang_getCanonicalType(CXType CT) {
   if (T.isNull())
     return MakeCXType(QualType(), GetTU(CT));
 
-  ASTUnit *AU = static_cast<ASTUnit*>(TU->TUData);
-  return MakeCXType(AU->getASTContext().getCanonicalType(T), TU);
+  return MakeCXType(cxtu::getASTUnit(TU)->getASTContext()
+                        .getCanonicalType(T),
+                    TU);
 }
 
 unsigned clang_isConstQualifiedType(CXType CT) {
@@ -533,7 +537,7 @@ CXType clang_getResultType(CXType X) {
 
 CXType clang_getCursorResultType(CXCursor C) {
   if (clang_isDeclaration(C.kind)) {
-    Decl *D = cxcursor::getCursorDecl(C);
+    const Decl *D = cxcursor::getCursorDecl(C);
     if (const ObjCMethodDecl *MD = dyn_cast_or_null<ObjCMethodDecl>(D))
       return MakeCXType(MD->getResultType(), cxcursor::getCursorTU(C));
 
@@ -549,9 +553,8 @@ unsigned clang_isPODType(CXType X) {
     return 0;
   
   CXTranslationUnit TU = GetTU(X);
-  ASTUnit *AU = static_cast<ASTUnit*>(TU->TUData);
 
-  return T.isPODType(AU->getASTContext()) ? 1 : 0;
+  return T.isPODType(cxtu::getASTUnit(TU)->getASTContext()) ? 1 : 0;
 }
 
 CXType clang_getElementType(CXType CT) {

@@ -64,13 +64,6 @@ enum AnalysisPurgeMode {
 NumPurgeModes
 };
 
-/// AnalysisIPAMode - Set of inter-procedural modes.
-enum AnalysisIPAMode {
-#define ANALYSIS_IPA(NAME, CMDFLAG, DESC) NAME,
-#include "clang/StaticAnalyzer/Core/Analyses.def"
-NumIPAModes
-};
-
 /// AnalysisInlineFunctionSelection - Set of inlining function selection heuristics.
 enum AnalysisInliningMode {
 #define ANALYSIS_INLINING_MODE(NAME, CMDFLAG, DESC) NAME,
@@ -102,6 +95,26 @@ enum CXXInlineableMemberKind {
   CIMK_Destructors
 };
 
+/// \brief Describes the different modes of inter-procedural analysis.
+enum IPAKind {
+  IPAK_NotSet = 0,
+
+  /// Perform only intra-procedural analysis.
+  IPAK_None = 1,
+
+  /// Inline C functions and blocks when their definitions are available.
+  IPAK_BasicInlining = 2,
+
+  /// Inline callees(C, C++, ObjC) when their definitions are available.
+  IPAK_Inlining = 3,
+
+  /// Enable inlining of dynamically dispatched methods.
+  IPAK_DynamicDispatch = 4,
+
+  /// Enable inlining of dynamically dispatched methods, bifurcate paths when
+  /// exact type info is unavailable.
+  IPAK_DynamicDispatchBifurcate = 5
+};
 
 class AnalyzerOptions : public RefCountedBase<AnalyzerOptions> {
 public:
@@ -116,9 +129,6 @@ public:
   AnalysisConstraints AnalysisConstraintsOpt;
   AnalysisDiagClients AnalysisDiagOpt;
   AnalysisPurgeMode AnalysisPurgeOpt;
-  
-  // \brief The interprocedural analysis mode.
-  AnalysisIPAMode IPAMode;
   
   std::string AnalyzeSpecificFunction;
   
@@ -165,6 +175,23 @@ public:
   AnalysisInliningMode InliningMode;
 
 private:
+  /// \brief Describes the kinds for high-level analyzer mode.
+  enum UserModeKind {
+    UMK_NotSet = 0,
+    /// Perform shallow but fast analyzes.
+    UMK_Shallow = 1,
+    /// Perform deep analyzes.
+    UMK_Deep = 2
+  };
+
+  /// Controls the high-level analyzer mode, which influences the default 
+  /// settings for some of the lower-level config options (such as IPAMode).
+  /// \sa getUserMode
+  UserModeKind UserMode;
+
+  /// Controls the mode of inter-procedural analysis.
+  IPAKind IPAMode;
+
   /// Controls which C++ member functions will be considered for inlining.
   CXXInlineableMemberKind CXXMemberInliningMode;
   
@@ -184,12 +211,12 @@ private:
   // \sa getAlwaysInlineSize
   llvm::Optional<unsigned> AlwaysInlineSize;
 
-  /// \sa shouldPruneNullReturnPaths
-  llvm::Optional<bool> PruneNullReturnPaths;
+  /// \sa shouldSuppressNullReturnPaths
+  llvm::Optional<bool> SuppressNullReturnPaths;
 
   /// \sa shouldAvoidSuppressingNullArgumentPaths
   llvm::Optional<bool> AvoidSuppressingNullArgumentPaths;
-  
+
   /// \sa getGraphTrimInterval
   llvm::Optional<unsigned> GraphTrimInterval;
 
@@ -210,6 +237,14 @@ private:
   int getOptionAsInteger(StringRef Name, int DefaultVal);
 
 public:
+  /// \brief Retrieves and sets the UserMode. This is a high-level option,
+  /// which is used to set other low-level options. It is not accessible
+  /// outside of AnalyzerOptions.
+  UserModeKind getUserMode();
+
+  /// \brief Returns the inter-procedural analysis mode.
+  IPAKind getIPAMode();
+
   /// Returns the option controlling which C++ member functions will be
   /// considered for inlining.
   ///
@@ -249,18 +284,25 @@ public:
   ///
   /// This is controlled by the 'suppress-null-return-paths' config option,
   /// which accepts the values "true" and "false".
-  bool shouldPruneNullReturnPaths();
+  bool shouldSuppressNullReturnPaths();
 
   /// Returns whether a bug report should \em not be suppressed if its path
   /// includes a call with a null argument, even if that call has a null return.
   ///
-  /// This option has no effect when #shouldPruneNullReturnPaths() is false.
+  /// This option has no effect when #shouldSuppressNullReturnPaths() is false.
   ///
   /// This is a counter-heuristic to avoid false negatives.
   ///
   /// This is controlled by the 'avoid-suppressing-null-argument-paths' config
   /// option, which accepts the values "true" and "false".
   bool shouldAvoidSuppressingNullArgumentPaths();
+
+  /// Returns whether irrelevant parts of a bug report path should be pruned
+  /// out of the final output.
+  ///
+  /// This is controlled by the 'prune-paths' config option, which accepts the
+  /// values "true" and "false".
+  bool shouldPrunePaths();
 
   // Returns the size of the functions (in basic blocks), which should be
   // considered to be small enough to always inline.
@@ -285,28 +327,30 @@ public:
   unsigned getMaxTimesInlineLarge();
 
 public:
-  AnalyzerOptions() : CXXMemberInliningMode() {
-    AnalysisStoreOpt = RegionStoreModel;
-    AnalysisConstraintsOpt = RangeConstraintsModel;
-    AnalysisDiagOpt = PD_HTML;
-    AnalysisPurgeOpt = PurgeStmt;
-    IPAMode = DynamicDispatchBifurcate;
-    ShowCheckerHelp = 0;
-    AnalyzeAll = 0;
-    AnalyzerDisplayProgress = 0;
-    AnalyzeNestedBlocks = 0;
-    eagerlyAssumeBinOpBifurcation = 0;
-    TrimGraph = 0;
-    visualizeExplodedGraphWithGraphViz = 0;
-    visualizeExplodedGraphWithUbiGraph = 0;
-    UnoptimizedCFG = 0;
-    PrintStats = 0;
-    NoRetryExhausted = 0;
+  AnalyzerOptions() :
+    AnalysisStoreOpt(RegionStoreModel),
+    AnalysisConstraintsOpt(RangeConstraintsModel),
+    AnalysisDiagOpt(PD_HTML),
+    AnalysisPurgeOpt(PurgeStmt),
+    ShowCheckerHelp(0),
+    AnalyzeAll(0),
+    AnalyzerDisplayProgress(0),
+    AnalyzeNestedBlocks(0),
+    eagerlyAssumeBinOpBifurcation(0),
+    TrimGraph(0),
+    visualizeExplodedGraphWithGraphViz(0),
+    visualizeExplodedGraphWithUbiGraph(0),
+    UnoptimizedCFG(0),
+    PrintStats(0),
+    NoRetryExhausted(0),
     // Cap the stack depth at 4 calls (5 stack frames, base + 4 calls).
-    InlineMaxStackDepth = 5;
-    InlineMaxFunctionSize = 50;
-    InliningMode = NoRedundancy;
-  }
+    InlineMaxStackDepth(5),
+    InlineMaxFunctionSize(50),
+    InliningMode(NoRedundancy),
+    UserMode(UMK_NotSet),
+    IPAMode(IPAK_NotSet),
+    CXXMemberInliningMode() {}
+
 };
   
 typedef IntrusiveRefCntPtr<AnalyzerOptions> AnalyzerOptionsRef;

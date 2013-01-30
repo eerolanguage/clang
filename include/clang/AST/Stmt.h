@@ -174,11 +174,20 @@ protected:
     unsigned Kind : 2;
   };
 
+  enum APFloatSemantics {
+    IEEEhalf,
+    IEEEsingle,
+    IEEEdouble,
+    x87DoubleExtended,
+    IEEEquad,
+    PPCDoubleDouble
+  };
+
   class FloatingLiteralBitfields {
     friend class FloatingLiteral;
     unsigned : NumExprBits;
 
-    unsigned IsIEEE : 1; // Distinguishes between PPC128 and IEEE128.
+    unsigned Semantics : 3; // Provides semantics for APFloat construction
     unsigned IsExact : 1;
   };
 
@@ -363,6 +372,9 @@ public:
   LLVM_ATTRIBUTE_USED void dump() const;
   LLVM_ATTRIBUTE_USED void dump(SourceManager &SM) const;
   void dump(raw_ostream &OS, SourceManager &SM) const;
+
+  /// dumpColor - same as dump(), but forces color highlighting.
+  LLVM_ATTRIBUTE_USED void dumpColor() const;
 
   /// dumpPretty/printPretty - These two methods do a "pretty print" of the AST
   /// back to its original source language syntax.

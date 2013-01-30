@@ -182,13 +182,16 @@ namespace {
   struct BlockLayoutChunk {
     CharUnits Alignment;
     CharUnits Size;
+    Qualifiers::ObjCLifetime Lifetime;
     const BlockDecl::Capture *Capture; // null for 'this'
     llvm::Type *Type;
 
     BlockLayoutChunk(CharUnits align, CharUnits size,
+                     Qualifiers::ObjCLifetime lifetime,
                      const BlockDecl::Capture *capture,
                      llvm::Type *type)
-      : Alignment(align), Size(size), Capture(capture), Type(type) {}
+      : Alignment(align), Size(size), Lifetime(lifetime),
+        Capture(capture), Type(type) {}
 
     /// Tell the block info that this chunk has the given field index.
     void setIndex(CGBlockInfo &info, unsigned index) {
@@ -200,9 +203,35 @@ namespace {
     }
   };
 
-  /// Order by descending alignment.
+  /// Order by 1) all __strong together 2) next, all byfref together 3) next,
+  /// all __weak together. Preserve descending alignment in all situations.
   bool operator<(const BlockLayoutChunk &left, const BlockLayoutChunk &right) {
-    return left.Alignment > right.Alignment;
+    CharUnits LeftValue, RightValue;
+    bool LeftByref = left.Capture ? left.Capture->isByRef() : false;
+    bool RightByref = right.Capture ? right.Capture->isByRef() : false;
+    
+    if (left.Lifetime == Qualifiers::OCL_Strong &&
+        left.Alignment >= right.Alignment)
+      LeftValue = CharUnits::fromQuantity(64);
+    else if (LeftByref && left.Alignment >= right.Alignment)
+      LeftValue = CharUnits::fromQuantity(32);
+    else if (left.Lifetime == Qualifiers::OCL_Weak &&
+             left.Alignment >= right.Alignment)
+      LeftValue = CharUnits::fromQuantity(16);
+    else
+      LeftValue = left.Alignment;
+    if (right.Lifetime == Qualifiers::OCL_Strong &&
+        right.Alignment >= left.Alignment)
+      RightValue = CharUnits::fromQuantity(64);
+    else if (RightByref && right.Alignment >= left.Alignment)
+      RightValue = CharUnits::fromQuantity(32);
+    else if (right.Lifetime == Qualifiers::OCL_Weak &&
+             right.Alignment >= left.Alignment)
+      RightValue = CharUnits::fromQuantity(16);
+    else
+      RightValue = right.Alignment;
+    
+      return LeftValue > RightValue;
   }
 }
 
@@ -337,7 +366,9 @@ static void computeBlockInfo(CodeGenModule &CGM, CodeGenFunction *CGF,
       = CGM.getContext().getTypeInfoInChars(thisType);
     maxFieldAlign = std::max(maxFieldAlign, tinfo.second);
 
-    layout.push_back(BlockLayoutChunk(tinfo.second, tinfo.first, 0, llvmType));
+    layout.push_back(BlockLayoutChunk(tinfo.second, tinfo.first,
+                                      Qualifiers::OCL_None,
+                                      0, llvmType));
   }
 
   // Next, all the block captures.
@@ -358,6 +389,7 @@ static void computeBlockInfo(CodeGenModule &CGM, CodeGenFunction *CGF,
       maxFieldAlign = std::max(maxFieldAlign, tinfo.second);
 
       layout.push_back(BlockLayoutChunk(tinfo.second, tinfo.first,
+                                        Qualifiers::OCL_None,
                                         &*ci, llvmType));
       continue;
     }
@@ -371,8 +403,9 @@ static void computeBlockInfo(CodeGenModule &CGM, CodeGenFunction *CGF,
 
     // If we have a lifetime qualifier, honor it for capture purposes.
     // That includes *not* copying it if it's __unsafe_unretained.
-    if (Qualifiers::ObjCLifetime lifetime 
-          = variable->getType().getObjCLifetime()) {
+    Qualifiers::ObjCLifetime lifetime =
+      variable->getType().getObjCLifetime();
+    if (lifetime) {
       switch (lifetime) {
       case Qualifiers::OCL_None: llvm_unreachable("impossible");
       case Qualifiers::OCL_ExplicitNone:
@@ -387,6 +420,8 @@ static void computeBlockInfo(CodeGenModule &CGM, CodeGenFunction *CGF,
     // Block pointers require copy/dispose.  So do Objective-C pointers.
     } else if (variable->getType()->isObjCRetainableType()) {
       info.NeedsCopyDispose = true;
+      // used for mrr below.
+      lifetime = Qualifiers::OCL_Strong;
 
     // So do types that require non-trivial copy construction.
     } else if (ci->hasCopyExpr()) {
@@ -413,7 +448,7 @@ static void computeBlockInfo(CodeGenModule &CGM, CodeGenFunction *CGF,
     llvm::Type *llvmType =
       CGM.getTypes().ConvertTypeForMem(VT);
     
-    layout.push_back(BlockLayoutChunk(align, size, &*ci, llvmType));
+    layout.push_back(BlockLayoutChunk(align, size, lifetime, &*ci, llvmType));
   }
 
   // If that was everything, we're done here.
@@ -1211,7 +1246,14 @@ CodeGenFunction::GenerateBlockFunction(GlobalDecl GD,
  */
 
 
-
+/// Generate the copy-helper function for a block closure object:
+///   static void block_copy_helper(block_t *dst, block_t *src);
+/// The runtime will have previously initialized 'dst' by doing a
+/// bit-copy of 'src'.
+///
+/// Note that this copies an entire block closure object to the heap;
+/// it should not be confused with a 'byref copy helper', which moves
+/// the contents of an individual __block variable to the heap.
 llvm::Constant *
 CodeGenFunction::GenerateCopyHelperFunction(const CGBlockInfo &blockInfo) {
   ASTContext &C = getContext();
@@ -1367,6 +1409,13 @@ CodeGenFunction::GenerateCopyHelperFunction(const CGBlockInfo &blockInfo) {
   return llvm::ConstantExpr::getBitCast(Fn, VoidPtrTy);
 }
 
+/// Generate the destroy-helper function for a block closure object:
+///   static void block_destroy_helper(block_t *theBlock);
+///
+/// Note that this destroys a heap-allocated block closure object;
+/// it should not be confused with a 'byref destroy helper', which
+/// destroys the heap-allocated contents of an individual __block
+/// variable.
 llvm::Constant *
 CodeGenFunction::GenerateDestroyHelperFunction(const CGBlockInfo &blockInfo) {
   ASTContext &C = getContext();
@@ -1652,6 +1701,7 @@ public:
 static llvm::Constant *
 generateByrefCopyHelper(CodeGenFunction &CGF,
                         llvm::StructType &byrefType,
+                        unsigned valueFieldIndex,
                         CodeGenModule::ByrefHelpers &byrefInfo) {
   ASTContext &Context = CGF.getContext();
 
@@ -1700,13 +1750,13 @@ generateByrefCopyHelper(CodeGenFunction &CGF,
     llvm::Value *destField = CGF.GetAddrOfLocalVar(&dst);
     destField = CGF.Builder.CreateLoad(destField);
     destField = CGF.Builder.CreateBitCast(destField, byrefPtrType);
-    destField = CGF.Builder.CreateStructGEP(destField, 6, "x");
+    destField = CGF.Builder.CreateStructGEP(destField, valueFieldIndex, "x");
 
     // src->x
     llvm::Value *srcField = CGF.GetAddrOfLocalVar(&src);
     srcField = CGF.Builder.CreateLoad(srcField);
     srcField = CGF.Builder.CreateBitCast(srcField, byrefPtrType);
-    srcField = CGF.Builder.CreateStructGEP(srcField, 6, "x");
+    srcField = CGF.Builder.CreateStructGEP(srcField, valueFieldIndex, "x");
 
     byrefInfo.emitCopy(CGF, destField, srcField);
   }  
@@ -1719,15 +1769,17 @@ generateByrefCopyHelper(CodeGenFunction &CGF,
 /// Build the copy helper for a __block variable.
 static llvm::Constant *buildByrefCopyHelper(CodeGenModule &CGM,
                                             llvm::StructType &byrefType,
+                                            unsigned byrefValueIndex,
                                             CodeGenModule::ByrefHelpers &info) {
   CodeGenFunction CGF(CGM);
-  return generateByrefCopyHelper(CGF, byrefType, info);
+  return generateByrefCopyHelper(CGF, byrefType, byrefValueIndex, info);
 }
 
 /// Generate code for a __block variable's dispose helper.
 static llvm::Constant *
 generateByrefDisposeHelper(CodeGenFunction &CGF,
                            llvm::StructType &byrefType,
+                           unsigned byrefValueIndex,
                            CodeGenModule::ByrefHelpers &byrefInfo) {
   ASTContext &Context = CGF.getContext();
   QualType R = Context.VoidTy;
@@ -1769,7 +1821,7 @@ generateByrefDisposeHelper(CodeGenFunction &CGF,
     llvm::Value *V = CGF.GetAddrOfLocalVar(&src);
     V = CGF.Builder.CreateLoad(V);
     V = CGF.Builder.CreateBitCast(V, byrefType.getPointerTo(0));
-    V = CGF.Builder.CreateStructGEP(V, 6, "x");
+    V = CGF.Builder.CreateStructGEP(V, byrefValueIndex, "x");
 
     byrefInfo.emitDispose(CGF, V);
   }
@@ -1782,14 +1834,17 @@ generateByrefDisposeHelper(CodeGenFunction &CGF,
 /// Build the dispose helper for a __block variable.
 static llvm::Constant *buildByrefDisposeHelper(CodeGenModule &CGM,
                                               llvm::StructType &byrefType,
+                                               unsigned byrefValueIndex,
                                             CodeGenModule::ByrefHelpers &info) {
   CodeGenFunction CGF(CGM);
-  return generateByrefDisposeHelper(CGF, byrefType, info);
+  return generateByrefDisposeHelper(CGF, byrefType, byrefValueIndex, info);
 }
 
-/// 
+/// Lazily build the copy and dispose helpers for a __block variable
+/// with the given information.
 template <class T> static T *buildByrefHelpers(CodeGenModule &CGM,
                                                llvm::StructType &byrefTy,
+                                               unsigned byrefValueIndex,
                                                T &byrefInfo) {
   // Increase the field's alignment to be at least pointer alignment,
   // since the layout of the byref struct will guarantee at least that.
@@ -1804,26 +1859,33 @@ template <class T> static T *buildByrefHelpers(CodeGenModule &CGM,
     = CGM.ByrefHelpersCache.FindNodeOrInsertPos(id, insertPos);
   if (node) return static_cast<T*>(node);
 
-  byrefInfo.CopyHelper = buildByrefCopyHelper(CGM, byrefTy, byrefInfo);
-  byrefInfo.DisposeHelper = buildByrefDisposeHelper(CGM, byrefTy, byrefInfo);
+  byrefInfo.CopyHelper =
+    buildByrefCopyHelper(CGM, byrefTy, byrefValueIndex, byrefInfo);
+  byrefInfo.DisposeHelper =
+    buildByrefDisposeHelper(CGM, byrefTy, byrefValueIndex,byrefInfo);
 
   T *copy = new (CGM.getContext()) T(byrefInfo);
   CGM.ByrefHelpersCache.InsertNode(copy, insertPos);
   return copy;
 }
 
+/// Build the copy and dispose helpers for the given __block variable
+/// emission.  Places the helpers in the global cache.  Returns null
+/// if no helpers are required.
 CodeGenModule::ByrefHelpers *
 CodeGenFunction::buildByrefHelpers(llvm::StructType &byrefType,
                                    const AutoVarEmission &emission) {
   const VarDecl &var = *emission.Variable;
   QualType type = var.getType();
 
+  unsigned byrefValueIndex = getByRefValueLLVMField(&var);
+
   if (const CXXRecordDecl *record = type->getAsCXXRecordDecl()) {
     const Expr *copyExpr = CGM.getContext().getBlockVarCopyInits(&var);
     if (!copyExpr && record->hasTrivialDestructor()) return 0;
 
     CXXByrefHelpers byrefInfo(emission.Alignment, type, copyExpr);
-    return ::buildByrefHelpers(CGM, byrefType, byrefInfo);
+    return ::buildByrefHelpers(CGM, byrefType, byrefValueIndex, byrefInfo);
   }
 
   // Otherwise, if we don't have a retainable type, there's nothing to do.
@@ -1848,7 +1910,7 @@ CodeGenFunction::buildByrefHelpers(llvm::StructType &byrefType,
     // byref routines.
     case Qualifiers::OCL_Weak: {
       ARCWeakByrefHelpers byrefInfo(emission.Alignment);
-      return ::buildByrefHelpers(CGM, byrefType, byrefInfo);
+      return ::buildByrefHelpers(CGM, byrefType, byrefValueIndex, byrefInfo);
     }
 
     // ARC __strong __block variables need to be retained.
@@ -1857,13 +1919,13 @@ CodeGenFunction::buildByrefHelpers(llvm::StructType &byrefType,
       // transfer possible.
       if (type->isBlockPointerType()) {
         ARCStrongBlockByrefHelpers byrefInfo(emission.Alignment);
-        return ::buildByrefHelpers(CGM, byrefType, byrefInfo);
+        return ::buildByrefHelpers(CGM, byrefType, byrefValueIndex, byrefInfo);
 
       // Otherwise, we transfer ownership of the retain from the stack
       // to the heap.
       } else {
         ARCStrongByrefHelpers byrefInfo(emission.Alignment);
-        return ::buildByrefHelpers(CGM, byrefType, byrefInfo);
+        return ::buildByrefHelpers(CGM, byrefType, byrefValueIndex, byrefInfo);
       }
     }
     llvm_unreachable("fell out of lifetime switch!");
@@ -1883,7 +1945,7 @@ CodeGenFunction::buildByrefHelpers(llvm::StructType &byrefType,
     flags |= BLOCK_FIELD_IS_WEAK;
 
   ObjectByrefHelpers byrefInfo(emission.Alignment, flags);
-  return ::buildByrefHelpers(CGM, byrefType, byrefInfo);
+  return ::buildByrefHelpers(CGM, byrefType, byrefValueIndex, byrefInfo);
 }
 
 unsigned CodeGenFunction::getByRefValueLLVMField(const ValueDecl *VD) const {

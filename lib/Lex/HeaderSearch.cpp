@@ -23,6 +23,9 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include <cstdio>
+#if defined(LLVM_ON_UNIX)
+#include <limits.h>
+#endif
 using namespace clang;
 
 const IdentifierInfo *
@@ -263,6 +266,10 @@ const FileEntry *DirectoryLookup::LookupFile(
   return Result;
 }
 
+/// FIXME: HACK HACK HACK!
+static llvm::DenseMap<const DirectoryEntry *, const DirectoryEntry *>
+  TopFrameworkDirs;
+
 /// \brief Given a framework directory, find the top-most framework directory.
 ///
 /// \param FileMgr The file manager to use for directory lookups.
@@ -275,7 +282,6 @@ getTopFrameworkDir(FileManager &FileMgr, StringRef DirName,
   assert(llvm::sys::path::extension(DirName) == ".framework" &&
          "Not a framework directory");
 
-#ifdef LLVM_ON_UNIX
   // Note: as an egregious but useful hack we use the real path here, because
   // frameworks moving between top-level frameworks to embedded frameworks tend
   // to be symlinked, and we base the logical structure of modules on the
@@ -290,12 +296,8 @@ getTopFrameworkDir(FileManager &FileMgr, StringRef DirName,
   //
   // Similar issues occur when a top-level framework has moved into an
   // embedded framework.
-  char RealDirName[PATH_MAX];
-  if (realpath(DirName.str().c_str(), RealDirName))
-    DirName = RealDirName;
-#endif
-
   const DirectoryEntry *TopFrameworkDir = FileMgr.getDirectory(DirName);
+  DirName = FileMgr.getCanonicalName(TopFrameworkDir);
   do {
     // Get the parent directory name.
     DirName = llvm::sys::path::parent_path(DirName);

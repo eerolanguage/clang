@@ -721,6 +721,7 @@ public:
   CanQualType OCLImage1dTy, OCLImage1dArrayTy, OCLImage1dBufferTy;
   CanQualType OCLImage2dTy, OCLImage2dArrayTy;
   CanQualType OCLImage3dTy;
+  CanQualType OCLEventTy;
 
   // Types for deductions in C++0x [stmt.ranged]'s desugaring. Built on demand.
   mutable QualType AutoDeductTy;     // Deduction against 'auto'.
@@ -1106,6 +1107,14 @@ public:
   /// \brief In C99, this returns a type compatible with the type
   /// defined in <stddef.h> as defined by the target.
   QualType getWIntType() const { return WIntTy; }
+
+  /// \brief Return a type compatible with "intptr_t" (C99 7.18.1.4),
+  /// as defined by the target.
+  QualType getIntPtrType() const;
+
+  /// \brief Return a type compatible with "uintptr_t" (C99 7.18.1.4),
+  /// as defined by the target.
+  QualType getUIntPtrType() const;
 
   /// \brief Return the unique type for "ptrdiff_t" (C99 7.17) defined in
   /// <stddef.h>. Pointer - pointer requires this (C99 6.5.6p9).
@@ -1562,14 +1571,27 @@ public:
   const ASTRecordLayout &
   getASTObjCImplementationLayout(const ObjCImplementationDecl *D) const;
 
-  /// \brief Get the key function for the given record decl, or NULL if there
-  /// isn't one.
+  /// \brief Get our current best idea for the key function of the
+  /// given record decl, or NULL if there isn't one.
   ///
   /// The key function is, according to the Itanium C++ ABI section 5.2.3:
+  ///   ...the first non-pure virtual function that is not inline at the
+  ///   point of class definition.
   ///
-  /// ...the first non-pure virtual function that is not inline at the point
-  /// of class definition.
-  const CXXMethodDecl *getKeyFunction(const CXXRecordDecl *RD);
+  /// Other ABIs use the same idea.  However, the ARM C++ ABI ignores
+  /// virtual functions that are defined 'inline', which means that
+  /// the result of this computation can change.
+  const CXXMethodDecl *getCurrentKeyFunction(const CXXRecordDecl *RD);
+
+  /// \brief Observe that the given method cannot be a key function.
+  /// Checks the key-function cache for the method's class and clears it
+  /// if matches the given declaration.
+  ///
+  /// This is used in ABIs where out-of-line definitions marked
+  /// inline are not considered to be key functions.
+  ///
+  /// \param method should be the declaration from the class definition
+  void setNonKeyFunction(const CXXMethodDecl *method);
 
   /// Get the offset of a FieldDecl or IndirectFieldDecl, in bits.
   uint64_t getFieldOffset(const ValueDecl *FD) const;

@@ -22,7 +22,10 @@ TOOL_NO_EXPORTS = 1
 # LINK_COMPONENTS before including Makefile.rules
 include $(CLANG_LEVEL)/../../Makefile.config
 
-LINK_COMPONENTS := $(TARGETS_TO_BUILD) asmparser support mc
+LINK_COMPONENTS := $(TARGETS_TO_BUILD) asmparser bitreader support mc
+
+# Note that 'USEDLIBS' must include all of the core clang libraries
+# when -static is given to linker on cygming.
 USEDLIBS = clang.a \
 	   clangFormat.a clangRewriteCore.a \
 	   clangFrontend.a clangDriver.a \

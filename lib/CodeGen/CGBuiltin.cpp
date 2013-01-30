@@ -187,8 +187,7 @@ static llvm::Value *EmitOverflowIntrinsic(CodeGenFunction &CGF,
          "Arguments must be the same type. (Did you forget to make sure both "
          "arguments have the same integer width?)");
 
-  ArrayRef<llvm::Type *> Type(X->getType());
-  llvm::Value *Callee = CGF.CGM.getIntrinsic(IntrinsicID, Type);
+  llvm::Value *Callee = CGF.CGM.getIntrinsic(IntrinsicID, X->getType());
   llvm::Value *Tmp = CGF.Builder.CreateCall2(Callee, X, Y);
   Carry = CGF.Builder.CreateExtractValue(Tmp, 1);
   return CGF.Builder.CreateExtractValue(Tmp, 0);
@@ -437,7 +436,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     return RValue::get(Builder.CreateCall(F));
   }
   case Builtin::BI__builtin_unreachable: {
-    if (getLangOpts().SanitizeUnreachable)
+    if (SanOpts->Unreachable)
       EmitCheck(Builder.getFalse(), "builtin_unreachable",
                 EmitCheckSourceLocation(E->getExprLoc()),
                 ArrayRef<llvm::Value *>(), CRK_Unrecoverable);
@@ -1349,7 +1348,11 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__builtin_addcs:
   case Builtin::BI__builtin_addc:
   case Builtin::BI__builtin_addcl:
-  case Builtin::BI__builtin_addcll: {
+  case Builtin::BI__builtin_addcll:
+  case Builtin::BI__builtin_subcs:
+  case Builtin::BI__builtin_subc:
+  case Builtin::BI__builtin_subcl:
+  case Builtin::BI__builtin_subcll: {
 
     // We translate all of these builtins from expressions of the form:
     //   int x = ..., y = ..., carryin = ..., carryout, result;
@@ -1375,7 +1378,23 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     std::pair<llvm::Value*, unsigned> CarryOutPtr =
       EmitPointerWithAlignment(E->getArg(3));
 
-    const llvm::Intrinsic::ID IntrinsicId = llvm::Intrinsic::uadd_with_overflow;
+    // Decide if we are lowering to a uadd.with.overflow or usub.with.overflow.
+    llvm::Intrinsic::ID IntrinsicId;
+    switch (BuiltinID) {
+    default: llvm_unreachable("Unknown multiprecision builtin id.");
+    case Builtin::BI__builtin_addcs:
+    case Builtin::BI__builtin_addc:
+    case Builtin::BI__builtin_addcl:
+    case Builtin::BI__builtin_addcll:
+      IntrinsicId = llvm::Intrinsic::uadd_with_overflow;
+      break;
+    case Builtin::BI__builtin_subcs:
+    case Builtin::BI__builtin_subc:
+    case Builtin::BI__builtin_subcl:
+    case Builtin::BI__builtin_subcll:
+      IntrinsicId = llvm::Intrinsic::usub_with_overflow;
+      break;
+    }
 
     // Construct our resulting LLVM IR expression.
     llvm::Value *Carry1;
@@ -2113,7 +2132,9 @@ Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
     Ops[0] = Builder.CreateBitCast(Ops[0], Ty);
     Ops[1] = Builder.CreateBitCast(Ops[1], Ty);
     Ops[2] = Builder.CreateBitCast(Ops[2], Ty);
-    return Builder.CreateCall3(F, Ops[0], Ops[1], Ops[2]);
+
+    // NEON intrinsic puts accumulator first, unlike the LLVM fma.
+    return Builder.CreateCall3(F, Ops[1], Ops[2], Ops[0]);
   }
   case ARM::BI__builtin_neon_vpadal_v:
   case ARM::BI__builtin_neon_vpadalq_v: {

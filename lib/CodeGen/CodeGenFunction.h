@@ -598,6 +598,9 @@ public:
   /// calls to EmitTypeCheck can be skipped.
   bool SanitizePerformTypeCheck;
 
+  /// \brief Sanitizer options to use for this function.
+  const SanitizerOptions *SanOpts;
+
   /// In ARC, whether we should autorelease the return value.
   bool AutoreleaseResult;
 
@@ -800,7 +803,7 @@ public:
 
   protected:
     CodeGenFunction& CGF;
-    
+
   public:
     /// \brief Enter a new cleanup scope.
     explicit RunCleanupsScope(CodeGenFunction &CGF)
@@ -1408,7 +1411,7 @@ public:
 
   /// EmitReturnBlock - Emit the unified return block, trying to avoid its
   /// emission when possible.
-  void EmitReturnBlock();
+  bool EmitReturnBlock();
 
   /// FinishFunction - Complete IR generation of the current function. It is
   /// legal to call this function even if there is no current insertion point.
@@ -1662,14 +1665,24 @@ public:
   void EmitExprAsInit(const Expr *init, const ValueDecl *D,
                       LValue lvalue, bool capturedByInit);
 
+  /// hasVolatileMember - returns true if aggregate type has a volatile
+  /// member.
+  bool hasVolatileMember(QualType T) {
+    if (const RecordType *RT = T->getAs<RecordType>()) {
+      const RecordDecl *RD = cast<RecordDecl>(RT->getDecl());
+      return RD->hasVolatileMember();
+    }
+    return false;
+  }
   /// EmitAggregateCopy - Emit an aggrate assignment.
   ///
   /// The difference to EmitAggregateCopy is that tail padding is not copied.
   /// This is required for correctness when assigning non-POD structures in C++.
   void EmitAggregateAssign(llvm::Value *DestPtr, llvm::Value *SrcPtr,
-                           QualType EltTy, bool isVolatile=false,
-                           CharUnits Alignment = CharUnits::Zero()) {
-    EmitAggregateCopy(DestPtr, SrcPtr, EltTy, isVolatile, Alignment, true);
+                           QualType EltTy) {
+    bool IsVolatile = hasVolatileMember(EltTy);
+    EmitAggregateCopy(DestPtr, SrcPtr, EltTy, IsVolatile, CharUnits::Zero(),
+                      true);
   }
 
   /// EmitAggregateCopy - Emit an aggrate copy.
@@ -2000,6 +2013,9 @@ public:
 
   RValue EmitCompoundStmt(const CompoundStmt &S, bool GetLast = false,
                           AggValueSlot AVS = AggValueSlot::ignored());
+  RValue EmitCompoundStmtWithoutScope(const CompoundStmt &S,
+                                      bool GetLast = false, AggValueSlot AVS =
+                                          AggValueSlot::ignored());
 
   /// EmitLabel - Emit the block for the given label. It is legal to call this
   /// function even if there is no current insertion point.

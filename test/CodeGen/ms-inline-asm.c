@@ -1,5 +1,5 @@
 // REQUIRES: x86-64-registered-target
-// RUN: %clang_cc1 %s -triple i386-apple-darwin10 -O0 -fasm-blocks -fenable-experimental-ms-inline-asm -w -emit-llvm -o - | FileCheck %s
+// RUN: %clang_cc1 %s -triple i386-apple-darwin10 -O0 -fasm-blocks -emit-llvm -o - | FileCheck %s
 
 void t1() {
 // CHECK: @t1
@@ -198,10 +198,38 @@ int t19() {
 }
 
 void t20() {
+  char bar;
   int foo;
-  __asm mov eax, TYPE foo
+  char _bar[2];
+  int _foo[4];
+
+  __asm mov eax, LENGTH foo
+  __asm mov eax, LENGTH bar
+  __asm mov eax, LENGTH _foo
+  __asm mov eax, LENGTH _bar
 // CHECK: t20
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$1", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$1", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
 // CHECK: call void asm sideeffect inteldialect "mov eax, $$4", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$2", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+
+  __asm mov eax, TYPE foo
+  __asm mov eax, TYPE bar
+  __asm mov eax, TYPE _foo
+  __asm mov eax, TYPE _bar
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$4", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$1", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$4", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$1", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+
+  __asm mov eax, SIZE foo
+  __asm mov eax, SIZE bar
+  __asm mov eax, SIZE _foo
+  __asm mov eax, SIZE _bar
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$4", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$1", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$16", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+// CHECK: call void asm sideeffect inteldialect "mov eax, $$2", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
 }
 
 void t21() {

@@ -129,8 +129,6 @@ public:
                        llvm::GlobalVariable *DeclPtr, bool PerformInit);
   void registerGlobalDtor(CodeGenFunction &CGF, llvm::Constant *dtor,
                           llvm::Constant *addr);
-
-  void EmitVTables(const CXXRecordDecl *Class);
 };
 
 class ARMCXXABI : public ItaniumCXXABI {
@@ -176,11 +174,20 @@ private:
 }
 
 CodeGen::CGCXXABI *CodeGen::CreateItaniumCXXABI(CodeGenModule &CGM) {
-  return new ItaniumCXXABI(CGM);
-}
+  switch (CGM.getContext().getTargetInfo().getCXXABI().getKind()) {
+  // For IR-generation purposes, there's no significant difference
+  // between the ARM and iOS ABIs.
+  case TargetCXXABI::GenericARM:
+  case TargetCXXABI::iOS:
+    return new ARMCXXABI(CGM);
 
-CodeGen::CGCXXABI *CodeGen::CreateARMCXXABI(CodeGenModule &CGM) {
-  return new ARMCXXABI(CGM);
+  case TargetCXXABI::GenericItanium:
+    return new ItaniumCXXABI(CGM);
+
+  case TargetCXXABI::Microsoft:
+    llvm_unreachable("Microsoft ABI is not Itanium-based");
+  }
+  llvm_unreachable("bad ABI kind");
 }
 
 llvm::Type *
@@ -883,50 +890,46 @@ llvm::Value *ItaniumCXXABI::readArrayCookieImpl(CodeGenFunction &CGF,
 }
 
 CharUnits ARMCXXABI::getArrayCookieSizeImpl(QualType elementType) {
-  // On ARM, the cookie is always:
+  // ARM says that the cookie is always:
   //   struct array_cookie {
   //     std::size_t element_size; // element_size != 0
   //     std::size_t element_count;
   //   };
-  // TODO: what should we do if the allocated type actually wants
-  // greater alignment?
-  return CharUnits::fromQuantity(2 * CGM.SizeSizeInBytes);
+  // But the base ABI doesn't give anything an alignment greater than
+  // 8, so we can dismiss this as typical ABI-author blindness to
+  // actual language complexity and round up to the element alignment.
+  return std::max(CharUnits::fromQuantity(2 * CGM.SizeSizeInBytes),
+                  CGM.getContext().getTypeAlignInChars(elementType));
 }
 
 llvm::Value *ARMCXXABI::InitializeArrayCookie(CodeGenFunction &CGF,
-                                              llvm::Value *NewPtr,
-                                              llvm::Value *NumElements,
+                                              llvm::Value *newPtr,
+                                              llvm::Value *numElements,
                                               const CXXNewExpr *expr,
-                                              QualType ElementType) {
+                                              QualType elementType) {
   assert(requiresArrayCookie(expr));
 
-  // NewPtr is a char*.
-
-  unsigned AS = NewPtr->getType()->getPointerAddressSpace();
-
-  ASTContext &Ctx = getContext();
-  CharUnits SizeSize = Ctx.getTypeSizeInChars(Ctx.getSizeType());
-  llvm::IntegerType *SizeTy =
-    cast<llvm::IntegerType>(CGF.ConvertType(Ctx.getSizeType()));
+  // NewPtr is a char*, but we generalize to arbitrary addrspaces.
+  unsigned AS = newPtr->getType()->getPointerAddressSpace();
 
   // The cookie is always at the start of the buffer.
-  llvm::Value *CookiePtr = NewPtr;
+  llvm::Value *cookie = newPtr;
 
   // The first element is the element size.
-  CookiePtr = CGF.Builder.CreateBitCast(CookiePtr, SizeTy->getPointerTo(AS));
-  llvm::Value *ElementSize = llvm::ConstantInt::get(SizeTy,
-                          Ctx.getTypeSizeInChars(ElementType).getQuantity());
-  CGF.Builder.CreateStore(ElementSize, CookiePtr);
+  cookie = CGF.Builder.CreateBitCast(cookie, CGF.SizeTy->getPointerTo(AS));
+  llvm::Value *elementSize = llvm::ConstantInt::get(CGF.SizeTy,
+                 getContext().getTypeSizeInChars(elementType).getQuantity());
+  CGF.Builder.CreateStore(elementSize, cookie);
 
   // The second element is the element count.
-  CookiePtr = CGF.Builder.CreateConstInBoundsGEP1_32(CookiePtr, 1);
-  CGF.Builder.CreateStore(NumElements, CookiePtr);
+  cookie = CGF.Builder.CreateConstInBoundsGEP1_32(cookie, 1);
+  CGF.Builder.CreateStore(numElements, cookie);
 
   // Finally, compute a pointer to the actual data buffer by skipping
   // over the cookie completely.
-  CharUnits CookieSize = 2 * SizeSize;
-  return CGF.Builder.CreateConstInBoundsGEP1_64(NewPtr,
-                                                CookieSize.getQuantity());
+  CharUnits cookieSize = ARMCXXABI::getArrayCookieSizeImpl(elementType);
+  return CGF.Builder.CreateConstInBoundsGEP1_64(newPtr,
+                                                cookieSize.getQuantity());
 }
 
 llvm::Value *ARMCXXABI::readArrayCookieImpl(CodeGenFunction &CGF,
@@ -1179,9 +1182,4 @@ void ItaniumCXXABI::registerGlobalDtor(CodeGenFunction &CGF,
   }
 
   CGF.registerGlobalDtorWithAtExit(dtor, addr);
-}
-
-/// Generate and emit virtual tables for the given class.
-void ItaniumCXXABI::EmitVTables(const CXXRecordDecl *Class) {
-  CGM.getVTables().GenerateClassData(CGM.getVTableLinkage(Class), Class);
 }

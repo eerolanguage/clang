@@ -215,9 +215,6 @@ def header_include_file : Separate<["-"], "header-include-file">,
 // Diagnostic Options
 //===----------------------------------------------------------------------===//
 
-def dump_build_information : Separate<["-"], "dump-build-information">,
-  MetaVarName<"<filename>">,
-  HelpText<"output a dump of some build information to a file">;
 def diagnostic_log_file : Separate<["-"], "diagnostic-log-file">,
   HelpText<"Filename (or -) to log diagnostics to">;
 def diagnostic_serialized_file : Separate<["-"], "serialize-diagnostic-file">,
@@ -292,6 +289,8 @@ def ast_dump_filter : Separate<["-"], "ast-dump-filter">,
   HelpText<"Use with -ast-dump or -ast-print to dump/print only AST declaration"
            " nodes having a certain substring in a qualified name. Use"
            " -ast-list to list all filterable declaration node names.">;
+def fno_modules_global_index : Flag<["-"], "fno-modules-global-index">,
+  HelpText<"Do not automatically generate or update the global module index">;
 
 let Group = Action_Group in {
 

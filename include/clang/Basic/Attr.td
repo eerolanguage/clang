@@ -29,8 +29,8 @@ class SubsetSubject<AttrSubject base, string description, code check>
   code CheckCode = check;
 }
 
-// This is the type of a variable which C++0x defines [[aligned()]] as being
-// a possible subject.
+// This is the type of a variable which C++11 allows alignas(...) to appertain
+// to.
 def NormalVar : SubsetSubject<Var, "non-register, non-parameter variable",
                               [{S->getStorageClass() != VarDecl::Register &&
                                 S->getKind() != Decl::ImplicitParam &&
@@ -91,6 +91,7 @@ class Declspec<string name> : Spelling<name, "Declspec">;
 class CXX11<string namespace, string name> : Spelling<name, "CXX11"> {
   string Namespace = namespace;
 }
+class Keyword<string name> : Spelling<name, "Keyword">;
 
 class Attr {
   // The various ways in which an attribute can be spelled in source
@@ -125,6 +126,13 @@ class InheritableAttr : Attr;
 /// redeclarations, even when it's written on a parameter.
 class InheritableParamAttr : InheritableAttr;
 
+/// An ignored attribute, which we parse but discard with no checking.
+class IgnoredAttr : Attr {
+  let Ignored = 1;
+  let ASTNode = 0;
+  let SemaHandler = 0;
+}
+
 //
 // Attributes begin here
 //
@@ -136,12 +144,13 @@ def AddressSpace : Attr {
 }
 
 def Alias : InheritableAttr {
-  let Spellings = [GNU<"alias">];
+  let Spellings = [GNU<"alias">, CXX11<"gnu", "alias">];
   let Args = [StringArgument<"Aliasee">];
 }
 
 def Aligned : InheritableAttr {
-  let Spellings = [GNU<"aligned">, GNU<"align">];
+  let Spellings = [GNU<"aligned">, Declspec<"align">, CXX11<"gnu", "aligned">,
+                   Keyword<"alignas">, Keyword<"_Alignas">];
   let Subjects = [NonBitField, NormalVar, Tag];
   let Args = [AlignedArgument<"Alignment">, BoolArgument<"IsMSDeclSpec">];
 }
@@ -152,16 +161,16 @@ def AlignMac68k : InheritableAttr {
 }
 
 def AllocSize : Attr {
-  let Spellings = [GNU<"alloc_size">];
+  let Spellings = [GNU<"alloc_size">, CXX11<"gnu", "alloc_size">];
   let Args = [VariadicUnsignedArgument<"Args">];
 }
 
 def AlwaysInline : InheritableAttr {
-  let Spellings = [GNU<"always_inline">];
+  let Spellings = [GNU<"always_inline">, CXX11<"gnu", "always_inline">];
 }
 
 def TLSModel : InheritableAttr {
-  let Spellings = [GNU<"tls_model">];
+  let Spellings = [GNU<"tls_model">, CXX11<"gnu", "tls_model">];
   let Subjects = [Var];
   let Args = [StringArgument<"Model">];
 }
@@ -200,11 +209,8 @@ def Blocks : InheritableAttr {
   let Args = [EnumArgument<"Type", "BlockType", ["byref"], ["ByRef"]>];
 }
 
-def Bounded : Attr {
+def Bounded : IgnoredAttr {
   let Spellings = [GNU<"bounded">];
-  let ASTNode = 0;
-  let SemaHandler = 0;
-  let Ignored = 1;
 }
 
 def CarriesDependency : InheritableParamAttr {
@@ -214,7 +220,8 @@ def CarriesDependency : InheritableParamAttr {
 }
 
 def CDecl : InheritableAttr {
-  let Spellings = [GNU<"cdecl">, GNU<"__cdecl">];
+  let Spellings = [GNU<"cdecl">, CXX11<"gnu", "cdecl">, Keyword<"__cdecl">,
+                   Keyword<"_cdecl">];
 }
 
 // cf_audited_transfer indicates that the given function has been
@@ -250,24 +257,24 @@ def CFConsumed : InheritableParamAttr {
 }
 
 def Cleanup : InheritableAttr {
-  let Spellings = [GNU<"cleanup">];
+  let Spellings = [GNU<"cleanup">, CXX11<"gnu", "cleanup">];
   let Args = [FunctionArgument<"FunctionDecl">];
 }
 
 def Cold : InheritableAttr {
-  let Spellings = [GNU<"cold">];
+  let Spellings = [GNU<"cold">, CXX11<"gnu", "cold">];
 }
 
 def Common : InheritableAttr {
-  let Spellings = [GNU<"common">];
+  let Spellings = [GNU<"common">, CXX11<"gnu", "common">];
 }
 
 def Const : InheritableAttr {
-  let Spellings = [GNU<"const">, GNU<"__const">];
+  let Spellings = [GNU<"const">, GNU<"__const">, CXX11<"gnu", "const">];
 }
 
 def Constructor : InheritableAttr {
-  let Spellings = [GNU<"constructor">];
+  let Spellings = [GNU<"constructor">, CXX11<"gnu", "constructor">];
   let Args = [IntArgument<"Priority">];
 }
 
@@ -296,8 +303,13 @@ def CUDAShared : InheritableAttr {
   let Spellings = [GNU<"shared">];
 }
 
+def CXX11NoReturn : InheritableAttr {
+  let Spellings = [CXX11<"","noreturn">, CXX11<"std","noreturn">];
+  let Subjects = [Function];
+}
+
 def OpenCLKernel : Attr {
-  let Spellings = [GNU<"opencl_kernel_function">];
+  let Spellings = [Keyword<"__kernel">, Keyword<"kernel">];
 }
 
 def OpenCLImageAccess : Attr {
@@ -307,12 +319,12 @@ def OpenCLImageAccess : Attr {
 }
 
 def Deprecated : InheritableAttr {
-  let Spellings = [GNU<"deprecated">];
+  let Spellings = [GNU<"deprecated">, CXX11<"gnu", "deprecated">];
   let Args = [StringArgument<"Message">];
 }
 
 def Destructor : InheritableAttr {
-  let Spellings = [GNU<"destructor">];
+  let Spellings = [GNU<"destructor">, CXX11<"gnu", "destructor">];
   let Args = [IntArgument<"Priority">];
 }
 
@@ -323,12 +335,13 @@ def ExtVectorType : Attr {
 }
 
 def FallThrough : Attr {
-  let Spellings = [CXX11<"clang","fallthrough">];
+  let Spellings = [CXX11<"clang", "fallthrough">];
   let Subjects = [NullStmt];
 }
 
 def FastCall : InheritableAttr {
-  let Spellings = [GNU<"fastcall">, GNU<"__fastcall">];
+  let Spellings = [GNU<"fastcall">, CXX11<"gnu", "fastcall">,
+                   Keyword<"__fastcall">, Keyword<"_fastcall">];
 }
 
 def Final : InheritableAttr {
@@ -342,22 +355,22 @@ def MinSize : InheritableAttr {
 }
 
 def Format : InheritableAttr {
-  let Spellings = [GNU<"format">];
+  let Spellings = [GNU<"format">, CXX11<"gnu", "format">];
   let Args = [StringArgument<"Type">, IntArgument<"FormatIdx">,
               IntArgument<"FirstArg">];
 }
 
 def FormatArg : InheritableAttr {
-  let Spellings = [GNU<"format_arg">];
+  let Spellings = [GNU<"format_arg">, CXX11<"gnu", "format_arg">];
   let Args = [IntArgument<"FormatIdx">];
 }
 
 def GNUInline : InheritableAttr {
-  let Spellings = [GNU<"gnu_inline">];
+  let Spellings = [GNU<"gnu_inline">, CXX11<"gnu", "gnu_inline">];
 }
 
 def Hot : InheritableAttr {
-  let Spellings = [GNU<"hot">];
+  let Spellings = [GNU<"hot">, CXX11<"gnu", "hot">];
 }
 
 def IBAction : InheritableAttr {
@@ -374,7 +387,7 @@ def IBOutletCollection : InheritableAttr {
 }
 
 def Malloc : InheritableAttr {
-  let Spellings = [GNU<"malloc">];
+  let Spellings = [GNU<"malloc">, CXX11<"gnu", "malloc">];
 }
 
 def MaxFieldAlignment : InheritableAttr {
@@ -384,7 +397,7 @@ def MaxFieldAlignment : InheritableAttr {
 }
 
 def MayAlias : InheritableAttr {
-  let Spellings = [GNU<"may_alias">];
+  let Spellings = [GNU<"may_alias">, CXX11<"gnu", "may_alias">];
 }
 
 def MSP430Interrupt : InheritableAttr {
@@ -403,14 +416,19 @@ def MBlazeSaveVolatiles : InheritableAttr {
   let SemaHandler = 0;
 }
 
+def Mips16 : InheritableAttr {
+  let Spellings = [GNU<"mips16">, CXX11<"gnu", "mips16">];
+  let Subjects = [Function];
+}
+
 def Mode : Attr {
-  let Spellings = [GNU<"mode">];
+  let Spellings = [GNU<"mode">, CXX11<"gnu", "mode">];
   let Args = [IdentifierArgument<"Mode">];
   let ASTNode = 0;
 }
 
 def Naked : InheritableAttr {
-  let Spellings = [GNU<"naked">];
+  let Spellings = [GNU<"naked">, CXX11<"gnu", "naked">];
 }
 
 def NeonPolyVectorType : Attr {
@@ -426,11 +444,11 @@ def NeonVectorType : Attr {
 }
 
 def ReturnsTwice : InheritableAttr {
-  let Spellings = [GNU<"returns_twice">];
+  let Spellings = [GNU<"returns_twice">, CXX11<"gnu", "returns_twice">];
 }
 
 def NoCommon : InheritableAttr {
-  let Spellings = [GNU<"nocommon">];
+  let Spellings = [GNU<"nocommon">, CXX11<"gnu", "nocommon">];
 }
 
 def NoDebug : InheritableAttr {
@@ -438,11 +456,16 @@ def NoDebug : InheritableAttr {
 }
 
 def NoInline : InheritableAttr {
-  let Spellings = [GNU<"noinline">];
+  let Spellings = [GNU<"noinline">, CXX11<"gnu", "noinline">];
+}
+
+def NoMips16 : InheritableAttr {
+  let Spellings = [GNU<"nomips16">, CXX11<"gnu", "nomips16">];
+  let Subjects = [Function];
 }
 
 def NonNull : InheritableAttr {
-  let Spellings = [GNU<"nonnull">];
+  let Spellings = [GNU<"nonnull">, CXX11<"gnu", "nonnull">];
   let Args = [VariadicUnsignedArgument<"Args">];
   let AdditionalMembers =
 [{bool isNonNull(unsigned idx) const {
@@ -455,19 +478,19 @@ def NonNull : InheritableAttr {
 }
 
 def NoReturn : InheritableAttr {
-  let Spellings = [GNU<"noreturn">, CXX11<"","noreturn">,
-                   CXX11<"std","noreturn">];
+  let Spellings = [GNU<"noreturn">, CXX11<"gnu", "noreturn">];
   // FIXME: Does GCC allow this on the function instead?
   let Subjects = [Function];
 }
 
 def NoInstrumentFunction : InheritableAttr {
-  let Spellings = [GNU<"no_instrument_function">];
+  let Spellings = [GNU<"no_instrument_function">,
+                   CXX11<"gnu", "no_instrument_function">];
   let Subjects = [Function];
 }
 
 def NoThrow : InheritableAttr {
-  let Spellings = [GNU<"nothrow">];
+  let Spellings = [GNU<"nothrow">, CXX11<"gnu", "nothrow">];
 }
 
 def NSBridged : InheritableAttr {
@@ -558,7 +581,7 @@ def Ownership : InheritableAttr {
 }
 
 def Packed : InheritableAttr {
-  let Spellings = [GNU<"packed">];
+  let Spellings = [GNU<"packed">, CXX11<"gnu", "packed">];
 }
 
 def PnaclCall : InheritableAttr {
@@ -570,18 +593,18 @@ def IntelOclBicc : InheritableAttr {
 }
 
 def Pcs : InheritableAttr {
-  let Spellings = [GNU<"pcs">];
+  let Spellings = [GNU<"pcs">, CXX11<"gnu", "pcs">];
   let Args = [EnumArgument<"PCS", "PCSType",
                            ["aapcs", "aapcs-vfp"],
                            ["AAPCS", "AAPCS_VFP"]>];
 }
 
 def Pure : InheritableAttr {
-  let Spellings = [GNU<"pure">];
+  let Spellings = [GNU<"pure">, CXX11<"gnu", "pure">];
 }
 
 def Regparm : InheritableAttr {
-  let Spellings = [GNU<"regparm">];
+  let Spellings = [GNU<"regparm">, CXX11<"gnu", "regparm">];
   let Args = [UnsignedArgument<"NumParams">];
 }
 
@@ -604,30 +627,32 @@ def InitPriority : InheritableAttr {
 }
 
 def Section : InheritableAttr {
-  let Spellings = [GNU<"section">];
+  let Spellings = [GNU<"section">, CXX11<"gnu", "section">];
   let Args = [StringArgument<"Name">];
 }
 
 def Sentinel : InheritableAttr {
-  let Spellings = [GNU<"sentinel">];
+  let Spellings = [GNU<"sentinel">, CXX11<"gnu", "sentinel">];
   let Args = [DefaultIntArgument<"Sentinel", 0>,
               DefaultIntArgument<"NullPos", 0>];
 }
 
 def StdCall : InheritableAttr {
-  let Spellings = [GNU<"stdcall">, GNU<"__stdcall">];
+  let Spellings = [GNU<"stdcall">, CXX11<"gnu", "stdcall">,
+                   Keyword<"__stdcall">, Keyword<"_stdcall">];
 }
 
 def ThisCall : InheritableAttr {
-  let Spellings = [GNU<"thiscall">, GNU<"__thiscall">];
+  let Spellings = [GNU<"thiscall">, CXX11<"gnu", "thiscall">,
+                   Keyword<"__thiscall">, Keyword<"_thiscall">];
 }
 
 def Pascal : InheritableAttr {
-  let Spellings = [GNU<"pascal">];
+  let Spellings = [GNU<"pascal">, Keyword<"__pascal">, Keyword<"_pascal">];
 }
 
 def TransparentUnion : InheritableAttr {
-  let Spellings = [GNU<"transparent_union">];
+  let Spellings = [GNU<"transparent_union">, CXX11<"gnu", "transparent_union">];
 }
 
 def Unavailable : InheritableAttr {
@@ -658,11 +683,11 @@ def ObjCRequiresPropertyDefs : InheritableAttr {
 }
 
 def Unused : InheritableAttr {
-  let Spellings = [GNU<"unused">];
+  let Spellings = [GNU<"unused">, CXX11<"gnu", "unused">];
 }
 
 def Used : InheritableAttr {
-  let Spellings = [GNU<"used">];
+  let Spellings = [GNU<"used">, CXX11<"gnu", "used">];
 }
 
 def Uuid : InheritableAttr {
@@ -672,21 +697,18 @@ def Uuid : InheritableAttr {
 }
 
 def VectorSize : Attr {
-  let Spellings = [GNU<"vector_size">];
+  let Spellings = [GNU<"vector_size">, CXX11<"gnu", "vector_size">];
   let Args = [ExprArgument<"NumBytes">];
   let ASTNode = 0;
 }
 
-def VecTypeHint : Attr {
+def VecTypeHint : IgnoredAttr {
   let Spellings = [GNU<"vec_type_hint">];
-  let ASTNode = 0;
-  let SemaHandler = 0;
-  let Ignored = 1;
 }
 
 def Visibility : InheritableAttr {
   let Clone = 0;
-  let Spellings = [GNU<"visibility">];
+  let Spellings = [GNU<"visibility">, CXX11<"gnu", "visibility">];
   let Args = [EnumArgument<"Visibility", "VisibilityType",
                            ["default", "hidden", "internal", "protected"],
                            ["Default", "Hidden", "Hidden", "Protected"]>];
@@ -698,11 +720,13 @@ def VecReturn : InheritableAttr {
 }
 
 def WarnUnusedResult : InheritableAttr {
-  let Spellings = [GNU<"warn_unused_result">, CXX11<"clang","warn_unused_result">];
+  let Spellings = [GNU<"warn_unused_result">,
+                   CXX11<"clang", "warn_unused_result">,
+                   CXX11<"gnu", "warn_unused_result">];
 }
 
 def Weak : InheritableAttr {
-  let Spellings = [GNU<"weak">];
+  let Spellings = [GNU<"weak">, CXX11<"gnu", "weak">];
 }
 
 def WeakImport : InheritableAttr {
@@ -710,7 +734,7 @@ def WeakImport : InheritableAttr {
 }
 
 def WeakRef : InheritableAttr {
-  let Spellings = [GNU<"weakref">];
+  let Spellings = [GNU<"weakref">, CXX11<"gnu", "weakref">];
 }
 
 def X86ForceAlignArgPointer : InheritableAttr {
@@ -875,29 +899,33 @@ def DLLImport : InheritableAttr {
 }
 
 def ForceInline : InheritableAttr {
-  let Spellings = [Declspec<"__forceinline">];
+  let Spellings = [Keyword<"__forceinline">];
 }
 
 def Win64 : InheritableAttr {
-  let Spellings = [Declspec<"w64">];
+  let Spellings = [Keyword<"__w64">];
 }
 
 def Ptr32 : InheritableAttr {
-  let Spellings = [Declspec<"__ptr32">];
+  let Spellings = [Keyword<"__ptr32">];
 }
 
 def Ptr64 : InheritableAttr {
-  let Spellings = [Declspec<"__ptr64">];
+  let Spellings = [Keyword<"__ptr64">];
 }
 
 def SingleInheritance : InheritableAttr {
-  let Spellings = [Declspec<"__single_inheritance">];
+  let Spellings = [Keyword<"__single_inheritance">];
 }
 
 def MultipleInheritance : InheritableAttr {
-  let Spellings = [Declspec<"__multiple_inheritance">];
+  let Spellings = [Keyword<"__multiple_inheritance">];
 }
 
 def VirtualInheritance : InheritableAttr {
-  let Spellings = [Declspec<"__virtual_inheritance">];
+  let Spellings = [Keyword<"__virtual_inheritance">];
+}
+
+def Unaligned : IgnoredAttr {
+  let Spellings = [Keyword<"__unaligned">];
 }

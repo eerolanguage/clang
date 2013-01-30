@@ -8,10 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "CursorVisitor.h"
+#include "CLog.h"
 #include "CXCursor.h"
 #include "CXSourceLocation.h"
 #include "CXTranslationUnit.h"
-#include "CLog.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/Frontend/ASTUnit.h"
 #include "llvm/Support/Compiler.h"
@@ -21,8 +21,8 @@ using namespace cxcursor;
 using namespace cxindex;
 
 static void getTopOverriddenMethods(CXTranslationUnit TU,
-                                    Decl *D,
-                                    SmallVectorImpl<Decl *> &Methods) {
+                                    const Decl *D,
+                                    SmallVectorImpl<const Decl *> &Methods) {
   if (!D)
     return;
   if (!isa<ObjCMethodDecl>(D) && !isa<CXXMethodDecl>(D))
@@ -46,15 +46,15 @@ namespace {
 struct FindFileIdRefVisitData {
   CXTranslationUnit TU;
   FileID FID;
-  Decl *Dcl;
+  const Decl *Dcl;
   int SelectorIdIdx;
   CXCursorAndRangeVisitor visitor;
 
-  typedef SmallVector<Decl *, 8> TopMethodsTy;
+  typedef SmallVector<const Decl *, 8> TopMethodsTy;
   TopMethodsTy TopMethods;
 
   FindFileIdRefVisitData(CXTranslationUnit TU, FileID FID,
-                         Decl *D, int selectorIdIdx,
+                         const Decl *D, int selectorIdIdx,
                          CXCursorAndRangeVisitor visitor)
     : TU(TU), FID(FID), SelectorIdIdx(selectorIdIdx), visitor(visitor) {
     Dcl = getCanonical(D);
@@ -62,7 +62,7 @@ struct FindFileIdRefVisitData {
   }
 
   ASTContext &getASTContext() const {
-    return static_cast<ASTUnit *>(TU->TUData)->getASTContext();
+    return cxtu::getASTUnit(TU)->getASTContext();
   }
 
   /// \brief We are looking to find all semantically relevant identifiers,
@@ -76,24 +76,25 @@ struct FindFileIdRefVisitData {
   ///
   /// we consider the canonical decl of the constructor decl to be the class
   /// itself, so both 'C' can be highlighted.
-  Decl *getCanonical(Decl *D) const {
+  const Decl *getCanonical(const Decl *D) const {
     if (!D)
       return 0;
 
     D = D->getCanonicalDecl();
 
-    if (ObjCImplDecl *ImplD = dyn_cast<ObjCImplDecl>(D)) {
+    if (const ObjCImplDecl *ImplD = dyn_cast<ObjCImplDecl>(D)) {
       if (ImplD->getClassInterface())
         return getCanonical(ImplD->getClassInterface());
 
-    } else if (CXXConstructorDecl *CXXCtorD = dyn_cast<CXXConstructorDecl>(D)) {
+    } else if (const CXXConstructorDecl *CXXCtorD =
+                   dyn_cast<CXXConstructorDecl>(D)) {
       return getCanonical(CXXCtorD->getParent());
     }
     
     return D;
   }
 
-  bool isHit(Decl *D) const {
+  bool isHit(const Decl *D) const {
     if (!D)
       return false;
 
@@ -108,7 +109,7 @@ struct FindFileIdRefVisitData {
   }
 
 private:
-  bool isOverriddingMethod(Decl *D) const {
+  bool isOverriddingMethod(const Decl *D) const {
     if (std::find(TopMethods.begin(), TopMethods.end(), D) !=
           TopMethods.end())
       return true;
@@ -150,7 +151,7 @@ static enum CXChildVisitResult findFileIdRefVisit(CXCursor cursor,
   if (!clang_isDeclaration(declCursor.kind))
     return CXChildVisit_Recurse;
 
-  Decl *D = cxcursor::getCursorDecl(declCursor);
+  const Decl *D = cxcursor::getCursorDecl(declCursor);
   if (!D)
     return CXChildVisit_Continue;
 
@@ -214,11 +215,10 @@ static void findIdRefsInFile(CXTranslationUnit TU, CXCursor declCursor,
                            const FileEntry *File,
                            CXCursorAndRangeVisitor Visitor) {
   assert(clang_isDeclaration(declCursor.kind));
-  ASTUnit *Unit = static_cast<ASTUnit*>(TU->TUData);
-  SourceManager &SM = Unit->getSourceManager();
+  SourceManager &SM = cxtu::getASTUnit(TU)->getSourceManager();
 
   FileID FID = SM.translateFile(File);
-  Decl *Dcl = cxcursor::getCursorDecl(declCursor);
+  const Decl *Dcl = cxcursor::getCursorDecl(declCursor);
   if (!Dcl)
     return;
 
@@ -226,7 +226,7 @@ static void findIdRefsInFile(CXTranslationUnit TU, CXCursor declCursor,
                               cxcursor::getSelectorIdentifierIndex(declCursor),
                               Visitor);
 
-  if (DeclContext *DC = Dcl->getParentFunctionOrMethod()) {
+  if (const DeclContext *DC = Dcl->getParentFunctionOrMethod()) {
     clang_visitChildren(cxcursor::MakeCXCursor(cast<Decl>(DC), TU),
                         findFileIdRefVisit, &data);
     return;
@@ -312,7 +312,7 @@ static void findMacroRefsInFile(CXTranslationUnit TU, CXCursor Cursor,
       Cursor.kind != CXCursor_MacroExpansion)
     return;
 
-  ASTUnit *Unit = static_cast<ASTUnit*>(TU->TUData);
+  ASTUnit *Unit = cxtu::getASTUnit(TU);
   SourceManager &SM = Unit->getSourceManager();
 
   FileID FID = SM.translateFile(File);

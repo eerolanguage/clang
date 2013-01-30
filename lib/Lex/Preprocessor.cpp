@@ -27,6 +27,7 @@
 
 #include "clang/Lex/Preprocessor.h"
 #include "MacroArgs.h"
+#include "clang/Basic/ConvertUTF.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
@@ -43,6 +44,8 @@
 #include "clang/Lex/ScratchBuffer.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Capacity.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -57,20 +60,16 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
                            DiagnosticsEngine &diags, LangOptions &opts,
                            const TargetInfo *target, SourceManager &SM,
                            HeaderSearch &Headers, ModuleLoader &TheModuleLoader,
-                           IdentifierInfoLookup* IILookup,
-                           bool OwnsHeaders,
-                           bool DelayInitialization,
-                           bool IncrProcessing)
-  : PPOpts(PPOpts), Diags(&diags), LangOpts(opts), Target(target),
-    FileMgr(Headers.getFileMgr()),
-    SourceMgr(SM), HeaderInfo(Headers), TheModuleLoader(TheModuleLoader),
-    ExternalSource(0), Identifiers(opts, IILookup), 
-    IncrementalProcessing(IncrProcessing), CodeComplete(0), 
-    CodeCompletionFile(0), CodeCompletionOffset(0), CodeCompletionReached(0),
-    SkipMainFilePreamble(0, true), CurPPLexer(0), 
-    CurDirLookup(0), CurLexerKind(CLK_Lexer), Callbacks(0), Listener(0),
-    MacroArgCache(0), Record(0), MIChainHead(0), MICache(0) 
-{
+                           IdentifierInfoLookup *IILookup, bool OwnsHeaders,
+                           bool DelayInitialization, bool IncrProcessing)
+    : PPOpts(PPOpts), Diags(&diags), LangOpts(opts), Target(target),
+      FileMgr(Headers.getFileMgr()), SourceMgr(SM), HeaderInfo(Headers),
+      TheModuleLoader(TheModuleLoader), ExternalSource(0),
+      Identifiers(opts, IILookup), IncrementalProcessing(IncrProcessing),
+      CodeComplete(0), CodeCompletionFile(0), CodeCompletionOffset(0),
+      CodeCompletionReached(0), SkipMainFilePreamble(0, true), CurPPLexer(0),
+      CurDirLookup(0), CurLexerKind(CLK_Lexer), Callbacks(0), Listener(0),
+      MacroArgCache(0), Record(0), MIChainHead(0), MICache(0) {
   OwnsHeaderSearch = OwnsHeaders;
   
   ScratchBuf = new ScratchBuffer(SourceMgr);
@@ -97,9 +96,10 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
   InMacroArgPreExpansion = false;
   NumCachedTokenLexers = 0;
   PragmasEnabled = true;
+  ParsingIfOrElifDirective = false;
 
   CachedLexPos = 0;
-  
+
   // We haven't read anything from the external source.
   ReadMacrosFromExternalSource = false;
   
@@ -399,7 +399,7 @@ StringRef Preprocessor::getSpelling(const Token &Tok,
                                           SmallVectorImpl<char> &Buffer,
                                           bool *Invalid) const {
   // NOTE: this has to be checked *before* testing for an IdentifierInfo.
-  if (Tok.isNot(tok::raw_identifier)) {
+  if (Tok.isNot(tok::raw_identifier) && !Tok.hasUCN()) {
     // Try the fast path.
     if (const IdentifierInfo *II = Tok.getIdentifierInfo())
       return II->getName();
@@ -497,6 +497,48 @@ void Preprocessor::EndSourceFile() {
 // Lexer Event Handling.
 //===----------------------------------------------------------------------===//
 
+static void appendCodePoint(unsigned Codepoint,
+                            llvm::SmallVectorImpl<char> &Str) {
+  char ResultBuf[4];
+  char *ResultPtr = ResultBuf;
+  bool Res = ConvertCodePointToUTF8(Codepoint, ResultPtr);
+  (void)Res;
+  assert(Res && "Unexpected conversion failure");
+  Str.append(ResultBuf, ResultPtr);
+}
+
+static void expandUCNs(SmallVectorImpl<char> &Buf, StringRef Input) {
+  for (StringRef::iterator I = Input.begin(), E = Input.end(); I != E; ++I) {
+    if (*I != '\\') {
+      Buf.push_back(*I);
+      continue;
+    }
+
+    ++I;
+    assert(*I == 'u' || *I == 'U');
+
+    unsigned NumHexDigits;
+    if (*I == 'u')
+      NumHexDigits = 4;
+    else
+      NumHexDigits = 8;
+
+    assert(I + NumHexDigits <= E);
+
+    uint32_t CodePoint = 0;
+    for (++I; NumHexDigits != 0; ++I, --NumHexDigits) {
+      unsigned Value = llvm::hexDigitValue(*I);
+      assert(Value != -1U);
+
+      CodePoint <<= 4;
+      CodePoint += Value;
+    }
+
+    appendCodePoint(CodePoint, Buf);
+    --I;
+  }
+}
+
 /// LookUpIdentifierInfo - Given a tok::raw_identifier token, look up the
 /// identifier information for the token and install it into the token,
 /// updating the token kind accordingly.
@@ -505,15 +547,22 @@ IdentifierInfo *Preprocessor::LookUpIdentifierInfo(Token &Identifier) const {
 
   // Look up this token, see if it is a macro, or if it is a language keyword.
   IdentifierInfo *II;
-  if (!Identifier.needsCleaning()) {
+  if (!Identifier.needsCleaning() && !Identifier.hasUCN()) {
     // No cleaning needed, just use the characters from the lexed buffer.
     II = getIdentifierInfo(StringRef(Identifier.getRawIdentifierData(),
-                                           Identifier.getLength()));
+                                     Identifier.getLength()));
   } else {
     // Cleaning needed, alloca a buffer, clean into it, then use the buffer.
     SmallString<64> IdentifierBuffer;
     StringRef CleanedStr = getSpelling(Identifier, IdentifierBuffer);
-    II = getIdentifierInfo(CleanedStr);
+
+    if (Identifier.hasUCN()) {
+      SmallString<64> UCNIdentifierBuffer;
+      expandUCNs(UCNIdentifierBuffer, CleanedStr);
+      II = getIdentifierInfo(UCNIdentifierBuffer);
+    } else {
+      II = getIdentifierInfo(CleanedStr);
+    }
   }
 
   // Update the token info (identifier info and appropriate token kind).

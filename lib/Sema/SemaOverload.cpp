@@ -1,4 +1,4 @@
-//===--- SemaOverload.cpp - C++ Overloading ---------------------*- C++ -*-===//
+//===--- SemaOverload.cpp - C++ Overloading -------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -1012,28 +1012,36 @@ bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
   // 13.1p2). While not part of the definition of the signature,
   // this check is important to determine whether these functions
   // can be overloaded.
-  CXXMethodDecl* OldMethod = dyn_cast<CXXMethodDecl>(Old);
-  CXXMethodDecl* NewMethod = dyn_cast<CXXMethodDecl>(New);
+  CXXMethodDecl *OldMethod = dyn_cast<CXXMethodDecl>(Old);
+  CXXMethodDecl *NewMethod = dyn_cast<CXXMethodDecl>(New);
   if (OldMethod && NewMethod &&
-      !OldMethod->isStatic() && !NewMethod->isStatic() &&
-      (OldMethod->getTypeQualifiers() != NewMethod->getTypeQualifiers() ||
-       OldMethod->getRefQualifier() != NewMethod->getRefQualifier())) {
-    if (!UseUsingDeclRules &&
-        OldMethod->getRefQualifier() != NewMethod->getRefQualifier() &&
-        (OldMethod->getRefQualifier() == RQ_None ||
-         NewMethod->getRefQualifier() == RQ_None)) {
-      // C++0x [over.load]p2:
-      //   - Member function declarations with the same name and the same
-      //     parameter-type-list as well as member function template
-      //     declarations with the same name, the same parameter-type-list, and
-      //     the same template parameter lists cannot be overloaded if any of
-      //     them, but not all, have a ref-qualifier (8.3.5).
-      Diag(NewMethod->getLocation(), diag::err_ref_qualifier_overload)
-        << NewMethod->getRefQualifier() << OldMethod->getRefQualifier();
-      Diag(OldMethod->getLocation(), diag::note_previous_declaration);
+      !OldMethod->isStatic() && !NewMethod->isStatic()) {
+    if (OldMethod->getRefQualifier() != NewMethod->getRefQualifier()) {
+      if (!UseUsingDeclRules &&
+          (OldMethod->getRefQualifier() == RQ_None ||
+           NewMethod->getRefQualifier() == RQ_None)) {
+        // C++0x [over.load]p2:
+        //   - Member function declarations with the same name and the same
+        //     parameter-type-list as well as member function template
+        //     declarations with the same name, the same parameter-type-list, and
+        //     the same template parameter lists cannot be overloaded if any of
+        //     them, but not all, have a ref-qualifier (8.3.5).
+        Diag(NewMethod->getLocation(), diag::err_ref_qualifier_overload)
+          << NewMethod->getRefQualifier() << OldMethod->getRefQualifier();
+        Diag(OldMethod->getLocation(), diag::note_previous_declaration);
+      }
+      return true;
     }
 
-    return true;
+    // We may not have applied the implicit const for a constexpr member
+    // function yet (because we haven't yet resolved whether this is a static
+    // or non-static member function). Add it now, on the assumption that this
+    // is a redeclaration of OldMethod.
+    unsigned NewQuals = NewMethod->getTypeQualifiers();
+    if (NewMethod->isConstexpr() && !isa<CXXConstructorDecl>(NewMethod))
+      NewQuals |= Qualifiers::Const;
+    if (OldMethod->getTypeQualifiers() != NewQuals)
+      return true;
   }
 
   // The signatures match; this is not an overload.
@@ -1832,7 +1840,8 @@ bool Sema::IsFloatingPointPromotion(QualType FromType, QualType ToType) {
         return true;
 
       // Half can be promoted to float.
-      if (FromBuiltin->getKind() == BuiltinType::Half &&
+      if (!getLangOpts().NativeHalfType &&
+           FromBuiltin->getKind() == BuiltinType::Half &&
           ToBuiltin->getKind() == BuiltinType::Float)
         return true;
     }
@@ -4611,7 +4620,7 @@ static bool TryCopyInitialization(const CanQualType FromQTy,
 /// parameter of the given member function (@c Method) from the
 /// expression @p From.
 static ImplicitConversionSequence
-TryObjectArgumentInitialization(Sema &S, QualType OrigFromType,
+TryObjectArgumentInitialization(Sema &S, QualType FromType,
                                 Expr::Classification FromClassification,
                                 CXXMethodDecl *Method,
                                 CXXRecordDecl *ActingContext) {
@@ -4627,7 +4636,6 @@ TryObjectArgumentInitialization(Sema &S, QualType OrigFromType,
   ImplicitConversionSequence ICS;
 
   // We need to have an object of class type.
-  QualType FromType = OrigFromType;
   if (const PointerType *PT = FromType->getAs<PointerType>()) {
     FromType = PT->getPointeeType();
 
@@ -4662,7 +4670,7 @@ TryObjectArgumentInitialization(Sema &S, QualType OrigFromType,
                                     != FromTypeCanon.getLocalCVRQualifiers() &&
       !ImplicitParamType.isAtLeastAsQualifiedAs(FromTypeCanon)) {
     ICS.setBad(BadConversionSequence::bad_qualifiers,
-               OrigFromType, ImplicitParamType);
+               FromType, ImplicitParamType);
     return ICS;
   }
 
@@ -10326,6 +10334,13 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
         if (CheckCallReturnType(FnDecl->getResultType(), OpLoc, TheCall,
                                 FnDecl))
           return ExprError();
+
+        ArrayRef<const Expr *> ArgsArray(Args, 2);
+        // Cut off the implicit 'this'.
+        if (isa<CXXMethodDecl>(FnDecl))
+          ArgsArray = ArgsArray.slice(1);
+        checkCall(FnDecl, ArgsArray, 0, isa<CXXMethodDecl>(FnDecl), OpLoc, 
+                  TheCall->getSourceRange(), VariadicDoesNotApply);
 
         return MaybeBindToTemporary(TheCall);
       } else {

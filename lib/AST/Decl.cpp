@@ -1206,7 +1206,9 @@ void VarDecl::setStorageClass(StorageClass SC) {
 SourceRange VarDecl::getSourceRange() const {
   if (const Expr *Init = getInit()) {
     SourceLocation InitEnd = Init->getLocEnd();
-    if (InitEnd.isValid())
+    // If Init is implicit, ignore its source range and fallback on 
+    // DeclaratorDecl::getSourceRange() to handle postfix elements.
+    if (InitEnd.isValid() && InitEnd != getLocation())
       return SourceRange(getOuterLocStart(), InitEnd);
   }
   return DeclaratorDecl::getSourceRange();
@@ -1808,6 +1810,11 @@ bool FunctionDecl::isGlobal() const {
   return true;
 }
 
+bool FunctionDecl::isNoReturn() const {
+  return hasAttr<NoReturnAttr>() || hasAttr<CXX11NoReturnAttr>() ||
+         getType()->getAs<FunctionType>()->getNoReturnAttr();
+}
+
 void
 FunctionDecl::setPreviousDeclaration(FunctionDecl *PrevDecl) {
   redeclarable_base::setPreviousDeclaration(PrevDecl);
@@ -1955,38 +1962,6 @@ unsigned FunctionDecl::getMinRequiredArguments() const {
   return NumRequiredArgs;
 }
 
-bool FunctionDecl::isInlined() const {
-  if (IsInline)
-    return true;
-  
-  if (isa<CXXMethodDecl>(this)) {
-    if (!isOutOfLine() || getCanonicalDecl()->isInlineSpecified())
-      return true;
-  }
-
-  switch (getTemplateSpecializationKind()) {
-  case TSK_Undeclared:
-  case TSK_ExplicitSpecialization:
-    return false;
-
-  case TSK_ImplicitInstantiation:
-  case TSK_ExplicitInstantiationDeclaration:
-  case TSK_ExplicitInstantiationDefinition:
-    // Handle below.
-    break;
-  }
-
-  const FunctionDecl *PatternDecl = getTemplateInstantiationPattern();
-  bool HasPattern = false;
-  if (PatternDecl)
-    HasPattern = PatternDecl->hasBody(PatternDecl);
-  
-  if (HasPattern && PatternDecl)
-    return PatternDecl->isInlined();
-  
-  return false;
-}
-
 static bool RedeclForcesDefC99(const FunctionDecl *Redecl) {
   // Only consider file-scope declarations in this test.
   if (!Redecl->getLexicalDeclContext()->isTranslationUnit())
@@ -2062,8 +2037,8 @@ bool FunctionDecl::doesDeclarationForceExternallyVisibleDefinition() const {
   return FoundBody;
 }
 
-/// \brief For an inline function definition in C or C++, determine whether the 
-/// definition will be externally visible.
+/// \brief For an inline function definition in C, or for a gnu_inline function
+/// in C++, determine whether the definition will be externally visible.
 ///
 /// Inline function definitions are always available for inlining optimizations.
 /// However, depending on the language dialect, declaration specifiers, and
@@ -2106,6 +2081,10 @@ bool FunctionDecl::isInlineDefinitionExternallyVisible() const {
     
     return false;
   }
+
+  // The rest of this function is C-only.
+  assert(!Context.getLangOpts().CPlusPlus &&
+         "should not use C inline rules in C++");
 
   // C99 6.7.4p6:
   //   [...] If all of the file scope declarations for a function in a 
@@ -2755,6 +2734,7 @@ RecordDecl::RecordDecl(Kind DK, TagKind TK, DeclContext *DC,
   HasFlexibleArrayMember = false;
   AnonymousStructOrUnion = false;
   HasObjectMember = false;
+  HasVolatileMember = false;
   LoadedFieldsFromExternalStorage = false;
   assert(classof(static_cast<Decl*>(this)) && "Invalid Kind!");
 }

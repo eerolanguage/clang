@@ -25,6 +25,7 @@ namespace clang {
 
 class Lexer;
 class SourceManager;
+class DiagnosticConsumer;
 
 namespace format {
 
@@ -56,17 +57,27 @@ struct FormatStyle {
   /// \brief The number of spaces to before trailing line comments.
   unsigned SpacesBeforeTrailingComments;
 
+  /// \brief If false, a function call's or function definition's parameters
+  /// will either all be on the same line or will have one line each.
+  bool BinPackParameters;
+
+  /// \brief Allow putting all parameters of a function declaration/call onto
+  /// the next line without calling this bin-packing.
+  bool AllowAllParametersOnNextLine;
+
+  /// \brief Allow putting the return type of a function onto its own line.
+  bool AllowReturnTypeOnItsOwnLine;
+
   /// \brief If the constructor initializers don't fit on a line, put each
-  /// initializer on its own line. 
+  /// initializer on its own line.
   bool ConstructorInitializerAllOnOneLineOrOnePerLine;
+
+  /// \brief If true, "if (a) return;" can be put on a single line.
+  bool AllowShortIfStatementsOnASingleLine;
 
   /// \brief Add a space in front of an Objective-C protocol list, i.e. use
   /// Foo <Protocol> instead of Foo<Protocol>.
   bool ObjCSpaceBeforeProtocolList;
-
-  /// \brief Add a space in front method return types, i.e. use
-  /// + (id)init instead of +(id) init
-  bool ObjCSpaceBeforeReturnType;
 };
 
 /// \brief Returns a format style complying with the LLVM coding standards:
@@ -77,6 +88,10 @@ FormatStyle getLLVMStyle();
 /// http://google-styleguide.googlecode.com/svn/trunk/cppguide.xml.
 FormatStyle getGoogleStyle();
 
+/// \brief Returns a format style complying with Chromium's style guide:
+/// http://www.chromium.org/developers/coding-style.
+FormatStyle getChromiumStyle();
+
 /// \brief Reformats the given \p Ranges in the token stream coming out of
 /// \c Lex.
 ///
@@ -84,11 +99,15 @@ FormatStyle getGoogleStyle();
 /// everything that might influence its formatting or might be influenced by its
 /// formatting.
 ///
+/// \param DiagClient A custom DiagnosticConsumer. Can be 0, in this case
+/// diagnostic is output to llvm::errs().
+///
 /// Returns the \c Replacements necessary to make all \p Ranges comply with
 /// \p Style.
 tooling::Replacements reformat(const FormatStyle &Style, Lexer &Lex,
                                SourceManager &SourceMgr,
-                               std::vector<CharSourceRange> Ranges);
+                               std::vector<CharSourceRange> Ranges,
+                               DiagnosticConsumer *DiagClient = 0);
 
 /// \brief Returns the \c LangOpts that the formatter expects you to set.
 LangOptions getFormattingLangOpts();

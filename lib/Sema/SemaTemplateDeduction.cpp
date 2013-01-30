@@ -2647,11 +2647,15 @@ Sema::FinishTemplateArgumentDeduction(FunctionTemplateDecl *FunctionTemplate,
       if (CurrentInstantiationScope &&
           CurrentInstantiationScope->getPartiallySubstitutedPack(&ExplicitArgs,
                                                              &NumExplicitArgs)
-          == Param)
+            == Param) {
         Builder.push_back(TemplateArgument(ExplicitArgs, NumExplicitArgs));
-      else
-        Builder.push_back(TemplateArgument::getEmptyPack());
 
+        // Forget the partially-substituted pack; it's substitution is now
+        // complete.
+        CurrentInstantiationScope->ResetPartiallySubstitutedPack();
+      } else {
+        Builder.push_back(TemplateArgument::getEmptyPack());
+      }
       continue;
     }
 
@@ -4614,7 +4618,7 @@ Sema::MarkUsedTemplateParameters(const TemplateArgumentList &TemplateArgs,
 /// call to the given function template.
 void
 Sema::MarkDeducedTemplateParameters(ASTContext &Ctx,
-                                    FunctionTemplateDecl *FunctionTemplate,
+                                    const FunctionTemplateDecl *FunctionTemplate,
                                     llvm::SmallBitVector &Deduced) {
   TemplateParameterList *TemplateParams
     = FunctionTemplate->getTemplateParameters();

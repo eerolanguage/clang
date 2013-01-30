@@ -33,7 +33,7 @@ class SanitizerArgs {
 #define SANITIZER(NAME, ID) ID = 1 << SO_##ID,
 #define SANITIZER_GROUP(NAME, ID, ALIAS) ID = ALIAS,
 #include "clang/Basic/Sanitizers.def"
-    NeedsAsanRt = AddressFull,
+    NeedsAsanRt = Address,
     NeedsTsanRt = Thread,
     NeedsMsanRt = Memory,
     NeedsUbsanRt = (Undefined & ~Bounds) | Integer
@@ -41,9 +41,11 @@ class SanitizerArgs {
   unsigned Kind;
   std::string BlacklistFile;
   bool MsanTrackOrigins;
+  bool AsanZeroBaseShadow;
 
  public:
-  SanitizerArgs() : Kind(0), BlacklistFile(""), MsanTrackOrigins(false) {}
+  SanitizerArgs() : Kind(0), BlacklistFile(""), MsanTrackOrigins(false),
+                    AsanZeroBaseShadow(false) {}
   /// Parses the sanitizer arguments from an argument list.
   SanitizerArgs(const Driver &D, const ArgList &Args);
 
@@ -72,6 +74,10 @@ class SanitizerArgs {
 
     if (MsanTrackOrigins)
       CmdArgs.push_back(Args.MakeArgString("-fsanitize-memory-track-origins"));
+
+    if (AsanZeroBaseShadow)
+      CmdArgs.push_back(Args.MakeArgString(
+          "-fsanitize-address-zero-base-shadow"));
   }
 
  private:

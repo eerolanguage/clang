@@ -1183,8 +1183,8 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   SmallVector<IdentifierInfo *, 12> KeyIdents;
   SmallVector<SourceLocation, 12> KeyLocs;
   SmallVector<Sema::ObjCArgInfo, 12> ArgInfos;
-  ParseScope PrototypeScope(this,
-                            Scope::FunctionPrototypeScope|Scope::DeclScope);
+  ParseScope PrototypeScope(this, Scope::FunctionPrototypeScope |
+                            Scope::FunctionDeclarationScope | Scope::DeclScope);
 
   AttributePool allParamAttrs(AttrFactory);
 
@@ -2509,6 +2509,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
                                          MultiStmtArg(), false);
 
     if (!DefaultReturnExpr.isInvalid()) {
+      Sema::CompoundScopeRAII CompoundScope(Actions);
       SourceLocation BodyEndLoc = FnBody.get()->getLocEnd();
       StmtResult DefaultReturnStmt = 
           Actions.ActOnReturnStmt(ReturnLoc, DefaultReturnExpr.take());
@@ -2604,7 +2605,7 @@ StmtResult Parser::ParseObjCAtStatement(SourceLocation AtLoc) {
   
   // Otherwise, eat the semicolon.
   ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
-  return Actions.ActOnExprStmt(Actions.MakeFullExpr(Res.take()));
+  return Actions.ActOnExprStmt(Res);
 }
 
 ExprResult Parser::ParseObjCAtExpression(SourceLocation AtLoc) {
@@ -2989,7 +2990,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
   // Parse objc-selector
   SourceLocation Loc;
   IdentifierInfo *selIdent = ParseObjCSelectorPiece(Loc);
-
+  
   SmallVector<IdentifierInfo *, 12> KeyIdents;
   SmallVector<SourceLocation, 12> KeyLocs;
   ExprVector KeyExprs;

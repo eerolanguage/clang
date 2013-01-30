@@ -74,8 +74,7 @@ int main(int argc, const char **argv, char * const *envp) {
 
   IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
   DiagnosticsEngine Diags(DiagID, &*DiagOpts, DiagClient);
-  Driver TheDriver(Path.str(), llvm::sys::getDefaultTargetTriple(),
-                   "a.out", Diags);
+  Driver TheDriver(Path.str(), llvm::sys::getProcessTriple(), "a.out", Diags);
   TheDriver.setTitle("clang interpreter");
 
   // FIXME: This is a hack to try to force the driver to do something we can
@@ -129,7 +128,7 @@ int main(int argc, const char **argv, char * const *envp) {
   Clang.setInvocation(CI.take());
 
   // Create the compilers actual diagnostics engine.
-  Clang.createDiagnostics(int(CCArgs.size()),const_cast<char**>(CCArgs.data()));
+  Clang.createDiagnostics();
   if (!Clang.hasDiagnostics())
     return 1;
 

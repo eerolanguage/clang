@@ -139,6 +139,10 @@ public:
                                            /// speed up parsing in cases you do
                                            /// not need them (e.g. with code
                                            /// completion).
+  unsigned UseGlobalModuleIndex : 1;       ///< Whether we can use the
+                                           ///< global module index if available.
+  unsigned GenerateGlobalModuleIndex : 1;  ///< Whether we can generate the
+                                           ///< global module index if needed.
 
   CodeCompleteOptions CodeCompleteOpts;
 
@@ -211,8 +215,10 @@ public:
     ShowStats(false), ShowTimers(false), ShowVersion(false),
     FixWhatYouCan(false), FixOnlyWarnings(false), FixAndRecompile(false),
     FixToTemporaries(false), ARCMTMigrateEmitARCErrors(false),
-    SkipFunctionBodies(false), ARCMTAction(ARCMT_None),
-    ObjCMTAction(ObjCMT_None), ProgramAction(frontend::ParseSyntaxOnly)
+    SkipFunctionBodies(false), UseGlobalModuleIndex(true),
+    GenerateGlobalModuleIndex(true),
+    ARCMTAction(ARCMT_None), ObjCMTAction(ObjCMT_None),
+    ProgramAction(frontend::ParseSyntaxOnly)
   {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file

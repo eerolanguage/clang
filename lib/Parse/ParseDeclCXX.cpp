@@ -957,6 +957,7 @@ bool Parser::isValidAfterTypeSpecifier(bool CouldBeBitfield) {
   case tok::semi:               // struct foo {...} ;
   case tok::star:               // struct foo {...} *         P;
   case tok::amp:                // struct foo {...} &         R = ...
+  case tok::ampamp:             // struct foo {...} &&        R = ...
   case tok::identifier:         // struct foo {...} V         ;
   case tok::r_paren:            //(struct foo {...} )         {4}
   case tok::annot_cxxscope:     // struct foo {...} a::       b;
@@ -964,6 +965,7 @@ bool Parser::isValidAfterTypeSpecifier(bool CouldBeBitfield) {
   case tok::annot_template_id:  // struct foo {...} a<int>    ::b;
   case tok::l_paren:            // struct foo {...} (         x);
   case tok::comma:              // __builtin_offsetof(struct foo{...} ,
+  case tok::kw_operator:        // struct foo       operator  ++() {...}
     return true;
   case tok::colon:
     return CouldBeBitfield;     // enum E { ... }   :         2;
@@ -971,7 +973,12 @@ bool Parser::isValidAfterTypeSpecifier(bool CouldBeBitfield) {
   case tok::kw_const:           // struct foo {...} const     x;
   case tok::kw_volatile:        // struct foo {...} volatile  x;
   case tok::kw_restrict:        // struct foo {...} restrict  x;
-  case tok::kw_inline:          // struct foo {...} inline    foo() {};
+  // Function specifiers
+  // Note, no 'explicit'. An explicit function must be either a conversion
+  // operator or a constructor. Either way, it can't have a return type.
+  case tok::kw_inline:          // struct foo       inline    f();
+  case tok::kw_virtual:         // struct foo       virtual   f();
+  case tok::kw_friend:          // struct foo       friend    f();
   // Storage-class specifiers
   case tok::kw_static:          // struct foo {...} static    x;
   case tok::kw_extern:          // struct foo {...} extern    x;
@@ -979,6 +986,7 @@ bool Parser::isValidAfterTypeSpecifier(bool CouldBeBitfield) {
   case tok::kw_register:        // struct foo {...} register  x;
   case tok::kw_auto:            // struct foo {...} auto      x;
   case tok::kw_mutable:         // struct foo {...} mutable   x;
+  case tok::kw_thread_local:    // struct foo {...} thread_local x;
   case tok::kw_constexpr:       // struct foo {...} constexpr x;
     // As shown above, type qualifiers and storage class specifiers absolutely
     // can occur after class specifiers according to the grammar.  However,
@@ -1003,6 +1011,13 @@ bool Parser::isValidAfterTypeSpecifier(bool CouldBeBitfield) {
     if (!getLangOpts().CPlusPlus)
       return true;
     break;
+    // C++11 attributes
+  case tok::l_square: // enum E [[]] x
+    // Note, no tok::kw_alignas here; alignas cannot appertain to a type.
+    return getLangOpts().CPlusPlus11 && NextToken().is(tok::l_square);
+  case tok::greater:
+    // template<class T = class X>
+    return getLangOpts().CPlusPlus;
   }
   return false;
 }
@@ -2675,8 +2690,7 @@ void Parser::ParseConstructorInitializer(Decl *ConstructorDecl) {
     }
   } while (true);
 
-  Actions.ActOnMemInitializers(ConstructorDecl, ColonLoc,
-                               MemInitializers.data(), MemInitializers.size(),
+  Actions.ActOnMemInitializers(ConstructorDecl, ColonLoc, MemInitializers,
                                AnyErrors);
 }
 
@@ -3032,7 +3046,7 @@ static bool IsBuiltInOrStandardCXX11Attribute(IdentifierInfo *AttrName,
                                  AttributeList::AS_CXX11)) {
   case AttributeList::AT_CarriesDependency:
   case AttributeList::AT_FallThrough:
-  case AttributeList::AT_NoReturn: {
+  case AttributeList::AT_CXX11NoReturn: {
     return true;
   }
 
@@ -3095,6 +3109,8 @@ void Parser::ParseCXX11AttributeSpecifier(ParsedAttributes &attrs,
   ConsumeBracket();
   ConsumeBracket();
 
+  llvm::SmallDenseMap<IdentifierInfo*, SourceLocation, 4> SeenAttrs;
+
   while (Tok.isNot(tok::r_square)) {
     // attribute not present
     if (Tok.is(tok::comma)) {
@@ -3127,6 +3143,11 @@ void Parser::ParseCXX11AttributeSpecifier(ParsedAttributes &attrs,
 
     bool StandardAttr = IsBuiltInOrStandardCXX11Attribute(AttrName,ScopeName);
     bool AttrParsed = false;
+
+    if (StandardAttr &&
+        !SeenAttrs.insert(std::make_pair(AttrName, AttrLoc)).second)
+      Diag(AttrLoc, diag::err_cxx11_attribute_repeated)
+        << AttrName << SourceRange(SeenAttrs[AttrName]);
 
     // Parse attribute arguments
     if (Tok.is(tok::l_paren)) {

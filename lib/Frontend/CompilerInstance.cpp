@@ -49,7 +49,8 @@
 using namespace clang;
 
 CompilerInstance::CompilerInstance()
-  : Invocation(new CompilerInvocation()), ModuleManager(0) {
+  : Invocation(new CompilerInvocation()), ModuleManager(0),
+    BuildGlobalModuleIndex(false), ModuleBuildFailed(false) {
 }
 
 CompilerInstance::~CompilerInstance() {
@@ -58,6 +59,12 @@ CompilerInstance::~CompilerInstance() {
 
 void CompilerInstance::setInvocation(CompilerInvocation *Value) {
   Invocation = Value;
+}
+
+bool CompilerInstance::shouldBuildGlobalModuleIndex() const {
+  return (BuildGlobalModuleIndex ||
+          (ModuleManager && ModuleManager->isGlobalIndexUnavailable())) &&
+         !ModuleBuildFailed;
 }
 
 void CompilerInstance::setDiagnostics(DiagnosticsEngine *Value) {
@@ -93,29 +100,6 @@ void CompilerInstance::setCodeCompletionConsumer(CodeCompleteConsumer *Value) {
 }
 
 // Diagnostics
-static void SetUpBuildDumpLog(DiagnosticOptions *DiagOpts,
-                              unsigned argc, const char* const *argv,
-                              DiagnosticsEngine &Diags) {
-  std::string ErrorInfo;
-  OwningPtr<raw_ostream> OS(
-    new llvm::raw_fd_ostream(DiagOpts->DumpBuildInformation.c_str(),ErrorInfo));
-  if (!ErrorInfo.empty()) {
-    Diags.Report(diag::err_fe_unable_to_open_logfile)
-                 << DiagOpts->DumpBuildInformation << ErrorInfo;
-    return;
-  }
-
-  (*OS) << "clang -cc1 command line arguments: ";
-  for (unsigned i = 0; i != argc; ++i)
-    (*OS) << argv[i] << ' ';
-  (*OS) << '\n';
-
-  // Chain in a diagnostic client which will log the diagnostics.
-  DiagnosticConsumer *Logger =
-    new TextDiagnosticPrinter(*OS.take(), DiagOpts, /*OwnsOutputStream=*/true);
-  Diags.setClient(new ChainedDiagnosticConsumer(Diags.takeClient(), Logger));
-}
-
 static void SetUpDiagnosticLog(DiagnosticOptions *DiagOpts,
                                const CodeGenOptions *CodeGenOpts,
                                DiagnosticsEngine &Diags) {
@@ -129,7 +113,7 @@ static void SetUpDiagnosticLog(DiagnosticOptions *DiagOpts,
                                ErrorInfo, llvm::raw_fd_ostream::F_Append));
     if (!ErrorInfo.empty()) {
       Diags.Report(diag::warn_fe_cc_log_diagnostics_failure)
-        << DiagOpts->DumpBuildInformation << ErrorInfo;
+        << DiagOpts->DiagnosticLogFile << ErrorInfo;
     } else {
       FileOS->SetUnbuffered();
       FileOS->SetUseAtomicWrites(true);
@@ -168,18 +152,16 @@ static void SetupSerializedDiagnostics(DiagnosticOptions *DiagOpts,
                                                 SerializedConsumer));
 }
 
-void CompilerInstance::createDiagnostics(int Argc, const char* const *Argv,
-                                         DiagnosticConsumer *Client,
+void CompilerInstance::createDiagnostics(DiagnosticConsumer *Client,
                                          bool ShouldOwnClient,
                                          bool ShouldCloneClient) {
-  Diagnostics = createDiagnostics(&getDiagnosticOpts(), Argc, Argv, Client,
+  Diagnostics = createDiagnostics(&getDiagnosticOpts(), Client,
                                   ShouldOwnClient, ShouldCloneClient,
                                   &getCodeGenOpts());
 }
 
 IntrusiveRefCntPtr<DiagnosticsEngine>
 CompilerInstance::createDiagnostics(DiagnosticOptions *Opts,
-                                    int Argc, const char* const *Argv,
                                     DiagnosticConsumer *Client,
                                     bool ShouldOwnClient,
                                     bool ShouldCloneClient,
@@ -205,9 +187,6 @@ CompilerInstance::createDiagnostics(DiagnosticOptions *Opts,
   // Chain in -diagnostic-log-file dumper, if requested.
   if (!Opts->DiagnosticLogFile.empty())
     SetUpDiagnosticLog(Opts, CodeGenOpts, *Diags);
-
-  if (!Opts->DumpBuildInformation.empty())
-    SetUpBuildDumpLog(Opts, Argc, Argv, *Diags);
 
   if (!Opts->DiagnosticSerializationFile.empty())
     SetupSerializedDiagnostics(Opts, *Diags,
@@ -318,7 +297,8 @@ void CompilerInstance::createPCHExternalASTSource(StringRef Path,
                                           AllowPCHWithCompilerErrors,
                                           getPreprocessor(), getASTContext(),
                                           DeserializationListener,
-                                          Preamble));
+                                          Preamble,
+                                       getFrontendOpts().UseGlobalModuleIndex));
   ModuleManager = static_cast<ASTReader*>(Source.get());
   getASTContext().setExternalSource(Source);
 }
@@ -331,12 +311,14 @@ CompilerInstance::createPCHExternalASTSource(StringRef Path,
                                              Preprocessor &PP,
                                              ASTContext &Context,
                                              void *DeserializationListener,
-                                             bool Preamble) {
+                                             bool Preamble,
+                                             bool UseGlobalModuleIndex) {
   OwningPtr<ASTReader> Reader;
   Reader.reset(new ASTReader(PP, Context,
                              Sysroot.empty() ? "" : Sysroot.c_str(),
                              DisablePCHValidation,
-                             AllowPCHWithCompilerErrors));
+                             AllowPCHWithCompilerErrors,
+                             UseGlobalModuleIndex));
 
   Reader->setDeserializationListener(
             static_cast<ASTDeserializationListener *>(DeserializationListener));
@@ -866,6 +848,7 @@ static void compileModule(CompilerInstance &ImportingInstance,
   FrontendOptions &FrontendOpts = Invocation->getFrontendOpts();
   FrontendOpts.OutputFile = ModuleFileName.str();
   FrontendOpts.DisableFree = false;
+  FrontendOpts.GenerateGlobalModuleIndex = false;
   FrontendOpts.Inputs.clear();
   InputKind IK = getSourceInputKindFromOptions(*Invocation->getLangOpts());
 
@@ -907,8 +890,7 @@ static void compileModule(CompilerInstance &ImportingInstance,
   // module.
   CompilerInstance Instance;
   Instance.setInvocation(&*Invocation);
-  Instance.createDiagnostics(/*argc=*/0, /*argv=*/0,
-                             &ImportingInstance.getDiagnosticClient(),
+  Instance.createDiagnostics(&ImportingInstance.getDiagnosticClient(),
                              /*ShouldOwnClient=*/true,
                              /*ShouldCloneClient=*/true);
 
@@ -940,6 +922,12 @@ static void compileModule(CompilerInstance &ImportingInstance,
   Instance.clearOutputFiles(/*EraseFiles=*/true);
   if (!TempModuleMapFileName.empty())
     llvm::sys::Path(TempModuleMapFileName).eraseFromDisk();
+
+  // We've rebuilt a module. If we're allowed to generate or update the global
+  // module index, record that fact in the importing compiler instance.
+  if (ImportingInstance.getFrontendOpts().GenerateGlobalModuleIndex) {
+    ImportingInstance.setBuildGlobalModuleIndex(true);
+  }
 }
 
 ModuleLoadResult
@@ -1027,7 +1015,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
         getDiagnostics().Report(ModuleNameLoc, diag::err_module_not_built)
           << ModuleName
           << SourceRange(ImportLoc, ModuleNameLoc);
-
+        ModuleBuildFailed = true;
         return ModuleLoadResult();
       }
 
@@ -1045,6 +1033,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
                                             : diag::err_module_not_found)
         << ModuleName
         << SourceRange(ImportLoc, ModuleNameLoc);
+      ModuleBuildFailed = true;
       return ModuleLoadResult();
     }
 
@@ -1057,7 +1046,9 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
       const PreprocessorOptions &PPOpts = getPreprocessorOpts();
       ModuleManager = new ASTReader(getPreprocessor(), *Context,
                                     Sysroot.empty() ? "" : Sysroot.c_str(),
-                                    PPOpts.DisablePCHValidation);
+                                    PPOpts.DisablePCHValidation,
+                                    /*AllowASTWithCompilerErrors=*/false,
+                                    getFrontendOpts().UseGlobalModuleIndex);
       if (hasASTConsumer()) {
         ModuleManager->setDeserializationListener(
           getASTConsumer().GetASTDeserializationListener());
@@ -1098,6 +1089,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
         getDiagnostics().Report(ModuleNameLoc, diag::err_module_not_built)
           << ModuleName
           << SourceRange(ImportLoc, ModuleNameLoc);
+        ModuleBuildFailed = true;
 
         return ModuleLoadResult();
       }
@@ -1113,6 +1105,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
         if (getPreprocessorOpts().FailedModules)
           getPreprocessorOpts().FailedModules->addFailed(ModuleName);
         KnownModules[Path[0].first] = 0;
+        ModuleBuildFailed = true;
         return ModuleLoadResult();
       }
 
@@ -1131,6 +1124,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
     case ASTReader::Failure:
       // Already complained, but note now that we failed.
       KnownModules[Path[0].first] = 0;
+      ModuleBuildFailed = true;
       return ModuleLoadResult();
     }
     

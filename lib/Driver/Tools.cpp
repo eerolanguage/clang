@@ -12,6 +12,7 @@
 #include "SanitizerArgs.h"
 #include "ToolChains.h"
 #include "clang/Basic/ObjCRuntime.h"
+#include "clang/Basic/Version.h"
 #include "clang/Driver/Action.h"
 #include "clang/Driver/Arg.h"
 #include "clang/Driver/ArgList.h"
@@ -227,6 +228,7 @@ static bool forwardToGCC(const Option &O) {
 }
 
 void Clang::AddPreprocessingOptions(Compilation &C,
+                                    const JobAction &JA,
                                     const Driver &D,
                                     const ArgList &Args,
                                     ArgStringList &CmdArgs,
@@ -247,7 +249,7 @@ void Clang::AddPreprocessingOptions(Compilation &C,
     const char *DepFile;
     if (Arg *MF = Args.getLastArg(options::OPT_MF)) {
       DepFile = MF->getValue();
-      C.addFailureResultFile(DepFile);
+      C.addFailureResultFile(DepFile, &JA);
     } else if (Output.getType() == types::TY_Dependencies) {
       DepFile = Output.getFilename();
     } else if (A->getOption().matches(options::OPT_M) ||
@@ -255,7 +257,7 @@ void Clang::AddPreprocessingOptions(Compilation &C,
       DepFile = "-";
     } else {
       DepFile = getDependencyFileName(Args, Inputs);
-      C.addFailureResultFile(DepFile);
+      C.addFailureResultFile(DepFile, &JA);
     }
     CmdArgs.push_back("-dependency-file");
     CmdArgs.push_back(DepFile);
@@ -1126,10 +1128,59 @@ void Clang::AddSparcTargetArgs(const ArgList &Args,
   }
 }
 
+static const char *getX86TargetCPU(const ArgList &Args,
+                                   const llvm::Triple &Triple) {
+  if (const Arg *A = Args.getLastArg(options::OPT_march_EQ)) {
+    if (StringRef(A->getValue()) != "native")
+      return A->getValue();
+
+    // FIXME: Reject attempts to use -march=native unless the target matches
+    // the host.
+    //
+    // FIXME: We should also incorporate the detected target features for use
+    // with -native.
+    std::string CPU = llvm::sys::getHostCPUName();
+    if (!CPU.empty() && CPU != "generic")
+      return Args.MakeArgString(CPU);
+  }
+
+  // Select the default CPU if none was given (or detection failed).
+
+  if (Triple.getArch() != llvm::Triple::x86_64 &&
+      Triple.getArch() != llvm::Triple::x86)
+    return 0; // This routine is only handling x86 targets.
+
+  bool Is64Bit = Triple.getArch() == llvm::Triple::x86_64;
+
+  // FIXME: Need target hooks.
+  if (Triple.isOSDarwin())
+    return Is64Bit ? "core2" : "yonah";
+
+  // Everything else goes to x86-64 in 64-bit mode.
+  if (Is64Bit)
+    return "x86-64";
+
+  if (Triple.getOSName().startswith("haiku"))
+    return "i586";
+  if (Triple.getOSName().startswith("openbsd"))
+    return "i486";
+  if (Triple.getOSName().startswith("bitrig"))
+    return "i686";
+  if (Triple.getOSName().startswith("freebsd"))
+    return "i486";
+  if (Triple.getOSName().startswith("netbsd"))
+    return "i486";
+  // All x86 devices running Android have core2 as their common
+  // denominator. This makes a better choice than pentium4.
+  if (Triple.getEnvironment() == llvm::Triple::Android)
+    return "core2";
+
+  // Fallback to p4.
+  return "pentium4";
+}
+
 void Clang::AddX86TargetArgs(const ArgList &Args,
                              ArgStringList &CmdArgs) const {
-  const bool isAndroid =
-    getToolChain().getTriple().getEnvironment() == llvm::Triple::Android;
   if (!Args.hasFlag(options::OPT_mred_zone,
                     options::OPT_mno_red_zone,
                     true) ||
@@ -1142,65 +1193,7 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
                    false))
     CmdArgs.push_back("-no-implicit-float");
 
-  const char *CPUName = 0;
-  if (const Arg *A = Args.getLastArg(options::OPT_march_EQ)) {
-    if (StringRef(A->getValue()) == "native") {
-      // FIXME: Reject attempts to use -march=native unless the target matches
-      // the host.
-      //
-      // FIXME: We should also incorporate the detected target features for use
-      // with -native.
-      std::string CPU = llvm::sys::getHostCPUName();
-      if (!CPU.empty() && CPU != "generic")
-        CPUName = Args.MakeArgString(CPU);
-    } else
-      CPUName = A->getValue();
-  }
-
-  // Select the default CPU if none was given (or detection failed).
-  if (!CPUName) {
-    // FIXME: Need target hooks.
-    if (getToolChain().getTriple().isOSDarwin()) {
-      if (getToolChain().getArch() == llvm::Triple::x86_64)
-        CPUName = "core2";
-      else if (getToolChain().getArch() == llvm::Triple::x86)
-        CPUName = "yonah";
-    } else if (getToolChain().getOS().startswith("haiku"))  {
-      if (getToolChain().getArch() == llvm::Triple::x86_64)
-        CPUName = "x86-64";
-      else if (getToolChain().getArch() == llvm::Triple::x86)
-        CPUName = "i586";
-    } else if (getToolChain().getOS().startswith("openbsd"))  {
-      if (getToolChain().getArch() == llvm::Triple::x86_64)
-        CPUName = "x86-64";
-      else if (getToolChain().getArch() == llvm::Triple::x86)
-        CPUName = "i486";
-    } else if (getToolChain().getOS().startswith("bitrig"))  {
-      if (getToolChain().getArch() == llvm::Triple::x86_64)
-        CPUName = "x86-64";
-      else if (getToolChain().getArch() == llvm::Triple::x86)
-        CPUName = "i686";
-    } else if (getToolChain().getOS().startswith("freebsd"))  {
-      if (getToolChain().getArch() == llvm::Triple::x86_64)
-        CPUName = "x86-64";
-      else if (getToolChain().getArch() == llvm::Triple::x86)
-        CPUName = "i486";
-    } else if (getToolChain().getOS().startswith("netbsd"))  {
-      if (getToolChain().getArch() == llvm::Triple::x86_64)
-        CPUName = "x86-64";
-      else if (getToolChain().getArch() == llvm::Triple::x86)
-        CPUName = "i486";
-    } else {
-      if (getToolChain().getArch() == llvm::Triple::x86_64)
-        CPUName = "x86-64";
-      else if (getToolChain().getArch() == llvm::Triple::x86)
-        // All x86 devices running Android have core2 as their common
-        // denominator. This makes a better choice than pentium4.
-        CPUName = isAndroid ? "core2" : "pentium4";
-    }
-  }
-
-  if (CPUName) {
+  if (const char *CPUName = getX86TargetCPU(Args, getToolChain().getTriple())) {
     CmdArgs.push_back("-target-cpu");
     CmdArgs.push_back(CPUName);
   }
@@ -1451,9 +1444,11 @@ static bool UseRelaxAll(Compilation &C, const ArgList &Args) {
     RelaxDefault);
 }
 
-SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args) {
-  Kind = 0;
-
+SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args)
+    : Kind(0), BlacklistFile(""), MsanTrackOrigins(false),
+      AsanZeroBaseShadow(false) {
+  unsigned AllKinds = 0;  // All kinds of sanitizers that were turned on
+                          // at least once (possibly, disabled further).
   for (ArgList::const_iterator I = Args.begin(), E = Args.end(); I != E; ++I) {
     unsigned Add, Remove;
     if (!parse(D, Args, *I, Add, Remove, true))
@@ -1461,6 +1456,7 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args) {
     (*I)->claim();
     Kind |= Add;
     Kind &= ~Remove;
+    AllKinds |= Add;
   }
 
   // Only one runtime library can be used at once.
@@ -1481,11 +1477,12 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args) {
       << lastArgumentForKind(D, Args, NeedsMsanRt);
 
   // If -fsanitize contains extra features of ASan, it should also
-  // explicitly contain -fsanitize=address.
-  if (NeedsAsan && ((Kind & Address) == 0))
-    D.Diag(diag::err_drv_argument_only_allowed_with)
-      << lastArgumentForKind(D, Args, NeedsAsanRt)
-      << "-fsanitize=address";
+  // explicitly contain -fsanitize=address (probably, turned off later in the
+  // command line).
+  if ((Kind & AddressFull) != 0 && (AllKinds & Address) == 0)
+    D.Diag(diag::warn_drv_unused_sanitizer)
+     << lastArgumentForKind(D, Args, AddressFull)
+     << "-fsanitize=address";
 
   // Parse -f(no-)sanitize-blacklist options.
   if (Arg *BLArg = Args.getLastArg(options::OPT_fsanitize_blacklist,
@@ -1501,10 +1498,17 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args) {
   }
 
   // Parse -f(no-)sanitize-memory-track-origins options.
-  if (Kind & Memory)
+  if (NeedsMsan)
     MsanTrackOrigins =
       Args.hasFlag(options::OPT_fsanitize_memory_track_origins,
                    options::OPT_fno_sanitize_memory_track_origins,
+                   /* Default */false);
+
+  // Parse -f(no-)sanitize-address-zero-base-shadow options.
+  if (NeedsAsan)
+    AsanZeroBaseShadow =
+      Args.hasFlag(options::OPT_fsanitize_address_zero_base_shadow,
+                   options::OPT_fno_sanitize_address_zero_base_shadow,
                    /* Default */false);
 }
 
@@ -1525,6 +1529,13 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
     CmdArgs.insert(CmdArgs.begin(), Args.MakeArgString(LibAsan));
   } else {
     if (!Args.hasArg(options::OPT_shared)) {
+      bool ZeroBaseShadow = Args.hasFlag(
+          options::OPT_fsanitize_address_zero_base_shadow,
+          options::OPT_fno_sanitize_address_zero_base_shadow, false);
+      if (ZeroBaseShadow && !Args.hasArg(options::OPT_pie)) {
+        TC.getDriver().Diag(diag::err_drv_argument_only_allowed_with) <<
+            "-fsanitize-address-zero-base-shadow" << "-pie";
+      }
       // LibAsan is "libclang_rt.asan-<ArchName>.a" in the Linux library
       // resource directory.
       SmallString<128> LibAsan(TC.getDriver().ResourceDir);
@@ -1595,17 +1606,15 @@ static void addMsanRTLinux(const ToolChain &TC, const ArgList &Args,
 /// (Linux).
 static void addUbsanRTLinux(const ToolChain &TC, const ArgList &Args,
                             ArgStringList &CmdArgs) {
-  if (!Args.hasArg(options::OPT_shared)) {
-    // LibUbsan is "libclang_rt.ubsan-<ArchName>.a" in the Linux library
-    // resource directory.
-    SmallString<128> LibUbsan(TC.getDriver().ResourceDir);
-    llvm::sys::path::append(LibUbsan, "lib", "linux",
-                            (Twine("libclang_rt.ubsan-") +
-                             TC.getArchName() + ".a"));
-    CmdArgs.push_back(Args.MakeArgString(LibUbsan));
-    CmdArgs.push_back("-lpthread");
-    CmdArgs.push_back("-export-dynamic");
-  }
+  // LibUbsan is "libclang_rt.ubsan-<ArchName>.a" in the Linux library
+  // resource directory.
+  SmallString<128> LibUbsan(TC.getDriver().ResourceDir);
+  llvm::sys::path::append(LibUbsan, "lib", "linux",
+                          (Twine("libclang_rt.ubsan-") +
+                           TC.getArchName() + ".a"));
+  CmdArgs.push_back(Args.MakeArgString(LibUbsan));
+  CmdArgs.push_back("-lpthread");
+  CmdArgs.push_back("-export-dynamic");
 }
 
 static bool shouldUseFramePointer(const ArgList &Args,
@@ -2297,7 +2306,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   //
   // FIXME: Support -fpreprocessed
   if (types::getPreprocessedType(InputType) != types::TY_INVALID)
-    AddPreprocessingOptions(C, D, Args, CmdArgs, Output, Inputs);
+    AddPreprocessingOptions(C, JA, D, Args, CmdArgs, Output, Inputs);
 
   // Don't warn about "clang -c -DPIC -fPIC test.i" because libtool.m4 assumes
   // that "The compiler can only warn and ignore the option if not recognized".
@@ -2633,12 +2642,24 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -fmodules enables modules (off by default). However, for C++/Objective-C++,
   // users must also pass -fcxx-modules. The latter flag will disappear once the
   // modules implementation is solid for C++/Objective-C++ programs as well.
+  bool HaveModules = false;
   if (Args.hasFlag(options::OPT_fmodules, options::OPT_fno_modules, false)) {
     bool AllowedInCXX = Args.hasFlag(options::OPT_fcxx_modules, 
                                      options::OPT_fno_cxx_modules, 
                                      false);
-    if (AllowedInCXX || !types::isCXX(InputType))
+    if (AllowedInCXX || !types::isCXX(InputType)) {
       CmdArgs.push_back("-fmodules");
+      HaveModules = true;
+    }
+  }
+
+  // -fmodules-autolink (on by default when modules is enabled) automatically
+  // links against libraries for imported modules.
+  if (HaveModules &&
+      Args.hasFlag(options::OPT_fmodules_autolink,
+                   options::OPT_fno_modules_autolink,
+                   true)) {
+    CmdArgs.push_back("-fmodules-autolink");
   }
 
   // -faccess-control is default.
@@ -2699,10 +2720,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasFlag(options::OPT_fms_extensions, options::OPT_fno_ms_extensions,
                    getToolChain().getTriple().getOS() == llvm::Triple::Win32))
     CmdArgs.push_back("-fms-extensions");
-
-  // -fms-inline-asm.
-  if (Args.hasArg(options::OPT_fenable_experimental_ms_inline_asm))
-    CmdArgs.push_back("-fenable-experimental-ms-inline-asm");
 
   // -fms-compatibility=0 is default.
   if (Args.hasFlag(options::OPT_fms_compatibility, 
@@ -3340,6 +3357,11 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
 
     // Add the -fdebug-compilation-dir flag if needed.
     addDebugCompDirArg(Args, CmdArgs);
+
+    // Set the AT_producer to the clang version when using the integrated
+    // assembler on assembly source files.
+    CmdArgs.push_back("-dwarf-debug-producer");
+    CmdArgs.push_back(Args.MakeArgString(getClangFullVersion()));
   }
 
   // Optionally embed the -cc1as level arguments into the debug info, for build
@@ -4276,11 +4298,11 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
   SanitizerArgs Sanitize(getToolChain().getDriver(), Args);
-  // If we're building a dynamic lib with -fsanitize=address, or
-  // -fsanitize=undefined, unresolved symbols may appear. Mark all
+  // If we're building a dynamic lib with -fsanitize=address,
+  // unresolved symbols may appear. Mark all
   // of them as dynamic_lookup. Linking executables is handled in
   // lib/Driver/ToolChains.cpp.
-  if (Sanitize.needsAsanRt() || Sanitize.needsUbsanRt()) {
+  if (Sanitize.needsAsanRt()) {
     if (Args.hasArg(options::OPT_dynamiclib) ||
         Args.hasArg(options::OPT_bundle)) {
       CmdArgs.push_back("-undefined");
@@ -5505,7 +5527,7 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (!D.SysRoot.empty())
     CmdArgs.push_back(Args.MakeArgString("--sysroot=" + D.SysRoot));
 
-  if (Args.hasArg(options::OPT_pie))
+  if (Args.hasArg(options::OPT_pie) && !Args.hasArg(options::OPT_shared))
     CmdArgs.push_back("-pie");
 
   if (Args.hasArg(options::OPT_rdynamic))
@@ -5648,7 +5670,26 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-plugin");
     std::string Plugin = ToolChain.getDriver().Dir + "/../lib/LLVMgold.so";
     CmdArgs.push_back(Args.MakeArgString(Plugin));
+
+    // Try to pass driver level flags relevant to LTO code generation down to
+    // the plugin.
+
+    // Handle architecture-specific flags for selecting CPU variants.
+    if (ToolChain.getArch() == llvm::Triple::x86 ||
+        ToolChain.getArch() == llvm::Triple::x86_64)
+      CmdArgs.push_back(
+          Args.MakeArgString(Twine("-plugin-opt=mcpu=") +
+                             getX86TargetCPU(Args, ToolChain.getTriple())));
+    else if (ToolChain.getArch() == llvm::Triple::arm ||
+             ToolChain.getArch() == llvm::Triple::thumb)
+      CmdArgs.push_back(
+          Args.MakeArgString(Twine("-plugin-opt=mcpu=") +
+                             getARMTargetCPU(Args, ToolChain.getTriple())));
+
+    // FIXME: Factor out logic for MIPS, PPC, and other targets to support this
+    // as well.
   }
+
 
   if (Args.hasArg(options::OPT_Z_Xlinker__no_demangle))
     CmdArgs.push_back("--no-demangle");
@@ -5685,10 +5726,19 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       if (Args.hasArg(options::OPT_static))
         CmdArgs.push_back("--start-group");
 
+      bool OpenMP = Args.hasArg(options::OPT_fopenmp);
+      if (OpenMP) {
+        CmdArgs.push_back("-lgomp");
+
+        // FIXME: Exclude this for platforms whith libgomp that doesn't require
+        // librt. Most modern Linux platfroms require it, but some may not.
+        CmdArgs.push_back("-lrt");
+      }
+
       AddLibgcc(ToolChain.getTriple(), D, CmdArgs, Args);
 
       if (Args.hasArg(options::OPT_pthread) ||
-          Args.hasArg(options::OPT_pthreads))
+          Args.hasArg(options::OPT_pthreads) || OpenMP)
         CmdArgs.push_back("-lpthread");
 
       CmdArgs.push_back("-lc");

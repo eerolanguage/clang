@@ -270,8 +270,18 @@ static void moveAttrFromListToList(AttributeList &attr,
   spliceAttrIntoList(attr, toList);
 }
 
+/// The location of a type attribute.
+enum TypeAttrLocation {
+  /// The attribute is in the decl-specifier-seq.
+  TAL_DeclSpec,
+  /// The attribute is part of a DeclaratorChunk.
+  TAL_DeclChunk,
+  /// The attribute is immediately after the declaration's name.
+  TAL_DeclName
+};
+
 static void processTypeAttrs(TypeProcessingState &state,
-                             QualType &type, bool isDeclSpec,
+                             QualType &type, TypeAttrLocation TAL,
                              AttributeList *attrs);
 
 static bool handleFunctionTypeAttr(TypeProcessingState &state,
@@ -453,6 +463,15 @@ distributeFunctionTypeAttrFromDeclSpec(TypeProcessingState &state,
                                        QualType &declSpecType) {
   state.saveDeclSpecAttrs();
 
+  // C++11 attributes before the decl specifiers actually appertain to
+  // the declarators. Move them straight there. We don't support the
+  // 'put them wherever you like' semantics we allow for GNU attributes.
+  if (attr.isCXX11Attribute()) {
+    moveAttrFromListToList(attr, state.getCurrentAttrListRef(),
+                           state.getDeclarator().getAttrListRef());
+    return;
+  }
+
   // Try to distribute to the innermost.
   if (distributeFunctionTypeAttrToInnermost(state, attr,
                                             state.getCurrentAttrListRef(),
@@ -501,6 +520,11 @@ static void distributeTypeAttrsFromDeclarator(TypeProcessingState &state,
   AttributeList *next;
   do {
     next = attr->getNext();
+
+    // Do not distribute C++11 attributes. They have strict rules for what
+    // they appertain to.
+    if (attr->isCXX11Attribute())
+      continue;
 
     switch (attr->getKind()) {
     OBJC_POINTER_TYPE_ATTRS_CASELIST:
@@ -932,6 +956,10 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
     Result = Context.OCLImage3dTy;
     break;
 
+  case DeclSpec::TST_event_t:
+    Result = Context.OCLEventTy;
+    break;
+
   case DeclSpec::TST_error:
     Result = Context.IntTy;
     declarator.setInvalidType(true);
@@ -967,7 +995,7 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
   // list of type attributes to be temporarily saved while the type
   // attributes are pushed around.
   if (AttributeList *attrs = DS.getAttributes().getList())
-    processTypeAttrs(state, Result, true, attrs);
+    processTypeAttrs(state, Result, TAL_DeclSpec, attrs);
 
   // Apply const/volatile/restrict qualifiers to T.
   if (unsigned TypeQuals = DS.getTypeQualifiers()) {
@@ -1440,6 +1468,12 @@ QualType Sema::BuildArrayType(QualType T, ArrayType::ArraySizeModifier ASM,
 
     T = Context.getConstantArrayType(T, ConstVal, ASM, Quals);
   }
+
+  // OpenCL v1.2 s6.9.d: variable length arrays are not supported.
+  if (getLangOpts().OpenCL && T->isVariableArrayType()) {
+    Diag(Loc, diag::err_opencl_vla);
+    return QualType();
+  }
   // If this is not C99, extwarn about VLA's and C99 array size modifiers.
   if (!getLangOpts().C99) {
     if (T->isVariableArrayType()) {
@@ -1464,6 +1498,11 @@ QualType Sema::BuildArrayType(QualType T, ArrayType::ArraySizeModifier ASM,
       Diag(Loc,
            getLangOpts().CPlusPlus? diag::err_c99_array_usage_cxx
                                      : diag::ext_c99_array_usage) << ASM;
+  }
+
+  if (T->isVariableArrayType()) {
+    // Warn about VLAs for -Wvla.
+    Diag(Loc, diag::warn_vla_used);
   }
 
   return T;
@@ -1632,11 +1671,16 @@ QualType Sema::BuildMemberPointerType(QualType T, QualType Class,
     return QualType();
   }
 
-  // In the Microsoft ABI, the class is allowed to be an incomplete
-  // type. In such cases, the compiler makes a worst-case assumption.
-  // We make no such assumption right now, so emit an error if the
-  // class isn't a complete type.
-  if (Context.getTargetInfo().getCXXABI() == CXXABI_Microsoft &&
+  // C++ allows the class type in a member pointer to be an incomplete type.
+  // In the Microsoft ABI, the size of the member pointer can vary
+  // according to the class type, which means that we really need a
+  // complete type if possible, which means we need to instantiate templates.
+  //
+  // For now, just require a complete type, which will instantiate
+  // templates.  This will also error if the type is just forward-declared,
+  // which is a bug, but it's a bug that saves us from dealing with some
+  // complexities at the moment.
+  if (Context.getTargetInfo().getCXXABI().isMicrosoft() &&
       RequireCompleteType(Loc, Class, diag::err_incomplete_type))
     return QualType();
 
@@ -1863,7 +1907,7 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
     // "void" instead.
     T = SemaRef.Context.VoidTy;
     if (AttributeList *attrs = D.getDeclSpec().getAttributes().getList())
-      processTypeAttrs(state, T, true, attrs);
+      processTypeAttrs(state, T, TAL_DeclSpec, attrs);
     break;
 
   case UnqualifiedId::IK_ConversionFunctionId:
@@ -2411,10 +2455,16 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
       // Do not allow returning half FP value.
       // FIXME: This really should be in BuildFunctionType.
       if (T->isHalfType()) {
-        S.Diag(D.getIdentifierLoc(),
-             diag::err_parameters_retval_cannot_have_fp16_type) << 1
-          << FixItHint::CreateInsertion(D.getIdentifierLoc(), "*");
-        D.setInvalidType(true);
+        if (S.getLangOpts().OpenCL) {
+          if (!S.getOpenCLOptions().cl_khr_fp16) {
+            S.Diag(D.getIdentifierLoc(), diag::err_opencl_half_return) << T;
+            D.setInvalidType(true);
+          } 
+        } else {
+          S.Diag(D.getIdentifierLoc(),
+            diag::err_parameters_retval_cannot_have_fp16_type) << 1;
+          D.setInvalidType(true);
+        }
       }
 
       // cv-qualifiers on return types are pointless except when the type is a
@@ -2443,6 +2493,44 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
                                   D.getDeclSpec().getVolatileSpecLoc(),
                                   D.getDeclSpec().getRestrictSpecLoc(),
                                   S);
+      }
+
+      // Objective-C ARC ownership qualifiers are ignored on the function
+      // return type (by type canonicalization). Complain if this attribute
+      // was written here.
+      if (T.getQualifiers().hasObjCLifetime()) {
+        SourceLocation AttrLoc;
+        if (chunkIndex + 1 < D.getNumTypeObjects()) {
+          DeclaratorChunk ReturnTypeChunk = D.getTypeObject(chunkIndex + 1);
+          for (const AttributeList *Attr = ReturnTypeChunk.getAttrs();
+               Attr; Attr = Attr->getNext()) {
+            if (Attr->getKind() == AttributeList::AT_ObjCOwnership) {
+              AttrLoc = Attr->getLoc();
+              break;
+            }
+          }
+        }
+        if (AttrLoc.isInvalid()) {
+          for (const AttributeList *Attr
+                 = D.getDeclSpec().getAttributes().getList();
+               Attr; Attr = Attr->getNext()) {
+            if (Attr->getKind() == AttributeList::AT_ObjCOwnership) {
+              AttrLoc = Attr->getLoc();
+              break;
+            }
+          }
+        }
+
+        if (AttrLoc.isValid()) {
+          // The ownership attributes are almost always written via
+          // the predefined
+          // __strong/__weak/__autoreleasing/__unsafe_unretained.
+          if (AttrLoc.isMacroID())
+            AttrLoc = S.SourceMgr.getImmediateExpansionRange(AttrLoc).first;
+
+          S.Diag(AttrLoc, diag::warn_arc_lifetime_result_type)
+            << T.getQualifiers().getObjCLifetime();
+        }
       }
 
       if (LangOpts.CPlusPlus && D.getDeclSpec().isTypeSpecOwned()) {
@@ -2549,10 +2637,17 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
           } else if (ArgTy->isHalfType()) {
             // Disallow half FP arguments.
             // FIXME: This really should be in BuildFunctionType.
-            S.Diag(Param->getLocation(),
-               diag::err_parameters_retval_cannot_have_fp16_type) << 0
-            << FixItHint::CreateInsertion(Param->getLocation(), "*");
-            D.setInvalidType();
+            if (S.getLangOpts().OpenCL) {
+              if (!S.getOpenCLOptions().cl_khr_fp16) {
+                S.Diag(Param->getLocation(),
+                  diag::err_opencl_half_argument) << ArgTy;
+                D.setInvalidType();
+              }
+            } else {
+              S.Diag(Param->getLocation(),
+                diag::err_parameters_retval_cannot_have_fp16_type) << 0;
+              D.setInvalidType();
+            }
           } else if (!FTI.hasPrototype) {
             if (ArgTy->isPromotableIntegerType()) {
               ArgTy = Context.getPromotedIntegerType(ArgTy);
@@ -2669,7 +2764,7 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
 
     // See if there are any attributes on this declarator chunk.
     if (AttributeList *attrs = const_cast<AttributeList*>(DeclType.getAttrs()))
-      processTypeAttrs(state, T, false, attrs);
+      processTypeAttrs(state, T, TAL_DeclChunk, attrs);
   }
 
   if (LangOpts.CPlusPlus && T->isFunctionType()) {
@@ -2692,30 +2787,6 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
     } else {
       DeclContext *DC = S.computeDeclContext(D.getCXXScopeSpec());
       FreeFunction = (DC && !DC->isRecord());
-    }
-
-    // C++0x [dcl.constexpr]p8: A constexpr specifier for a non-static member
-    // function that is not a constructor declares that function to be const.
-    // FIXME: This should be deferred until we know whether this is a static
-    //        member function (for an out-of-class definition, we don't know
-    //        this until we perform redeclaration lookup).
-    if (D.getDeclSpec().isConstexprSpecified() && !FreeFunction &&
-        D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_static &&
-        D.getName().getKind() != UnqualifiedId::IK_ConstructorName &&
-        D.getName().getKind() != UnqualifiedId::IK_ConstructorTemplateId &&
-        !(FnTy->getTypeQuals() & DeclSpec::TQ_const)) {
-      // Rebuild function type adding a 'const' qualifier.
-      FunctionProtoType::ExtProtoInfo EPI = FnTy->getExtProtoInfo();
-      EPI.TypeQuals |= DeclSpec::TQ_const;
-      T = Context.getFunctionType(FnTy->getResultType(),
-                                  FnTy->arg_type_begin(),
-                                  FnTy->getNumArgs(), EPI);
-      // Rebuild any parens around the identifier in the function type.
-      for (unsigned i = 0, e = D.getNumTypeObjects(); i != e; ++i) {
-        if (D.getTypeObject(i).Kind != DeclaratorChunk::Paren)
-          break;
-        T = S.BuildParenType(T);
-      }
     }
 
     // C++11 [dcl.fct]p6 (w/DR1417):
@@ -2781,7 +2852,7 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
   // Apply any undistributed attributes from the declarator.
   if (!T.isNull())
     if (AttributeList *attrs = D.getAttributes())
-      processTypeAttrs(state, T, false, attrs);
+      processTypeAttrs(state, T, TAL_DeclName, attrs);
 
   // Diagnose any ignored type attributes.
   if (!T.isNull()) state.diagnoseIgnoredTypeAttrs(T);
@@ -4178,7 +4249,7 @@ static void HandleNeonVectorTypeAttr(QualType& CurType,
 }
 
 static void processTypeAttrs(TypeProcessingState &state, QualType &type,
-                             bool isDeclSpec, AttributeList *attrs) {
+                             TypeAttrLocation TAL, AttributeList *attrs) {
   // Scan through and apply attributes to this type where it makes sense.  Some
   // attributes (such as __address_space__, __vector_size__, etc) apply to the
   // type, but others can be present in the type specifiers even though they
@@ -4193,10 +4264,43 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     if (attr.isInvalid())
       continue;
 
+    if (attr.isCXX11Attribute()) {
+      // [[gnu::...]] attributes are treated as declaration attributes, so may
+      // not appertain to a DeclaratorChunk, even if we handle them as type
+      // attributes.
+      if (attr.getScopeName() && attr.getScopeName()->isStr("gnu")) {
+        if (TAL == TAL_DeclChunk) {
+          state.getSema().Diag(attr.getLoc(),
+                               diag::warn_cxx11_gnu_attribute_on_type)
+              << attr.getName();
+          continue;
+        }
+      } else if (TAL != TAL_DeclChunk) {
+        // Otherwise, only consider type processing for a C++11 attribute if
+        // it's actually been applied to a type.
+        continue;
+      }
+    }
+
     // If this is an attribute we can handle, do so now,
     // otherwise, add it to the FnAttrs list for rechaining.
     switch (attr.getKind()) {
-    default: break;
+    default:
+      // A C++11 attribute on a declarator chunk must appertain to a type.
+      if (attr.isCXX11Attribute() && TAL == TAL_DeclChunk)
+        state.getSema().Diag(attr.getLoc(), diag::err_attribute_not_type_attr)
+          << attr.getName()->getName();
+      break;
+
+    case AttributeList::UnknownAttribute:
+      if (attr.isCXX11Attribute() && TAL == TAL_DeclChunk)
+        state.getSema().Diag(attr.getLoc(),
+                             diag::warn_unknown_attribute_ignored)
+          << attr.getName();
+      break;
+
+    case AttributeList::IgnoredAttribute:
+      break;
 
     case AttributeList::AT_MayAlias:
       // FIXME: This attribute needs to actually be handled, but if we ignore
@@ -4236,16 +4340,9 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       attr.setUsedAsTypeAttr();
       break;
 
-    case AttributeList::AT_Win64:
-    case AttributeList::AT_Ptr32:
-    case AttributeList::AT_Ptr64:
-      // FIXME: don't ignore these
-      attr.setUsedAsTypeAttr();
-      break;
-
     case AttributeList::AT_NSReturnsRetained:
       if (!state.getSema().getLangOpts().ObjCAutoRefCount)
-    break;
+        break;
       // fallthrough into the function attrs
 
     FUNCTION_TYPE_ATTRS_CASELIST:
@@ -4253,7 +4350,7 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
 
       // Never process function type attributes as part of the
       // declaration-specifiers.
-      if (isDeclSpec)
+      if (TAL == TAL_DeclSpec)
         distributeFunctionTypeAttrFromDeclSpec(state, attr, type);
 
       // Otherwise, handle the possible delays.
