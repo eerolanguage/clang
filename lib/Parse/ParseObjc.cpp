@@ -2509,6 +2509,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
                                          MultiStmtArg(), false);
 
     if (!DefaultReturnExpr.isInvalid()) {
+      Sema::CompoundScopeRAII CompoundScope(Actions);
       SourceLocation BodyEndLoc = FnBody.get()->getLocEnd();
       StmtResult DefaultReturnStmt = 
           Actions.ActOnReturnStmt(ReturnLoc, DefaultReturnExpr.take());

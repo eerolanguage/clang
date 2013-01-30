@@ -2585,6 +2585,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
       Tok.getLength() == 0) { // only if inserted
     ConsumeToken(); // eat the "|"
     ParenCount++; // a r_paren was inserted earlier
+    Sema::CompoundScopeRAII CompoundScope(Actions);
     if (Tok.is(tok::kw_return)) {
       Stmt = Actions.ActOnReturnStmt(ConsumeToken(), // the "return"
                                      ParseAssignmentExpression().take());
