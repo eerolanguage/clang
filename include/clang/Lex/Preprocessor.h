@@ -160,6 +160,9 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// \brief True if pragmas are enabled.
   bool PragmasEnabled : 1;
 
+  /// \brief True if the current build action is a preprocessing action.
+  bool PreprocessedOutput : 1;
+
   /// \brief True if we are currently preprocessing a #if or #elif directive
   bool ParsingIfOrElifDirective;
 
@@ -345,6 +348,9 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// should use from the command line etc.
   std::string Predefines;
 
+  /// \brief The file ID for the preprocessor predefines.
+  FileID PredefinesFileID;
+
   /// TokenLexerCache - Cache macro expanders to reduce malloc traffic.
   enum { TokenLexerCacheSize = 8 };
   unsigned NumCachedTokenLexers;
@@ -477,6 +483,16 @@ public:
     return SuppressIncludeNotFoundError;
   }
 
+  /// Sets whether the preprocessor is responsible for producing output or if
+  /// it is producing tokens to be consumed by Parse and Sema.
+  void setPreprocessedOutput(bool IsPreprocessedOutput) {
+    PreprocessedOutput = IsPreprocessedOutput;
+  }
+
+  /// Returns true if the preprocessor is responsible for generating output,
+  /// false if it is producing tokens to be consumed by Parse and Sema.
+  bool isPreprocessedOutput() const { return PreprocessedOutput; }
+
   /// isCurrentLexer - Return true if we are lexing directly from the specified
   /// lexer.
   bool isCurrentLexer(const PreprocessorLexer *L) const {
@@ -492,6 +508,9 @@ public:
   /// Note that this ignores any potentially active macro expansions and _Pragma
   /// expansions going on at the time.
   PreprocessorLexer *getCurrentFileLexer() const;
+
+  /// \brief Returns the file ID for the preprocessor predefines.
+  FileID getPredefinesFileID() const { return PredefinesFileID; }
 
   /// getPPCallbacks/addPPCallbacks - Accessors for preprocessor callbacks.
   /// Note that this class takes ownership of any PPCallbacks object given to
@@ -1351,6 +1370,12 @@ private:
   /// EnterSourceFileWithPTH - Add a lexer to the top of the include stack and
   /// start getting tokens from it using the PTH cache.
   void EnterSourceFileWithPTH(PTHLexer *PL, const DirectoryLookup *Dir);
+
+  /// \brief Set the file ID for the preprocessor predefines.
+  void setPredefinesFileID(FileID FID) {
+    assert(PredefinesFileID.isInvalid() && "PredefinesFileID already set!");
+    PredefinesFileID = FID;
+  }
 
   /// IsFileLexer - Returns true if we are lexing from a file and not a
   ///  pragma or a macro.

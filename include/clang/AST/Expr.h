@@ -28,7 +28,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
-#include <cctype>
 
 namespace clang {
   class APValue;
@@ -1488,7 +1487,7 @@ public:
                      getByteLength());
   }
 
-  void outputString(raw_ostream &OS);
+  void outputString(raw_ostream &OS) const;
 
   uint32_t getCodeUnit(size_t i) const {
     assert(i < Length && "out of bounds access");
@@ -2205,6 +2204,15 @@ public:
   }
   const_arg_iterator arg_end() const {
     return SubExprs+PREARGS_START+getNumPreArgs()+getNumArgs();
+  }
+
+  /// This method provides fast access to all the subexpressions of
+  /// a CallExpr without going through the slower virtual child_iterator
+  /// interface.  This provides efficient reverse iteration of the
+  /// subexpressions.  This is currently used for CFG construction.
+  ArrayRef<Stmt*> getRawSubExprs() {
+    return ArrayRef<Stmt*>(SubExprs,
+                           getNumPreArgs() + PREARGS_START + getNumArgs());
   }
 
   /// getNumCommas - Return the number of commas that must have been present in

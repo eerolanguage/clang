@@ -1,8 +1,8 @@
 #include "clang/AST/CommentLexer.h"
 #include "clang/AST/CommentCommandTraits.h"
-#include "clang/Basic/ConvertUTF.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace clang {
@@ -30,18 +30,31 @@ bool isHTMLHexCharacterReferenceCharacter(char C) {
          (C >= 'A' && C <= 'F');
 }
 
+StringRef convertCodePointToUTF8(llvm::BumpPtrAllocator &Allocator,
+                                 unsigned CodePoint) {
+  char *Resolved = Allocator.Allocate<char>(UNI_MAX_UTF8_BYTES_PER_CODE_POINT);
+  char *ResolvedPtr = Resolved;
+  if (llvm::ConvertCodePointToUTF8(CodePoint, ResolvedPtr))
+    return StringRef(Resolved, ResolvedPtr - Resolved);
+  else
+    return StringRef();
+}
+
 #include "clang/AST/CommentHTMLTags.inc"
+#include "clang/AST/CommentHTMLNamedCharacterReferences.inc"
 
 } // unnamed namespace
 
 StringRef Lexer::resolveHTMLNamedCharacterReference(StringRef Name) const {
+  // Fast path, first check a few most widely used named character references.
   return llvm::StringSwitch<StringRef>(Name)
       .Case("amp", "&")
       .Case("lt", "<")
       .Case("gt", ">")
       .Case("quot", "\"")
       .Case("apos", "\'")
-      .Default("");
+      // Slow path.
+      .Default(translateHTMLNamedCharacterReferenceToUTF8(Name));
 }
 
 StringRef Lexer::resolveHTMLDecimalCharacterReference(StringRef Name) const {
@@ -51,13 +64,7 @@ StringRef Lexer::resolveHTMLDecimalCharacterReference(StringRef Name) const {
     CodePoint *= 10;
     CodePoint += Name[i] - '0';
   }
-
-  char *Resolved = Allocator.Allocate<char>(UNI_MAX_UTF8_BYTES_PER_CODE_POINT);
-  char *ResolvedPtr = Resolved;
-  if (ConvertCodePointToUTF8(CodePoint, ResolvedPtr))
-    return StringRef(Resolved, ResolvedPtr - Resolved);
-  else
-    return StringRef();
+  return convertCodePointToUTF8(Allocator, CodePoint);
 }
 
 StringRef Lexer::resolveHTMLHexCharacterReference(StringRef Name) const {
@@ -68,13 +75,7 @@ StringRef Lexer::resolveHTMLHexCharacterReference(StringRef Name) const {
     assert(isHTMLHexCharacterReferenceCharacter(C));
     CodePoint += llvm::hexDigitValue(C);
   }
-
-  char *Resolved = Allocator.Allocate<char>(UNI_MAX_UTF8_BYTES_PER_CODE_POINT);
-  char *ResolvedPtr = Resolved;
-  if (ConvertCodePointToUTF8(CodePoint, ResolvedPtr))
-    return StringRef(Resolved, ResolvedPtr - Resolved);
-  else
-    return StringRef();
+  return convertCodePointToUTF8(Allocator, CodePoint);
 }
 
 void Lexer::skipLineStartingDecorations() {

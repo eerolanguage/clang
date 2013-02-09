@@ -597,6 +597,7 @@ CXXABI *ASTContext::createCXXABI(const TargetInfo &T) {
   case TargetCXXABI::GenericARM:
   case TargetCXXABI::iOS:
     return CreateARMCXXABI(*this);
+  case TargetCXXABI::GenericAArch64: // Same as Itanium at this level
   case TargetCXXABI::GenericItanium:
     return CreateItaniumCXXABI(*this);
   case TargetCXXABI::Microsoft:
@@ -905,6 +906,7 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target) {
     InitBuiltinType(OCLImage2dArrayTy, BuiltinType::OCLImage2dArray);
     InitBuiltinType(OCLImage3dTy, BuiltinType::OCLImage3d);
 
+    InitBuiltinType(OCLSamplerTy, BuiltinType::OCLSampler);
     InitBuiltinType(OCLEventTy, BuiltinType::OCLEvent);
   }
   
@@ -1447,6 +1449,11 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
       Width = Target->getPointerWidth(0); 
       Align = Target->getPointerAlign(0);
       break;
+    case BuiltinType::OCLSampler:
+      // Samplers are modeled as integers.
+      Width = Target->getIntWidth();
+      Align = Target->getIntAlign();
+      break;
     case BuiltinType::OCLEvent:
     case BuiltinType::OCLImage1d:
     case BuiltinType::OCLImage1dArray:
@@ -1804,12 +1811,16 @@ void ASTContext::setObjCImplementation(ObjCCategoryDecl *CatD,
   ObjCImpls[CatD] = ImplD;
 }
 
-ObjCInterfaceDecl *ASTContext::getObjContainingInterface(NamedDecl *ND) const {
-  if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(ND->getDeclContext()))
+const ObjCInterfaceDecl *ASTContext::getObjContainingInterface(
+                                              const NamedDecl *ND) const {
+  if (const ObjCInterfaceDecl *ID =
+          dyn_cast<ObjCInterfaceDecl>(ND->getDeclContext()))
     return ID;
-  if (ObjCCategoryDecl *CD = dyn_cast<ObjCCategoryDecl>(ND->getDeclContext()))
+  if (const ObjCCategoryDecl *CD =
+          dyn_cast<ObjCCategoryDecl>(ND->getDeclContext()))
     return CD->getClassInterface();
-  if (ObjCImplDecl *IMD = dyn_cast<ObjCImplDecl>(ND->getDeclContext()))
+  if (const ObjCImplDecl *IMD =
+          dyn_cast<ObjCImplDecl>(ND->getDeclContext()))
     return IMD->getClassInterface();
 
   return 0;
@@ -4918,6 +4929,7 @@ static char getObjCEncodingForPrimitiveKind(const ASTContext *C,
     case BuiltinType::OCLImage2dArray:
     case BuiltinType::OCLImage3d:
     case BuiltinType::OCLEvent:
+    case BuiltinType::OCLSampler:
     case BuiltinType::Dependent:
 #define BUILTIN_TYPE(KIND, ID)
 #define PLACEHOLDER_TYPE(KIND, ID) \
@@ -5563,6 +5575,85 @@ static TypedefDecl *CreateVoidPtrBuiltinVaListDecl(const ASTContext *Context) {
   return VaListTypeDecl;
 }
 
+static TypedefDecl *
+CreateAArch64ABIBuiltinVaListDecl(const ASTContext *Context) {
+  RecordDecl *VaListTagDecl;
+  if (Context->getLangOpts().CPlusPlus) {
+    // namespace std { struct __va_list {
+    NamespaceDecl *NS;
+    NS = NamespaceDecl::Create(const_cast<ASTContext &>(*Context),
+                               Context->getTranslationUnitDecl(),
+                               /*Inline*/false, SourceLocation(),
+                               SourceLocation(), &Context->Idents.get("std"),
+                               /*PrevDecl*/0);
+
+    VaListTagDecl = CXXRecordDecl::Create(*Context, TTK_Struct,
+                                          Context->getTranslationUnitDecl(),
+                                          SourceLocation(), SourceLocation(),
+                                          &Context->Idents.get("__va_list"));
+    VaListTagDecl->setDeclContext(NS);
+  } else {
+    // struct __va_list
+    VaListTagDecl = CreateRecordDecl(*Context, TTK_Struct,
+                                   Context->getTranslationUnitDecl(),
+                                   &Context->Idents.get("__va_list"));
+  }
+
+  VaListTagDecl->startDefinition();
+
+  const size_t NumFields = 5;
+  QualType FieldTypes[NumFields];
+  const char *FieldNames[NumFields];
+
+  // void *__stack;
+  FieldTypes[0] = Context->getPointerType(Context->VoidTy);
+  FieldNames[0] = "__stack";
+
+  // void *__gr_top;
+  FieldTypes[1] = Context->getPointerType(Context->VoidTy);
+  FieldNames[1] = "__gr_top";
+
+  // void *__vr_top;
+  FieldTypes[2] = Context->getPointerType(Context->VoidTy);
+  FieldNames[2] = "__vr_top";
+
+  // int __gr_offs;
+  FieldTypes[3] = Context->IntTy;
+  FieldNames[3] = "__gr_offs";
+
+  // int __vr_offs;
+  FieldTypes[4] = Context->IntTy;
+  FieldNames[4] = "__vr_offs";
+
+  // Create fields
+  for (unsigned i = 0; i < NumFields; ++i) {
+    FieldDecl *Field = FieldDecl::Create(const_cast<ASTContext &>(*Context),
+                                         VaListTagDecl,
+                                         SourceLocation(),
+                                         SourceLocation(),
+                                         &Context->Idents.get(FieldNames[i]),
+                                         FieldTypes[i], /*TInfo=*/0,
+                                         /*BitWidth=*/0,
+                                         /*Mutable=*/false,
+                                         ICIS_NoInit);
+    Field->setAccess(AS_public);
+    VaListTagDecl->addDecl(Field);
+  }
+  VaListTagDecl->completeDefinition();
+  QualType VaListTagType = Context->getRecordType(VaListTagDecl);
+  Context->VaListTagTy = VaListTagType;
+
+  // } __builtin_va_list;
+  TypedefDecl *VaListTypedefDecl
+    = TypedefDecl::Create(const_cast<ASTContext &>(*Context),
+                          Context->getTranslationUnitDecl(),
+                          SourceLocation(), SourceLocation(),
+                          &Context->Idents.get("__builtin_va_list"),
+                          Context->getTrivialTypeSourceInfo(VaListTagType));
+
+  return VaListTypedefDecl;
+}
+
 static TypedefDecl *CreatePowerABIBuiltinVaListDecl(const ASTContext *Context) {
   // typedef struct __va_list_tag {
   RecordDecl *VaListTagDecl;
@@ -5796,6 +5887,8 @@ static TypedefDecl *CreateVaListDecl(const ASTContext *Context,
     return CreateCharPtrBuiltinVaListDecl(Context);
   case TargetInfo::VoidPtrBuiltinVaList:
     return CreateVoidPtrBuiltinVaListDecl(Context);
+  case TargetInfo::AArch64ABIBuiltinVaList:
+    return CreateAArch64ABIBuiltinVaListDecl(Context);
   case TargetInfo::PowerABIBuiltinVaList:
     return CreatePowerABIBuiltinVaListDecl(Context);
   case TargetInfo::X86_64ABIBuiltinVaList:
@@ -7642,6 +7735,7 @@ bool ASTContext::isNearlyEmpty(const CXXRecordDecl *RD) const {
 
 MangleContext *ASTContext::createMangleContext() {
   switch (Target->getCXXABI().getKind()) {
+  case TargetCXXABI::GenericAArch64:
   case TargetCXXABI::GenericItanium:
   case TargetCXXABI::GenericARM:
   case TargetCXXABI::iOS:

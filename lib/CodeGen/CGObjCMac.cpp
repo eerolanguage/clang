@@ -61,11 +61,13 @@ private:
     // Add the non-lazy-bind attribute, since objc_msgSend is likely to
     // be called a lot.
     llvm::Type *params[] = { ObjectPtrTy, SelectorPtrTy };
-    return CGM.CreateRuntimeFunction(llvm::FunctionType::get(ObjectPtrTy,
-                                                             params, true),
-                                     "objc_msgSend",
-                                     llvm::Attribute::get(CGM.getLLVMContext(),
-                                                llvm::Attribute::NonLazyBind));
+    return
+      CGM.CreateRuntimeFunction(llvm::FunctionType::get(ObjectPtrTy,
+                                                        params, true),
+                                "objc_msgSend",
+                                llvm::AttributeSet::get(CGM.getLLVMContext(),
+                                              llvm::AttributeSet::FunctionIndex,
+                                                 llvm::Attribute::NonLazyBind));
   }
 
   /// void objc_msgSend_stret (id, SEL, ...)
@@ -579,11 +581,13 @@ public:
   llvm::Constant *getSetJmpFn() {
     // This is specifically the prototype for x86.
     llvm::Type *params[] = { CGM.Int32Ty->getPointerTo() };
-    return CGM.CreateRuntimeFunction(llvm::FunctionType::get(CGM.Int32Ty,
-                                                             params, false),
-                                     "_setjmp",
-                                     llvm::Attribute::get(CGM.getLLVMContext(),
-                                                llvm::Attribute::NonLazyBind));
+    return
+      CGM.CreateRuntimeFunction(llvm::FunctionType::get(CGM.Int32Ty,
+                                                        params, false),
+                                "_setjmp",
+                                llvm::AttributeSet::get(CGM.getLLVMContext(),
+                                              llvm::AttributeSet::FunctionIndex,
+                                                 llvm::Attribute::NonLazyBind));
   }
 
 public:
@@ -4411,6 +4415,7 @@ llvm::Value *CGObjCMac::EmitSelector(CGBuilderTy &Builder, Selector Sel,
       CreateMetadataVar("\01L_OBJC_SELECTOR_REFERENCES_", Casted,
                         "__OBJC,__message_refs,literal_pointers,no_dead_strip",
                         4, true);
+    Entry->setExternallyInitialized(true);
   }
 
   if (lvalue)
@@ -6757,6 +6762,7 @@ llvm::Value *CGObjCNonFragileABIMac::EmitSelector(CGBuilderTy &Builder,
       new llvm::GlobalVariable(CGM.getModule(), ObjCTypes.SelectorPtrTy, false,
                                llvm::GlobalValue::InternalLinkage,
                                Casted, "\01L_OBJC_SELECTOR_REFERENCES_");
+    Entry->setExternallyInitialized(true);
     Entry->setSection("__DATA, __objc_selrefs, literal_pointers, no_dead_strip");
     CGM.AddUsedGlobal(Entry);
   }

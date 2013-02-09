@@ -19,6 +19,7 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
+#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/DeclSpec.h"
@@ -47,7 +48,9 @@ enum AttributeDeclKind {
   ExpectedFieldOrGlobalVar,
   ExpectedStruct,
   ExpectedVariableFunctionOrTag,
-  ExpectedTLSVar
+  ExpectedTLSVar,
+  ExpectedVariableOrField,
+  ExpectedVariableFieldOrTag
 };
 
 //===----------------------------------------------------------------------===//
@@ -3272,36 +3275,75 @@ static void handleAlignedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  //FIXME: The C++0x version of this attribute has more limited applicabilty
-  //       than GNU's, and should error out when it is used to specify a
-  //       weaker alignment, rather than being silently ignored.
+  // FIXME: The C++11 version of this attribute should error out when it is
+  //        used to specify a weaker alignment, rather than being silently
+  //        ignored. This constraint cannot be applied until we have seen
+  //        all the attributes which apply to the variable.
 
   if (Attr.getNumArgs() == 0) {
-    D->addAttr(::new (S.Context) AlignedAttr(Attr.getRange(), S.Context, 
-               true, 0, Attr.isDeclspecAttribute(),
-               Attr.getAttributeSpellingListIndex()));
+    D->addAttr(::new (S.Context) AlignedAttr(Attr.getRange(), S.Context,
+               true, 0, Attr.getAttributeSpellingListIndex()));
     return;
   }
 
-  S.AddAlignedAttr(Attr.getRange(), D, Attr.getArg(0), 
-                   Attr.isDeclspecAttribute(),
+  S.AddAlignedAttr(Attr.getRange(), D, Attr.getArg(0),
                    Attr.getAttributeSpellingListIndex());
 }
 
-void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E, 
-                          bool isDeclSpec, unsigned SpellingListIndex) {
+void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E,
+                          unsigned SpellingListIndex) {
   // FIXME: Handle pack-expansions here.
   if (DiagnoseUnexpandedParameterPack(E))
     return;
 
+  AlignedAttr TmpAttr(AttrRange, Context, true, E, SpellingListIndex);
+  SourceLocation AttrLoc = AttrRange.getBegin();
+
+  // C++11 alignas(...) and C11 _Alignas(...) have additional requirements.
+  if (TmpAttr.isAlignas()) {
+    // C++11 [dcl.align]p1:
+    //   An alignment-specifier may be applied to a variable or to a class
+    //   data member, but it shall not be applied to a bit-field, a function
+    //   parameter, the formal parameter of a catch clause, or a variable
+    //   declared with the register storage class specifier. An
+    //   alignment-specifier may also be applied to the declaration of a class
+    //   or enumeration type.
+    // C11 6.7.5/2:
+    //   An alignment attribute shall not be specified in a declaration of
+    //   a typedef, or a bit-field, or a function, or a parameter, or an
+    //   object declared with the register storage-class specifier.
+    int DiagKind = -1;
+    if (isa<ParmVarDecl>(D)) {
+      DiagKind = 0;
+    } else if (VarDecl *VD = dyn_cast<VarDecl>(D)) {
+      if (VD->getStorageClass() == SC_Register)
+        DiagKind = 1;
+      if (VD->isExceptionVariable())
+        DiagKind = 2;
+    } else if (FieldDecl *FD = dyn_cast<FieldDecl>(D)) {
+      if (FD->isBitField())
+        DiagKind = 3;
+    } else if (!isa<TagDecl>(D)) {
+      Diag(AttrLoc, diag::err_attribute_wrong_decl_type)
+        << (TmpAttr.isC11() ? "'_Alignas'" : "'alignas'")
+        << (TmpAttr.isC11() ? ExpectedVariableOrField
+                            : ExpectedVariableFieldOrTag);
+      return;
+    }
+    if (DiagKind != -1) {
+      Diag(AttrLoc, diag::err_alignas_attribute_wrong_decl_type)
+        << (TmpAttr.isC11() ? "'_Alignas'" : "'alignas'")
+        << DiagKind;
+      return;
+    }
+  }
+
   if (E->isTypeDependent() || E->isValueDependent()) {
     // Save dependent expressions in the AST to be instantiated.
-    D->addAttr(::new (Context) AlignedAttr(AttrRange, Context, true, E, 
-                                           isDeclSpec, SpellingListIndex));
+    D->addAttr(::new (Context) AlignedAttr(TmpAttr));
     return;
   }
-  
-  SourceLocation AttrLoc = AttrRange.getBegin();
+
   // FIXME: Cache the number on the Attr object?
   llvm::APSInt Alignment(32);
   ExprResult ICE
@@ -3310,32 +3352,76 @@ void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E,
         /*AllowFold*/ false);
   if (ICE.isInvalid())
     return;
-  if (!llvm::isPowerOf2_64(Alignment.getZExtValue())) {
+
+  // C++11 [dcl.align]p2:
+  //   -- if the constant expression evaluates to zero, the alignment
+  //      specifier shall have no effect
+  // C11 6.7.5p6:
+  //   An alignment specification of zero has no effect.
+  if (!(TmpAttr.isAlignas() && !Alignment) &&
+      !llvm::isPowerOf2_64(Alignment.getZExtValue())) {
     Diag(AttrLoc, diag::err_attribute_aligned_not_power_of_two)
       << E->getSourceRange();
     return;
   }
-  if (isDeclSpec) {
+
+  if (TmpAttr.isDeclspec()) {
     // We've already verified it's a power of 2, now let's make sure it's
     // 8192 or less.
     if (Alignment.getZExtValue() > 8192) {
-      Diag(AttrLoc, diag::err_attribute_aligned_greater_than_8192) 
+      Diag(AttrLoc, diag::err_attribute_aligned_greater_than_8192)
         << E->getSourceRange();
       return;
     }
   }
 
-  D->addAttr(::new (Context) AlignedAttr(AttrRange, Context, true, ICE.take(), 
-                                         isDeclSpec, SpellingListIndex));
+  D->addAttr(::new (Context) AlignedAttr(AttrRange, Context, true,
+                                         ICE.take(), SpellingListIndex));
 }
 
-void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, TypeSourceInfo *TS, 
-                          bool isDeclSpec, unsigned SpellingListIndex) {
+void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, TypeSourceInfo *TS,
+                          unsigned SpellingListIndex) {
   // FIXME: Cache the number on the Attr object if non-dependent?
   // FIXME: Perform checking of type validity
-  D->addAttr(::new (Context) AlignedAttr(AttrRange, Context, false, TS, 
-                                         isDeclSpec, SpellingListIndex));
+  D->addAttr(::new (Context) AlignedAttr(AttrRange, Context, false, TS,
+                                         SpellingListIndex));
   return;
+}
+
+void Sema::CheckAlignasUnderalignment(Decl *D) {
+  assert(D->hasAttrs() && "no attributes on decl");
+
+  QualType Ty;
+  if (ValueDecl *VD = dyn_cast<ValueDecl>(D))
+    Ty = VD->getType();
+  else
+    Ty = Context.getTagDeclType(cast<TagDecl>(D));
+  if (Ty->isDependentType())
+    return;
+
+  // C++11 [dcl.align]p5, C11 6.7.5/4:
+  //   The combined effect of all alignment attributes in a declaration shall
+  //   not specify an alignment that is less strict than the alignment that
+  //   would otherwise be required for the entity being declared.
+  AlignedAttr *AlignasAttr = 0;
+  unsigned Align = 0;
+  for (specific_attr_iterator<AlignedAttr>
+         I = D->specific_attr_begin<AlignedAttr>(),
+         E = D->specific_attr_end<AlignedAttr>(); I != E; ++I) {
+    if (I->isAlignmentDependent())
+      return;
+    if (I->isAlignas())
+      AlignasAttr = *I;
+    Align = std::max(Align, I->getAlignment(Context));
+  }
+
+  if (AlignasAttr && Align) {
+    CharUnits RequestedAlign = Context.toCharUnitsFromBits(Align);
+    CharUnits NaturalAlign = Context.getTypeAlignInChars(Ty);
+    if (NaturalAlign > RequestedAlign)
+      Diag(AlignasAttr->getLocation(), diag::err_alignas_underaligned)
+        << Ty << (unsigned)NaturalAlign.getQuantity();
+  }
 }
 
 /// handleModeAttr - This attribute modifies the width of a decl with primitive
@@ -4393,7 +4479,7 @@ static void handleUuidAttr(Sema &S, Decl *D, const AttributeList &Attr) {
           S.Diag(Attr.getLoc(), diag::err_attribute_uuid_malformed_guid);
           return;
         }
-      } else if (!isxdigit(*I)) {
+      } else if (!isHexDigit(*I)) {
         S.Diag(Attr.getLoc(), diag::err_attribute_uuid_malformed_guid);
         return;
       }
@@ -4813,7 +4899,7 @@ bool Sema::ProcessAccessDeclAttributeList(AccessSpecDecl *ASDecl,
 static void checkUnusedDeclAttributes(Sema &S, const AttributeList *A) {
   for ( ; A; A = A->getNext()) {
     // Only warn if the attribute is an unignored, non-type attribute.
-    if (A->isUsedAsTypeAttr()) continue;
+    if (A->isUsedAsTypeAttr() || A->isInvalid()) continue;
     if (A->getKind() == AttributeList::IgnoredAttribute) continue;
 
     if (A->getKind() == AttributeList::UnknownAttribute) {

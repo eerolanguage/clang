@@ -212,14 +212,15 @@ public:
 
     switch (Opts->AnalysisConstraintsOpt) {
     default:
-      llvm_unreachable("Unknown store manager.");
+      llvm_unreachable("Unknown constraint manager.");
 #define ANALYSIS_CONSTRAINTS(NAME, CMDFLAG, DESC, CREATEFN)     \
       case NAME##Model: CreateConstraintMgr = CREATEFN; break;
 #include "clang/StaticAnalyzer/Core/Analyses.def"
     }
   }
 
-  void DisplayFunction(const Decl *D, AnalysisMode Mode) {
+  void DisplayFunction(const Decl *D, AnalysisMode Mode,
+                       ExprEngine::InliningModes IMode) {
     if (!Opts->AnalyzerDisplayProgress)
       return;
 
@@ -230,8 +231,18 @@ public:
 
       if (Mode == AM_Syntax)
         llvm::errs() << " (Syntax)";
-      else if (Mode == AM_Path)
-        llvm::errs() << " (Path)";
+      else if (Mode == AM_Path) {
+        llvm::errs() << " (Path, ";
+        switch (IMode) {
+          case ExprEngine::Inline_None:
+            llvm::errs() << " Inline_None";
+            break;
+          case ExprEngine::Inline_All:
+            llvm::errs() << " Inline_All";
+            break;
+        }
+        llvm::errs() << ")";
+      }
       else
         assert(Mode == (AM_Syntax | AM_Path) && "Unexpected mode!");
 
@@ -569,7 +580,7 @@ void AnalysisConsumer::HandleCode(Decl *D, AnalysisMode Mode,
   if (Mode == AM_None)
     return;
 
-  DisplayFunction(D, Mode);
+  DisplayFunction(D, Mode, IMode);
   CFG *DeclCFG = Mgr->getCFG(D);
   if (DeclCFG) {
     unsigned CFGSize = DeclCFG->size();
@@ -616,7 +627,7 @@ void AnalysisConsumer::ActionExprEngine(Decl *D, bool ObjCGCEnabled,
 
   // Execute the worklist algorithm.
   Eng.ExecuteWorkList(Mgr->getAnalysisDeclContextManager().getStackFrame(D),
-                      Mgr->options.MaxNodes);
+                      Mgr->options.getMaxNodesPerTopLevelFunction());
 
   // Release the auditor (if any) so that it doesn't monitor the graph
   // created BugReporter.

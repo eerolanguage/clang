@@ -24,7 +24,7 @@
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtObjC.h"
 #include "clang/Analysis/Analyses/FormatString.h"
-#include "clang/Basic/ConvertUTF.h"
+#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
@@ -35,6 +35,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/raw_ostream.h"
 #include <limits>
 using namespace clang;
@@ -3253,7 +3254,8 @@ void Sema::CheckMemaccessArguments(const CallExpr *Call,
           if (const UnaryOperator *UnaryOp = dyn_cast<UnaryOperator>(Dest))
             if (UnaryOp->getOpcode() == UO_AddrOf)
               ActionIdx = 1; // If its an address-of operator, just remove it.
-          if (Context.getTypeSize(PointeeTy) == Context.getCharWidth())
+          if (!PointeeTy->isIncompleteType() &&
+              (Context.getTypeSize(PointeeTy) == Context.getCharWidth()))
             ActionIdx = 2; // If the pointee's size is sizeof(char),
                            // suggest an explicit length.
 
@@ -5776,10 +5778,11 @@ static bool IsTailPaddedMemberArray(Sema &S, llvm::APInt Size,
       TInfo = TDL->getTypeSourceInfo();
       continue;
     }
-    ConstantArrayTypeLoc CTL = cast<ConstantArrayTypeLoc>(TL);
-    const Expr *SizeExpr = dyn_cast<IntegerLiteral>(CTL.getSizeExpr());
-    if (!SizeExpr || SizeExpr->getExprLoc().isMacroID())
-      return false;
+    if (const ConstantArrayTypeLoc *CTL = dyn_cast<ConstantArrayTypeLoc>(&TL)) {
+      const Expr *SizeExpr = dyn_cast<IntegerLiteral>(CTL->getSizeExpr());
+      if (!SizeExpr || SizeExpr->getExprLoc().isMacroID())
+        return false;
+    }
     break;
   }
 
@@ -6170,7 +6173,7 @@ static bool isSetterLikeSelector(Selector sel) {
     return false;
 
   if (str.empty()) return true;
-  return !islower(str.front());
+  return !isLowercase(str.front());
 }
 
 /// Check a message send to see if it's likely to cause a retain cycle.

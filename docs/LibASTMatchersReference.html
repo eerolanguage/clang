@@ -361,6 +361,14 @@ Example matches 'a', L'a'
 </pre></td></tr>
 
 
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1Stmt.html">Stmt</a>&gt;</td><td class="name" onclick="toggle('compoundLiteralExpr0')"><a name="compoundLiteralExpr0Anchor">compoundLiteralExpr</a></td><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1CompoundLiteralExpr.html">CompoundLiteralExpr</a>&gt;...</td></tr>
+<tr><td colspan="4" class="doc" id="compoundLiteralExpr0"><pre>Matches compound (i.e. non-scalar) literals
+
+Example match: {1}, (1, 2)
+  int array[4] = {1}; vector int myvec = (vector int)(1, 2);
+</pre></td></tr>
+
+
 <tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1Stmt.html">Stmt</a>&gt;</td><td class="name" onclick="toggle('compoundStmt0')"><a name="compoundStmt0Anchor">compoundStmt</a></td><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1CompoundStmt.html">CompoundStmt</a>&gt;...</td></tr>
 <tr><td colspan="4" class="doc" id="compoundStmt0"><pre>Matches compound statements.
 
@@ -1291,8 +1299,8 @@ Example matches a &lt;&lt; b
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1CXXRecordDecl.html">CXXRecordDecl</a>&gt;</td><td class="name" onclick="toggle('isExplicitTemplateSpecialization0')"><a name="isExplicitTemplateSpecialization0Anchor">isExplicitTemplateSpecialization</a></td><td></td></tr>
-<tr><td colspan="4" class="doc" id="isExplicitTemplateSpecialization0"><pre>Matches explicit template specializations of function, class, or
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1CXXRecordDecl.html">CXXRecordDecl</a>&gt;</td><td class="name" onclick="toggle('isExplicitTemplateSpecialization2')"><a name="isExplicitTemplateSpecialization2Anchor">isExplicitTemplateSpecialization</a></td><td></td></tr>
+<tr><td colspan="4" class="doc" id="isExplicitTemplateSpecialization2"><pre>Matches explicit template specializations of function, class, or
 static member variable template instantiations.
 
 Given
@@ -1311,8 +1319,8 @@ isSameOrDerivedFrom(hasName(...)).
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1CXXRecordDecl.html">CXXRecordDecl</a>&gt;</td><td class="name" onclick="toggle('isTemplateInstantiation0')"><a name="isTemplateInstantiation0Anchor">isTemplateInstantiation</a></td><td></td></tr>
-<tr><td colspan="4" class="doc" id="isTemplateInstantiation0"><pre>Matches template instantiations of function, class, or static
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1CXXRecordDecl.html">CXXRecordDecl</a>&gt;</td><td class="name" onclick="toggle('isTemplateInstantiation2')"><a name="isTemplateInstantiation2Anchor">isTemplateInstantiation</a></td><td></td></tr>
+<tr><td colspan="4" class="doc" id="isTemplateInstantiation2"><pre>Matches template instantiations of function, class, or static
 member variable template instantiations.
 
 Given
@@ -1390,6 +1398,13 @@ declCountIs(2)
 </pre></td></tr>
 
 
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1Decl.html">Decl</a>&gt;</td><td class="name" onclick="toggle('equalsNode0')"><a name="equalsNode0Anchor">equalsNode</a></td><td>Decl* Other</td></tr>
+<tr><td colspan="4" class="doc" id="equalsNode0"><pre>Matches if a node equals another node.
+
+Decl has pointer identity in the AST.
+</pre></td></tr>
+
+
 <tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1FloatingLiteral.html">FloatingLiteral</a>&gt;</td><td class="name" onclick="toggle('equals1')"><a name="equals1Anchor">equals</a></td><td>ValueT  Value</td></tr>
 <tr><td colspan="4" class="doc" id="equals1"><pre>Matches literals that are equal to the given value.
 
@@ -1401,8 +1416,8 @@ Usable as: Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1Charac
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1FunctionDecl.html">FunctionDecl</a>&gt;</td><td class="name" onclick="toggle('isDefinition0')"><a name="isDefinition0Anchor">isDefinition</a></td><td></td></tr>
-<tr><td colspan="4" class="doc" id="isDefinition0"><pre>Matches if a declaration has a body attached.
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1FunctionDecl.html">FunctionDecl</a>&gt;</td><td class="name" onclick="toggle('isDefinition2')"><a name="isDefinition2Anchor">isDefinition</a></td><td></td></tr>
+<tr><td colspan="4" class="doc" id="isDefinition2"><pre>Matches if a declaration has a body attached.
 
 Example matches A, va, fa
   class A {};
@@ -1416,8 +1431,8 @@ Usable as: Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1TagDec
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1FunctionDecl.html">FunctionDecl</a>&gt;</td><td class="name" onclick="toggle('isExplicitTemplateSpecialization2')"><a name="isExplicitTemplateSpecialization2Anchor">isExplicitTemplateSpecialization</a></td><td></td></tr>
-<tr><td colspan="4" class="doc" id="isExplicitTemplateSpecialization2"><pre>Matches explicit template specializations of function, class, or
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1FunctionDecl.html">FunctionDecl</a>&gt;</td><td class="name" onclick="toggle('isExplicitTemplateSpecialization0')"><a name="isExplicitTemplateSpecialization0Anchor">isExplicitTemplateSpecialization</a></td><td></td></tr>
+<tr><td colspan="4" class="doc" id="isExplicitTemplateSpecialization0"><pre>Matches explicit template specializations of function, class, or
 static member variable template instantiations.
 
 Given
@@ -1442,8 +1457,8 @@ functionDecl(isExternC())
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1FunctionDecl.html">FunctionDecl</a>&gt;</td><td class="name" onclick="toggle('isTemplateInstantiation2')"><a name="isTemplateInstantiation2Anchor">isTemplateInstantiation</a></td><td></td></tr>
-<tr><td colspan="4" class="doc" id="isTemplateInstantiation2"><pre>Matches template instantiations of function, class, or static
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1FunctionDecl.html">FunctionDecl</a>&gt;</td><td class="name" onclick="toggle('isTemplateInstantiation0')"><a name="isTemplateInstantiation0Anchor">isTemplateInstantiation</a></td><td></td></tr>
+<tr><td colspan="4" class="doc" id="isTemplateInstantiation0"><pre>Matches template instantiations of function, class, or static
 member variable template instantiations.
 
 Given
@@ -1573,8 +1588,16 @@ matches "a(int)", "b(long)", but not "c(double)".
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1TagDecl.html">TagDecl</a>&gt;</td><td class="name" onclick="toggle('isDefinition2')"><a name="isDefinition2Anchor">isDefinition</a></td><td></td></tr>
-<tr><td colspan="4" class="doc" id="isDefinition2"><pre>Matches if a declaration has a body attached.
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1Stmt.html">Stmt</a>&gt;</td><td class="name" onclick="toggle('equalsNode1')"><a name="equalsNode1Anchor">equalsNode</a></td><td>Stmt* Other</td></tr>
+<tr><td colspan="4" class="doc" id="equalsNode1"><pre>Matches if a node equals another node.
+
+Stmt has pointer identity in the AST.
+
+</pre></td></tr>
+
+
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1TagDecl.html">TagDecl</a>&gt;</td><td class="name" onclick="toggle('isDefinition0')"><a name="isDefinition0Anchor">isDefinition</a></td><td></td></tr>
+<tr><td colspan="4" class="doc" id="isDefinition0"><pre>Matches if a declaration has a body attached.
 
 Example matches A, va, fa
   class A {};
@@ -1674,6 +1697,40 @@ match expressions.</p>
 <table>
 <tr style="text-align:left"><th>Return type</th><th>Name</th><th>Parameters</th></tr>
 <!-- START_TRAVERSAL_MATCHERS -->
+
+<tr><td>Matcher&lt;*&gt;</td><td class="name" onclick="toggle('eachOf0')"><a name="eachOf0Anchor">eachOf</a></td><td>Matcher&lt;*&gt;  P1, Matcher&lt;*&gt;  P2</td></tr>
+<tr><td colspan="4" class="doc" id="eachOf0"><pre>Matches if any of the given matchers matches.
+
+Unlike anyOf, eachOf will generate a match result for each
+matching submatcher.
+
+For example, in:
+  class A { int a; int b; };
+The matcher:
+  recordDecl(eachOf(has(fieldDecl(hasName("a")).bind("v")),
+                    has(fieldDecl(hasName("b")).bind("v"))))
+will generate two results binding "v", the first of which binds
+the field declaration of a, the second the field declaration of
+b.
+
+Usable as: Any Matcher
+</pre></td></tr>
+
+
+<tr><td>Matcher&lt;*&gt;</td><td class="name" onclick="toggle('findAll0')"><a name="findAll0Anchor">findAll</a></td><td>Matcher&lt;T&gt;  Matcher</td></tr>
+<tr><td colspan="4" class="doc" id="findAll0"><pre>Matches if the node or any descendant matches.
+
+Generates results for each match.
+
+For example, in:
+  class A { class B {}; class C {}; };
+The matcher:
+  recordDecl(hasName("::A"), findAll(recordDecl(isDefinition()).bind("m")))
+will generate results for A, B and C.
+
+Usable as: Any Matcher
+</pre></td></tr>
+
 
 <tr><td>Matcher&lt;*&gt;</td><td class="name" onclick="toggle('forEach0')"><a name="forEach0Anchor">forEach</a></td><td>Matcher&lt;ChildT&gt;  ChildMatcher</td></tr>
 <tr><td colspan="4" class="doc" id="forEach0"><pre>Matches AST nodes that have child AST nodes that match the
@@ -2535,7 +2592,7 @@ Usable as: Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1BlockP
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifierLoc.html">NestedNameSpecifierLoc</a>&gt;</td><td class="name" onclick="toggle('hasPrefix1')"><a name="hasPrefix1Anchor">hasPrefix</a></td><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifierLoc.html">NestedNameSpecifierLoc</a>&gt;  InnerMatcher</td></tr>
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifierLoc.html">NestedNameSpecifierLoc</a>&gt;</td><td class="name" onclick="toggle('hasPrefix1')"><a name="hasPrefix1Anchor">hasPrefix</a></td><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifierLoc.html">NestedNameSpecifierLoc</a>&gt; InnerMatcher</td></tr>
 <tr><td colspan="4" class="doc" id="hasPrefix1"><pre>Matches on the prefix of a NestedNameSpecifierLoc.
 
 Given
@@ -2565,7 +2622,7 @@ nestedNameSpecifierLoc(specifiesTypeLoc(loc(type(
 </pre></td></tr>
 
 
-<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifier.html">NestedNameSpecifier</a>&gt;</td><td class="name" onclick="toggle('hasPrefix0')"><a name="hasPrefix0Anchor">hasPrefix</a></td><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifier.html">NestedNameSpecifier</a>&gt;  InnerMatcher</td></tr>
+<tr><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifier.html">NestedNameSpecifier</a>&gt;</td><td class="name" onclick="toggle('hasPrefix0')"><a name="hasPrefix0Anchor">hasPrefix</a></td><td>Matcher&lt<a href="http://clang.llvm.org/doxygen/classclang_1_1NestedNameSpecifier.html">NestedNameSpecifier</a>&gt; InnerMatcher</td></tr>
 <tr><td colspan="4" class="doc" id="hasPrefix0"><pre>Matches on the prefix of a NestedNameSpecifier.
 
 Given

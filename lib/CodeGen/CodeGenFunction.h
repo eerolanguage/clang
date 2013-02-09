@@ -1282,6 +1282,8 @@ public:
 
   void pushDestroy(QualType::DestructionKind dtorKind,
                    llvm::Value *addr, QualType type);
+  void pushEHDestroy(QualType::DestructionKind dtorKind,
+                     llvm::Value *addr, QualType type);
   void pushDestroy(CleanupKind kind, llvm::Value *addr, QualType type,
                    Destroyer *destroyer, bool useEHCleanupForArray);
   void emitDestroy(llvm::Value *addr, QualType type, Destroyer *destroyer,
@@ -1411,7 +1413,7 @@ public:
 
   /// EmitReturnBlock - Emit the unified return block, trying to avoid its
   /// emission when possible.
-  bool EmitReturnBlock();
+  void EmitReturnBlock();
 
   /// FinishFunction - Complete IR generation of the current function. It is
   /// legal to call this function even if there is no current insertion point.
@@ -1674,7 +1676,7 @@ public:
     }
     return false;
   }
-  /// EmitAggregateCopy - Emit an aggrate assignment.
+  /// EmitAggregateCopy - Emit an aggregate assignment.
   ///
   /// The difference to EmitAggregateCopy is that tail padding is not copied.
   /// This is required for correctness when assigning non-POD structures in C++.
@@ -1685,7 +1687,7 @@ public:
                       true);
   }
 
-  /// EmitAggregateCopy - Emit an aggrate copy.
+  /// EmitAggregateCopy - Emit an aggregate copy.
   ///
   /// \param isVolatile - True iff either the source or the destination is
   /// volatile.
@@ -1816,7 +1818,8 @@ public:
   void EmitDelegatingCXXConstructorCall(const CXXConstructorDecl *Ctor,
                                         const FunctionArgList &Args);
   void EmitCXXConstructorCall(const CXXConstructorDecl *D, CXXCtorType Type,
-                              bool ForVirtualBase, llvm::Value *This,
+                              bool ForVirtualBase, bool Delegating,
+                              llvm::Value *This,
                               CallExpr::const_arg_iterator ArgBeg,
                               CallExpr::const_arg_iterator ArgEnd);
   
@@ -1842,7 +1845,8 @@ public:
   static Destroyer destroyCXXObject;
 
   void EmitCXXDestructorCall(const CXXDestructorDecl *D, CXXDtorType Type,
-                             bool ForVirtualBase, llvm::Value *This);
+                             bool ForVirtualBase, bool Delegating,
+                             llvm::Value *This);
 
   void EmitNewArrayInitializer(const CXXNewExpr *E, QualType elementType,
                                llvm::Value *NewPtr, llvm::Value *NumElements);
@@ -2606,7 +2610,7 @@ public:
 
   /// \brief Create a basic block that will call the trap intrinsic, and emit a
   /// conditional branch to it, for the -ftrapv checks.
-  void EmitTrapvCheck(llvm::Value *Checked);
+  void EmitTrapCheck(llvm::Value *Checked);
 
   /// EmitCallArg - Emit a single call argument.
   void EmitCallArg(CallArgList &args, const Expr *E, QualType ArgType);

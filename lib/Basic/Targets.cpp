@@ -661,9 +661,19 @@ public:
     ArchDefine603   = 1 << 4,
     ArchDefine604   = 1 << 5,
     ArchDefinePwr4  = 1 << 6,
-    ArchDefinePwr6  = 1 << 7
+    ArchDefinePwr5  = 1 << 7,
+    ArchDefinePwr5x = 1 << 8,
+    ArchDefinePwr6  = 1 << 9,
+    ArchDefinePwr6x = 1 << 10,
+    ArchDefinePwr7  = 1 << 11,
+    ArchDefineA2    = 1 << 12,
+    ArchDefineA2q   = 1 << 13
   } ArchDefineTypes;
 
+  // Note: GCC recognizes the following additional cpus:
+  //  401, 403, 405, 405fp, 440fp, 464, 464fp, 476, 476fp, 505, 740, 801,
+  //  821, 823, 8540, 8548, e300c2, e300c3, e500mc64, e6500, 860, cell,
+  //  titan, rs64.
   virtual bool setCPU(const std::string &Name) {
     bool CPUKnown = llvm::StringSwitch<bool>(Name)
       .Case("generic", true)
@@ -677,6 +687,7 @@ public:
       .Case("604", true)
       .Case("604e", true)
       .Case("620", true)
+      .Case("630", true)
       .Case("g3", true)
       .Case("7400", true)
       .Case("g4", true)
@@ -686,11 +697,26 @@ public:
       .Case("970", true)
       .Case("g5", true)
       .Case("a2", true)
+      .Case("a2q", true)
       .Case("e500mc", true)
       .Case("e5500", true)
+      .Case("power3", true)
+      .Case("pwr3", true)
+      .Case("power4", true)
+      .Case("pwr4", true)
+      .Case("power5", true)
+      .Case("pwr5", true)
+      .Case("power5x", true)
+      .Case("pwr5x", true)
+      .Case("power6", true)
       .Case("pwr6", true)
+      .Case("power6x", true)
+      .Case("pwr6x", true)
+      .Case("power7", true)
       .Case("pwr7", true)
+      .Case("powerpc", true)
       .Case("ppc", true)
+      .Case("powerpc64", true)
       .Case("ppc64", true)
       .Default(false);
 
@@ -710,6 +736,12 @@ public:
 
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const;
+
+  virtual void getDefaultFeatures(llvm::StringMap<bool> &Features) const;
+
+  virtual bool setFeatureEnabled(llvm::StringMap<bool> &Features,
+                                 StringRef Name,
+                                 bool Enabled) const;
 
   virtual bool hasFeature(StringRef Feature) const;
   
@@ -880,14 +912,42 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
     .Case("604",   ArchDefineName | ArchDefinePpcgr)
     .Case("604e",  ArchDefineName | ArchDefine604 | ArchDefinePpcgr)
     .Case("620",   ArchDefineName | ArchDefinePpcgr)
+    .Case("630",   ArchDefineName | ArchDefinePpcgr)
     .Case("7400",  ArchDefineName | ArchDefinePpcgr)
     .Case("7450",  ArchDefineName | ArchDefinePpcgr)
     .Case("750",   ArchDefineName | ArchDefinePpcgr)
     .Case("970",   ArchDefineName | ArchDefinePwr4 | ArchDefinePpcgr
                      | ArchDefinePpcsq)
-    .Case("pwr6",  ArchDefinePwr6 | ArchDefinePpcgr | ArchDefinePpcsq)
-    .Case("pwr7",  ArchDefineName | ArchDefinePwr6 | ArchDefinePpcgr
+    .Case("a2",    ArchDefineA2)
+    .Case("a2q",   ArchDefineName | ArchDefineA2 | ArchDefineA2q)
+    .Case("pwr3",  ArchDefinePpcgr)
+    .Case("pwr4",  ArchDefineName | ArchDefinePpcgr | ArchDefinePpcsq)
+    .Case("pwr5",  ArchDefineName | ArchDefinePwr4 | ArchDefinePpcgr
                      | ArchDefinePpcsq)
+    .Case("pwr5x", ArchDefineName | ArchDefinePwr5 | ArchDefinePwr4
+                     | ArchDefinePpcgr | ArchDefinePpcsq)
+    .Case("pwr6",  ArchDefineName | ArchDefinePwr5x | ArchDefinePwr5
+                     | ArchDefinePwr4 | ArchDefinePpcgr | ArchDefinePpcsq)
+    .Case("pwr6x", ArchDefineName | ArchDefinePwr6 | ArchDefinePwr5x
+                     | ArchDefinePwr5 | ArchDefinePwr4 | ArchDefinePpcgr
+                     | ArchDefinePpcsq)
+    .Case("pwr7",  ArchDefineName | ArchDefinePwr6x | ArchDefinePwr6
+                     | ArchDefinePwr5x | ArchDefinePwr5 | ArchDefinePwr4
+                     | ArchDefinePwr6 | ArchDefinePpcgr | ArchDefinePpcsq)
+    .Case("power3",  ArchDefinePpcgr)
+    .Case("power4",  ArchDefinePwr4 | ArchDefinePpcgr | ArchDefinePpcsq)
+    .Case("power5",  ArchDefinePwr5 | ArchDefinePwr4 | ArchDefinePpcgr
+                       | ArchDefinePpcsq)
+    .Case("power5x", ArchDefinePwr5x | ArchDefinePwr5 | ArchDefinePwr4
+                       | ArchDefinePpcgr | ArchDefinePpcsq)
+    .Case("power6",  ArchDefinePwr6 | ArchDefinePwr5x | ArchDefinePwr5
+                       | ArchDefinePwr4 | ArchDefinePpcgr | ArchDefinePpcsq)
+    .Case("power6x", ArchDefinePwr6x | ArchDefinePwr6 | ArchDefinePwr5x
+                       | ArchDefinePwr5 | ArchDefinePwr4 | ArchDefinePpcgr
+                       | ArchDefinePpcsq)
+    .Case("power7",  ArchDefinePwr7 | ArchDefinePwr6x | ArchDefinePwr6
+                       | ArchDefinePwr5x | ArchDefinePwr5 | ArchDefinePwr4
+                       | ArchDefinePwr6 | ArchDefinePpcgr | ArchDefinePpcsq)
     .Default(ArchDefineNone);
 
   if (defs & ArchDefineName)
@@ -902,12 +962,79 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("_ARCH_603");
   if (defs & ArchDefine604)
     Builder.defineMacro("_ARCH_604");
-  if (defs & (ArchDefinePwr4 | ArchDefinePwr6))
+  if (defs & ArchDefinePwr4)
     Builder.defineMacro("_ARCH_PWR4");
-  if (defs & ArchDefinePwr6) {
+  if (defs & ArchDefinePwr5)
     Builder.defineMacro("_ARCH_PWR5");
+  if (defs & ArchDefinePwr5x)
+    Builder.defineMacro("_ARCH_PWR5X");
+  if (defs & ArchDefinePwr6)
     Builder.defineMacro("_ARCH_PWR6");
+  if (defs & ArchDefinePwr6x)
+    Builder.defineMacro("_ARCH_PWR6X");
+  if (defs & ArchDefinePwr7)
+    Builder.defineMacro("_ARCH_PWR7");
+  if (defs & ArchDefineA2)
+    Builder.defineMacro("_ARCH_A2");
+  if (defs & ArchDefineA2q) {
+    Builder.defineMacro("_ARCH_A2Q");
+    Builder.defineMacro("_ARCH_QP");
   }
+
+  if (getTriple().getVendor() == llvm::Triple::BGQ) {
+    Builder.defineMacro("__bg__");
+    Builder.defineMacro("__THW_BLUEGENE__");
+    Builder.defineMacro("__bgq__");
+    Builder.defineMacro("__TOS_BGQ__");
+  }
+
+  // FIXME: The following are not yet generated here by Clang, but are
+  //        generated by GCC:
+  //
+  //   _SOFT_FLOAT_
+  //   __RECIP_PRECISION__
+  //   __APPLE_ALTIVEC__
+  //   __VSX__
+  //   __RECIP__
+  //   __RECIPF__
+  //   __RSQRTE__
+  //   __RSQRTEF__
+  //   _SOFT_DOUBLE_
+  //   __NO_LWSYNC__
+  //   __HAVE_BSWAP__
+  //   __LONGDOUBLE128
+  //   __CMODEL_MEDIUM__
+  //   __CMODEL_LARGE__
+  //   _CALL_SYSV
+  //   _CALL_DARWIN
+  //   __NO_FPRS__
+}
+
+void PPCTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
+  Features["altivec"] = llvm::StringSwitch<bool>(CPU)
+    .Case("7400", true)
+    .Case("g4", true)
+    .Case("7450", true)
+    .Case("g4+", true)
+    .Case("970", true)
+    .Case("g5", true)
+    .Case("pwr6", true)
+    .Case("pwr7", true)
+    .Case("ppc64", true)
+    .Default(false);
+
+  Features["qpx"] = (CPU == "a2q");
+}
+
+bool PPCTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
+                                         StringRef Name,
+                                         bool Enabled) const {
+  if (Name == "altivec" || Name == "qpx") {
+    Features[Name] = Enabled;
+    return true;
+  }
+
+  return false;
 }
 
 bool PPCTargetInfo::hasFeature(StringRef Feature) const {
@@ -3020,6 +3147,186 @@ public:
      Int64Type = SignedLongLong;
   }
 };
+}
+
+namespace {
+class AArch64TargetInfo : public TargetInfo {
+  static const char * const GCCRegNames[];
+  static const TargetInfo::GCCRegAlias GCCRegAliases[];
+public:
+  AArch64TargetInfo(const std::string& triple) : TargetInfo(triple) {
+    BigEndian = false;
+    LongWidth = LongAlign = 64;
+    LongDoubleWidth = LongDoubleAlign = 128;
+    PointerWidth = PointerAlign = 64;
+    SuitableAlign = 128;
+    DescriptionString = "e-p:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-"
+                        "i64:64:64-i128:128:128-f32:32:32-f64:64:64-"
+                        "f128:128:128-n32:64-S128";
+
+    WCharType = UnsignedInt;
+    LongDoubleFormat = &llvm::APFloat::IEEEquad;
+
+    TheCXXABI.set(TargetCXXABI::GenericAArch64);
+  }
+  virtual void getTargetDefines(const LangOptions &Opts,
+                                MacroBuilder &Builder) const {
+    // GCC defines theses currently
+    Builder.defineMacro("__aarch64__");
+    Builder.defineMacro("__AARCH64EL__");
+
+    // ACLE predefines. Many can only have one possible value on v8 AArch64.
+
+    // FIXME: these were written based on an unreleased version of a 32-bit ACLE
+    // which was intended to be compatible with a 64-bit implementation. They
+    // will need updating when a real 64-bit ACLE exists. Particularly pressing
+    // instances are: __AARCH_ISA_A32, __AARCH_ISA_T32, __ARCH_PCS.
+    Builder.defineMacro("__AARCH_ACLE",    "101");
+    Builder.defineMacro("__AARCH",         "8");
+    Builder.defineMacro("__AARCH_PROFILE", "'A'");
+
+    Builder.defineMacro("__AARCH_FEATURE_UNALIGNED");
+    Builder.defineMacro("__AARCH_FEATURE_CLZ");
+    Builder.defineMacro("__AARCH_FEATURE_FMA");
+
+    // FIXME: ACLE 1.1 reserves bit 4. Will almost certainly come to mean
+    // 128-bit LDXP present, at which point this becomes 0x1f.
+    Builder.defineMacro("__AARCH_FEATURE_LDREX", "0xf");
+
+    // 0xe implies support for half, single and double precision operations.
+    Builder.defineMacro("__AARCH_FP", "0xe");
+
+    // PCS specifies this for SysV variants, which is all we support. Other ABIs
+    // may choose __AARCH_FP16_FORMAT_ALTERNATIVE.
+    Builder.defineMacro("__AARCH_FP16_FORMAT_IEEE");
+
+    if (Opts.FastMath || Opts.FiniteMathOnly)
+      Builder.defineMacro("__AARCH_FP_FAST");
+
+    if ((Opts.C99 || Opts.C11) && !Opts.Freestanding)
+      Builder.defineMacro("__AARCH_FP_FENV_ROUNDING");
+
+    Builder.defineMacro("__AARCH_SIZEOF_WCHAR_T",
+                        Opts.ShortWChar ? "2" : "4");
+
+    Builder.defineMacro("__AARCH_SIZEOF_MINIMAL_ENUM",
+                        Opts.ShortEnums ? "1" : "4");
+
+    if (BigEndian)
+      Builder.defineMacro("__AARCH_BIG_ENDIAN");
+  }
+  virtual void getTargetBuiltins(const Builtin::Info *&Records,
+                                 unsigned &NumRecords) const {
+    Records = 0;
+    NumRecords = 0;
+  }
+  virtual bool hasFeature(StringRef Feature) const {
+    return Feature == "aarch64";
+  }
+  virtual void getGCCRegNames(const char * const *&Names,
+                              unsigned &NumNames) const;
+  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                unsigned &NumAliases) const;
+
+  virtual bool isCLZForZeroUndef() const { return false; }
+
+  virtual bool validateAsmConstraint(const char *&Name,
+                                     TargetInfo::ConstraintInfo &Info) const {
+    switch (*Name) {
+    default: return false;
+    case 'w': // An FP/SIMD vector register
+      Info.setAllowsRegister();
+      return true;
+    case 'I': // Constant that can be used with an ADD instruction
+    case 'J': // Constant that can be used with a SUB instruction
+    case 'K': // Constant that can be used with a 32-bit logical instruction
+    case 'L': // Constant that can be used with a 64-bit logical instruction
+    case 'M': // Constant that can be used as a 32-bit MOV immediate
+    case 'N': // Constant that can be used as a 64-bit MOV immediate
+    case 'Y': // Floating point constant zero
+    case 'Z': // Integer constant zero
+      return true;
+    case 'Q': // A memory reference with base register and no offset
+      Info.setAllowsMemory();
+      return true;
+    case 'S': // A symbolic address
+      Info.setAllowsRegister();
+      return true;
+    case 'U':
+      // Ump: A memory address suitable for ldp/stp in SI, DI, SF and DF modes, whatever they may be
+      // Utf: A memory address suitable for ldp/stp in TF mode, whatever it may be
+      // Usa: An absolute symbolic address
+      // Ush: The high part (bits 32:12) of a pc-relative symbolic address
+      llvm_unreachable("FIXME: Unimplemented support for bizarre constraints");
+    }
+  }
+
+  virtual const char *getClobbers() const {
+    // There are no AArch64 clobbers shared by all asm statements.
+    return "";
+  }
+
+  virtual BuiltinVaListKind getBuiltinVaListKind() const {
+    return TargetInfo::AArch64ABIBuiltinVaList;
+  }
+};
+
+const char * const AArch64TargetInfo::GCCRegNames[] = {
+  "w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7",
+  "w8", "w9", "w10", "w11", "w12", "w13", "w14", "w15",
+  "w16", "w17", "w18", "w19", "w20", "w21", "w22", "w23",
+  "w24", "w25", "w26", "w27", "w28", "w29", "w30", "wsp", "wzr",
+
+  "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+  "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+  "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+  "x24", "x25", "x26", "x27", "x28", "x29", "x30", "sp", "xzr",
+
+  "b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7",
+  "b8", "b9", "b10", "b11", "b12", "b13", "b14", "b15",
+  "b16", "b17", "b18", "b19", "b20", "b21", "b22", "b23",
+  "b24", "b25", "b26", "b27", "b28", "b29", "b30", "b31",
+
+  "h0", "h1", "h2", "h3", "h4", "h5", "h6", "h7",
+  "h8", "h9", "h10", "h11", "h12", "h13", "h14", "h15",
+  "h16", "h17", "h18", "h19", "h20", "h21", "h22", "h23",
+  "h24", "h25", "h26", "h27", "h28", "h29", "h30", "h31",
+
+  "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
+  "s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15",
+  "s16", "s17", "s18", "s19", "s20", "s21", "s22", "s23",
+  "s24", "s25", "s26", "s27", "s28", "s29", "s30", "s31",
+
+  "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
+  "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+  "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23",
+  "d24", "d25", "d26", "d27", "d28", "d29", "d30", "d31",
+
+  "q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7",
+  "q8", "q9", "q10", "q11", "q12", "q13", "q14", "q15",
+  "q16", "q17", "q18", "q19", "q20", "q21", "q22", "q23",
+  "q24", "q25", "q26", "q27", "q28", "q29", "q30", "q31"
+};
+
+void AArch64TargetInfo::getGCCRegNames(const char * const *&Names,
+                                       unsigned &NumNames) const {
+  Names = GCCRegNames;
+  NumNames = llvm::array_lengthof(GCCRegNames);
+}
+
+const TargetInfo::GCCRegAlias AArch64TargetInfo::GCCRegAliases[] = {
+  { { "x16" }, "ip0"},
+  { { "x17" }, "ip1"},
+  { { "x29" }, "fp" },
+  { { "x30" }, "lr" }
+};
+
+void AArch64TargetInfo::getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                         unsigned &NumAliases) const {
+  Aliases = GCCRegAliases;
+  NumAliases = llvm::array_lengthof(GCCRegAliases);
+
+}
 } // end anonymous namespace
 
 namespace {
@@ -4539,6 +4846,14 @@ static TargetInfo *AllocateTarget(const std::string &T) {
 
   case llvm::Triple::hexagon:
     return new HexagonTargetInfo(T);
+
+  case llvm::Triple::aarch64:
+    switch (os) {
+    case llvm::Triple::Linux:
+      return new LinuxTargetInfo<AArch64TargetInfo>(T);
+    default:
+      return new AArch64TargetInfo(T);
+    }
 
   case llvm::Triple::arm:
   case llvm::Triple::thumb:

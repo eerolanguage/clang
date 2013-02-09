@@ -894,8 +894,9 @@ class TemplateDiff {
         GetTemplateDecl(FromIter, DefaultTTPD, FromDecl);
         GetTemplateDecl(ToIter, DefaultTTPD, ToDecl);
         Tree.SetNode(FromDecl, ToDecl);
-        Tree.SetSame(FromDecl && ToDecl &&
-                     FromDecl->getIdentifier() == ToDecl->getIdentifier());
+        Tree.SetSame(
+            FromDecl && ToDecl &&
+            FromDecl->getCanonicalDecl() == ToDecl->getCanonicalDecl());
       }
 
       if (!FromIter.isEnd()) ++FromIter;
@@ -920,8 +921,8 @@ class TemplateDiff {
   /// even if the template arguments are not.
   static bool hasSameBaseTemplate(const TemplateSpecializationType *FromTST,
                                   const TemplateSpecializationType *ToTST) {
-    return FromTST->getTemplateName().getAsTemplateDecl()->getIdentifier() ==
-           ToTST->getTemplateName().getAsTemplateDecl()->getIdentifier();
+    return FromTST->getTemplateName().getAsTemplateDecl()->getCanonicalDecl() ==
+           ToTST->getTemplateName().getAsTemplateDecl()->getCanonicalDecl();
   }
 
   /// hasSameTemplate - Returns true if both types are specialized from the
@@ -1278,21 +1279,29 @@ class TemplateDiff {
   void PrintTemplateTemplate(TemplateDecl *FromTD, TemplateDecl *ToTD,
                              bool FromDefault, bool ToDefault, bool Same) {
     assert((FromTD || ToTD) && "Only one template argument may be missing.");
+
+    std::string FromName = FromTD ? FromTD->getName() : "(no argument)";
+    std::string ToName = ToTD ? ToTD->getName() : "(no argument)";
+    if (FromTD && ToTD && FromName == ToName) {
+      FromName = FromTD->getQualifiedNameAsString();
+      ToName = ToTD->getQualifiedNameAsString();
+    }
+
     if (Same) {
       OS << "template " << FromTD->getNameAsString();
     } else if (!PrintTree) {
       OS << (FromDefault ? "(default) template " : "template ");
       Bold();
-      OS << (FromTD ? FromTD->getNameAsString() : "(no argument)");
+      OS << FromName;
       Unbold();
     } else {
       OS << (FromDefault ? "[(default) template " : "[template ");
       Bold();
-      OS << (FromTD ? FromTD->getNameAsString() : "(no argument)");
+      OS << FromName;
       Unbold();
       OS << " != " << (ToDefault ? "(default) template " : "template ");
       Bold();
-      OS << (ToTD ? ToTD->getNameAsString() : "(no argument)");
+      OS << ToName;
       Unbold();
       OS << ']';
     }

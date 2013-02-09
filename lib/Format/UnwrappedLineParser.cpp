@@ -11,9 +11,6 @@
 /// \brief This file contains the implementation of the UnwrappedLineParser,
 /// which turns a stream of tokens into UnwrappedLines.
 ///
-/// This is EXPERIMENTAL code under heavy development. It is not in a state yet,
-/// where it can be used to format real code.
-///
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "format-parser"
@@ -218,7 +215,7 @@ void UnwrappedLineParser::parsePPDirective() {
   nextToken();
 
   if (FormatTok.Tok.getIdentifierInfo() == NULL) {
-    addUnwrappedLine();
+    parsePPUnknown();
     return;
   }
 
@@ -508,6 +505,10 @@ void UnwrappedLineParser::parseNamespace() {
     nextToken();
   if (FormatTok.Tok.is(tok::l_brace)) {
     parseBlock(/*MustBeDeclaration=*/ true, 0);
+    // Munch the semicolon after a namespace. This is more common than one would
+    // think. Puttin the semicolon into its own line is very ugly.
+    if (FormatTok.Tok.is(tok::semi))
+      nextToken();
     addUnwrappedLine();
   }
   // FIXME: Add error handling.
@@ -653,9 +654,11 @@ void UnwrappedLineParser::parseRecord() {
     if (FormatTok.Tok.is(tok::l_paren)) {
       parseParens();
     }
-    // The actual identifier can be a nested name specifier.
+    // The actual identifier can be a nested name specifier, and in macros
+    // it is often token-pasted.
     while (FormatTok.Tok.is(tok::identifier) ||
-           FormatTok.Tok.is(tok::coloncolon))
+           FormatTok.Tok.is(tok::coloncolon) ||
+           FormatTok.Tok.is(tok::hashhash))
       nextToken();
 
     // Note that parsing away template declarations here leads to incorrectly
@@ -781,7 +784,7 @@ void UnwrappedLineParser::flushComments(bool NewlineBeforeNext) {
            I = CommentsBeforeNextToken.begin(),
            E = CommentsBeforeNextToken.end();
        I != E; ++I) {
-    if (I->HasUnescapedNewline && JustComments) {
+    if (I->NewlinesBefore && JustComments) {
       addUnwrappedLine();
     }
     pushToken(*I);
@@ -795,7 +798,7 @@ void UnwrappedLineParser::flushComments(bool NewlineBeforeNext) {
 void UnwrappedLineParser::nextToken() {
   if (eof())
     return;
-  flushComments(FormatTok.HasUnescapedNewline);
+  flushComments(FormatTok.NewlinesBefore > 0);
   pushToken(FormatTok);
   readToken();
 }
@@ -816,7 +819,7 @@ void UnwrappedLineParser::readToken() {
     }
     if (!FormatTok.Tok.is(tok::comment))
       return;
-    if (FormatTok.HasUnescapedNewline || FormatTok.IsFirst) {
+    if (FormatTok.NewlinesBefore > 0 || FormatTok.IsFirst) {
       CommentsInCurrentLine = false;
     }
     if (CommentsInCurrentLine) {

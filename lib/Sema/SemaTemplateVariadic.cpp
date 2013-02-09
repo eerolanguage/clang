@@ -737,6 +737,7 @@ bool Sema::containsUnexpandedParameterPacks(Declarator &D) {
   case TST_image2d_t:
   case TST_image2d_array_t:
   case TST_image3d_t:
+  case TST_sampler_t:
   case TST_event_t:
   case TST_error:
     break;
@@ -844,7 +845,7 @@ ExprResult Sema::ActOnSizeofParameterPackExpr(Scope *S,
     return ExprError();
   }
 
-  MarkAnyDeclReferenced(OpLoc, ParameterPack);
+  MarkAnyDeclReferenced(OpLoc, ParameterPack, true);
 
   return new (Context) SizeOfPackExpr(Context.getSizeType(), OpLoc, 
                                       ParameterPack, NameLoc, RParenLoc);

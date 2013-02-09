@@ -30,7 +30,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/Builtins.h"
-#include "clang/Basic/ConvertUTF.h"
+#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/Module.h"
 #include "clang/Basic/SourceManager.h"
@@ -44,8 +44,10 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CallSite.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/Mangler.h"
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -53,6 +55,7 @@ static const char AnnotationSection[] = "llvm.metadata";
 
 static CGCXXABI &createCXXABI(CodeGenModule &CGM) {
   switch (CGM.getContext().getTargetInfo().getCXXABI().getKind()) {
+  case TargetCXXABI::GenericAArch64:
   case TargetCXXABI::GenericARM:
   case TargetCXXABI::iOS:
   case TargetCXXABI::GenericItanium:
@@ -1231,7 +1234,7 @@ llvm::Constant *
 CodeGenModule::GetOrCreateLLVMFunction(StringRef MangledName,
                                        llvm::Type *Ty,
                                        GlobalDecl D, bool ForVTable,
-                                       llvm::Attribute ExtraAttrs) {
+                                       llvm::AttributeSet ExtraAttrs) {
   // Lookup the entry, lazily creating it if necessary.
   llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
   if (Entry) {
@@ -1267,8 +1270,8 @@ CodeGenModule::GetOrCreateLLVMFunction(StringRef MangledName,
   assert(F->getName() == MangledName && "name was uniqued!");
   if (D.getDecl())
     SetFunctionAttributes(D, F, IsIncompleteFunction);
-  if (ExtraAttrs.hasAttributes()) {
-    llvm::AttrBuilder B(ExtraAttrs);
+  if (ExtraAttrs.hasAttributes(llvm::AttributeSet::FunctionIndex)) {
+    llvm::AttrBuilder B(ExtraAttrs, llvm::AttributeSet::FunctionIndex);
     F->addAttributes(llvm::AttributeSet::FunctionIndex,
                      llvm::AttributeSet::get(VMContext,
                                              llvm::AttributeSet::FunctionIndex,
@@ -1344,7 +1347,7 @@ llvm::Constant *CodeGenModule::GetAddrOfFunction(GlobalDecl GD,
 llvm::Constant *
 CodeGenModule::CreateRuntimeFunction(llvm::FunctionType *FTy,
                                      StringRef Name,
-                                     llvm::Attribute ExtraAttrs) {
+                                     llvm::AttributeSet ExtraAttrs) {
   return GetOrCreateLLVMFunction(Name, FTy, GlobalDecl(), /*ForVTable=*/false,
                                  ExtraAttrs);
 }
@@ -2934,7 +2937,7 @@ llvm::Constant *CodeGenModule::EmitUuidofInitializer(StringRef Uuid,
   const char *Uuidstr = Uuid.data();
   for (int i = 0; i < 36; ++i) {
     if (i == 8 || i == 13 || i == 18 || i == 23) assert(Uuidstr[i] == '-');
-    else                                         assert(isxdigit(Uuidstr[i]));
+    else                                         assert(isHexDigit(Uuidstr[i]));
   }
   
   llvm::APInt Field0(32, StringRef(Uuidstr     , 8), 16);

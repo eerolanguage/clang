@@ -35,7 +35,8 @@ ASTConsumer *CreateModernObjCRewriter(const std::string &InFile,
                                 raw_ostream *OS,
                                 DiagnosticsEngine &Diags,
                                 const LangOptions &LOpts,
-                                bool SilenceRewriteMacroWarning);
+                                bool SilenceRewriteMacroWarning,
+                                bool LineInfo);
 
 // Translate Eero source code to standard Objective-C
 ASTConsumer *CreateEeroToObjCRewriter(const std::string &InFile,

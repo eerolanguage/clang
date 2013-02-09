@@ -1,6 +1,8 @@
 // RUN: rm -rf %t
 // RUN: mkdir %t
 
+// This file contains UTF-8 sequences.  Please don't "fix" them!
+
 // Check that we serialize comment source locations properly.
 // RUN: %clang_cc1 -x c++ -std=c++11 -emit-pch -o %t/out.pch %s
 // RUN: %clang_cc1 -x c++ -std=c++11 -include-pch %t/out.pch -fsyntax-only %s
@@ -600,6 +602,39 @@ void comment_to_html_conversion_33();
 // CHECK-NEXT:         (CXComment_Text Text=[i])
 // CHECK-NEXT:         (CXComment_HTMLEndTag Name=[em])))]
 
+// rdar://12392215
+/// &copy; the copyright symbol
+/// &trade; the trade mark symbol
+/// &reg; the registered trade mark symbol
+/// &nbsp; a non breakable space.
+/// &Delta; Greek letter Delta Δ.
+/// &Gamma; Greek letter Gamma Γ.
+void comment_to_html_conversion_34();
+
+// CHECK: comment-to-html-xml-conversion.cpp:[[@LINE-2]]:6: FunctionDecl=comment_to_html_conversion_34:{{.*}} FullCommentAsHTML=[<p class="para-brief"> © the copyright symbol ™ the trade mark symbol ® the registered trade mark symbol   a non breakable space. Δ Greek letter Delta Δ. Γ Greek letter Gamma Γ.</p>] FullCommentAsXML=[<Function file="{{[^"]+}}comment-to-html-xml-conversion.cpp" line="[[@LINE-2]]" column="6"><Name>comment_to_html_conversion_34</Name><USR>c:@F@comment_to_html_conversion_34#</USR><Declaration>void comment_to_html_conversion_34()</Declaration><Abstract><Para> © the copyright symbol ™ the trade mark symbol ® the registered trade mark symbol   a non breakable space. Δ Greek letter Delta Δ. Γ Greek letter Gamma Γ.</Para></Abstract></Function>]
+// CHECK-NEXT:  CommentAST=[
+// CHECK-NEXT:    (CXComment_FullComment
+// CHECK-NEXT:       (CXComment_Paragraph
+// CHECK-NEXT:         (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:         (CXComment_Text Text=[©])
+// CHECK-NEXT:         (CXComment_Text Text=[ the copyright symbol] HasTrailingNewline)
+// CHECK-NEXT:         (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:         (CXComment_Text Text=[™])
+// CHECK-NEXT:         (CXComment_Text Text=[ the trade mark symbol] HasTrailingNewline)
+// CHECK-NEXT:         (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:         (CXComment_Text Text=[®])
+// CHECK-NEXT:         (CXComment_Text Text=[ the registered trade mark symbol] HasTrailingNewline)
+// CHECK-NEXT:         (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:         (CXComment_Text Text=[ ])
+// CHECK-NEXT:         (CXComment_Text Text=[ a non breakable space.] HasTrailingNewline)
+// CHECK-NEXT:         (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:         (CXComment_Text Text=[Δ])
+// CHECK-NEXT:         (CXComment_Text Text=[ Greek letter Delta Δ.] HasTrailingNewline)
+// CHECK-NEXT:         (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:         (CXComment_Text Text=[Γ])
+// CHECK-NEXT:         (CXComment_Text Text=[ Greek letter Gamma Γ.])))]
+
+
 /// Aaa.
 class comment_to_xml_conversion_01 {
 // CHECK: comment-to-html-xml-conversion.cpp:[[@LINE-1]]:7: ClassDecl=comment_to_xml_conversion_01:{{.*}} FullCommentAsXML=[<Class file="{{[^"]+}}comment-to-html-xml-conversion.cpp" line="[[@LINE-1]]" column="7"><Name>comment_to_xml_conversion_01</Name><USR>c:@C@comment_to_xml_conversion_01</USR><Declaration>class comment_to_xml_conversion_01 {}</Declaration><Abstract><Para> Aaa.</Para></Abstract></Class>]
@@ -730,6 +765,32 @@ enum class comment_to_xml_conversion_17 {
   comment_to_xml_conversion_18
 // CHECK: comment-to-html-xml-conversion.cpp:[[@LINE-1]]:3: EnumConstantDecl=comment_to_xml_conversion_18:{{.*}} FullCommentAsXML=[<Variable file="{{[^"]+}}comment-to-html-xml-conversion.cpp" line="[[@LINE-1]]" column="3"><Name>comment_to_xml_conversion_18</Name><USR>c:@E@comment_to_xml_conversion_17@comment_to_xml_conversion_18</USR><Declaration>comment_to_xml_conversion_18</Declaration><Abstract><Para> Aaa.</Para></Abstract></Variable>]
 };
+
+/// Aaa.
+/// \todo Bbb.
+void comment_to_xml_conversion_todo_1();
+// CHECK: comment-to-html-xml-conversion.cpp:[[@LINE-1]]:6: FunctionDecl=comment_to_xml_conversion_todo_1:{{.*}} FullCommentAsXML=[<Function file="{{[^"]+}}comment-to-html-xml-conversion.cpp" line="[[@LINE-1]]" column="6"><Name>comment_to_xml_conversion_todo_1</Name><USR>c:@F@comment_to_xml_conversion_todo_1#</USR><Declaration>void comment_to_xml_conversion_todo_1()</Declaration><Abstract><Para> Aaa. </Para></Abstract><Discussion><Para kind="todo"> Bbb.</Para></Discussion></Function>]
+
+/// Aaa.
+/// \todo Bbb.
+///
+/// Ccc.
+void comment_to_xml_conversion_todo_2();
+// CHECK: comment-to-html-xml-conversion.cpp:[[@LINE-1]]:6: FunctionDecl=comment_to_xml_conversion_todo_2:{{.*}} FullCommentAsXML=[<Function file="{{[^"]+}}comment-to-html-xml-conversion.cpp" line="[[@LINE-1]]" column="6"><Name>comment_to_xml_conversion_todo_2</Name><USR>c:@F@comment_to_xml_conversion_todo_2#</USR><Declaration>void comment_to_xml_conversion_todo_2()</Declaration><Abstract><Para> Aaa. </Para></Abstract><Discussion><Para kind="todo"> Bbb.</Para><Para> Ccc.</Para></Discussion></Function>]
+
+/// Aaa.
+/// \todo Bbb.
+///
+/// Ccc.
+/// \todo Ddd.
+void comment_to_xml_conversion_todo_3();
+// CHECK: comment-to-html-xml-conversion.cpp:[[@LINE-1]]:6: FunctionDecl=comment_to_xml_conversion_todo_3:{{.*}} FullCommentAsXML=[<Function file="{{[^"]+}}comment-to-html-xml-conversion.cpp" line="[[@LINE-1]]" column="6"><Name>comment_to_xml_conversion_todo_3</Name><USR>c:@F@comment_to_xml_conversion_todo_3#</USR><Declaration>void comment_to_xml_conversion_todo_3()</Declaration><Abstract><Para> Aaa. </Para></Abstract><Discussion><Para kind="todo"> Bbb.</Para><Para> Ccc. </Para><Para kind="todo"> Ddd.</Para></Discussion></Function>]
+
+/// Aaa.
+/// \todo Bbb.
+/// \todo Ccc.
+void comment_to_xml_conversion_todo_4();
+// CHECK: comment-to-html-xml-conversion.cpp:[[@LINE-1]]:6: FunctionDecl=comment_to_xml_conversion_todo_4:{{.*}} FullCommentAsXML=[<Function file="{{[^"]+}}comment-to-html-xml-conversion.cpp" line="[[@LINE-1]]" column="6"><Name>comment_to_xml_conversion_todo_4</Name><USR>c:@F@comment_to_xml_conversion_todo_4#</USR><Declaration>void comment_to_xml_conversion_todo_4()</Declaration><Abstract><Para> Aaa. </Para></Abstract><Discussion><Para kind="todo"> Bbb. </Para><Para kind="todo"> Ccc.</Para></Discussion></Function>]
 
 #endif
 

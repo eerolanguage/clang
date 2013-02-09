@@ -1022,7 +1022,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::annot_typename:
     if (isStartOfObjCClassMessageMissingOpenBracket()) {
       ParsedType Type = getTypeAnnotation(Tok);
-      
+
       // Fake up a Declarator to use with ActOnTypeName.
       DeclSpec DS(AttrFactory);
       DS.SetRangeStart(Tok.getLocation());
@@ -1032,7 +1032,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       unsigned DiagID;
       DS.SetTypeSpecType(TST_typename, Tok.getAnnotationEndLoc(),
                          PrevSpec, DiagID, Type);
-      
+
       Declarator DeclaratorInfo(DS, Declarator::TypeNameContext);
       TypeResult Ty = Actions.ActOnTypeName(getCurScope(), DeclaratorInfo);
       if (Ty.isInvalid())
@@ -1044,7 +1044,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       break;
     }
     // Fall through
-      
+
   case tok::annot_decltype:
   case tok::kw_char:
   case tok::kw_wchar_t:
@@ -1070,8 +1070,9 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_image1d_buffer_t:
   case tok::kw_image2d_t:
   case tok::kw_image2d_array_t:
-  case tok::kw_image3d_t: {
-  case tok::kw_event_t:
+  case tok::kw_image3d_t:
+  case tok::kw_sampler_t:
+  case tok::kw_event_t: {
     if (!getLangOpts().CPlusPlus) {
       Diag(Tok, diag::err_expected_expression);
       if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
@@ -1704,11 +1705,11 @@ Parser::ParseExprAfterUnaryExprOrTypeTrait(const Token &OpTok,
 ///       unary-expression:  [C99 6.5.3]
 ///         'sizeof' unary-expression
 ///         'sizeof' '(' type-name ')'
-/// [C++0x] 'sizeof' '...' '(' identifier ')'
+/// [C++11] 'sizeof' '...' '(' identifier ')'
 /// [GNU]   '__alignof' unary-expression
 /// [GNU]   '__alignof' '(' type-name ')'
 /// [C11]   '_Alignof' '(' type-name ')'
-/// [C++0x] 'alignof' '(' type-id ')'
+/// [C++11] 'alignof' '(' type-id ')'
 /// \endverbatim
 ExprResult Parser::ParseUnaryExprOrTypeTraitExpression() {
   assert((Tok.is(tok::kw_sizeof) || Tok.is(tok::kw___alignof) ||
@@ -1718,7 +1719,7 @@ ExprResult Parser::ParseUnaryExprOrTypeTraitExpression() {
   Token OpTok = Tok;
   ConsumeToken();
 
-  // [C++0x] 'sizeof' '...' '(' identifier ')'
+  // [C++11] 'sizeof' '...' '(' identifier ')'
   if (Tok.is(tok::ellipsis) && OpTok.is(tok::kw_sizeof)) {
     SourceLocation EllipsisLoc = ConsumeToken();
     SourceLocation LParenLoc, RParenLoc;
@@ -1788,6 +1789,9 @@ ExprResult Parser::ParseUnaryExprOrTypeTraitExpression() {
                                                  /*isType=*/true,
                                                  CastTy.getAsOpaquePtr(),
                                                  CastRange);
+
+  if (OpTok.is(tok::kw_alignof) || OpTok.is(tok::kw__Alignof))
+    Diag(OpTok, diag::ext_alignof_expr) << OpTok.getIdentifierInfo();
 
   // If we get here, the operand to the sizeof/alignof was an expresion.
   if (!Operand.isInvalid())

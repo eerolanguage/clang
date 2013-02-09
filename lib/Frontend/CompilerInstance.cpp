@@ -244,6 +244,8 @@ void CompilerInstance::createPreprocessor() {
 
   InitializePreprocessor(*PP, PPOpts, getHeaderSearchOpts(), getFrontendOpts());
 
+  PP->setPreprocessedOutput(getPreprocessorOutputOpts().ShowCPP);
+
   // Set up the module path, including the hash for the
   // module-creation options.
   SmallString<256> SpecificModuleCache(
@@ -794,6 +796,23 @@ static void doCompileMapModule(void *UserData) {
   Data.Instance.ExecuteAction(Data.CreateModuleAction);
 }
 
+namespace {
+  /// \brief Function object that checks with the given macro definition should
+  /// be removed, because it is one of the ignored macros.
+  class RemoveIgnoredMacro {
+    const HeaderSearchOptions &HSOpts;
+
+  public:
+    explicit RemoveIgnoredMacro(const HeaderSearchOptions &HSOpts)
+      : HSOpts(HSOpts) { }
+
+    bool operator()(const std::pair<std::string, bool> &def) const {
+      StringRef MacroDef = def.first;
+      return HSOpts.ModulesIgnoreMacros.count(MacroDef.split('=').first) > 0;
+    }
+  };
+}
+
 /// \brief Compile a module file for the given module, using the options 
 /// provided by the importing compiler instance.
 static void compileModule(CompilerInstance &ImportingInstance,
@@ -829,6 +848,14 @@ static void compileModule(CompilerInstance &ImportingInstance,
   // reset them to their default values.
   Invocation->getLangOpts()->resetNonModularOptions();
   PPOpts.resetNonModularOptions();
+
+  // Remove any macro definitions that are explicitly ignored by the module.
+  // They aren't supposed to affect how the module is built anyway.
+  const HeaderSearchOptions &HSOpts = Invocation->getHeaderSearchOpts();
+  PPOpts.Macros.erase(std::remove_if(PPOpts.Macros.begin(), PPOpts.Macros.end(),
+                                     RemoveIgnoredMacro(HSOpts)),
+                      PPOpts.Macros.end());
+
 
   // Note the name of the module we're building.
   Invocation->getLangOpts()->CurrentModule = Module->getTopLevelModuleName();
@@ -941,7 +968,8 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
   if (!ImportLoc.isInvalid() && LastModuleImportLoc == ImportLoc) {
     // Make the named module visible.
     if (LastModuleImportResult)
-      ModuleManager->makeModuleVisible(LastModuleImportResult, Visibility);
+      ModuleManager->makeModuleVisible(LastModuleImportResult, Visibility,
+                                       ImportLoc);
     return LastModuleImportResult;
   }
   
@@ -965,9 +993,9 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
     // Search for a module with the given name.
     Module = PP->getHeaderSearchInfo().lookupModule(ModuleName);
     std::string ModuleFileName;
-    if (Module)
+    if (Module) {
       ModuleFileName = PP->getHeaderSearchInfo().getModuleFileName(Module);
-    else
+    } else
       ModuleFileName = PP->getHeaderSearchInfo().getModuleFileName(ModuleName);
 
     if (ModuleFileName.empty()) {
@@ -1021,7 +1049,8 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
 
       BuildingModule = true;
       compileModule(*this, ModuleNameLoc, Module, ModuleFileName);
-      ModuleFile = FileMgr->getFile(ModuleFileName);
+      ModuleFile = FileMgr->getFile(ModuleFileName, /*OpenFile=*/false,
+                                    /*CacheFailure=*/false);
 
       if (!ModuleFile && getPreprocessorOpts().FailedModules)
         getPreprocessorOpts().FailedModules->addFailed(ModuleName);
@@ -1035,6 +1064,20 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
         << SourceRange(ImportLoc, ModuleNameLoc);
       ModuleBuildFailed = true;
       return ModuleLoadResult();
+    }
+
+    // If there is already a module file associated with this module, make sure
+    // it is the same as the module file we're looking for. Otherwise, we
+    // have two module files for the same module.
+    if (const FileEntry *CurModuleFile = Module? Module->getASTFile() : 0) {
+      if (CurModuleFile != ModuleFile) {
+        getDiagnostics().Report(ModuleNameLoc, diag::err_module_file_conflict)
+          << ModuleName
+          << CurModuleFile->getName()
+          << ModuleFile->getName();
+        ModuleBuildFailed = true;
+        return ModuleLoadResult();
+      }
     }
 
     // If we don't already have an ASTReader, create one now.
@@ -1090,14 +1133,14 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
           << ModuleName
           << SourceRange(ImportLoc, ModuleNameLoc);
         ModuleBuildFailed = true;
-
         return ModuleLoadResult();
       }
 
       compileModule(*this, ModuleNameLoc, Module, ModuleFileName);
 
       // Try loading the module again.
-      ModuleFile = FileMgr->getFile(ModuleFileName);
+      ModuleFile = FileMgr->getFile(ModuleFileName, /*OpenFile=*/false,
+                                    /*CacheFailure=*/false);
       if (!ModuleFile ||
           ModuleManager->ReadAST(ModuleFileName,
                                  serialization::MK_Module, ImportLoc,
@@ -1135,8 +1178,9 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
                  .findModule((Path[0].first->getName()));
     }
 
-    if (Module)
+    if (Module) {
       Module->setASTFile(ModuleFile);
+    }
     
     // Cache the result of this top-level module lookup for later.
     Known = KnownModules.insert(std::make_pair(Path[0].first, Module)).first;
@@ -1229,7 +1273,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
       return ModuleLoadResult();
     }
 
-    ModuleManager->makeModuleVisible(Module, Visibility);
+    ModuleManager->makeModuleVisible(Module, Visibility, ImportLoc);
   }
   
   // If this module import was due to an inclusion directive, create an 
@@ -1250,7 +1294,8 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
 }
 
 void CompilerInstance::makeModuleVisible(Module *Mod,
-                                         Module::NameVisibilityKind Visibility){
-  ModuleManager->makeModuleVisible(Mod, Visibility);
+                                         Module::NameVisibilityKind Visibility,
+                                         SourceLocation ImportLoc){
+  ModuleManager->makeModuleVisible(Mod, Visibility, ImportLoc);
 }
 

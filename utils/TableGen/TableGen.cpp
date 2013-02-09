@@ -44,7 +44,9 @@ enum ActionType {
   GenClangSACheckers,
   GenClangCommentHTMLTags,
   GenClangCommentHTMLTagsProperties,
+  GenClangCommentHTMLNamedCharacterReferences,
   GenClangCommentCommandInfo,
+  GenClangCommentCommandList,
   GenOptParserDefs, GenOptParserImpl,
   GenArmNeon,
   GenArmNeonSema,
@@ -111,8 +113,16 @@ namespace {
                                "gen-clang-comment-html-tags-properties",
                                "Generate efficient matchers for HTML tag "
                                "properties"),
+                    clEnumValN(GenClangCommentHTMLNamedCharacterReferences,
+                               "gen-clang-comment-html-named-character-references",
+                               "Generate function to translate named character "
+                               "references to UTF-8 sequences"),
                     clEnumValN(GenClangCommentCommandInfo,
                                "gen-clang-comment-command-info",
+                               "Generate command properties for commands that "
+                               "are used in documentation comments"),
+                    clEnumValN(GenClangCommentCommandList,
+                               "gen-clang-comment-command-list",
                                "Generate list of commands that are used in "
                                "documentation comments"),
                     clEnumValN(GenArmNeon, "gen-arm-neon",
@@ -194,8 +204,14 @@ bool ClangTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
   case GenClangCommentHTMLTagsProperties:
     EmitClangCommentHTMLTagsProperties(Records, OS);
     break;
+  case GenClangCommentHTMLNamedCharacterReferences:
+    EmitClangCommentHTMLNamedCharacterReferences(Records, OS);
+    break;
   case GenClangCommentCommandInfo:
     EmitClangCommentCommandInfo(Records, OS);
+    break;
+  case GenClangCommentCommandList:
+    EmitClangCommentCommandList(Records, OS);
     break;
   case GenOptParserDefs:
     EmitOptParser(Records, OS, true);

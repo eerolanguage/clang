@@ -1905,6 +1905,11 @@ static void checkNewAttributesAfterDef(Sema &S, Decl *New, const Decl *Old) {
       ++I;
       continue; // regular attr merging will take care of validating this.
     }
+    // C's _Noreturn is allowed to be added to a function after it is defined.
+    if (isa<C11NoReturnAttr>(NewAttribute)) {
+      ++I;
+      continue;
+    }
     S.Diag(NewAttribute->getLocation(),
            diag::warn_attribute_precede_definition);
     S.Diag(Def->getLocation(), diag::note_previous_definition);
@@ -2214,6 +2219,23 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S) {
     NewType = Context.adjustFunctionType(NewType, NewTypeInfo);
     New->setType(QualType(NewType, 0));
     NewQType = Context.getCanonicalType(New->getType());
+  }
+
+  // If this redeclaration makes the function inline, we may need to add it to
+  // UndefinedButUsed.
+  if (!Old->isInlined() && New->isInlined() &&
+      !New->hasAttr<GNUInlineAttr>() &&
+      (getLangOpts().CPlusPlus || !getLangOpts().GNUInline) &&
+      Old->isUsed(false) &&
+      !Old->isDefined() && !New->isThisDeclarationADefinition())
+    UndefinedButUsed.insert(std::make_pair(Old->getCanonicalDecl(),
+                                           SourceLocation()));
+
+  // If this redeclaration makes it newly gnu_inline, we don't want to warn
+  // about it.
+  if (New->hasAttr<GNUInlineAttr>() &&
+      Old->isInlined() && !Old->hasAttr<GNUInlineAttr>()) {
+    UndefinedButUsed.erase(Old->getCanonicalDecl());
   }
   
   if (getLangOpts().CPlusPlus) {
@@ -3242,7 +3264,8 @@ Decl *Sema::BuildAnonymousStructOrUnion(Scope *S, DeclSpec &DS,
           // This is a popular extension, provided by Plan9, MSVC and GCC, but
           // not part of standard C++.
           Diag(MemRecord->getLocation(),
-               diag::ext_anonymous_record_with_anonymous_type);
+               diag::ext_anonymous_record_with_anonymous_type)
+            << (int)Record->isUnion();
         }
       } else if (isa<AccessSpecDecl>(*Mem)) {
         // Any access specifier is fine.
@@ -4474,6 +4497,14 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       SCAsWritten = SC_OpenCLWorkGroupLocal;
     }
 
+    // OpenCL v1.2 s6.9.b p4:
+    // The sampler type cannot be used with the __local and __global address
+    // space qualifiers.
+    if (R->isSamplerT() && (R.getAddressSpace() == LangAS::opencl_local ||
+      R.getAddressSpace() == LangAS::opencl_global)) {
+      Diag(D.getIdentifierLoc(), diag::err_wrong_sampler_addressspace);
+    }
+
     // OpenCL 1.2 spec, p6.9 r:
     // The event type cannot be used to declare a program scope variable.
     // The event type cannot be used with the __local, __constant and __global
@@ -4618,6 +4649,9 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
   // Handle attributes prior to checking for duplicates in MergeVarDecl
   ProcessDeclAttributes(S, NewVD, D);
+
+  if (NewVD->hasAttrs())
+    CheckAlignasUnderalignment(NewVD);
 
   if (getLangOpts().CUDA) {
     // CUDA B.2.5: "__shared__ and __constant__ variables have implied static
@@ -5946,6 +5980,11 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   NewFD->setDeclsInPrototypeScope(DeclsInPrototypeScope);
   DeclsInPrototypeScope.clear();
 
+  if (D.getDeclSpec().isNoreturnSpecified())
+    NewFD->addAttr(
+        ::new(Context) C11NoReturnAttr(D.getDeclSpec().getNoreturnSpecLoc(),
+                                       Context));
+
   // Process the non-inheritable attributes on this declaration.
   ProcessDeclAttributes(S, NewFD, D,
                         /*NonInheritable=*/true, /*Inheritable=*/false);
@@ -6268,25 +6307,41 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   }
 
   if (NewFD->hasAttr<OpenCLKernelAttr>()) {
-
     // OpenCL v1.2 s6.8 static is invalid for kernel functions.
     if ((getLangOpts().OpenCLVersion >= 120)
         && (SC == SC_Static)) {
       Diag(D.getIdentifierLoc(), diag::err_static_kernel);
       D.setInvalidType();
     }
-
-    // OpenCL v1.2 s6.8 n:
-    // Arguments to kernel functions in a program cannot be declared to be of
-    // type event_t.
+    
+    // OpenCL v1.2, s6.9 -- Kernels can only have return type void.
+    if (!NewFD->getResultType()->isVoidType()) {
+      Diag(D.getIdentifierLoc(),
+           diag::err_expected_kernel_void_return_type);
+      D.setInvalidType();
+    }
+    
     for (FunctionDecl::param_iterator PI = NewFD->param_begin(),
          PE = NewFD->param_end(); PI != PE; ++PI) {
-      if ((*PI)->getType()->isEventT()) {
-        Diag((*PI)->getLocation(), diag::err_event_t_kernel_arg);
+      ParmVarDecl *Param = *PI;
+      QualType PT = Param->getType();
+
+      // OpenCL v1.2 s6.9.a:
+      // A kernel function argument cannot be declared as a
+      // pointer to a pointer type.
+      if (PT->isPointerType() && PT->getPointeeType()->isPointerType()) {
+        Diag(Param->getLocation(), diag::err_opencl_ptrptr_kernel_arg);
+        D.setInvalidType();
+      }
+
+      // OpenCL v1.2 s6.8 n:
+      // A kernel function argument cannot be declared
+      // of event_t type.
+      if (PT->isEventT()) {
+        Diag(Param->getLocation(), diag::err_event_t_kernel_arg);
         D.setInvalidType();
       }
     }
-    
   }
 
   MarkUnusedFileScopedDecl(NewFD);
@@ -7256,9 +7311,10 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
       if (getLangOpts().CPlusPlus11) {
         Diag(VDecl->getLocation(),
              diag::ext_in_class_initializer_float_type_cxx11)
-          << DclT << Init->getSourceRange()
-          << FixItHint::CreateInsertion(VDecl->getLocStart(), "constexpr ");
-        VDecl->setConstexpr(true);
+            << DclT << Init->getSourceRange();
+        Diag(VDecl->getLocStart(),
+             diag::note_in_class_initializer_float_type_cxx11)
+            << FixItHint::CreateInsertion(VDecl->getLocStart(), "constexpr ");
       } else {
         Diag(VDecl->getLocation(), diag::ext_in_class_initializer_float_type)
           << DclT << Init->getSourceRange();
@@ -8462,6 +8518,18 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
 
   if (FD) {
     FD->setBody(Body);
+
+    // The only way to be included in UndefinedButUsed is if there is an
+    // ODR use before the definition. Avoid the expensive map lookup if this
+    // is the first declaration.
+    if (FD->getPreviousDecl() != 0 && FD->getPreviousDecl()->isUsed()) {
+      if (FD->getLinkage() != ExternalLinkage)
+        UndefinedButUsed.erase(FD);
+      else if (FD->isInlined() &&
+               (LangOpts.CPlusPlus || !LangOpts.GNUInline) &&
+               (!FD->getPreviousDecl()->hasAttr<GNUInlineAttr>()))
+        UndefinedButUsed.erase(FD);
+    }
 
     // If the function implicitly returns zero (like 'main') or is naked,
     // don't complain about missing return statements.
@@ -9815,7 +9883,11 @@ void Sema::ActOnTagFinishDefinition(Scope *S, Decl *TagD,
 
   // Exit this scope of this tag's definition.
   PopDeclContext();
-                                          
+
+  if (getCurLexicalContext()->isObjCContainer() &&
+      Tag->getDeclContext()->isFileContext())
+    Tag->setTopLevelDeclInObjCContainer();
+
   // Notify the consumer that we've defined a tag.
   Consumer.HandleTagDeclDefinition(Tag);
 }
@@ -9976,9 +10048,6 @@ FieldDecl *Sema::HandleField(Scope *S, RecordDecl *Record,
 
   if (D.getDeclSpec().isThreadSpecified())
     Diag(D.getDeclSpec().getThreadSpecLoc(), diag::err_invalid_thread);
-  if (D.getDeclSpec().isConstexprSpecified())
-    Diag(D.getDeclSpec().getConstexprSpecLoc(), diag::err_invalid_constexpr)
-      << 2;
   
   // Check to see if this name was declared as a member previously
   NamedDecl *PrevDecl = 0;
@@ -10185,9 +10254,13 @@ FieldDecl *Sema::CheckFieldDecl(DeclarationName Name, QualType T,
 
   // FIXME: We need to pass in the attributes given an AST
   // representation, not a parser representation.
-  if (D)
+  if (D) {
     // FIXME: What to pass instead of TUScope?
     ProcessDeclAttributes(TUScope, NewFD, *D);
+
+    if (NewFD->hasAttrs())
+      CheckAlignasUnderalignment(NewFD);
+  }
 
   // In auto-retain/release, infer strong retension for fields of
   // retainable type.
@@ -10712,6 +10785,8 @@ void Sema::ActOnFields(Scope* S,
     if (!Completed)
       Record->completeDefinition();
 
+    if (Record->hasAttrs())
+      CheckAlignasUnderalignment(Record);
   } else {
     ObjCIvarDecl **ClsFields =
       reinterpret_cast<ObjCIvarDecl**>(RecFields.data());
@@ -11459,6 +11534,10 @@ void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceLocation LBraceLoc,
     DeclsInPrototypeScope.push_back(Enum);
 
   CheckForDuplicateEnumValues(*this, Elements, NumElements, Enum, EnumType);
+
+  // Now that the enum type is defined, ensure it's not been underaligned.
+  if (Enum->hasAttrs())
+    CheckAlignasUnderalignment(Enum);
 }
 
 Decl *Sema::ActOnFileScopeAsmDecl(Expr *expr,
@@ -11511,7 +11590,7 @@ void Sema::createImplicitModuleImport(SourceLocation Loc, Module *Mod) {
   Consumer.HandleImplicitImportDecl(ImportD);
 
   // Make the module visible.
-  PP.getModuleLoader().makeModuleVisible(Mod, Module::AllVisible);
+  PP.getModuleLoader().makeModuleVisible(Mod, Module::AllVisible, Loc);
 }
 
 void Sema::ActOnPragmaRedefineExtname(IdentifierInfo* Name,

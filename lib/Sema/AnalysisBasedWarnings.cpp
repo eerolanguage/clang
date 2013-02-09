@@ -702,7 +702,38 @@ namespace {
       return FallthroughStmts;
     }
 
+    void fillReachableBlocks(CFG *Cfg) {
+      assert(ReachableBlocks.empty() && "ReachableBlocks already filled");
+      std::deque<const CFGBlock *> BlockQueue;
+
+      ReachableBlocks.insert(&Cfg->getEntry());
+      BlockQueue.push_back(&Cfg->getEntry());
+      // Mark all case blocks reachable to avoid problems with switching on
+      // constants, covered enums, etc.
+      // These blocks can contain fall-through annotations, and we don't want to
+      // issue a warn_fallthrough_attr_unreachable for them.
+      for (CFG::iterator I = Cfg->begin(), E = Cfg->end(); I != E; ++I) {
+        const CFGBlock *B = *I;
+        const Stmt *L = B->getLabel();
+        if (L && isa<SwitchCase>(L) && ReachableBlocks.insert(B))
+          BlockQueue.push_back(B);
+      }
+
+      while (!BlockQueue.empty()) {
+        const CFGBlock *P = BlockQueue.front();
+        BlockQueue.pop_front();
+        for (CFGBlock::const_succ_iterator I = P->succ_begin(),
+                                           E = P->succ_end();
+             I != E; ++I) {
+          if (*I && ReachableBlocks.insert(*I))
+            BlockQueue.push_back(*I);
+        }
+      }
+    }
+
     bool checkFallThroughIntoBlock(const CFGBlock &B, int &AnnotatedCnt) {
+      assert(!ReachableBlocks.empty() && "ReachableBlocks empty");
+
       int UnannotatedCnt = 0;
       AnnotatedCnt = 0;
 
@@ -726,16 +757,17 @@ namespace {
         if (L && L->getSubStmt() == B.getLabel() && P->begin() == P->end())
           continue; // Case label is preceded with a normal label, good.
 
-        if (P->pred_begin() == P->pred_end()) {  // The block is unreachable.
-          // This only catches trivially unreachable blocks.
-          for (CFGBlock::const_iterator ElIt = P->begin(), ElEnd = P->end();
-               ElIt != ElEnd; ++ElIt) {
-            if (const CFGStmt *CS = ElIt->getAs<CFGStmt>()){
+        if (!ReachableBlocks.count(P)) {
+          for (CFGBlock::const_reverse_iterator ElemIt = P->rbegin(),
+                                                ElemEnd = P->rend();
+               ElemIt != ElemEnd; ++ElemIt) {
+            if (const CFGStmt *CS = ElemIt->getAs<CFGStmt>()) {
               if (const AttributedStmt *AS = asFallThroughAttr(CS->getStmt())) {
                 S.Diag(AS->getLocStart(),
                        diag::warn_fallthrough_attr_unreachable);
                 markFallthroughVisited(AS);
                 ++AnnotatedCnt;
+                break;
               }
               // Don't care about other unreachable statements.
             }
@@ -816,6 +848,7 @@ namespace {
     bool FoundSwitchStatements;
     AttrStmts FallthroughStmts;
     Sema &S;
+    llvm::SmallPtrSet<const CFGBlock *, 16> ReachableBlocks;
   };
 }
 
@@ -847,7 +880,7 @@ static void DiagnoseSwitchLabelsFallthrough(Sema &S, AnalysisDeclContext &AC,
   if (!Cfg)
     return;
 
-  int AnnotatedCnt;
+  FM.fillReachableBlocks(Cfg);
 
   for (CFG::reverse_iterator I = Cfg->rbegin(), E = Cfg->rend(); I != E; ++I) {
     const CFGBlock *B = *I;
@@ -855,6 +888,8 @@ static void DiagnoseSwitchLabelsFallthrough(Sema &S, AnalysisDeclContext &AC,
 
     if (!Label || !isa<SwitchCase>(Label))
       continue;
+
+    int AnnotatedCnt;
 
     if (!FM.checkFallThroughIntoBlock(*B, AnnotatedCnt))
       continue;

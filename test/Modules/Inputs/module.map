@@ -116,6 +116,10 @@ module templates_right {
 module MethodPoolA {
   header "MethodPoolA.h"
 
+  explicit module Sub2 {
+    header "MethodPoolASub2.h"
+  }
+
   explicit module Sub {
     header "MethodPoolASub.h"
   }
@@ -154,4 +158,16 @@ module autolink {
     header "autolink-sub2.h"
     link framework "autolink_framework"
   }
+}
+
+module weird_objc {
+  header "weird_objc.h"
+}
+
+module ignored_macros {
+  header "ignored_macros.h"
+}
+
+module cxx_many_overloads {
+  header "cxx-many-overloads.h"
 }

@@ -2424,6 +2424,7 @@ void InitializationSequence::Step::Destroy() {
   case SK_PassByIndirectRestore:
   case SK_ProduceObjCObject:
   case SK_StdInitializerList:
+  case SK_OCLSamplerInit:
   case SK_OCLZeroEvent:
     break;
 
@@ -2649,6 +2650,13 @@ void InitializationSequence::AddProduceObjCObjectStep(QualType T) {
 void InitializationSequence::AddStdInitializerListConstructionStep(QualType T) {
   Step S;
   S.Kind = SK_StdInitializerList;
+  S.Type = T;
+  Steps.push_back(S);
+}
+
+void InitializationSequence::AddOCLSamplerInitStep(QualType T) {
+  Step S;
+  S.Kind = SK_OCLSamplerInit;
   S.Type = T;
   Steps.push_back(S);
 }
@@ -4017,6 +4025,18 @@ static bool tryObjCWritebackConversion(Sema &S,
   return true;
 }
 
+static bool TryOCLSamplerInitialization(Sema &S,
+                                        InitializationSequence &Sequence,
+                                        QualType DestType,
+                                        Expr *Initializer) {
+  if (!S.getLangOpts().OpenCL || !DestType->isSamplerT() ||
+    !Initializer->isIntegerConstantExpr(S.getASTContext()))
+    return false;
+
+  Sequence.AddOCLSamplerInitStep(DestType);
+  return true;
+}
+
 //
 // OpenCL 1.2 spec, s6.12.10
 //
@@ -4180,7 +4200,9 @@ InitializationSequence::InitializationSequence(Sema &S,
         tryObjCWritebackConversion(S, *this, Entity, Initializer)) {
       return;
     }
-    
+
+    if (TryOCLSamplerInitialization(S, *this, DestType, Initializer))
+      return;
 
     if (TryOCLZeroEventInitialization(S, *this, DestType, Initializer))
       return;
@@ -4729,7 +4751,8 @@ PerformConstructorInitialization(Sema &S,
   // call.
   if (S.CompleteConstructorCall(Constructor, Args,
                                 Loc, ConstructorArgs,
-                                AllowExplicitConv))
+                                AllowExplicitConv,
+                                IsListInitialization))
     return ExprError();
 
 
@@ -4973,6 +4996,7 @@ InitializationSequence::Perform(Sema &S,
   case SK_PassByIndirectRestore:
   case SK_ProduceObjCObject:
   case SK_StdInitializerList:
+  case SK_OCLSamplerInit:
   case SK_OCLZeroEvent: {
     assert(Args.size() == 1);
     CurInit = Args[0];
@@ -5240,7 +5264,8 @@ InitializationSequence::Perform(Sema &S,
       QualType Ty = ResultType ? ResultType->getNonReferenceType() : Step->Type;
       bool IsTemporary = Entity.getType()->isReferenceType();
       InitializedEntity TempEntity = InitializedEntity::InitializeTemporary(Ty);
-      InitListChecker PerformInitList(S, IsTemporary ? TempEntity : Entity,
+      InitializedEntity InitEntity = IsTemporary ? TempEntity : Entity;
+      InitListChecker PerformInitList(S, InitEntity,
           InitList, Ty, /*VerifyOnly=*/false,
           Kind.getKind() != InitializationKind::IK_DirectList ||
             !S.getLangOpts().CPlusPlus11);
@@ -5259,7 +5284,9 @@ InitializationSequence::Perform(Sema &S,
       InitListExpr *StructuredInitList =
           PerformInitList.getFullyStructuredList();
       CurInit.release();
-      CurInit = S.Owned(StructuredInitList);
+      CurInit = shouldBindAsTemporary(InitEntity)
+          ? S.MaybeBindToTemporary(StructuredInitList)
+          : S.Owned(StructuredInitList);
       break;
     }
 
@@ -5471,9 +5498,9 @@ InitializationSequence::Perform(Sema &S,
       for (unsigned i = 0; i < NumInits; ++i) {
         Element.setElementIndex(i);
         ExprResult Init = S.Owned(ILE->getInit(i));
-        ExprResult Res = S.PerformCopyInitialization(Element,
-                                                     Init.get()->getExprLoc(),
-                                                     Init);
+        ExprResult Res = S.PerformCopyInitialization(
+                             Element, Init.get()->getExprLoc(), Init,
+                             /*TopLevelOfInitList=*/ true);
         assert(!Res.isInvalid() && "Result changed since try phase.");
         Converted[i] = Res.take();
       }
@@ -5484,6 +5511,23 @@ InitializationSequence::Perform(Sema &S,
       Semantic->setType(Dest);
       Semantic->setInitializesStdInitializerList();
       CurInit = S.Owned(Semantic);
+      break;
+    }
+    case SK_OCLSamplerInit: {
+      assert(Step->Type->isSamplerT() && 
+             "Sampler initialization on non sampler type.");
+
+      QualType SourceType = CurInit.get()->getType();
+      InitializedEntity::EntityKind EntityKind = Entity.getKind();
+
+      if (EntityKind == InitializedEntity::EK_Parameter) {
+        if (!SourceType->isSamplerT())
+          S.Diag(Kind.getLocation(), diag::err_sampler_argument_required)
+            << SourceType;
+      } else if (EntityKind != InitializedEntity::EK_Variable) {
+        llvm_unreachable("Invalid EntityKind!");
+      }
+
       break;
     }
     case SK_OCLZeroEvent: {
@@ -6182,11 +6226,19 @@ void InitializationSequence::dump(raw_ostream &OS) const {
       OS << "std::initializer_list from initializer list";
       break;
 
+    case SK_OCLSamplerInit:
+      OS << "OpenCL sampler_t from integer constant";
+      break;
+
     case SK_OCLZeroEvent:
       OS << "OpenCL event_t from zero";
       break;
     }
+
+    OS << " [" << S->Type.getAsString() << ']';
   }
+
+  OS << '\n';
 }
 
 void InitializationSequence::dump() const {

@@ -323,10 +323,12 @@ class PointerEscape {
   _checkPointerEscape(void *checker,
                      ProgramStateRef State,
                      const InvalidatedSymbols &Escaped,
-                     const CallEvent *Call) {
+                     const CallEvent *Call,
+                     PointerEscapeKind Kind) {
     return ((const CHECKER *)checker)->checkPointerEscape(State, 
                                                           Escaped, 
-                                                          Call);
+                                                          Call,
+                                                          Kind);
   }
 
 public:
@@ -467,6 +469,14 @@ struct ImplicitNullDerefEvent {
   bool IsLoad;
   ExplodedNode *SinkNode;
   BugReporter *BR;
+};
+
+/// \brief A helper class which wraps a boolean value set to false by default.
+struct DefaultBool {
+  bool val;
+  DefaultBool() : val(false) {}
+  operator bool() const { return val; }
+  DefaultBool &operator=(bool b) { val = b; return *this; }
 };
 
 } // end ento namespace

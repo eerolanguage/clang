@@ -537,11 +537,11 @@ const FileEntry *Preprocessor::LookupFile(
   // Otherwise, see if this is a subframework header.  If so, this is relative
   // to one of the headers on the #include stack.  Walk the list of the current
   // headers on the #include stack and pass them to HeaderInfo.
-  // FIXME: SuggestedModule!
   if (IsFileLexer()) {
     if ((CurFileEnt = SourceMgr.getFileEntryForID(CurPPLexer->getFileID())))
       if ((FE = HeaderInfo.LookupSubframeworkHeader(Filename, CurFileEnt,
-                                                    SearchPath, RelativePath)))
+                                                    SearchPath, RelativePath,
+                                                    SuggestedModule)))
         return FE;
   }
 
@@ -551,7 +551,8 @@ const FileEntry *Preprocessor::LookupFile(
       if ((CurFileEnt =
            SourceMgr.getFileEntryForID(ISEntry.ThePPLexer->getFileID())))
         if ((FE = HeaderInfo.LookupSubframeworkHeader(
-                Filename, CurFileEnt, SearchPath, RelativePath)))
+                Filename, CurFileEnt, SearchPath, RelativePath,
+                SuggestedModule)))
           return FE;
     }
   }
@@ -789,7 +790,7 @@ static bool GetLineValue(Token &DigitTok, unsigned &Val,
   // here.
   Val = 0;
   for (unsigned i = 0; i != ActualLength; ++i) {
-    if (!isdigit(DigitTokBegin[i])) {
+    if (!isDigit(DigitTokBegin[i])) {
       PP.Diag(PP.AdvanceToTokenCharacter(DigitTok.getLocation(), i),
               diag::err_pp_line_digit_sequence);
       PP.DiscardUntilEndOfDirective();

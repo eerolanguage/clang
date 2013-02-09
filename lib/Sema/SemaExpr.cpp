@@ -581,8 +581,9 @@ ExprResult Sema::UsualUnaryConversions(Expr *E) {
 }
 
 /// DefaultArgumentPromotion (C99 6.5.2.2p6). Used for function calls that
-/// do not have a prototype. Arguments that have type float are promoted to
-/// double. All other argument types are converted by UsualUnaryConversions().
+/// do not have a prototype. Arguments that have type float or __fp16
+/// are promoted to double. All other argument types are converted by
+/// UsualUnaryConversions().
 ExprResult Sema::DefaultArgumentPromotion(Expr *E) {
   QualType Ty = E->getType();
   assert(!Ty.isNull() && "DefaultArgumentPromotion - missing type");
@@ -592,8 +593,11 @@ ExprResult Sema::DefaultArgumentPromotion(Expr *E) {
     return Owned(E);
   E = Res.take();
 
-  // If this is a 'float' (CVR qualified or typedef) promote to double.
-  if (Ty->isSpecificBuiltinType(BuiltinType::Float))
+  // If this is a 'float' or '__fp16' (CVR qualified or typedef) promote to
+  // double.
+  const BuiltinType *BTy = Ty->getAs<BuiltinType>();
+  if (BTy && (BTy->getKind() == BuiltinType::Half ||
+              BTy->getKind() == BuiltinType::Float))
     E = ImpCastExprToType(E, Context.DoubleTy, CK_FloatingCast).take();
 
   // C++ performs lvalue-to-rvalue conversion as a default argument
@@ -936,54 +940,24 @@ static QualType handleFloatConversion(Sema &S, ExprResult &LHS,
                                     /*convertFloat=*/!IsCompAssign);
 }
 
-/// \brief Handle conversions with GCC complex int extension.  Helper function
-/// of UsualArithmeticConversions()
-// FIXME: if the operands are (int, _Complex long), we currently
-// don't promote the complex.  Also, signedness?
-static QualType handleComplexIntConversion(Sema &S, ExprResult &LHS,
-                                           ExprResult &RHS, QualType LHSType,
-                                           QualType RHSType,
-                                           bool IsCompAssign) {
-  const ComplexType *LHSComplexInt = LHSType->getAsComplexIntegerType();
-  const ComplexType *RHSComplexInt = RHSType->getAsComplexIntegerType();
+typedef ExprResult PerformCastFn(Sema &S, Expr *operand, QualType toType);
 
-  if (LHSComplexInt && RHSComplexInt) {
-    int order = S.Context.getIntegerTypeOrder(LHSComplexInt->getElementType(),
-                                              RHSComplexInt->getElementType());
-    assert(order && "inequal types with equal element ordering");
-    if (order > 0) {
-      // _Complex int -> _Complex long
-      RHS = S.ImpCastExprToType(RHS.take(), LHSType, CK_IntegralComplexCast);
-      return LHSType;
-    }
+namespace {
+/// These helper callbacks are placed in an anonymous namespace to
+/// permit their use as function template parameters.
+ExprResult doIntegralCast(Sema &S, Expr *op, QualType toType) {
+  return S.ImpCastExprToType(op, toType, CK_IntegralCast);
+}
 
-    if (!IsCompAssign)
-      LHS = S.ImpCastExprToType(LHS.take(), RHSType, CK_IntegralComplexCast);
-    return RHSType;
-  }
-
-  if (LHSComplexInt) {
-    // int -> _Complex int
-    // FIXME: This needs to take integer ranks into account
-    RHS = S.ImpCastExprToType(RHS.take(), LHSComplexInt->getElementType(),
-                              CK_IntegralCast);
-    RHS = S.ImpCastExprToType(RHS.take(), LHSType, CK_IntegralRealToComplex);
-    return LHSType;
-  }
-
-  assert(RHSComplexInt);
-  // int -> _Complex int
-  // FIXME: This needs to take integer ranks into account
-  if (!IsCompAssign) {
-    LHS = S.ImpCastExprToType(LHS.take(), RHSComplexInt->getElementType(),
-                              CK_IntegralCast);
-    LHS = S.ImpCastExprToType(LHS.take(), RHSType, CK_IntegralRealToComplex);
-  }
-  return RHSType;
+ExprResult doComplexIntegralCast(Sema &S, Expr *op, QualType toType) {
+  return S.ImpCastExprToType(op, S.Context.getComplexType(toType),
+                             CK_IntegralComplexCast);
+}
 }
 
 /// \brief Handle integer arithmetic conversions.  Helper function of
 /// UsualArithmeticConversions()
+template <PerformCastFn doLHSCast, PerformCastFn doRHSCast>
 static QualType handleIntegerConversion(Sema &S, ExprResult &LHS,
                                         ExprResult &RHS, QualType LHSType,
                                         QualType RHSType, bool IsCompAssign) {
@@ -994,29 +968,29 @@ static QualType handleIntegerConversion(Sema &S, ExprResult &LHS,
   if (LHSSigned == RHSSigned) {
     // Same signedness; use the higher-ranked type
     if (order >= 0) {
-      RHS = S.ImpCastExprToType(RHS.take(), LHSType, CK_IntegralCast);
+      RHS = (*doRHSCast)(S, RHS.take(), LHSType);
       return LHSType;
     } else if (!IsCompAssign)
-      LHS = S.ImpCastExprToType(LHS.take(), RHSType, CK_IntegralCast);
+      LHS = (*doLHSCast)(S, LHS.take(), RHSType);
     return RHSType;
   } else if (order != (LHSSigned ? 1 : -1)) {
     // The unsigned type has greater than or equal rank to the
     // signed type, so use the unsigned type
     if (RHSSigned) {
-      RHS = S.ImpCastExprToType(RHS.take(), LHSType, CK_IntegralCast);
+      RHS = (*doRHSCast)(S, RHS.take(), LHSType);
       return LHSType;
     } else if (!IsCompAssign)
-      LHS = S.ImpCastExprToType(LHS.take(), RHSType, CK_IntegralCast);
+      LHS = (*doLHSCast)(S, LHS.take(), RHSType);
     return RHSType;
   } else if (S.Context.getIntWidth(LHSType) != S.Context.getIntWidth(RHSType)) {
     // The two types are different widths; if we are here, that
     // means the signed type is larger than the unsigned type, so
     // use the signed type.
     if (LHSSigned) {
-      RHS = S.ImpCastExprToType(RHS.take(), LHSType, CK_IntegralCast);
+      RHS = (*doRHSCast)(S, RHS.take(), LHSType);
       return LHSType;
     } else if (!IsCompAssign)
-      LHS = S.ImpCastExprToType(LHS.take(), RHSType, CK_IntegralCast);
+      LHS = (*doLHSCast)(S, LHS.take(), RHSType);
     return RHSType;
   } else {
     // The signed type is higher-ranked than the unsigned type,
@@ -1025,19 +999,62 @@ static QualType handleIntegerConversion(Sema &S, ExprResult &LHS,
     // to the signed type.
     QualType result =
       S.Context.getCorrespondingUnsignedType(LHSSigned ? LHSType : RHSType);
-    RHS = S.ImpCastExprToType(RHS.take(), result, CK_IntegralCast);
+    RHS = (*doRHSCast)(S, RHS.take(), result);
     if (!IsCompAssign)
-      LHS = S.ImpCastExprToType(LHS.take(), result, CK_IntegralCast);
+      LHS = (*doLHSCast)(S, LHS.take(), result);
     return result;
   }
+}
+
+/// \brief Handle conversions with GCC complex int extension.  Helper function
+/// of UsualArithmeticConversions()
+static QualType handleComplexIntConversion(Sema &S, ExprResult &LHS,
+                                           ExprResult &RHS, QualType LHSType,
+                                           QualType RHSType,
+                                           bool IsCompAssign) {
+  const ComplexType *LHSComplexInt = LHSType->getAsComplexIntegerType();
+  const ComplexType *RHSComplexInt = RHSType->getAsComplexIntegerType();
+
+  if (LHSComplexInt && RHSComplexInt) {
+    QualType LHSEltType = LHSComplexInt->getElementType();
+    QualType RHSEltType = RHSComplexInt->getElementType();
+    QualType ScalarType =
+      handleIntegerConversion<doComplexIntegralCast, doComplexIntegralCast>
+        (S, LHS, RHS, LHSEltType, RHSEltType, IsCompAssign);
+
+    return S.Context.getComplexType(ScalarType);
+  }
+
+  if (LHSComplexInt) {
+    QualType LHSEltType = LHSComplexInt->getElementType();
+    QualType ScalarType =
+      handleIntegerConversion<doComplexIntegralCast, doIntegralCast>
+        (S, LHS, RHS, LHSEltType, RHSType, IsCompAssign);
+    QualType ComplexType = S.Context.getComplexType(ScalarType);
+    RHS = S.ImpCastExprToType(RHS.take(), ComplexType,
+                              CK_IntegralRealToComplex);
+ 
+    return ComplexType;
+  }
+
+  assert(RHSComplexInt);
+
+  QualType RHSEltType = RHSComplexInt->getElementType();
+  QualType ScalarType =
+    handleIntegerConversion<doIntegralCast, doComplexIntegralCast>
+      (S, LHS, RHS, LHSType, RHSEltType, IsCompAssign);
+  QualType ComplexType = S.Context.getComplexType(ScalarType);
+  
+  if (!IsCompAssign)
+    LHS = S.ImpCastExprToType(LHS.take(), ComplexType,
+                              CK_IntegralRealToComplex);
+  return ComplexType;
 }
 
 /// UsualArithmeticConversions - Performs various conversions that are common to
 /// binary operators (C99 6.3.1.8). If both operands aren't arithmetic, this
 /// routine returns the first non-arithmetic type found. The client is
 /// responsible for emitting appropriate error diagnostics.
-/// FIXME: verify the conversion rules for "complex int" are consistent with
-/// GCC.
 QualType Sema::UsualArithmeticConversions(ExprResult &LHS, ExprResult &RHS,
                                           bool IsCompAssign) {
   if (!IsCompAssign) {
@@ -1102,9 +1119,10 @@ QualType Sema::UsualArithmeticConversions(ExprResult &LHS, ExprResult &RHS,
                                       IsCompAssign);
 
   // Finally, we have two differing integer types.
-  return handleIntegerConversion(*this, LHS, RHS, LHSType, RHSType,
-                                 IsCompAssign);
+  return handleIntegerConversion<doIntegralCast, doIntegralCast>
+           (*this, LHS, RHS, LHSType, RHSType, IsCompAssign);
 }
+
 
 //===----------------------------------------------------------------------===//
 //  Semantic Analysis for various Expression Types
@@ -2007,7 +2025,7 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
       if (SelfExpr.isInvalid())
         return ExprError();
 
-      MarkAnyDeclReferenced(Loc, IV);
+      MarkAnyDeclReferenced(Loc, IV, true);
       
       ObjCMethodFamily MF = CurMethod->getMethodFamily();
       if (MF != OMF_init && MF != OMF_dealloc && MF != OMF_finalize)
@@ -3707,7 +3725,8 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
                                   Expr **Args, unsigned NumArgs,
                                   SmallVector<Expr *, 8> &AllArgs,
                                   VariadicCallType CallType,
-                                  bool AllowExplicit) {
+                                  bool AllowExplicit,
+                                  bool IsListInitialization) {
   unsigned NumArgsInProto = Proto->getNumArgs();
   unsigned NumArgsToCheck = NumArgs;
   bool Invalid = false;
@@ -3747,7 +3766,7 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
       ExprResult ArgE = PerformCopyInitialization(Entity,
                                                   SourceLocation(),
                                                   Owned(Arg),
-                                                  /*TopLevelOfInitList=*/false,
+                                                  IsListInitialization,
                                                   AllowExplicit);
       if (ArgE.isInvalid())
         return true;
@@ -4642,10 +4661,15 @@ ExprResult Sema::BuildVectorLiteral(SourceLocation LParenLoc,
   Expr **exprs;
   unsigned numExprs;
   Expr *subExpr;
+  SourceLocation LiteralLParenLoc, LiteralRParenLoc;
   if (ParenListExpr *PE = dyn_cast<ParenListExpr>(E)) {
+    LiteralLParenLoc = PE->getLParenLoc();
+    LiteralRParenLoc = PE->getRParenLoc();
     exprs = PE->getExprs();
     numExprs = PE->getNumExprs();
-  } else {
+  } else { // isa<ParenExpr> by assertion at function entrance
+    LiteralLParenLoc = cast<ParenExpr>(E)->getLParen();
+    LiteralRParenLoc = cast<ParenExpr>(E)->getRParen();
     subExpr = cast<ParenExpr>(E)->getSubExpr();
     exprs = &subExpr;
     numExprs = 1;
@@ -4702,8 +4726,8 @@ ExprResult Sema::BuildVectorLiteral(SourceLocation LParenLoc,
   }
   // FIXME: This means that pretty-printing the final AST will produce curly
   // braces instead of the original commas.
-  InitListExpr *initE = new (Context) InitListExpr(Context, LParenLoc,
-                                                   initExprs, RParenLoc);
+  InitListExpr *initE = new (Context) InitListExpr(Context, LiteralLParenLoc,
+                                                   initExprs, LiteralRParenLoc);
   initE->setType(Ty);
   return BuildCompoundLiteralExpr(LParenLoc, TInfo, RParenLoc, initE);
 }
@@ -6743,10 +6767,10 @@ static bool IsWithinTemplateSpecialization(Decl *D) {
 }
 
 /// If two different enums are compared, raise a warning.
-static void checkEnumComparison(Sema &S, SourceLocation Loc, ExprResult &LHS,
-                                ExprResult &RHS) {
-  QualType LHSStrippedType = LHS.get()->IgnoreParenImpCasts()->getType();
-  QualType RHSStrippedType = RHS.get()->IgnoreParenImpCasts()->getType();
+static void checkEnumComparison(Sema &S, SourceLocation Loc, Expr *LHS,
+                                Expr *RHS) {
+  QualType LHSStrippedType = LHS->IgnoreParenImpCasts()->getType();
+  QualType RHSStrippedType = RHS->IgnoreParenImpCasts()->getType();
 
   const bool isEero = S.getLangOpts().Eero && !S.PP.isInLegacyHeader();
   if (isEero && (LHSStrippedType->isEnumeralType() != 
@@ -6782,7 +6806,7 @@ static void checkEnumComparison(Sema &S, SourceLocation Loc, ExprResult &LHS,
 
   S.Diag(Loc, diag::warn_comparison_of_mixed_enum_types)
       << LHSStrippedType << RHSStrippedType
-      << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
+      << LHS->getSourceRange() << RHS->getSourceRange();
 }
 
 /// \brief Diagnose bad pointer comparisons.
@@ -6997,11 +7021,12 @@ static void diagnoseObjCLiteralComparison(Sema &S, SourceLocation Loc,
       hasIsEqualMethod(S, LHS.get(), RHS.get())) {
     SourceLocation Start = LHS.get()->getLocStart();
     SourceLocation End = S.PP.getLocForEndOfToken(RHS.get()->getLocEnd());
-    SourceRange OpRange(Loc, S.PP.getLocForEndOfToken(Loc));
+    CharSourceRange OpRange =
+      CharSourceRange::getCharRange(Loc, S.PP.getLocForEndOfToken(Loc));
 
     S.Diag(Loc, diag::note_objc_literal_comparison_isequal)
       << FixItHint::CreateInsertion(Start, Opc == BO_EQ ? "[" : "![")
-      << FixItHint::CreateReplacement(OpRange, "isEqual:")
+      << FixItHint::CreateReplacement(OpRange, " isEqual:")
       << FixItHint::CreateInsertion(End, "]");
   }
 }
@@ -7025,7 +7050,7 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
   Expr *LHSStripped = LHS.get()->IgnoreParenImpCasts();
   Expr *RHSStripped = RHS.get()->IgnoreParenImpCasts();
 
-  checkEnumComparison(*this, Loc, LHS, RHS);
+  checkEnumComparison(*this, Loc, LHS.get(), RHS.get());
 
   if (!LHSType->hasFloatingRepresentation() &&
       !(LHSType->isBlockPointerType() && IsRelational) &&
@@ -8065,7 +8090,9 @@ static QualType CheckAddressOfOperand(Sema &S, ExprResult &OrigOp,
   if (const BuiltinType *PTy = OrigOp.get()->getType()->getAsPlaceholderType()){
     if (PTy->getKind() == BuiltinType::Overload) {
       if (!isa<OverloadExpr>(OrigOp.get()->IgnoreParens())) {
-        S.Diag(OpLoc, diag::err_typecheck_invalid_lvalue_addrof)
+        assert(cast<UnaryOperator>(OrigOp.get()->IgnoreParens())->getOpcode()
+                 == UO_AddrOf);
+        S.Diag(OpLoc, diag::err_typecheck_invalid_lvalue_addrof_addrof_function)
           << OrigOp.get()->getSourceRange();
         return QualType();
       }
@@ -8109,10 +8136,10 @@ static QualType CheckAddressOfOperand(Sema &S, ExprResult &OrigOp,
   Expr::LValueClassification lval = op->ClassifyLValue(S.Context);
   unsigned AddressOfError = AO_No_Error;
 
-  if (lval == Expr::LV_ClassTemporary) { 
+  if (lval == Expr::LV_ClassTemporary || lval == Expr::LV_ArrayTemporary) { 
     bool sfinae = S.isSFINAEContext();
-    S.Diag(OpLoc, sfinae ? diag::err_typecheck_addrof_class_temporary
-                         : diag::ext_typecheck_addrof_class_temporary)
+    S.Diag(OpLoc, sfinae ? diag::err_typecheck_addrof_temporary
+                         : diag::ext_typecheck_addrof_temporary)
       << op->getType() << op->getSourceRange();
     if (sfinae)
       return QualType();
@@ -8160,9 +8187,8 @@ static QualType CheckAddressOfOperand(Sema &S, ExprResult &OrigOp,
       if (isa<PseudoObjectExpr>(op)) {
         AddressOfError = AO_Property_Expansion;
       } else {
-        // FIXME: emit more specific diag...
         S.Diag(OpLoc, diag::err_typecheck_invalid_lvalue_addrof)
-          << op->getSourceRange();
+          << op->getType() << op->getSourceRange();
         return QualType();
       }
     }
@@ -10585,10 +10611,13 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
   }
 
   // Keep track of used but undefined functions.
-  if (!Func->isPure() && !Func->hasBody() &&
-      Func->getLinkage() != ExternalLinkage) {
-    SourceLocation &old = UndefinedInternals[Func->getCanonicalDecl()];
-    if (old.isInvalid()) old = Loc;
+  if (!Func->isDefined()) {
+    if (Func->getLinkage() != ExternalLinkage)
+      UndefinedButUsed.insert(std::make_pair(Func->getCanonicalDecl(), Loc));
+    else if (Func->getMostRecentDecl()->isInlined() &&
+             (LangOpts.CPlusPlus || !LangOpts.GNUInline) &&
+             !Func->getMostRecentDecl()->hasAttr<GNUInlineAttr>())
+      UndefinedButUsed.insert(std::make_pair(Func->getCanonicalDecl(), Loc));
   }
 
   // Normally the must current decl is marked used while processing the use and
@@ -11101,7 +11130,7 @@ static void MarkVarDeclODRUsed(Sema &SemaRef, VarDecl *Var,
   if (Var->hasDefinition(SemaRef.Context) == VarDecl::DeclarationOnly &&
       Var->getLinkage() != ExternalLinkage &&
       !(Var->isStaticDataMember() && Var->hasInit())) {
-    SourceLocation &old = SemaRef.UndefinedInternals[Var->getCanonicalDecl()];
+    SourceLocation &old = SemaRef.UndefinedButUsed[Var->getCanonicalDecl()];
     if (old.isInvalid()) old = Loc;
   }
 
@@ -11213,13 +11242,13 @@ void Sema::MarkVariableReferenced(SourceLocation Loc, VarDecl *Var) {
 }
 
 static void MarkExprReferenced(Sema &SemaRef, SourceLocation Loc,
-                               Decl *D, Expr *E) {
+                               Decl *D, Expr *E, bool OdrUse) {
   if (VarDecl *Var = dyn_cast<VarDecl>(D)) {
     DoMarkVarDeclReferenced(SemaRef, Loc, Var, E);
     return;
   }
 
-  SemaRef.MarkAnyDeclReferenced(Loc, D);
+  SemaRef.MarkAnyDeclReferenced(Loc, D, OdrUse);
 
   // If this is a call to a method via a cast, also mark the method in the
   // derived class used in case codegen can devirtualize the call.
@@ -11236,30 +11265,54 @@ static void MarkExprReferenced(Sema &SemaRef, SourceLocation Loc,
   CXXMethodDecl *DM = MD->getCorrespondingMethodInClass(MostDerivedClassDecl);
   if (!DM)
     return;
-  SemaRef.MarkAnyDeclReferenced(Loc, DM);
+  SemaRef.MarkAnyDeclReferenced(Loc, DM, OdrUse);
 } 
 
 /// \brief Perform reference-marking and odr-use handling for a DeclRefExpr.
 void Sema::MarkDeclRefReferenced(DeclRefExpr *E) {
-  MarkExprReferenced(*this, E->getLocation(), E->getDecl(), E);
+  // TODO: update this with DR# once a defect report is filed.
+  // C++11 defect. The address of a pure member should not be an ODR use, even
+  // if it's a qualified reference.
+  bool OdrUse = true;
+  if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(E->getDecl()))
+    if (Method->isVirtual())
+      OdrUse = false;
+  MarkExprReferenced(*this, E->getLocation(), E->getDecl(), E, OdrUse);
 }
 
 /// \brief Perform reference-marking and odr-use handling for a MemberExpr.
 void Sema::MarkMemberReferenced(MemberExpr *E) {
-  MarkExprReferenced(*this, E->getMemberLoc(), E->getMemberDecl(), E);
+  // C++11 [basic.def.odr]p2:
+  //   A non-overloaded function whose name appears as a potentially-evaluated
+  //   expression or a member of a set of candidate functions, if selected by
+  //   overload resolution when referred to from a potentially-evaluated
+  //   expression, is odr-used, unless it is a pure virtual function and its
+  //   name is not explicitly qualified.
+  bool OdrUse = true;
+  if (!E->hasQualifier()) {
+    if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(E->getMemberDecl()))
+      if (Method->isPure())
+        OdrUse = false;
+  }
+  MarkExprReferenced(*this, E->getMemberLoc(), E->getMemberDecl(), E, OdrUse);
 }
 
 /// \brief Perform marking for a reference to an arbitrary declaration.  It
 /// marks the declaration referenced, and performs odr-use checking for functions
 /// and variables. This method should not be used when building an normal
 /// expression which refers to a variable.
-void Sema::MarkAnyDeclReferenced(SourceLocation Loc, Decl *D) {
-  if (VarDecl *VD = dyn_cast<VarDecl>(D))
-    MarkVariableReferenced(Loc, VD);
-  else if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
-    MarkFunctionReferenced(Loc, FD);
-  else
-    D->setReferenced();
+void Sema::MarkAnyDeclReferenced(SourceLocation Loc, Decl *D, bool OdrUse) {
+  if (OdrUse) {
+    if (VarDecl *VD = dyn_cast<VarDecl>(D)) {
+      MarkVariableReferenced(Loc, VD);
+      return;
+    }
+    if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
+      MarkFunctionReferenced(Loc, FD);
+      return;
+    }
+  }
+  D->setReferenced();
 }
 
 namespace {
@@ -11284,7 +11337,7 @@ bool MarkReferencedDecls::TraverseTemplateArgument(
   const TemplateArgument &Arg) {
   if (Arg.getKind() == TemplateArgument::Declaration) {
     if (Decl *D = Arg.getAsDecl())
-      S.MarkAnyDeclReferenced(Loc, D);
+      S.MarkAnyDeclReferenced(Loc, D, true);
   }
 
   return Inherited::TraverseTemplateArgument(Arg);

@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/IdentifierTable.h"
@@ -19,7 +20,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/raw_ostream.h"
-#include <cctype>
 
 using namespace clang;
 
@@ -457,8 +457,8 @@ static const char *ScanFormat(const char *I, const char *E, char Target) {
       // Escaped characters get implicitly skipped here.
 
       // Format specifier.
-      if (!isdigit(*I) && !ispunct(*I)) {
-        for (I++; I != E && !isdigit(*I) && *I != '{'; I++) ;
+      if (!isDigit(*I) && !isPunctuation(*I)) {
+        for (I++; I != E && !isDigit(*I) && *I != '{'; I++) ;
         if (I == E) break;
         if (*I == '{')
           Depth++;
@@ -682,7 +682,7 @@ FormatDiagnostic(const char *DiagStr, const char *DiagEnd,
       OutStr.append(DiagStr, StrEnd);
       DiagStr = StrEnd;
       continue;
-    } else if (ispunct(DiagStr[1])) {
+    } else if (isPunctuation(DiagStr[1])) {
       OutStr.push_back(DiagStr[1]);  // %% -> %.
       DiagStr += 2;
       continue;
@@ -700,7 +700,7 @@ FormatDiagnostic(const char *DiagStr, const char *DiagEnd,
     unsigned ModifierLen = 0, ArgumentLen = 0;
 
     // Check to see if we have a modifier.  If so eat it.
-    if (!isdigit(DiagStr[0])) {
+    if (!isDigit(DiagStr[0])) {
       Modifier = DiagStr;
       while (DiagStr[0] == '-' ||
              (DiagStr[0] >= 'a' && DiagStr[0] <= 'z'))
@@ -719,22 +719,40 @@ FormatDiagnostic(const char *DiagStr, const char *DiagEnd,
       }
     }
 
-    assert(isdigit(*DiagStr) && "Invalid format for argument in diagnostic");
+    assert(isDigit(*DiagStr) && "Invalid format for argument in diagnostic");
     unsigned ArgNo = *DiagStr++ - '0';
 
     // Only used for type diffing.
     unsigned ArgNo2 = ArgNo;
 
     DiagnosticsEngine::ArgumentKind Kind = getArgKind(ArgNo);
-    if (Kind == DiagnosticsEngine::ak_qualtype &&
-        ModifierIs(Modifier, ModifierLen, "diff")) {
-      Kind = DiagnosticsEngine::ak_qualtype_pair;
-      assert(*DiagStr == ',' && isdigit(*(DiagStr + 1)) &&
+    if (ModifierIs(Modifier, ModifierLen, "diff")) {
+      assert(*DiagStr == ',' && isDigit(*(DiagStr + 1)) &&
              "Invalid format for diff modifier");
       ++DiagStr;  // Comma.
       ArgNo2 = *DiagStr++ - '0';
-      assert(getArgKind(ArgNo2) == DiagnosticsEngine::ak_qualtype &&
-             "Second value of type diff must be a qualtype");
+      DiagnosticsEngine::ArgumentKind Kind2 = getArgKind(ArgNo2);
+      if (Kind == DiagnosticsEngine::ak_qualtype &&
+          Kind2 == DiagnosticsEngine::ak_qualtype)
+        Kind = DiagnosticsEngine::ak_qualtype_pair;
+      else {
+        // %diff only supports QualTypes.  For other kinds of arguments,
+        // use the default printing.  For example, if the modifier is:
+        //   "%diff{compare $ to $|other text}1,2"
+        // treat it as:
+        //   "compare %1 to %2"
+        const char *Pipe = ScanFormat(Argument, Argument + ArgumentLen, '|');
+        const char *FirstDollar = ScanFormat(Argument, Pipe, '$');
+        const char *SecondDollar = ScanFormat(FirstDollar + 1, Pipe, '$');
+        const char ArgStr1[] = { '%', static_cast<char>('0' + ArgNo) };
+        const char ArgStr2[] = { '%', static_cast<char>('0' + ArgNo2) };
+        FormatDiagnostic(Argument, FirstDollar, OutStr);
+        FormatDiagnostic(ArgStr1, ArgStr1 + 2, OutStr);
+        FormatDiagnostic(FirstDollar + 1, SecondDollar, OutStr);
+        FormatDiagnostic(ArgStr2, ArgStr2 + 2, OutStr);
+        FormatDiagnostic(SecondDollar + 1, Pipe, OutStr);
+        continue;
+      }
     }
     
     switch (Kind) {

@@ -15,6 +15,7 @@
 #include "clang/StaticAnalyzer/Core/AnalyzerOptions.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
@@ -27,7 +28,7 @@ AnalyzerOptions::UserModeKind AnalyzerOptions::getUserMode() {
       .Case("shallow", UMK_Shallow)
       .Case("deep", UMK_Deep)
       .Default(UMK_NotSet);
-    assert(UserMode != UMK_NotSet && "User mode is not set or invalid.");
+    assert(UserMode != UMK_NotSet && "User mode is invalid.");
   }
   return UserMode;
 }
@@ -41,7 +42,7 @@ IPAKind AnalyzerOptions::getIPAMode() {
     const char *DefaultIPA = 0;
     UserModeKind HighLevelMode = getUserMode();
     if (HighLevelMode == UMK_Shallow)
-      DefaultIPA = "basic-inlining";
+      DefaultIPA = "inlining";
     else if (HighLevelMode == UMK_Deep)
       DefaultIPA = "dynamic-bifurcate";
     assert(DefaultIPA);
@@ -55,7 +56,7 @@ IPAKind AnalyzerOptions::getIPAMode() {
             .Case("dynamic", IPAK_DynamicDispatch)
             .Case("dynamic-bifurcate", IPAK_DynamicDispatchBifurcate)
             .Default(IPAK_NotSet);
-    assert(IPAConfig != IPAK_NotSet && "IPA Mode is not set or invalid.");
+    assert(IPAConfig != IPAK_NotSet && "IPA Mode is invalid.");
 
     // Set the member variable.
     IPAMode = IPAConfig;
@@ -171,6 +172,27 @@ unsigned AnalyzerOptions::getAlwaysInlineSize() {
   return AlwaysInlineSize.getValue();
 }
 
+unsigned AnalyzerOptions::getMaxInlinableSize() {
+  if (!MaxInlinableSize.hasValue()) {
+
+    int DefaultValue = 0;
+    UserModeKind HighLevelMode = getUserMode();
+    switch (HighLevelMode) {
+      default:
+        llvm_unreachable("Invalid mode.");
+      case UMK_Shallow:
+        DefaultValue = 4;
+        break;
+      case UMK_Deep:
+        DefaultValue = 50;
+        break;
+    }
+
+    MaxInlinableSize = getOptionAsInteger("max-inlinable-size", DefaultValue);
+  }
+  return MaxInlinableSize.getValue();
+}
+
 unsigned AnalyzerOptions::getGraphTrimInterval() {
   if (!GraphTrimInterval.hasValue())
     GraphTrimInterval = getOptionAsInteger("graph-trim-interval", 1000);
@@ -181,6 +203,25 @@ unsigned AnalyzerOptions::getMaxTimesInlineLarge() {
   if (!MaxTimesInlineLarge.hasValue())
     MaxTimesInlineLarge = getOptionAsInteger("max-times-inline-large", 32);
   return MaxTimesInlineLarge.getValue();
+}
+
+unsigned AnalyzerOptions::getMaxNodesPerTopLevelFunction() {
+  if (!MaxNodesPerTopLevelFunction.hasValue()) {
+    int DefaultValue = 0;
+    UserModeKind HighLevelMode = getUserMode();
+    switch (HighLevelMode) {
+      default:
+        llvm_unreachable("Invalid mode.");
+      case UMK_Shallow:
+        DefaultValue = 75000;
+        break;
+      case UMK_Deep:
+        DefaultValue = 150000;
+        break;
+    }
+    MaxNodesPerTopLevelFunction = getOptionAsInteger("max-nodes", DefaultValue);
+  }
+  return MaxNodesPerTopLevelFunction.getValue();
 }
 
 bool AnalyzerOptions::shouldSynthesizeBodies() {

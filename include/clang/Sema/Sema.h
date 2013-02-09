@@ -736,11 +736,15 @@ public:
 
   // Contains the locations of the beginning of unparsed default
   // argument locations.
-  llvm::DenseMap<ParmVarDecl *,SourceLocation> UnparsedDefaultArgLocs;
+  llvm::DenseMap<ParmVarDecl *, SourceLocation> UnparsedDefaultArgLocs;
 
-  /// UndefinedInternals - all the used, undefined objects with
-  /// internal linkage in this translation unit.
-  llvm::MapVector<NamedDecl*, SourceLocation> UndefinedInternals;
+  /// UndefinedInternals - all the used, undefined objects which require a
+  /// definition in this translation unit.
+  llvm::DenseMap<NamedDecl *, SourceLocation> UndefinedButUsed;
+
+  /// Obtain a sorted list of functions that are undefined but ODR-used.
+  void getUndefinedButUsed(
+    llvm::SmallVectorImpl<std::pair<NamedDecl *, SourceLocation> > &Undefined);
 
   typedef std::pair<ObjCMethodList, ObjCMethodList> GlobalMethods;
   typedef llvm::DenseMap<Selector, GlobalMethods> GlobalMethodPool;
@@ -2356,6 +2360,7 @@ public:
   bool CheckCallingConvAttr(const AttributeList &attr, CallingConv &CC, 
                             const FunctionDecl *FD = 0);
   bool CheckNoReturnAttr(const AttributeList &attr);
+  void CheckAlignasUnderalignment(Decl *D);
 
   /// \brief Stmt attributes - this routine is the top level dispatcher.
   StmtResult ProcessStmtAttributes(Stmt *Stmt, AttributeList *Attrs,
@@ -2882,7 +2887,7 @@ public:
   // for expressions referring to a decl; these exist because odr-use marking
   // needs to be delayed for some constant variables when we build one of the
   // named expressions.
-  void MarkAnyDeclReferenced(SourceLocation Loc, Decl *D);
+  void MarkAnyDeclReferenced(SourceLocation Loc, Decl *D, bool OdrUse);
   void MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func);
   void MarkVariableReferenced(SourceLocation Loc, VarDecl *Var);
   void MarkDeclRefReferenced(DeclRefExpr *E);
@@ -3764,7 +3769,8 @@ public:
                                MultiExprArg ArgsPtr,
                                SourceLocation Loc,
                                SmallVectorImpl<Expr*> &ConvertedArgs,
-                               bool AllowExplicit = false);
+                               bool AllowExplicit = false,
+                               bool IsListInitialization = false);
 
   ParsedType getDestructorName(SourceLocation TildeLoc,
                                IdentifierInfo &II, SourceLocation NameLoc,
@@ -5519,10 +5525,8 @@ public:
     /// \brief Substitution of the deduced template argument values
     /// resulted in an error.
     TDK_SubstitutionFailure,
-    /// \brief Substitution of the deduced template argument values
-    /// into a non-deduced context produced a type or value that
-    /// produces a type that does not match the original template
-    /// arguments provided.
+    /// \brief A non-depnedent component of the parameter did not match the
+    /// corresponding component of the argument.
     TDK_NonDeducedMismatch,
     /// \brief When performing template argument deduction for a function
     /// template, there were too many call arguments.
@@ -5535,7 +5539,9 @@ public:
     TDK_InvalidExplicitArguments,
     /// \brief The arguments included an overloaded function name that could
     /// not be resolved to a suitable function.
-    TDK_FailedOverloadResolution
+    TDK_FailedOverloadResolution,
+    /// \brief Deduction failed; that's all we know.
+    TDK_MiscellaneousDeductionFailure
   };
 
   TemplateDeductionResult
@@ -6599,9 +6605,9 @@ public:
 
   /// AddAlignedAttr - Adds an aligned attribute to a particular declaration.
   void AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E,
-                      bool isDeclSpec, unsigned SpellingListIndex);
+                      unsigned SpellingListIndex);
   void AddAlignedAttr(SourceRange AttrRange, Decl *D, TypeSourceInfo *T,
-                      bool isDeclSpec, unsigned SpellingListIndex);
+                      unsigned SpellingListIndex);
 
   /// \brief The kind of conversion being performed.
   enum CheckedConversionKind {
@@ -6690,7 +6696,8 @@ public:
                               Expr **Args, unsigned NumArgs,
                               SmallVector<Expr *, 8> &AllArgs,
                               VariadicCallType CallType = VariadicDoesNotApply,
-                              bool AllowExplicit = false);
+                              bool AllowExplicit = false,
+                              bool IsListInitialization = false);
 
   // DefaultVariadicArgumentPromotion - Like DefaultArgumentPromotion, but
   // will create a runtime trap if the resulting type is not a POD type.

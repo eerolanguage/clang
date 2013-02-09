@@ -111,7 +111,7 @@ static bool skipArg(const char *Flag, bool &SkipNextArg) {
   bool Res = llvm::StringSwitch<bool>(Flag)
     .Cases("-I", "-MF", "-MT", "-MQ", true)
     .Cases("-o", "-coverage-file", "-dependency-file", true)
-    .Cases("-fdebug-compilation-dir", "-fmodule-cache-path", "-idirafter", true)
+    .Cases("-fdebug-compilation-dir", "-idirafter", true)
     .Cases("-include", "-include-pch", "-internal-isystem", true)
     .Cases("-internal-externc-isystem", "-iprefix", "-iwithprefix", true)
     .Cases("-iwithprefixbefore", "-isysroot", "-isystem", "-iquote", true)
@@ -307,17 +307,17 @@ int Compilation::ExecuteCommand(const Command &C,
   return Res;
 }
 
-int Compilation::ExecuteJob(const Job &J,
-                            const Command *&FailingCommand) const {
+void Compilation::ExecuteJob(const Job &J,
+    SmallVectorImpl< std::pair<int, const Command *> > &FailingCommands) const {
   if (const Command *C = dyn_cast<Command>(&J)) {
-    return ExecuteCommand(*C, FailingCommand);
+    const Command *FailingCommand = 0;
+    if (int Res = ExecuteCommand(*C, FailingCommand))
+      FailingCommands.push_back(std::make_pair(Res, FailingCommand));
   } else {
     const JobList *Jobs = cast<JobList>(&J);
-    for (JobList::const_iterator
-           it = Jobs->begin(), ie = Jobs->end(); it != ie; ++it)
-      if (int Res = ExecuteJob(**it, FailingCommand))
-        return Res;
-    return 0;
+    for (JobList::const_iterator it = Jobs->begin(), ie = Jobs->end();
+         it != ie; ++it)
+      ExecuteJob(**it, FailingCommands);
   }
 }
 
@@ -329,6 +329,7 @@ void Compilation::initCompilationForDiagnostics() {
   // Clear temporary/results file lists.
   TempFiles.clear();
   ResultFiles.clear();
+  FailureResultFiles.clear();
 
   // Remove any user specified output.  Claim any unclaimed arguments, so as
   // to avoid emitting warnings about unused args.

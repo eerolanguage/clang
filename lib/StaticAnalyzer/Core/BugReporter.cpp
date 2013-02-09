@@ -309,7 +309,6 @@ public:
 class PathDiagnosticBuilder : public BugReporterContext {
   BugReport *R;
   PathDiagnosticConsumer *PDC;
-  OwningPtr<ParentMap> PM;
   NodeMapClosure NMC;
 public:
   const LocationContext *LC;
@@ -1295,7 +1294,25 @@ static void reversePropagateInterestingSymbols(BugReport &R,
     }
   }
 }
-                                               
+
+/// Return true if the terminator is a loop and the destination is the
+/// false branch.
+static bool isLoopJumpPastBody(const Stmt *Term, const BlockEdge *BE) {
+  switch (Term->getStmtClass()) {
+    case Stmt::ForStmtClass:
+    case Stmt::WhileStmtClass:
+      break;
+    default:
+      // Note that we intentionally do not include do..while here.
+      return false;
+  }
+
+  // Did we take the false branch?
+  const CFGBlock *Src = BE->getSrc();
+  assert(Src->succ_size() == 2);
+  return (*(Src->succ_begin()+1) == BE->getDst());
+}
+
 static bool GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
                                             PathDiagnosticBuilder &PDB,
                                             const ExplodedNode *N,
@@ -1304,6 +1321,11 @@ static bool GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
   const SourceManager& SM = PDB.getSourceManager();
   StackDiagVector CallStack;
   InterestingExprs IE;
+
+  // Record the last "looping back" diagnostic.  This is used
+  // for determining if we should emit a diagnostic for skipped loops.
+  std::pair<const Stmt *, PathDiagnosticEventPiece *>
+    LastLoopDiagnostic((Stmt*)0, (PathDiagnosticEventPiece*)0);
 
   const ExplodedNode *NextNode = N->pred_empty() ? NULL : *(N->pred_begin());
   while (NextNode) {
@@ -1416,6 +1438,12 @@ static bool GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
                                         "Looping back to the head of the loop");
           p->setPrunable(true);
 
+          // Record the loop diagnostic for later consultation.  We can
+          // use this to determine whether or not to emit a "skipped loop"
+          // event.
+          LastLoopDiagnostic.first = Loop;
+          LastLoopDiagnostic.second = p;
+
           EB.addEdge(p->getLocation(), true);
           PD.getActivePath().push_front(p);
 
@@ -1425,9 +1453,29 @@ static bool GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
             EB.addEdge(BL);
           }
         }
-        
-        if (const Stmt *Term = BE->getSrc()->getTerminator())
+
+        if (const Stmt *Term = BE->getSrc()->getTerminator()) {
+          // Are we jumping past the loop body without ever executing the
+          // loop (because the condition was false)?
+          if (isLoopJumpPastBody(Term, BE) &&
+              !PD.getActivePath().empty() &&
+              PD.getActivePath().front() != LastLoopDiagnostic.second &&
+              Term != LastLoopDiagnostic.first)
+          {
+            PathDiagnosticLocation L(Term, SM, PDB.LC);
+            PathDiagnosticEventPiece *PE =
+            new PathDiagnosticEventPiece(L,
+                                         "Loop body executed 0 times");
+            PE->setPrunable(true);
+            LastLoopDiagnostic.first = 0;
+            LastLoopDiagnostic.second = 0;
+
+            EB.addEdge(PE->getLocation(), true);
+            PD.getActivePath().push_front(PE);
+          }
+
           EB.addContext(Term);
+        }
 
         break;
       }
@@ -2047,6 +2095,7 @@ bool GRBugReporter::generatePathDiagnostic(PathDiagnostic& PD,
   // Register additional node visitors.
   R->addVisitor(new NilReceiverBRVisitor());
   R->addVisitor(new ConditionBRVisitor());
+  R->addVisitor(new LikelyFalsePositiveSuppressionBRVisitor());
 
   BugReport::VisitorList visitors;
   unsigned originalReportConfigToken, finalReportConfigToken;
@@ -2067,16 +2116,17 @@ bool GRBugReporter::generatePathDiagnostic(PathDiagnostic& PD,
 
     // Generate the very last diagnostic piece - the piece is visible before 
     // the trace is expanded.
-    if (PDB.getGenerationScheme() != PathDiagnosticConsumer::None) {
-      PathDiagnosticPiece *LastPiece = 0;
-      for (BugReport::visitor_iterator I = visitors.begin(), E = visitors.end();
-           I != E; ++I) {
-        if (PathDiagnosticPiece *Piece = (*I)->getEndPath(PDB, N, *R)) {
-          assert (!LastPiece &&
-                  "There can only be one final piece in a diagnostic.");
-          LastPiece = Piece;
-        }
+    PathDiagnosticPiece *LastPiece = 0;
+    for (BugReport::visitor_iterator I = visitors.begin(), E = visitors.end();
+        I != E; ++I) {
+      if (PathDiagnosticPiece *Piece = (*I)->getEndPath(PDB, N, *R)) {
+        assert (!LastPiece &&
+            "There can only be one final piece in a diagnostic.");
+        LastPiece = Piece;
       }
+    }
+
+    if (PDB.getGenerationScheme() != PathDiagnosticConsumer::None) {
       if (!LastPiece)
         LastPiece = BugReporterVisitor::getDefaultEndPath(PDB, N, *R);
       if (LastPiece)
@@ -2141,32 +2191,7 @@ void BugReporter::Register(BugType *BT) {
   BugTypes = F.add(BugTypes, BT);
 }
 
-bool BugReporter::suppressReport(BugReport *R) {
-  const Stmt *S = R->getStmt();
-  if (!S)
-    return false;
-
-  // Here we suppress false positives coming from system macros. This list is
-  // based on known issues.
-
-  // Skip reports within the sys/queue.h macros as we do not have the ability to
-  // reason about data structure shapes.
-  SourceManager &SM = getSourceManager();
-  SourceLocation Loc = S->getLocStart();
-  while (Loc.isMacroID()) {
-    if (SM.isInSystemMacro(Loc) &&
-       (SM.getFilename(SM.getSpellingLoc(Loc)).endswith("sys/queue.h")))
-      return true;
-    Loc = SM.getSpellingLoc(Loc);
-  }
-
-  return false;
-}
-
 void BugReporter::emitReport(BugReport* R) {
-  if (suppressReport(R))
-    return;
-
   // Compute the bug report's hash to determine its equivalence class.
   llvm::FoldingSetNodeID ID;
   R->Profile(ID);

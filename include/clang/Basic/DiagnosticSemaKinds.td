@@ -1544,6 +1544,8 @@ def warn_cxx98_compat_constexpr : Warning<
 def err_invalid_constexpr : Error<
   "%select{function parameter|typedef|non-static data member}0 "
   "cannot be constexpr">;
+def err_invalid_constexpr_member : Error<"non-static data member cannot be "
+  "constexpr%select{; did you intend to make it %select{const|static}0?|}1">;
 def err_constexpr_tag : Error<
   "%select{class|struct|interface|union|enum}0 cannot be marked constexpr">;
 def err_constexpr_dtor : Error<"destructor cannot be marked constexpr">;
@@ -1659,6 +1661,12 @@ def err_attribute_argument_not_int : Error<
   "'%0' attribute requires integer constant">;
 def err_aligned_attribute_argument_not_int : Error<
   "'aligned' attribute requires integer constant">;
+def err_alignas_attribute_wrong_decl_type : Error<
+  "%0 attribute cannot be applied to a %select{"
+  "function parameter|variable with 'register' storage class|"
+  "'catch' variable|bit-field}1">;
+def err_alignas_underaligned : Error<
+  "requested alignment is less than minimum alignment of %1 for type %0">;
 def err_attribute_first_argument_not_int_or_bool : Error<
   "%0 attribute first argument must be of int or bool type">;
 def err_attribute_argument_outof_range : Error<
@@ -1852,7 +1860,8 @@ def warn_attribute_wrong_decl_type : Warning<
   "functions, methods and blocks|functions, methods, and classes|"
   "functions, methods, and parameters|classes|variables|methods|"
   "variables, functions and labels|fields and global variables|structs|"
-  "variables, functions and tag types|thread-local variables}1">,
+  "variables, functions and tag types|thread-local variables|"
+  "variables and fields|variables, data members and tag types}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<
   "%0 attribute only applies to %select{functions|unions|"
@@ -1860,9 +1869,8 @@ def err_attribute_wrong_decl_type : Error<
   "functions, methods and blocks|functions, methods, and classes|"
   "functions, methods, and parameters|classes|variables|methods|"
   "variables, functions and labels|fields and global variables|structs|"
-  "variables, functions and tag types|thread-local variables}1">;
-def err_attribute_not_type_attr : Error<
-  "'%0' attribute cannot be applied to types">;
+  "variables, functions and tag types|thread-local variables|"
+  "variables and fields|variables, data members and tag types}1">;
 def warn_function_attribute_wrong_type : Warning<
   "'%0' only applies to function types; type here is %1">,
   InGroup<IgnoredAttributes>;
@@ -1903,11 +1911,11 @@ def err_objc_precise_lifetime_bad_type : Error<
 def warn_objc_precise_lifetime_meaningless : Error<
   "objc_precise_lifetime is not meaningful for "
   "%select{__unsafe_unretained|__autoreleasing}0 objects">;
-def err_invalid_pcs : Error<"Invalid PCS type">;
+def err_invalid_pcs : Error<"invalid PCS type">;
 def err_attribute_can_be_applied_only_to_value_decl : Error<
   "%0 attribute can only be applied to value declarations">;
-def warn_attribute_not_on_decl : Error<
-  "%0 attribute ignored when parsing type">;
+def warn_attribute_not_on_decl : Warning<
+  "%0 attribute ignored when parsing type">, InGroup<IgnoredAttributes>;
 
 // Availability attribute
 def warn_availability_unknown_platform : Warning<
@@ -2335,6 +2343,11 @@ def note_ovl_candidate_substitution_failure : Note<
     "candidate template ignored: substitution failure%0%1">;
 def note_ovl_candidate_disabled_by_enable_if : Note<
     "candidate template ignored: disabled by %0%1">;
+def note_ovl_candidate_failed_overload_resolution : Note<
+    "candidate template ignored: couldn't resolve reference to overloaded "
+    "function %0">;
+def note_ovl_candidate_non_deduced_mismatch : Note<
+    "candidate template ignored: could not match %diff{$ against $|types}0,1">;
     
 // Note that we don't treat templates differently for this diagnostic.
 def note_ovl_candidate_arity : Note<"candidate "
@@ -3281,10 +3294,12 @@ def note_deleted_assign_field : Note<
   "%select{copy|move}0 assignment operator of %1 is implicitly deleted "
   "because field %2 is of %select{reference|const-qualified}4 type %3">;
 
-// This should eventually be an error.
+// These should be errors.
 def warn_undefined_internal : Warning<
   "%select{function|variable}0 %q1 has internal linkage but is not defined">,
   InGroup<DiagGroup<"undefined-internal">>;
+def warn_undefined_inline : Warning<"inline function %q0 is not defined">,
+  InGroup<DiagGroup<"undefined-inline">>;
 def note_used_here : Note<"used here">;
 
 def warn_internal_in_extern_inline : ExtWarn<
@@ -4153,12 +4168,14 @@ def err_invalid_form_pointer_member_function : Error<
   "cannot create a non-constant pointer to member function">;
 def err_parens_pointer_member_function : Error<
   "cannot parenthesize the name of a method when forming a member pointer">;
+def err_typecheck_invalid_lvalue_addrof_addrof_function : Error<
+  "extra '&' taking address of overloaded function">;
 def err_typecheck_invalid_lvalue_addrof : Error<
-  "address expression must be an lvalue or a function designator">;
-def ext_typecheck_addrof_class_temporary : ExtWarn<
+  "cannot take the address of an rvalue of type %0">;
+def ext_typecheck_addrof_temporary : ExtWarn<
   "taking the address of a temporary object of type %0">, 
   InGroup<DiagGroup<"address-of-temporary">>, DefaultError;
-def err_typecheck_addrof_class_temporary : Error<
+def err_typecheck_addrof_temporary : Error<
   "taking the address of a temporary object of type %0">;
 def err_typecheck_unary_expr : Error<
   "invalid argument type %0 to unary expression">;
@@ -5321,6 +5338,7 @@ def ext_in_class_initializer_float_type : ExtWarn<
 def ext_in_class_initializer_float_type_cxx11 : ExtWarn<
   "in-class initializer for static data member of type %0 requires "
   "'constexpr' specifier">, InGroup<StaticFloatInit>, DefaultError;
+def note_in_class_initializer_float_type_cxx11 : Note<"add 'constexpr'">;
 def err_in_class_initializer_literal_type : Error<
   "in-class initializer for static data member of type %0 requires "
   "'constexpr' specifier">;
@@ -5358,8 +5376,8 @@ def ext_anonymous_record_with_type : Extension<
   "types declared in an anonymous %select{struct|union}0 are a Microsoft "
   "extension">, InGroup<Microsoft>;
 def ext_anonymous_record_with_anonymous_type : Extension<
-  "nested anonymous types are an extension">,
-  InGroup<DiagGroup<"nested-anon-types">>;
+  "anonymous types declared in an anonymous %select{struct|union}0 "
+  "are an extension">, InGroup<DiagGroup<"nested-anon-types">>;
 def err_anonymous_record_with_function : Error<
   "functions cannot be declared in an anonymous %select{struct|union}0">;
 def err_anonymous_record_with_static : Error<
@@ -6120,6 +6138,8 @@ def err_invalid_astype_of_different_size : Error<
   "invalid reinterpretation: sizes of %0 and %1 must match">;
 def err_static_kernel : Error<
   "kernel functions cannot be declared static">;
+def err_opencl_ptrptr_kernel_arg : Error<
+  "kernel argument cannot be declared as a pointer to a pointer">;
 def err_static_function_scope : Error<
   "variables in function scope cannot be declared static">;
 def err_opencl_bitfields : Error<
@@ -6134,6 +6154,12 @@ def err_event_t_struct_field : Error<
   "the event_t type cannot be used to declare a structure or union field">;
 def err_event_t_addr_space_qual : Error<
   "the event_t type can only be used with __private address space qualifier">;
+def err_expected_kernel_void_return_type : Error<
+  "kernel must have void return type">;
+def err_sampler_argument_required : Error<
+  "sampler_t variable required - got %0">;
+def err_wrong_sampler_addressspace: Error<
+  "sampler type cannot be used with the __local and __global address space qualifiers">;
 
 } // end of sema category
 

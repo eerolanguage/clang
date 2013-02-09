@@ -587,8 +587,7 @@ void NamedDecl::ClearLinkageCache() {
   if (const CXXRecordDecl *record = dyn_cast<CXXRecordDecl>(this))
     clearLinkageForClass(record);
 
-  if (ClassTemplateDecl *temp =
-        dyn_cast<ClassTemplateDecl>(const_cast<NamedDecl*>(this))) {
+  if (ClassTemplateDecl *temp = dyn_cast<ClassTemplateDecl>(this)) {
     // Clear linkage for the template pattern.
     CXXRecordDecl *record = temp->getTemplatedDecl();
     record->HasCachedLinkage = 0;
@@ -601,8 +600,7 @@ void NamedDecl::ClearLinkageCache() {
   }
 
   // Clear cached linkage for function template decls, too.
-  if (FunctionTemplateDecl *temp =
-        dyn_cast<FunctionTemplateDecl>(const_cast<NamedDecl*>(this))) {
+  if (FunctionTemplateDecl *temp = dyn_cast<FunctionTemplateDecl>(this)) {
     temp->getTemplatedDecl()->ClearLinkageCache();
     for (FunctionTemplateDecl::spec_iterator
            i = temp->spec_begin(), e = temp->spec_end(); i != e; ++i)
@@ -1812,6 +1810,7 @@ bool FunctionDecl::isGlobal() const {
 
 bool FunctionDecl::isNoReturn() const {
   return hasAttr<NoReturnAttr>() || hasAttr<CXX11NoReturnAttr>() ||
+         hasAttr<C11NoReturnAttr>() ||
          getType()->getAs<FunctionType>()->getNoReturnAttr();
 }
 
@@ -2613,6 +2612,16 @@ void TagDecl::completeDefinition() {
 TagDecl *TagDecl::getDefinition() const {
   if (isCompleteDefinition())
     return const_cast<TagDecl *>(this);
+
+  // If it's possible for us to have an out-of-date definition, check now.
+  if (MayHaveOutOfDateDef) {
+    if (IdentifierInfo *II = getIdentifier()) {
+      if (II->isOutOfDate()) {
+        updateOutOfDate(*II);
+      }
+    }
+  }
+
   if (const CXXRecordDecl *CXXRD = dyn_cast<CXXRecordDecl>(this))
     return CXXRD->getDefinition();
 
@@ -2669,14 +2678,17 @@ EnumDecl *EnumDecl::Create(ASTContext &C, DeclContext *DC,
                            bool IsScopedUsingClassTag, bool IsFixed) {
   EnumDecl *Enum = new (C) EnumDecl(DC, StartLoc, IdLoc, Id, PrevDecl,
                                     IsScoped, IsScopedUsingClassTag, IsFixed);
+  Enum->MayHaveOutOfDateDef = C.getLangOpts().Modules;
   C.getTypeDeclType(Enum, PrevDecl);
   return Enum;
 }
 
 EnumDecl *EnumDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   void *Mem = AllocateDeserializedDecl(C, ID, sizeof(EnumDecl));
-  return new (Mem) EnumDecl(0, SourceLocation(), SourceLocation(), 0, 0,
-                            false, false, false);
+  EnumDecl *Enum = new (Mem) EnumDecl(0, SourceLocation(), SourceLocation(),
+                                      0, 0, false, false, false);
+  Enum->MayHaveOutOfDateDef = C.getLangOpts().Modules;
+  return Enum;
 }
 
 void EnumDecl::completeDefinition(QualType NewType,
@@ -2744,14 +2756,18 @@ RecordDecl *RecordDecl::Create(const ASTContext &C, TagKind TK, DeclContext *DC,
                                IdentifierInfo *Id, RecordDecl* PrevDecl) {
   RecordDecl* R = new (C) RecordDecl(Record, TK, DC, StartLoc, IdLoc, Id,
                                      PrevDecl);
+  R->MayHaveOutOfDateDef = C.getLangOpts().Modules;
+
   C.getTypeDeclType(R, PrevDecl);
   return R;
 }
 
 RecordDecl *RecordDecl::CreateDeserialized(const ASTContext &C, unsigned ID) {
   void *Mem = AllocateDeserializedDecl(C, ID, sizeof(RecordDecl));
-  return new (Mem) RecordDecl(Record, TTK_Struct, 0, SourceLocation(),
-                              SourceLocation(), 0, 0);
+  RecordDecl *R = new (Mem) RecordDecl(Record, TTK_Struct, 0, SourceLocation(),
+                                       SourceLocation(), 0, 0);
+  R->MayHaveOutOfDateDef = C.getLangOpts().Modules;
+  return R;
 }
 
 bool RecordDecl::isInjectedClassName() const {

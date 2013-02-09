@@ -36,16 +36,20 @@
 namespace clang {
 using namespace sema;
 
-/// A convenience routine for creating a decayed reference to a
-/// function.
+/// A convenience routine for creating a decayed reference to a function.
 static ExprResult
-CreateFunctionRefExpr(Sema &S, FunctionDecl *Fn, bool HadMultipleCandidates,
+CreateFunctionRefExpr(Sema &S, FunctionDecl *Fn, NamedDecl *FoundDecl,
+                      bool HadMultipleCandidates,
                       SourceLocation Loc = SourceLocation(), 
                       const DeclarationNameLoc &LocInfo = DeclarationNameLoc()){
   DeclRefExpr *DRE = new (S.Context) DeclRefExpr(Fn, false, Fn->getType(),
                                                  VK_LValue, Loc, LocInfo);
   if (HadMultipleCandidates)
     DRE->setHadMultipleCandidates(true);
+
+  S.MarkDeclRefReferenced(DRE);
+  S.DiagnoseUseOfDecl(FoundDecl, Loc);
+
   ExprResult E = S.Owned(DRE);
   E = S.DefaultFunctionArrayConversion(E.take());
   if (E.isInvalid())
@@ -536,11 +540,15 @@ AmbiguousConversionSequence::copyFrom(const AmbiguousConversionSequence &O) {
 
 namespace {
   // Structure used by OverloadCandidate::DeductionFailureInfo to store
-  // template parameter and template argument information.
-  struct DFIParamWithArguments {
-    TemplateParameter Param;
+  // template argument information.
+  struct DFIArguments {
     TemplateArgument FirstArg;
     TemplateArgument SecondArg;
+  };
+  // Structure used by OverloadCandidate::DeductionFailureInfo to store
+  // template parameter and template argument information.
+  struct DFIParamWithArguments : DFIArguments {
+    TemplateParameter Param;
   };
 }
 
@@ -567,6 +575,15 @@ static MakeDeductionFailureInfo(ASTContext &Context,
     Result.Data = Info.Param.getOpaqueValue();
     break;
 
+  case Sema::TDK_NonDeducedMismatch: {
+    // FIXME: Should allocate from normal heap so that we can free this later.
+    DFIArguments *Saved = new (Context) DFIArguments;
+    Saved->FirstArg = Info.FirstArg;
+    Saved->SecondArg = Info.SecondArg;
+    Result.Data = Saved;
+    break;
+  }
+
   case Sema::TDK_Inconsistent:
   case Sema::TDK_Underqualified: {
     // FIXME: Should allocate from normal heap so that we can free this later.
@@ -588,8 +605,11 @@ static MakeDeductionFailureInfo(ASTContext &Context,
     }
     break;
 
-  case Sema::TDK_NonDeducedMismatch:
   case Sema::TDK_FailedOverloadResolution:
+    Result.Data = Info.Expression;
+    break;
+
+  case Sema::TDK_MiscellaneousDeductionFailure:
     break;
   }
 
@@ -605,10 +625,12 @@ void OverloadCandidate::DeductionFailureInfo::Destroy() {
   case Sema::TDK_TooManyArguments:
   case Sema::TDK_TooFewArguments:
   case Sema::TDK_InvalidExplicitArguments:
+  case Sema::TDK_FailedOverloadResolution:
     break;
 
   case Sema::TDK_Inconsistent:
   case Sema::TDK_Underqualified:
+  case Sema::TDK_NonDeducedMismatch:
     // FIXME: Destroy the data?
     Data = 0;
     break;
@@ -623,8 +645,7 @@ void OverloadCandidate::DeductionFailureInfo::Destroy() {
     break;
 
   // Unhandled
-  case Sema::TDK_NonDeducedMismatch:
-  case Sema::TDK_FailedOverloadResolution:
+  case Sema::TDK_MiscellaneousDeductionFailure:
     break;
   }
 }
@@ -645,6 +666,8 @@ OverloadCandidate::DeductionFailureInfo::getTemplateParameter() {
   case Sema::TDK_TooManyArguments:
   case Sema::TDK_TooFewArguments:
   case Sema::TDK_SubstitutionFailure:
+  case Sema::TDK_NonDeducedMismatch:
+  case Sema::TDK_FailedOverloadResolution:
     return TemplateParameter();
 
   case Sema::TDK_Incomplete:
@@ -656,8 +679,7 @@ OverloadCandidate::DeductionFailureInfo::getTemplateParameter() {
     return static_cast<DFIParamWithArguments*>(Data)->Param;
 
   // Unhandled
-  case Sema::TDK_NonDeducedMismatch:
-  case Sema::TDK_FailedOverloadResolution:
+  case Sema::TDK_MiscellaneousDeductionFailure:
     break;
   }
 
@@ -667,24 +689,25 @@ OverloadCandidate::DeductionFailureInfo::getTemplateParameter() {
 TemplateArgumentList *
 OverloadCandidate::DeductionFailureInfo::getTemplateArgumentList() {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
-    case Sema::TDK_Success:
-    case Sema::TDK_Invalid:
-    case Sema::TDK_InstantiationDepth:
-    case Sema::TDK_TooManyArguments:
-    case Sema::TDK_TooFewArguments:
-    case Sema::TDK_Incomplete:
-    case Sema::TDK_InvalidExplicitArguments:
-    case Sema::TDK_Inconsistent:
-    case Sema::TDK_Underqualified:
-      return 0;
+  case Sema::TDK_Success:
+  case Sema::TDK_Invalid:
+  case Sema::TDK_InstantiationDepth:
+  case Sema::TDK_TooManyArguments:
+  case Sema::TDK_TooFewArguments:
+  case Sema::TDK_Incomplete:
+  case Sema::TDK_InvalidExplicitArguments:
+  case Sema::TDK_Inconsistent:
+  case Sema::TDK_Underqualified:
+  case Sema::TDK_NonDeducedMismatch:
+  case Sema::TDK_FailedOverloadResolution:
+    return 0;
 
-    case Sema::TDK_SubstitutionFailure:
-      return static_cast<TemplateArgumentList*>(Data);
+  case Sema::TDK_SubstitutionFailure:
+    return static_cast<TemplateArgumentList*>(Data);
 
-    // Unhandled
-    case Sema::TDK_NonDeducedMismatch:
-    case Sema::TDK_FailedOverloadResolution:
-      break;
+  // Unhandled
+  case Sema::TDK_MiscellaneousDeductionFailure:
+    break;
   }
 
   return 0;
@@ -700,15 +723,16 @@ const TemplateArgument *OverloadCandidate::DeductionFailureInfo::getFirstArg() {
   case Sema::TDK_TooFewArguments:
   case Sema::TDK_InvalidExplicitArguments:
   case Sema::TDK_SubstitutionFailure:
+  case Sema::TDK_FailedOverloadResolution:
     return 0;
 
   case Sema::TDK_Inconsistent:
   case Sema::TDK_Underqualified:
-    return &static_cast<DFIParamWithArguments*>(Data)->FirstArg;
+  case Sema::TDK_NonDeducedMismatch:
+    return &static_cast<DFIArguments*>(Data)->FirstArg;
 
   // Unhandled
-  case Sema::TDK_NonDeducedMismatch:
-  case Sema::TDK_FailedOverloadResolution:
+  case Sema::TDK_MiscellaneousDeductionFailure:
     break;
   }
 
@@ -726,17 +750,27 @@ OverloadCandidate::DeductionFailureInfo::getSecondArg() {
   case Sema::TDK_TooFewArguments:
   case Sema::TDK_InvalidExplicitArguments:
   case Sema::TDK_SubstitutionFailure:
+  case Sema::TDK_FailedOverloadResolution:
     return 0;
 
   case Sema::TDK_Inconsistent:
   case Sema::TDK_Underqualified:
-    return &static_cast<DFIParamWithArguments*>(Data)->SecondArg;
+  case Sema::TDK_NonDeducedMismatch:
+    return &static_cast<DFIArguments*>(Data)->SecondArg;
 
   // Unhandled
-  case Sema::TDK_NonDeducedMismatch:
-  case Sema::TDK_FailedOverloadResolution:
+  case Sema::TDK_MiscellaneousDeductionFailure:
     break;
   }
+
+  return 0;
+}
+
+Expr *
+OverloadCandidate::DeductionFailureInfo::getExpr() {
+  if (static_cast<Sema::TemplateDeductionResult>(Result) ==
+        Sema::TDK_FailedOverloadResolution)
+    return static_cast<Expr*>(Data);
 
   return 0;
 }
@@ -1599,6 +1633,11 @@ static bool IsStandardConversion(Sema &S, Expr* From, QualType ToType,
     // tryAtomicConversion has updated the standard conversion sequence
     // appropriately.
     return true;
+  } else if (ToType->isEventT() && 
+             From->isIntegerConstantExpr(S.getASTContext()) &&
+             (From->EvaluateKnownConstInt(S.getASTContext()) == 0)) {
+    SCS.Second = ICK_Zero_Event_Conversion;
+    FromType = ToType;
   } else {
     // No second conversion required.
     SCS.Second = ICK_Identity;
@@ -1630,7 +1669,9 @@ static bool IsStandardConversion(Sema &S, Expr* From, QualType ToType,
                                        == CanonTo.getLocalUnqualifiedType() &&
         (CanonFrom.getLocalCVRQualifiers() != CanonTo.getLocalCVRQualifiers()
          || CanonFrom.getObjCGCAttr() != CanonTo.getObjCGCAttr()
-         || CanonFrom.getObjCLifetime() != CanonTo.getObjCLifetime())) {
+         || CanonFrom.getObjCLifetime() != CanonTo.getObjCLifetime()
+         || (CanonFrom->isSamplerT() && 
+           CanonFrom.getAddressSpace() != CanonTo.getAddressSpace()))) {
       FromType = ToType;
       CanonFrom = CanonTo;
     }
@@ -4835,6 +4876,7 @@ static bool CheckConvertedConstantConversions(Sema &S,
   case ICK_Identity:
   case ICK_Integral_Promotion:
   case ICK_Integral_Conversion:
+  case ICK_Zero_Event_Conversion:
     return true;
 
   case ICK_Boolean_Conversion:
@@ -8442,10 +8484,25 @@ void DiagnoseBadDeduction(Sema &S, OverloadCandidate *Cand,
     return;
   }
 
+  case Sema::TDK_FailedOverloadResolution: {
+    OverloadExpr::FindResult R =
+        OverloadExpr::find(Cand->DeductionFailure.getExpr());
+    S.Diag(Fn->getLocation(),
+           diag::note_ovl_candidate_failed_overload_resolution)
+      << R.Expression->getName();
+    return;
+  }
+
+  case Sema::TDK_NonDeducedMismatch:
+    // FIXME: Provide a source location to indicate what we couldn't match.
+    S.Diag(Fn->getLocation(), diag::note_ovl_candidate_non_deduced_mismatch)
+      << *Cand->DeductionFailure.getFirstArg()
+      << *Cand->DeductionFailure.getSecondArg();
+    return;
+
   // TODO: diagnose these individually, then kill off
   // note_ovl_candidate_bad_deduction, which is uselessly vague.
-  case Sema::TDK_NonDeducedMismatch:
-  case Sema::TDK_FailedOverloadResolution:
+  case Sema::TDK_MiscellaneousDeductionFailure:
     S.Diag(Fn->getLocation(), diag::note_ovl_candidate_bad_deduction);
     MaybeEmitInheritedConstructorNote(S, Fn);
     return;
@@ -8623,6 +8680,7 @@ RankDeductionFailure(const OverloadCandidate::DeductionFailureInfo &DFI) {
 
   case Sema::TDK_SubstitutionFailure:
   case Sema::TDK_NonDeducedMismatch:
+  case Sema::TDK_MiscellaneousDeductionFailure:
     return 3;
 
   case Sema::TDK_InstantiationDepth:
@@ -10046,8 +10104,6 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, unsigned OpcIn,
       // We matched an overloaded operator. Build a call to that
       // operator.
 
-      MarkFunctionReferenced(OpLoc, FnDecl);
-
       // Convert the arguments.
       if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(FnDecl)) {
         CheckMemberOperatorAccess(OpLoc, Args[0], 0, Best->FoundDecl);
@@ -10071,15 +10127,13 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, unsigned OpcIn,
         Input = InputInit.take();
       }
 
-      DiagnoseUseOfDecl(Best->FoundDecl, OpLoc);
-
       // Determine the result type.
       QualType ResultTy = FnDecl->getResultType();
       ExprValueKind VK = Expr::getValueKindForType(ResultTy);
       ResultTy = ResultTy.getNonLValueExprType(Context);
 
       // Build the actual expression node.
-      ExprResult FnExpr = CreateFunctionRefExpr(*this, FnDecl,
+      ExprResult FnExpr = CreateFunctionRefExpr(*this, FnDecl, Best->FoundDecl,
                                                 HadMultipleCandidates, OpLoc);
       if (FnExpr.isInvalid())
         return ExprError();
@@ -10271,8 +10325,6 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
         // We matched an overloaded operator. Build a call to that
         // operator.
 
-        MarkFunctionReferenced(OpLoc, FnDecl);
-
         // Convert the arguments.
         if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(FnDecl)) {
           // Best->Access is only meaningful for class members.
@@ -10313,8 +10365,6 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
           Args[1] = RHS = Arg1.takeAs<Expr>();
         }
 
-        DiagnoseUseOfDecl(Best->FoundDecl, OpLoc);
-
         // Determine the result type.
         QualType ResultTy = FnDecl->getResultType();
         ExprValueKind VK = Expr::getValueKindForType(ResultTy);
@@ -10322,6 +10372,7 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
 
         // Build the actual expression node.
         ExprResult FnExpr = CreateFunctionRefExpr(*this, FnDecl,
+                                                  Best->FoundDecl,
                                                   HadMultipleCandidates, OpLoc);
         if (FnExpr.isInvalid())
           return ExprError();
@@ -10498,10 +10549,7 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
         // We matched an overloaded operator. Build a call to that
         // operator.
 
-        MarkFunctionReferenced(LLoc, FnDecl);
-
         CheckMemberOperatorAccess(LLoc, Args[0], Args[1], Best->FoundDecl);
-        DiagnoseUseOfDecl(Best->FoundDecl, LLoc);
 
         // Convert the arguments.
         CXXMethodDecl *Method = cast<CXXMethodDecl>(FnDecl);
@@ -10533,6 +10581,7 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
         DeclarationNameInfo OpLocInfo(OpName, LLoc);
         OpLocInfo.setCXXOperatorNameRange(SourceRange(LLoc, RLoc));
         ExprResult FnExpr = CreateFunctionRefExpr(*this, FnDecl,
+                                                  Best->FoundDecl,
                                                   HadMultipleCandidates,
                                                   OpLocInfo.getLoc(),
                                                   OpLocInfo.getInfo());
@@ -11025,9 +11074,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
                          RParenLoc);
   }
 
-  MarkFunctionReferenced(LParenLoc, Best->Function);
   CheckMemberOperatorAccess(LParenLoc, Object.get(), 0, Best->FoundDecl);
-  DiagnoseUseOfDecl(Best->FoundDecl, LParenLoc);
 
   // We found an overloaded operator(). Build a CXXOperatorCallExpr
   // that calls this method, using Object for the implicit object
@@ -11061,7 +11108,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   DeclarationNameInfo OpLocInfo(
                Context.DeclarationNames.getCXXOperatorName(OO_Call), LParenLoc);
   OpLocInfo.setCXXOperatorNameRange(SourceRange(LParenLoc, RParenLoc));
-  ExprResult NewFn = CreateFunctionRefExpr(*this, Method,
+  ExprResult NewFn = CreateFunctionRefExpr(*this, Method, Best->FoundDecl,
                                            HadMultipleCandidates,
                                            OpLocInfo.getLoc(),
                                            OpLocInfo.getInfo());
@@ -11226,9 +11273,7 @@ Sema::BuildOverloadedArrowExpr(Scope *S, Expr *Base, SourceLocation OpLoc) {
     return ExprError();
   }
 
-  MarkFunctionReferenced(OpLoc, Best->Function);
   CheckMemberOperatorAccess(OpLoc, Base, 0, Best->FoundDecl);
-  DiagnoseUseOfDecl(Best->FoundDecl, OpLoc);
 
   // Convert the object parameter.
   CXXMethodDecl *Method = cast<CXXMethodDecl>(Best->Function);
@@ -11240,7 +11285,7 @@ Sema::BuildOverloadedArrowExpr(Scope *S, Expr *Base, SourceLocation OpLoc) {
   Base = BaseResult.take();
 
   // Build the operator call.
-  ExprResult FnExpr = CreateFunctionRefExpr(*this, Method,
+  ExprResult FnExpr = CreateFunctionRefExpr(*this, Method, Best->FoundDecl,
                                             HadMultipleCandidates, OpLoc);
   if (FnExpr.isInvalid())
     return ExprError();
@@ -11295,10 +11340,8 @@ ExprResult Sema::BuildLiteralOperatorCall(LookupResult &R,
   }
 
   FunctionDecl *FD = Best->Function;
-  MarkFunctionReferenced(UDSuffixLoc, FD);
-  DiagnoseUseOfDecl(Best->FoundDecl, UDSuffixLoc);
-
-  ExprResult Fn = CreateFunctionRefExpr(*this, FD, HadMultipleCandidates,
+  ExprResult Fn = CreateFunctionRefExpr(*this, FD, Best->FoundDecl,
+                                        HadMultipleCandidates,
                                         SuffixInfo.getLoc(),
                                         SuffixInfo.getInfo());
   if (Fn.isInvalid())

@@ -77,6 +77,8 @@ def err_module_cycle : Error<"cyclic dependency in module '%0': %1">,
 def note_pragma_entered_here : Note<"#pragma entered here">;  
 def note_decl_hiding_tag_type : Note<
   "%1 %0 is hidden by a non-type declaration of %0 here">;
+def err_attribute_not_type_attr : Error<
+  "%0 attribute cannot be applied to types">;
 
 // Eero common diagnostics
 def err_expected : Error<"expected %0">;
@@ -120,4 +122,8 @@ def err_unable_to_rename_temp : Error<
   "unable to rename temporary '%0' to output file '%1': '%2'">;
 def err_unable_to_make_temp : Error<
   "unable to make temporary file: %0">;
+  
+// Modules
+def err_module_file_conflict : Error<"module '%0' found in both '%1' and '%2'">;
+
 }

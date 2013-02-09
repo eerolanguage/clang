@@ -15,6 +15,7 @@
 #include "RAIIObjectsForParser.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/AddressSpaces.h"
+#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/OpenCL.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Sema/Lookup.h"
@@ -571,7 +572,7 @@ VersionTuple Parser::ParseVersionTuple(SourceRange &Range) {
   // Parse the major version.
   unsigned AfterMajor = 0;
   unsigned Major = 0;
-  while (AfterMajor < ActualLength && isdigit(ThisTokBegin[AfterMajor])) {
+  while (AfterMajor < ActualLength && isDigit(ThisTokBegin[AfterMajor])) {
     Major = Major * 10 + ThisTokBegin[AfterMajor] - '0';
     ++AfterMajor;
   }
@@ -603,7 +604,7 @@ VersionTuple Parser::ParseVersionTuple(SourceRange &Range) {
   // Parse the minor version.
   unsigned AfterMinor = AfterMajor + 1;
   unsigned Minor = 0;
-  while (AfterMinor < ActualLength && isdigit(ThisTokBegin[AfterMinor])) {
+  while (AfterMinor < ActualLength && isDigit(ThisTokBegin[AfterMinor])) {
     Minor = Minor * 10 + ThisTokBegin[AfterMinor] - '0';
     ++AfterMinor;
   }
@@ -630,7 +631,7 @@ VersionTuple Parser::ParseVersionTuple(SourceRange &Range) {
   // Parse the subminor version.
   unsigned AfterSubminor = AfterMinor + 1;
   unsigned Subminor = 0;
-  while (AfterSubminor < ActualLength && isdigit(ThisTokBegin[AfterSubminor])) {
+  while (AfterSubminor < ActualLength && isDigit(ThisTokBegin[AfterSubminor])) {
     Subminor = Subminor * 10 + ThisTokBegin[AfterSubminor] - '0';
     ++AfterSubminor;
   }
@@ -1024,6 +1025,7 @@ void Parser::ParseThreadSafetyAttribute(IdentifierInfo &AttrName,
 
   // now parse the list of expressions
   while (Tok.isNot(tok::r_paren)) {
+    EnterExpressionEvaluationContext Unevaluated(Actions, Sema::Unevaluated);
     ExprResult ArgExpr(ParseAssignmentExpression());
     if (ArgExpr.isInvalid()) {
       ArgExprsOk = false;
@@ -1152,7 +1154,7 @@ void Parser::ProhibitCXX11Attributes(ParsedAttributesWithRange &attrs) {
   AttributeList *AttrList = attrs.getList();
   while (AttrList) {
     if (AttrList->isCXX11Attribute()) {
-      Diag(AttrList->getLoc(), diag::warn_attribute_no_decl) 
+      Diag(AttrList->getLoc(), diag::err_attribute_not_type_attr) 
         << AttrList->getName();
       AttrList->setInvalid();
     }
@@ -2868,6 +2870,10 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_image3d_t, Loc,
                                      PrevSpec, DiagID);
       break;
+    case tok::kw_sampler_t:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_sampler_t, Loc,
+                                     PrevSpec, DiagID);
+      break;
     case tok::kw_event_t:
       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_event_t, Loc,
                                      PrevSpec, DiagID);
@@ -3731,6 +3737,7 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
   case tok::kw_image2d_t:
   case tok::kw_image2d_array_t:
   case tok::kw_image3d_t:
+  case tok::kw_sampler_t:
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
@@ -3813,6 +3820,7 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw_image2d_t:
   case tok::kw_image2d_array_t:
   case tok::kw_image3d_t:
+  case tok::kw_sampler_t:
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
@@ -3970,6 +3978,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_image2d_t:
   case tok::kw_image2d_array_t:
   case tok::kw_image3d_t:
+  case tok::kw_sampler_t:
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
@@ -3990,6 +3999,9 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_virtual:
   case tok::kw_explicit:
   case tok::kw__Noreturn:
+
+    // alignment-specifier
+  case tok::kw__Alignas:
 
     // friend keyword.
   case tok::kw_friend:

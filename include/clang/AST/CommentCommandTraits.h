@@ -69,6 +69,9 @@ struct CommandInfo {
   /// True if this command is \\deprecated or an alias.
   unsigned IsDeprecatedCommand : 1;
 
+  /// \brief True if this is a \\headerfile-like command.
+  unsigned IsHeaderfileCommand : 1;
+
   /// True if we don't want to warn about this command being passed an empty
   /// paragraph.  Meaningful only for block commands.
   unsigned IsEmptyParagraphAllowed : 1;
@@ -106,6 +109,13 @@ struct CommandInfo {
 /// in comments.
 class CommandTraits {
 public:
+  enum KnownCommandIDs {
+#define COMMENT_COMMAND(NAME) KCI_##NAME,
+#include "clang/AST/CommentCommandList.inc"
+#undef COMMENT_COMMAND
+    KCI_Last
+  };
+
   CommandTraits(llvm::BumpPtrAllocator &Allocator);
 
   /// \returns a CommandInfo object for a given command name or

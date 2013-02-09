@@ -25,16 +25,22 @@ void f6(signed short x) { }
 void f7(unsigned short x) { }
 
 // CHECK: define void @f8()
-// CHECK: nounwind
 // CHECK: alwaysinline
+// CHECK: nounwind
 // CHECK: {
 void __attribute__((always_inline)) f8(void) { }
 
 // CHECK: call void @f9_t()
 // CHECK: noreturn
-// CHECK: {
+// CHECK: }
 void __attribute__((noreturn)) f9_t(void);
 void f9(void) { f9_t(); }
+
+// CHECK: call void @f9a()
+// CHECK: noreturn
+// CHECK: }
+_Noreturn void f9a(void);
+void f9b(void) { f9a(); }
 
 // FIXME: We should be setting nounwind on calls.
 // CHECK: call i32 @f10_t()
@@ -50,7 +56,7 @@ int f12(int arg) {
   return arg ? 0 : f10_t();
 }
 
-// CHECK: define void @f13() nounwind readnone
+// CHECK: define void @f13() nounwind optsize readnone
 void f13(void) __attribute__((pure)) __attribute__((const));
 void f13(void){}
 

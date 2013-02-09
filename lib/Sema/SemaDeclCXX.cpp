@@ -1666,6 +1666,35 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
                        DS.getStorageClassSpec() == DeclSpec::SCS_mutable) &&
                       !isFunc);
 
+  if (DS.isConstexprSpecified() && isInstField) {
+    SemaDiagnosticBuilder B =
+        Diag(DS.getConstexprSpecLoc(), diag::err_invalid_constexpr_member);
+    SourceLocation ConstexprLoc = DS.getConstexprSpecLoc();
+    if (InitStyle == ICIS_NoInit) {
+      B << 0 << 0 << FixItHint::CreateReplacement(ConstexprLoc, "const");
+      D.getMutableDeclSpec().ClearConstexprSpec();
+      const char *PrevSpec;
+      unsigned DiagID;
+      bool Failed = D.getMutableDeclSpec().SetTypeQual(DeclSpec::TQ_const, ConstexprLoc,
+                                         PrevSpec, DiagID, getLangOpts());
+      (void)Failed;
+      assert(!Failed && "Making a constexpr member const shouldn't fail");
+    } else {
+      B << 1;
+      const char *PrevSpec;
+      unsigned DiagID;
+      if (D.getMutableDeclSpec().SetStorageClassSpec(
+          *this, DeclSpec::SCS_static, ConstexprLoc, PrevSpec, DiagID)) {
+        assert(DS.getStorageClassSpec() == DeclSpec::SCS_mutable &&
+               "This is the only DeclSpec that should fail to be applied");
+        B << 1;
+      } else {
+        B << 0 << FixItHint::CreateInsertion(ConstexprLoc, "static ");
+        isInstField = false;
+      }
+    }
+  }
+
   NamedDecl *Member;
   if (isInstField) {
     CXXScopeSpec &SS = D.getCXXScopeSpec();
@@ -1720,7 +1749,7 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
                          InitStyle, AS);
     assert(Member && "HandleField never returns null");
   } else {
-    assert(InitStyle == ICIS_NoInit);
+    assert(InitStyle == ICIS_NoInit || D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static);
 
     Member = HandleDeclarator(S, D, TemplateParameterLists);
     if (!Member) {
@@ -7842,6 +7871,14 @@ void Sema::DefineImplicitDestructor(SourceLocation CurrentLocation,
 /// \brief Perform any semantic analysis which needs to be delayed until all
 /// pending class member declarations have been parsed.
 void Sema::ActOnFinishCXXMemberDecls() {
+  // If the context is an invalid C++ class, just suppress these checks.
+  if (CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(CurContext)) {
+    if (Record->isInvalidDecl()) {
+      DelayedDestructorExceptionSpecChecks.clear();
+      return;
+    }
+  }
+
   // Perform any deferred checking of exception specifications for virtual
   // destructors.
   for (unsigned i = 0, e = DelayedDestructorExceptionSpecChecks.size();
@@ -9557,7 +9594,8 @@ Sema::CompleteConstructorCall(CXXConstructorDecl *Constructor,
                               MultiExprArg ArgsPtr,
                               SourceLocation Loc,
                               SmallVectorImpl<Expr*> &ConvertedArgs,
-                              bool AllowExplicit) {
+                              bool AllowExplicit,
+                              bool IsListInitialization) {
   // FIXME: This duplicates a lot of code from Sema::ConvertArgumentsForCall.
   unsigned NumArgs = ArgsPtr.size();
   Expr **Args = ArgsPtr.data();
@@ -9578,7 +9616,8 @@ Sema::CompleteConstructorCall(CXXConstructorDecl *Constructor,
   SmallVector<Expr *, 8> AllArgs;
   bool Invalid = GatherArgumentsForCall(Loc, Constructor,
                                         Proto, 0, Args, NumArgs, AllArgs, 
-                                        CallType, AllowExplicit);
+                                        CallType, AllowExplicit,
+                                        IsListInitialization);
   ConvertedArgs.append(AllArgs.begin(), AllArgs.end());
 
   DiagnoseSentinelCalls(Constructor, Loc, AllArgs.data(), AllArgs.size());
@@ -10265,47 +10304,49 @@ FriendDecl *Sema::CheckFriendTypeDecl(SourceLocation LocStart,
     // Do not complain about the form of friend template types during
     // template instantiation; we will already have complained when the
     // template was declared.
-  } else if (!T->isElaboratedTypeSpecifier()) {
-    // If we evaluated the type to a record type, suggest putting
-    // a tag in front.
-    if (const RecordType *RT = T->getAs<RecordType>()) {
-      RecordDecl *RD = RT->getDecl();
+  } else {
+    if (!T->isElaboratedTypeSpecifier()) {
+      // If we evaluated the type to a record type, suggest putting
+      // a tag in front.
+      if (const RecordType *RT = T->getAs<RecordType>()) {
+        RecordDecl *RD = RT->getDecl();
       
-      std::string InsertionText = std::string(" ") + RD->getKindName();
+        std::string InsertionText = std::string(" ") + RD->getKindName();
       
-      Diag(TypeRange.getBegin(),
-           getLangOpts().CPlusPlus11 ?
-             diag::warn_cxx98_compat_unelaborated_friend_type :
-             diag::ext_unelaborated_friend_type)
-        << (unsigned) RD->getTagKind()
-        << T
-        << FixItHint::CreateInsertion(PP.getLocForEndOfToken(FriendLoc),
-                                      InsertionText);
-    } else {
+        Diag(TypeRange.getBegin(),
+             getLangOpts().CPlusPlus11 ?
+               diag::warn_cxx98_compat_unelaborated_friend_type :
+               diag::ext_unelaborated_friend_type)
+          << (unsigned) RD->getTagKind()
+          << T
+          << FixItHint::CreateInsertion(PP.getLocForEndOfToken(FriendLoc),
+                                        InsertionText);
+      } else {
+        Diag(FriendLoc,
+             getLangOpts().CPlusPlus11 ?
+               diag::warn_cxx98_compat_nonclass_type_friend :
+               diag::ext_nonclass_type_friend)
+          << T
+          << TypeRange;
+      }
+    } else if (T->getAs<EnumType>()) {
       Diag(FriendLoc,
            getLangOpts().CPlusPlus11 ?
-             diag::warn_cxx98_compat_nonclass_type_friend :
-             diag::ext_nonclass_type_friend)
+             diag::warn_cxx98_compat_enum_friend :
+             diag::ext_enum_friend)
         << T
         << TypeRange;
     }
-  } else if (T->getAs<EnumType>()) {
-    Diag(FriendLoc,
-         getLangOpts().CPlusPlus11 ?
-           diag::warn_cxx98_compat_enum_friend :
-           diag::ext_enum_friend)
-      << T
-      << TypeRange;
-  }
   
-  // C++11 [class.friend]p3:
-  //   A friend declaration that does not declare a function shall have one
-  //   of the following forms:
-  //     friend elaborated-type-specifier ;
-  //     friend simple-type-specifier ;
-  //     friend typename-specifier ;
-  if (getLangOpts().CPlusPlus11 && LocStart != FriendLoc)
-    Diag(FriendLoc, diag::err_friend_not_first_in_declaration) << T;
+    // C++11 [class.friend]p3:
+    //   A friend declaration that does not declare a function shall have one
+    //   of the following forms:
+    //     friend elaborated-type-specifier ;
+    //     friend simple-type-specifier ;
+    //     friend typename-specifier ;
+    if (getLangOpts().CPlusPlus11 && LocStart != FriendLoc)
+      Diag(FriendLoc, diag::err_friend_not_first_in_declaration) << T;
+  }
 
   //   If the type specifier in a friend declaration designates a (possibly
   //   cv-qualified) class type, that class is declared as a friend; otherwise,
@@ -10318,7 +10359,8 @@ FriendDecl *Sema::CheckFriendTypeDecl(SourceLocation LocStart,
 Decl *Sema::ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
                                     unsigned TagSpec, SourceLocation TagLoc,
                                     CXXScopeSpec &SS,
-                                    IdentifierInfo *Name, SourceLocation NameLoc,
+                                    IdentifierInfo *Name,
+                                    SourceLocation NameLoc,
                                     AttributeList *Attr,
                                     MultiTemplateParamsArg TempParamLists) {
   TagTypeKind Kind = TypeWithKeyword::getTagTypeKindForTypeSpec(TagSpec);
@@ -10402,7 +10444,7 @@ Decl *Sema::ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
     }
 
     FriendDecl *Friend = FriendDecl::Create(Context, CurContext, NameLoc,
-                                            TSI, FriendLoc);
+                                            TSI, FriendLoc, TempParamLists);
     Friend->setAccess(AS_public);
     CurContext->addDecl(Friend);
     return Friend;
@@ -10424,7 +10466,7 @@ Decl *Sema::ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
   TL.setNameLoc(NameLoc);
 
   FriendDecl *Friend = FriendDecl::Create(Context, CurContext, NameLoc,
-                                          TSI, FriendLoc);
+                                          TSI, FriendLoc, TempParamLists);
   Friend->setAccess(AS_public);
   Friend->setUnsupportedFriend(true);
   CurContext->addDecl(Friend);

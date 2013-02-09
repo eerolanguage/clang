@@ -13,6 +13,7 @@
 
 #include "clang/Parse/Parser.h"
 #include "RAIIObjectsForParser.h"
+#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/OperatorKinds.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Sema/DeclSpec.h"
@@ -439,8 +440,8 @@ Decl *Parser::ParseUsingDirective(unsigned Context,
 ///               unqualified-id
 ///       'using' :: unqualified-id
 ///
-///     alias-declaration: C++0x [decl.typedef]p2
-///       'using' identifier = type-id ;
+///     alias-declaration: C++11 [dcl.dcl]p1
+///       'using' identifier attribute-specifier-seq[opt] = type-id ;
 ///
 Decl *Parser::ParseUsingDeclaration(unsigned Context,
                                     const ParsedTemplateInfo &TemplateInfo,
@@ -564,7 +565,7 @@ Decl *Parser::ParseUsingDeclaration(unsigned Context,
                    tok::semi);
 
   // Diagnose an attempt to declare a templated using-declaration.
-  // In C++0x, alias-declarations can be templates:
+  // In C++11, alias-declarations can be templates:
   //   template <...> using id = type;
   if (TemplateInfo.Kind && !IsAliasDecl) {
     SourceRange R = TemplateInfo.getSourceRange();
@@ -2166,8 +2167,6 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
         HasInitializer = true;
         if (!DeclaratorInfo.isDeclarationOfFunction() &&
             DeclaratorInfo.getDeclSpec().getStorageClassSpec()
-              != DeclSpec::SCS_static &&
-            DeclaratorInfo.getDeclSpec().getStorageClassSpec()
               != DeclSpec::SCS_typedef)
           HasInClassInit = Tok.is(tok::equal) ? ICIS_CopyInit : ICIS_ListInit;
       }
@@ -2218,7 +2217,9 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
     LateParsedAttrs.clear();
 
     // Handle the initializer.
-    if (HasInClassInit != ICIS_NoInit) {
+    if (HasInClassInit != ICIS_NoInit &&
+        DeclaratorInfo.getDeclSpec().getStorageClassSpec() !=
+        DeclSpec::SCS_static) {
       // The initializer was deferred; parse it and cache the tokens.
       Diag(Tok, getLangOpts().CPlusPlus11 ?
            diag::warn_cxx98_compat_nonstatic_member_init :
@@ -3032,7 +3033,7 @@ IdentifierInfo *Parser::TryParseCXX11AttributeIdentifier(SourceLocation &Loc) {
     // starts with an alphabetical character.
     SmallString<8> SpellingBuf;
     StringRef Spelling = PP.getSpelling(Tok.getLocation(), SpellingBuf);
-    if (std::isalpha(Spelling[0])) {
+    if (isLetter(Spelling[0])) {
       Loc = ConsumeToken();
       return &PP.getIdentifierTable().get(Spelling);
     }

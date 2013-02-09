@@ -414,21 +414,7 @@ void Clang::AddPreprocessingOptions(Compilation &C,
       CmdArgs.push_back(C.getArgs().MakeArgString(sysroot));
     }
   }
-  
-  // If a module path was provided, pass it along. Otherwise, use a temporary
-  // directory.
-  if (Arg *A = Args.getLastArg(options::OPT_fmodule_cache_path)) {
-    A->claim();
-    A->render(Args, CmdArgs);
-  } else {
-    SmallString<128> DefaultModuleCache;
-    llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false, 
-                                           DefaultModuleCache);
-    llvm::sys::path::append(DefaultModuleCache, "clang-module-cache");
-    CmdArgs.push_back("-fmodule-cache-path");
-    CmdArgs.push_back(Args.MakeArgString(DefaultModuleCache));
-  }
-  
+
   // Parse additional include paths from environment variables.
   // FIXME: We should probably sink the logic for handling these from the
   // frontend into the driver. It will allow deleting 4 otherwise unused flags.
@@ -549,6 +535,7 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
   default:
     return true;
 
+  case llvm::Triple::aarch64:
   case llvm::Triple::arm:
   case llvm::Triple::ppc:
   case llvm::Triple::ppc64:
@@ -1043,6 +1030,7 @@ static std::string getPPCTargetCPU(const ArgList &Args) {
       .Case("604", "604")
       .Case("604e", "604e")
       .Case("620", "620")
+      .Case("630", "pwr3")
       .Case("G3", "g3")
       .Case("7400", "7400")
       .Case("G4", "g4")
@@ -1052,10 +1040,23 @@ static std::string getPPCTargetCPU(const ArgList &Args) {
       .Case("970", "970")
       .Case("G5", "g5")
       .Case("a2", "a2")
+      .Case("a2q", "a2q")
       .Case("e500mc", "e500mc")
       .Case("e5500", "e5500")
+      .Case("power3", "pwr3")
+      .Case("power4", "pwr4")
+      .Case("power5", "pwr5")
+      .Case("power5x", "pwr5x")
       .Case("power6", "pwr6")
+      .Case("power6x", "pwr6x")
       .Case("power7", "pwr7")
+      .Case("pwr3", "pwr3")
+      .Case("pwr4", "pwr4")
+      .Case("pwr5", "pwr5")
+      .Case("pwr5x", "pwr5x")
+      .Case("pwr6", "pwr6")
+      .Case("pwr6x", "pwr6x")
+      .Case("pwr7", "pwr7")
       .Case("powerpc", "ppc")
       .Case("powerpc64", "ppc64")
       .Default("");
@@ -1082,6 +1083,17 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
   if (!TargetCPUName.empty()) {
     CmdArgs.push_back("-target-cpu");
     CmdArgs.push_back(Args.MakeArgString(TargetCPUName.c_str()));
+  }
+
+  // Allow override of the Altivec feature.
+  if (Args.hasFlag(options::OPT_fno_altivec, options::OPT_faltivec, false)) {
+    CmdArgs.push_back("-target-feature");
+    CmdArgs.push_back("-altivec");
+  }
+
+  if (Args.hasFlag(options::OPT_mno_qpx, options::OPT_mqpx, false)) {
+    CmdArgs.push_back("-target-feature");
+    CmdArgs.push_back("-qpx");
   }
 }
 
@@ -1457,6 +1469,33 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args)
     Kind |= Add;
     Kind &= ~Remove;
     AllKinds |= Add;
+  }
+
+  UbsanTrapOnError =
+    Args.hasArg(options::OPT_fcatch_undefined_behavior) ||
+    Args.hasFlag(options::OPT_fsanitize_undefined_trap_on_error,
+                 options::OPT_fno_sanitize_undefined_trap_on_error, false);
+
+  if (Args.hasArg(options::OPT_fcatch_undefined_behavior) &&
+      !Args.hasFlag(options::OPT_fsanitize_undefined_trap_on_error,
+                    options::OPT_fno_sanitize_undefined_trap_on_error, true)) {
+    D.Diag(diag::err_drv_argument_not_allowed_with)
+      << "-fcatch-undefined-behavior"
+      << "-fno-sanitize-undefined-trap-on-error";
+  }
+
+  // Warn about undefined sanitizer options that require runtime support.
+  if (UbsanTrapOnError && notAllowedWithTrap()) {
+    if (Args.hasArg(options::OPT_fcatch_undefined_behavior))
+      D.Diag(diag::err_drv_argument_not_allowed_with)
+        << lastArgumentForKind(D, Args, NotAllowedWithTrap)
+        << "-fcatch-undefined-behavior";
+    else if (Args.hasFlag(options::OPT_fsanitize_undefined_trap_on_error,
+                          options::OPT_fno_sanitize_undefined_trap_on_error,
+                          false))
+      D.Diag(diag::err_drv_argument_not_allowed_with)
+        << lastArgumentForKind(D, Args, NotAllowedWithTrap)
+        << "-fsanitize-undefined-trap-on-error";
   }
 
   // Only one runtime library can be used at once.
@@ -2199,22 +2238,29 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                       D.CCLogDiagnosticsFilename : "-");
   }
 
-  // Use the last option from "-g" group. "-gline-tables-only" is
-  // preserved, all other debug options are substituted with "-g".
+  // Use the last option from "-g" group. "-gline-tables-only"
+  // is preserved, all other debug options are substituted with "-g".
   Args.ClaimAllArgs(options::OPT_g_Group);
   if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
-    if (A->getOption().matches(options::OPT_gline_tables_only)) {
+    if (A->getOption().matches(options::OPT_gline_tables_only))
       CmdArgs.push_back("-gline-tables-only");
-    } else if (!A->getOption().matches(options::OPT_g0) &&
-               !A->getOption().matches(options::OPT_ggdb0)) {
+    else if (!A->getOption().matches(options::OPT_g0) &&
+             !A->getOption().matches(options::OPT_ggdb0))
       CmdArgs.push_back("-g");
-    }
   }
 
   // We ignore flags -gstrict-dwarf and -grecord-gcc-switches for now.
   Args.ClaimAllArgs(options::OPT_g_flags_Group);
   if (Args.hasArg(options::OPT_gcolumn_info))
     CmdArgs.push_back("-dwarf-column-info");
+
+  // -gsplit-dwarf should turn on -g and enable the backend dwarf
+  // splitting and extraction.
+  if (Args.hasArg(options::OPT_gsplit_dwarf)) {
+    CmdArgs.push_back("-g");
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-split-dwarf=Enable");
+  }
 
   Args.AddAllArgs(CmdArgs, options::OPT_ffunction_sections);
   Args.AddAllArgs(CmdArgs, options::OPT_fdata_sections);
@@ -2503,6 +2549,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     true))
     CmdArgs.push_back("-fno-sanitize-recover");
 
+  if (Args.hasArg(options::OPT_fcatch_undefined_behavior) ||
+      Args.hasFlag(options::OPT_fsanitize_undefined_trap_on_error,
+                   options::OPT_fno_sanitize_undefined_trap_on_error, false))
+    CmdArgs.push_back("-fsanitize-undefined-trap-on-error");
+
   // Report and error for -faltivec on anything other then PowerPC.
   if (const Arg *A = Args.getLastArg(options::OPT_faltivec))
     if (!(getToolChain().getTriple().getArch() == llvm::Triple::ppc ||
@@ -2652,6 +2703,27 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       HaveModules = true;
     }
   }
+
+  // If a module path was provided, pass it along. Otherwise, use a temporary
+  // directory.
+  if (Arg *A = Args.getLastArg(options::OPT_fmodules_cache_path)) {
+    A->claim();
+    if (HaveModules) {
+      A->render(Args, CmdArgs);
+    }
+  } else if (HaveModules) {
+    SmallString<128> DefaultModuleCache;
+    llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false,
+                                           DefaultModuleCache);
+    llvm::sys::path::append(DefaultModuleCache, "clang-module-cache");
+    const char Arg[] = "-fmodules-cache-path=";
+    DefaultModuleCache.insert(DefaultModuleCache.begin(),
+                              Arg, Arg + strlen(Arg));
+    CmdArgs.push_back(Args.MakeArgString(DefaultModuleCache));
+  }
+
+  // Pass through all -fmodules-ignore-macro arguments.
+  Args.AddAllArgs(CmdArgs, options::OPT_fmodules_ignore_macro);
 
   // -fmodules-autolink (on by default when modules is enabled) automatically
   // links against libraries for imported modules.
@@ -5548,6 +5620,8 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-m");
   if (ToolChain.getArch() == llvm::Triple::x86)
     CmdArgs.push_back("elf_i386");
+  else if (ToolChain.getArch() == llvm::Triple::aarch64)
+    CmdArgs.push_back("aarch64linux");
   else if (ToolChain.getArch() == llvm::Triple::arm
            ||  ToolChain.getArch() == llvm::Triple::thumb)
     CmdArgs.push_back("armelf_linux_eabi");
@@ -5596,6 +5670,8 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("/system/bin/linker");
     else if (ToolChain.getArch() == llvm::Triple::x86)
       CmdArgs.push_back("/lib/ld-linux.so.2");
+    else if (ToolChain.getArch() == llvm::Triple::aarch64)
+      CmdArgs.push_back("/lib/ld-linux-aarch64.so.1");
     else if (ToolChain.getArch() == llvm::Triple::arm ||
              ToolChain.getArch() == llvm::Triple::thumb) {
       if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF)
@@ -5767,6 +5843,42 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(getToolChain(), Args, CmdArgs, getToolChain().getTriple());
 
   C.addCommand(new Command(JA, *this, ToolChain.Linker.c_str(), CmdArgs));
+}
+
+void linuxtools::SplitDebug::ConstructJob(Compilation &C, const JobAction &JA,
+                                          const InputInfo &Output,
+                                          const InputInfoList &Inputs,
+                                          const ArgList &Args,
+                                          const char *LinkingOutput) const {
+  // Assert some invariants.
+  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
+  const InputInfo &Input = Inputs[0];
+  assert(Input.isFilename() && "Unexpected verify input");
+
+  ArgStringList ExtractArgs;
+  ExtractArgs.push_back("--extract-dwo");
+
+  ArgStringList StripArgs;
+  StripArgs.push_back("--strip-dwo");
+
+  // Grabbing the output of the earlier compile step.
+  StripArgs.push_back(Input.getFilename());
+  ExtractArgs.push_back(Input.getFilename());
+
+  // Add an output for the extract.
+  SmallString<128> T(Inputs[0].getBaseInput());
+  llvm::sys::path::replace_extension(T, "dwo");
+  const char *OutFile = Args.MakeArgString(T);
+  ExtractArgs.push_back(OutFile);
+
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath("objcopy"));
+
+  // First extract the dwo sections.
+  C.addCommand(new Command(JA, *this, Exec, ExtractArgs));
+
+  // Then remove them from the original .o file.
+  C.addCommand(new Command(JA, *this, Exec, StripArgs));
 }
 
 void minix::Assemble::ConstructJob(Compilation &C, const JobAction &JA,

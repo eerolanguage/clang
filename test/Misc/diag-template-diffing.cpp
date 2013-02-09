@@ -830,7 +830,47 @@ namespace rdar12456626 {
   };
 }
 
+namespace PR15023 {
+  // Don't crash when non-QualTypes are passed to a diff modifier.
+  template <typename... Args>
+  void func(void (*func)(Args...), Args...) { }
+
+  void bar(int, int &) {
+  }
+
+  void foo(int x) {
+    func(bar, 1, x)
+  }
+  // CHECK-ELIDE-NOTREE: no matching function for call to 'func'
+  // CHECK-ELIDE-NOTREE: candidate template ignored: deduced conflicting types for parameter 'Args' (<int, int &> vs. <int, int>)
+}
+
+namespace rdar12931988 {
+  namespace A {
+    template<typename T> struct X { };
+  }
+
+  namespace B {
+    template<typename T> struct X { };
+  }
+
+  void foo(A::X<int> &ax, B::X<int> bx) {
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'B::X<int>' to 'const rdar12931988::A::X<int>'
+    ax = bx;
+  }
+
+  template<template<typename> class> class Y {};
+
+  void bar(Y<A::X> ya, Y<B::X> yb) {
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'Y<template rdar12931988::B::X>' to 'Y<template rdar12931988::A::X>'
+    ya = yb;
+  }
+}
+
 // CHECK-ELIDE-NOTREE: {{[0-9]*}} errors generated.
 // CHECK-NOELIDE-NOTREE: {{[0-9]*}} errors generated.
 // CHECK-ELIDE-TREE: {{[0-9]*}} errors generated.
 // CHECK-NOELIDE-TREE: {{[0-9]*}} errors generated.
+

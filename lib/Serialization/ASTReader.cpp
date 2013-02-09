@@ -1,4 +1,4 @@
-//===--- ASTReader.cpp - AST File Reader ------------------------*- C++ -*-===//
+//===--- ASTReader.cpp - AST File Reader ----------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -23,8 +23,6 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLocVisitor.h"
 #include "clang/Basic/FileManager.h"
-#include "clang/Basic/FileSystemStatCache.h"
-#include "clang/Basic/OnDiskHashTable.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/SourceManagerInternals.h"
 #include "clang/Basic/TargetInfo.h"
@@ -2053,8 +2051,24 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
       break;
 
     case SPECIAL_TYPES:
-      for (unsigned I = 0, N = Record.size(); I != N; ++I)
-        SpecialTypes.push_back(getGlobalTypeID(F, Record[I]));
+      if (SpecialTypes.empty()) {
+        for (unsigned I = 0, N = Record.size(); I != N; ++I)
+          SpecialTypes.push_back(getGlobalTypeID(F, Record[I]));
+        break;
+      }
+
+      if (SpecialTypes.size() != Record.size()) {
+        Error("invalid special-types record");
+        return true;
+      }
+
+      for (unsigned I = 0, N = Record.size(); I != N; ++I) {
+        serialization::TypeID ID = getGlobalTypeID(F, Record[I]);
+        if (!SpecialTypes[I])
+          SpecialTypes[I] = ID;
+        // FIXME: If ID && SpecialTypes[I] != ID, do we need a separate
+        // merge step?
+      }
       break;
 
     case STATISTICS:
@@ -2462,19 +2476,19 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
         KnownNamespaces.push_back(getGlobalDeclID(F, Record[I]));
       break;
 
-    case UNDEFINED_INTERNALS:
-      if (UndefinedInternals.size() % 2 != 0) {
-        Error("Invalid existing UndefinedInternals");
+    case UNDEFINED_BUT_USED:
+      if (UndefinedButUsed.size() % 2 != 0) {
+        Error("Invalid existing UndefinedButUsed");
         return true;
       }
 
       if (Record.size() % 2 != 0) {
-        Error("invalid undefined internals record");
+        Error("invalid undefined-but-used record");
         return true;
       }
       for (unsigned I = 0, N = Record.size(); I != N; /* in loop */) {
-        UndefinedInternals.push_back(getGlobalDeclID(F, Record[I++]));
-        UndefinedInternals.push_back(
+        UndefinedButUsed.push_back(getGlobalDeclID(F, Record[I++]));
+        UndefinedButUsed.push_back(
             ReadSourceLocation(F, Record, I).getRawEncoding());
       }
       break;
@@ -2591,7 +2605,8 @@ void ASTReader::makeNamesVisible(const HiddenNames &Names) {
 }
 
 void ASTReader::makeModuleVisible(Module *Mod, 
-                                  Module::NameVisibilityKind NameVisibility) {
+                                  Module::NameVisibilityKind NameVisibility,
+                                  SourceLocation ImportLoc) {
   llvm::SmallPtrSet<Module *, 4> Visited;
   SmallVector<Module *, 4> Stack;
   Stack.push_back(Mod);  
@@ -2778,6 +2793,7 @@ ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
                                               MEnd = Loaded.end();
        M != MEnd; ++M) {
     ModuleFile &F = *M->Mod;
+    F.DirectImportLoc = ImportLoc;
     if (!M->ImportedBy)
       F.ImportLoc = M->ImportLoc;
     else
@@ -3082,7 +3098,8 @@ void ASTReader::InitializeContext() {
   // Re-export any modules that were imported by a non-module AST file.
   for (unsigned I = 0, N = ImportedModules.size(); I != N; ++I) {
     if (Module *Imported = getSubmodule(ImportedModules[I]))
-      makeModuleVisible(Imported, Module::AllVisible);
+      makeModuleVisible(Imported, Module::AllVisible,
+                        /*ImportLoc=*/SourceLocation());
   }
   ImportedModules.clear();
 }
@@ -3391,7 +3408,18 @@ bool ASTReader::ReadSubmoduleBlock(ModuleFile &F) {
         Error("too many submodules");
         return true;
       }
-      
+
+      if (const FileEntry *CurFile = CurrentModule->getASTFile()) {
+        if (CurFile != F.File) {
+          if (!Diags.isDiagnosticInFlight()) {
+            Diag(diag::err_module_file_conflict)
+              << CurrentModule->getTopLevelModuleName()
+              << CurFile->getName()
+              << F.File->getName();
+          }
+          return true;
+        }
+      }
       CurrentModule->setASTFile(F.File);
       CurrentModule->IsFromModuleFile = true;
       CurrentModule->IsSystem = IsSystem || CurrentModule->IsSystem;
@@ -3691,11 +3719,8 @@ bool ASTReader::ParseHeaderSearchOptions(const RecordData &Record,
       = static_cast<frontend::IncludeDirGroup>(Record[Idx++]);
     bool IsFramework = Record[Idx++];
     bool IgnoreSysRoot = Record[Idx++];
-    bool IsInternal = Record[Idx++];
-    bool ImplicitExternC = Record[Idx++];
     HSOpts.UserEntries.push_back(
-      HeaderSearchOptions::Entry(Path, Group, IsFramework, IgnoreSysRoot,
-                                 IsInternal, ImplicitExternC));
+      HeaderSearchOptions::Entry(Path, Group, IsFramework, IgnoreSysRoot));
   }
 
   // System header prefixes.
@@ -4878,6 +4903,7 @@ QualType ASTReader::GetType(TypeID ID) {
     case PREDEF_TYPE_IMAGE2D_ID:    T = Context.OCLImage2dTy;       break;
     case PREDEF_TYPE_IMAGE2D_ARR_ID: T = Context.OCLImage2dArrayTy; break;
     case PREDEF_TYPE_IMAGE3D_ID:    T = Context.OCLImage3dTy;       break;
+    case PREDEF_TYPE_SAMPLER_ID:    T = Context.OCLSamplerTy;       break;
     case PREDEF_TYPE_EVENT_ID:      T = Context.OCLEventTy;         break;
     case PREDEF_TYPE_AUTO_DEDUCT:   T = Context.getAutoDeductType(); break;
         
@@ -5399,14 +5425,13 @@ static ModuleFile *getDefinitiveModuleFileFor(const DeclContext *DC,
   return 0;
 }
 
-DeclContext::lookup_result
+bool
 ASTReader::FindExternalVisibleDeclsByName(const DeclContext *DC,
                                           DeclarationName Name) {
   assert(DC->hasExternalVisibleStorage() &&
          "DeclContext has no visible decls in storage");
   if (!Name)
-    return DeclContext::lookup_result(DeclContext::lookup_iterator(0),
-                                      DeclContext::lookup_iterator(0));
+    return false;
 
   SmallVector<NamedDecl *, 64> Decls;
   
@@ -5439,7 +5464,7 @@ ASTReader::FindExternalVisibleDeclsByName(const DeclContext *DC,
   }
   ++NumVisibleDeclContextsRead;
   SetExternalVisibleDeclsForName(DC, Name, Decls);
-  return const_cast<DeclContext*>(DC)->lookup(Name);
+  return !Decls.empty();
 }
 
 namespace {
@@ -5965,16 +5990,15 @@ void ASTReader::ReadKnownNamespaces(
   }
 }
 
-void ASTReader::ReadUndefinedInternals(
-                       llvm::MapVector<NamedDecl*, SourceLocation> &Undefined) {
-  for (unsigned Idx = 0, N = UndefinedInternals.size(); Idx != N;) {
-    NamedDecl *D = cast<NamedDecl>(GetDecl(UndefinedInternals[Idx++]));
+void ASTReader::ReadUndefinedButUsed(
+                        llvm::DenseMap<NamedDecl*, SourceLocation> &Undefined) {
+  for (unsigned Idx = 0, N = UndefinedButUsed.size(); Idx != N;) {
+    NamedDecl *D = cast<NamedDecl>(GetDecl(UndefinedButUsed[Idx++]));
     SourceLocation Loc =
-        SourceLocation::getFromRawEncoding(UndefinedInternals[Idx++]);
+        SourceLocation::getFromRawEncoding(UndefinedButUsed[Idx++]);
     Undefined.insert(std::make_pair(D, Loc));
   }
 }
-    
 
 void ASTReader::ReadTentativeDefinitions(
                   SmallVectorImpl<VarDecl *> &TentativeDefs) {

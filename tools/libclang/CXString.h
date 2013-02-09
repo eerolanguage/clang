@@ -18,18 +18,52 @@
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Compiler.h"
 #include <vector>
+#include <string>
 
 namespace clang {
 namespace cxstring {
 
 struct CXStringBuf;
 
-/// \brief Create a CXString object from a C string.
-CXString createCXString(const char *String, bool DupString = false);
+/// \brief Create a CXString object for an empty "" string.
+CXString createEmpty();
 
-/// \brief Create a CXString object from a StringRef.
-CXString createCXString(StringRef String, bool DupString = true);
+/// \brief Create a CXString object for an NULL string.
+///
+/// A NULL string should be used as an "invalid" value in case of errors.
+CXString createNull();
+
+/// \brief Create a CXString object from a nul-terminated C string.  New
+/// CXString may contain a pointer to \p String.
+///
+/// \p String should not be changed by the caller afterwards.
+CXString createRef(const char *String);
+
+/// \brief Create a CXString object from a nul-terminated C string.  New
+/// CXString will contain a copy of \p String.
+///
+/// \p String can be changed or freed by the caller.
+CXString createDup(const char *String);
+
+/// \brief Create a CXString object from a StringRef.  New CXString may
+/// contain a pointer to the undrelying data of \p String.
+///
+/// \p String should not be changed by the caller afterwards.
+CXString createRef(StringRef String);
+
+/// \brief Create a CXString object from a StringRef.  New CXString will
+/// contain a copy of \p String.
+///
+/// \p String can be changed or freed by the caller.
+CXString createDup(StringRef String);
+
+// Usually std::string is intended to be used as backing storage for CXString.
+// In this case, call \c createRef(String.c_str()).
+//
+// If you need to make a copy, call \c createDup(StringRef(String)).
+CXString createRef(std::string String) LLVM_DELETED_FUNCTION;
 
 /// \brief Create a CXString object that is backed by a string buffer.
 CXString createCXString(CXStringBuf *buf);

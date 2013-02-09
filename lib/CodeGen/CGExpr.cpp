@@ -21,13 +21,14 @@
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclObjC.h"
-#include "clang/Basic/ConvertUTF.h"
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/Support/ConvertUTF.h"
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -302,7 +303,8 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
     
     if (InitializedDecl) {
       // Get the destructor for the reference temporary.
-      if (const RecordType *RT = E->getType()->getAs<RecordType>()) {
+      if (const RecordType *RT =
+            E->getType()->getBaseElementTypeUnsafe()->getAs<RecordType>()) {
         CXXRecordDecl *ClassDecl = cast<CXXRecordDecl>(RT->getDecl());
         if (!ClassDecl->hasTrivialDestructor())
           ReferenceTemporaryDtor = ClassDecl->getDestructor();
@@ -405,10 +407,19 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
   const VarDecl *VD = dyn_cast_or_null<VarDecl>(InitializedDecl);
   if (VD && VD->hasGlobalStorage()) {
     if (ReferenceTemporaryDtor) {
-      llvm::Constant *DtorFn = 
-        CGM.GetAddrOfCXXDestructor(ReferenceTemporaryDtor, Dtor_Complete);
-      CGM.getCXXABI().registerGlobalDtor(*this, DtorFn, 
-                                    cast<llvm::Constant>(ReferenceTemporary));
+      llvm::Constant *CleanupFn;
+      llvm::Constant *CleanupArg;
+      if (E->getType()->isArrayType()) {
+        CleanupFn = CodeGenFunction(CGM).generateDestroyHelper(
+            cast<llvm::Constant>(ReferenceTemporary), E->getType(),
+            destroyCXXObject, getLangOpts().Exceptions);
+        CleanupArg = llvm::Constant::getNullValue(Int8PtrTy);
+      } else {
+        CleanupFn =
+          CGM.GetAddrOfCXXDestructor(ReferenceTemporaryDtor, Dtor_Complete);
+        CleanupArg = cast<llvm::Constant>(ReferenceTemporary);
+      }
+      CGM.getCXXABI().registerGlobalDtor(*this, CleanupFn, CleanupArg);
     } else {
       assert(!ObjCARCReferenceLifetimeType.isNull());
       // Note: We intentionally do not register a global "destructor" to
@@ -418,9 +429,13 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
     return RValue::get(Value);
   }
 
-  if (ReferenceTemporaryDtor)
-    PushDestructorCleanup(ReferenceTemporaryDtor, ReferenceTemporary);
-  else {
+  if (ReferenceTemporaryDtor) {
+    if (E->getType()->isArrayType())
+      pushDestroy(NormalAndEHCleanup, ReferenceTemporary, E->getType(),
+                  destroyCXXObject, getLangOpts().Exceptions);
+    else
+      PushDestructorCleanup(ReferenceTemporaryDtor, ReferenceTemporary);
+  } else {
     switch (ObjCARCReferenceLifetimeType.getObjCLifetime()) {
     case Qualifiers::OCL_None:
       llvm_unreachable(
@@ -1975,6 +1990,13 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
                                 ArrayRef<llvm::Value *> DynamicArgs,
                                 CheckRecoverableKind RecoverKind) {
   assert(SanOpts != &SanitizerOptions::Disabled);
+
+  if (CGM.getCodeGenOpts().SanitizeUndefinedTrapOnError) {
+    assert (RecoverKind != CRK_AlwaysRecoverable &&
+            "Runtime call required for AlwaysRecoverable kind!");
+    return EmitTrapCheck(Checked);
+  }
+
   llvm::BasicBlock *Cont = createBasicBlock("cont");
 
   llvm::BasicBlock *Handler = createBasicBlock("handler." + CheckName);
@@ -2030,7 +2052,9 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
                               (NeedsAbortSuffix? "_abort" : "")).str();
   llvm::Value *Fn =
     CGM.CreateRuntimeFunction(FnType, FunctionName,
-                              llvm::Attribute::get(getLLVMContext(), B));
+                              llvm::AttributeSet::get(getLLVMContext(),
+                                              llvm::AttributeSet::FunctionIndex,
+                                                      B));
   llvm::CallInst *HandlerCall = Builder.CreateCall(Fn, Args);
   if (Recover) {
     Builder.CreateBr(Cont);
@@ -2043,7 +2067,7 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
   EmitBlock(Cont);
 }
 
-void CodeGenFunction::EmitTrapvCheck(llvm::Value *Checked) {
+void CodeGenFunction::EmitTrapCheck(llvm::Value *Checked) {
   llvm::BasicBlock *Cont = createBasicBlock("cont");
 
   // If we're optimizing, collapse all calls to trap down to just one per

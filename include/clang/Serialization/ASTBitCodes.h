@@ -526,9 +526,9 @@ namespace clang {
       /// being deserialized.
       MACRO_UPDATES = 48,
 
-      /// \brief Record code for undefined but used internal functions and
-      /// variables.
-      UNDEFINED_INTERNALS = 49
+      /// \brief Record code for undefined but used functions and variables that
+      /// need a definition in this TU.
+      UNDEFINED_BUT_USED = 49
     };
 
     /// \brief Record types used within a source manager block.
@@ -720,7 +720,10 @@ namespace clang {
       PREDEF_TYPE_IMAGE2D_ARR_ID = 42,
       /// \brief OpenCL 3d image type.
       PREDEF_TYPE_IMAGE3D_ID    = 43,
-      PREDEF_TYPE_EVENT_ID      = 44
+      /// \brief OpenCL event type.
+      PREDEF_TYPE_EVENT_ID      = 44,
+      /// \brief OpenCL sampler type.
+      PREDEF_TYPE_SAMPLER_ID    = 45
     };
 
     /// \brief The number of predefined type IDs that are reserved for

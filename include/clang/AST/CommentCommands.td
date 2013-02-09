@@ -1,3 +1,7 @@
+//===----------------------------------------------------------------------===//
+// Define command classes.
+//===----------------------------------------------------------------------===//
+
 class Command<string name> {
   string Name = name;
   string EndCommandName = "";
@@ -12,6 +16,7 @@ class Command<string name> {
   bit IsParamCommand = 0;
   bit IsTParamCommand = 0;
   bit IsDeprecatedCommand = 0;
+  bit IsHeaderfileCommand = 0;
 
   bit IsEmptyParagraphAllowed = 0;
 
@@ -54,6 +59,10 @@ class DeclarationVerbatimLineCommand<string name> :
   let IsDeclarationCommand = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// InlineCommand
+//===----------------------------------------------------------------------===//
+
 def B  : InlineCommand<"b">;
 def C  : InlineCommand<"c">;
 def P  : InlineCommand<"p">;
@@ -61,8 +70,15 @@ def A  : InlineCommand<"a">;
 def E  : InlineCommand<"e">;
 def Em : InlineCommand<"em">;
 
+//===----------------------------------------------------------------------===//
+// BlockCommand
+//===----------------------------------------------------------------------===//
+
 def Brief : BlockCommand<"brief"> { let IsBriefCommand = 1; }
 def Short : BlockCommand<"short"> { let IsBriefCommand = 1; }
+
+// Opposite of \brief, it is the default in our implementation.
+def Details : BlockCommand<"details">;
 
 def Returns : BlockCommand<"returns"> { let IsReturnsCommand = 1; }
 def Return  : BlockCommand<"return"> { let IsReturnsCommand = 1; }
@@ -70,10 +86,10 @@ def Result  : BlockCommand<"result"> { let IsReturnsCommand = 1; }
 
 def Param : BlockCommand<"param"> { let IsParamCommand = 1; }
 
-// Doxygen
+// Doxygen command for template parameter documentation.
 def Tparam : BlockCommand<"tparam"> { let IsTParamCommand = 1; }
 
-// HeaderDoc
+// HeaderDoc command for template parameter documentation.
 def Templatefield : BlockCommand<"templatefield"> { let IsTParamCommand = 1; }
 
 def Deprecated : BlockCommand<"deprecated"> {
@@ -81,12 +97,16 @@ def Deprecated : BlockCommand<"deprecated"> {
   let IsDeprecatedCommand = 1;
 }
 
+def Headerfile : BlockCommand<"headerfile"> { let IsHeaderfileCommand = 1; }
+
+// We don't do any additional semantic analysis for the following
+// BlockCommands.  It might be a good idea to do something extra for them, but
+// for now we model them as plain BlockCommands.
 def Author     : BlockCommand<"author">;
 def Authors    : BlockCommand<"authors">;
 def Bug        : BlockCommand<"bug">;
 def Copyright  : BlockCommand<"copyright">;
 def Date       : BlockCommand<"date">;
-def Details    : BlockCommand<"details">;
 def Invariant  : BlockCommand<"invariant">;
 def Note       : BlockCommand<"note">;
 def Post       : BlockCommand<"post">;
@@ -100,6 +120,10 @@ def Todo       : BlockCommand<"todo">;
 def Version    : BlockCommand<"version">;
 def Warning    : BlockCommand<"warning">;
 
+//===----------------------------------------------------------------------===//
+// VerbatimBlockCommand
+//===----------------------------------------------------------------------===//
+
 defm Code      : VerbatimBlockCommand<"code", "endcode">;
 defm Verbatim  : VerbatimBlockCommand<"verbatim", "endverbatim">;
 defm Htmlonly  : VerbatimBlockCommand<"htmlonly", "endhtmlonly">;
@@ -111,10 +135,15 @@ defm Rtfonly   : VerbatimBlockCommand<"rtfonly", "endrtfonly">;
 defm Dot : VerbatimBlockCommand<"dot", "enddot">;
 defm Msc : VerbatimBlockCommand<"msc", "endmsc">;
 
-// These commands have special support in lexer.
+// These three commands have special support in CommentLexer to recognize their
+// names.
 def  FDollar  : VerbatimBlockCommand<"f$">; // Inline LaTeX formula
 defm FBracket : VerbatimBlockCommand<"f[", "f]">; // Displayed LaTeX formula
 defm FBrace   : VerbatimBlockCommand<"f{", "f}">; // LaTeX environment
+
+//===----------------------------------------------------------------------===//
+// VerbatimLineCommand
+//===----------------------------------------------------------------------===//
 
 def Defgroup   : VerbatimLineCommand<"defgroup">;
 def Ingroup    : VerbatimLineCommand<"ingroup">;
@@ -130,6 +159,10 @@ def Paragraph     : VerbatimLineCommand<"paragraph">;
 def Mainpage : VerbatimLineCommand<"mainpage">;
 def Subpage  : VerbatimLineCommand<"subpage">;
 def Ref      : VerbatimLineCommand<"ref">;
+
+//===----------------------------------------------------------------------===//
+// DeclarationVerbatimLineCommand
+//===----------------------------------------------------------------------===//
 
 // Doxygen commands.
 def Fn        : DeclarationVerbatimLineCommand<"fn">;
