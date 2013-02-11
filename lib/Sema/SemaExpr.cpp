@@ -6777,7 +6777,7 @@ static void checkEnumComparison(Sema &S, SourceLocation Loc, Expr *LHS,
                  RHSStrippedType->isEnumeralType())) {
     S.Diag(Loc, diag::err_typecheck_cond_incompatible_operands)
         << LHSStrippedType << RHSStrippedType
-        << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
+        << LHS->getSourceRange() << RHS->getSourceRange();
     return;
   }
 
@@ -6791,7 +6791,7 @@ static void checkEnumComparison(Sema &S, SourceLocation Loc, Expr *LHS,
   if (isEero && !S.Context.hasSameUnqualifiedType(LHSStrippedType, RHSStrippedType)) {
     S.Diag(Loc, diag::err_typecheck_cond_incompatible_operands)
         << LHSStrippedType << RHSStrippedType
-        << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
+        << LHS->getSourceRange() << RHS->getSourceRange();
     return;
   }
 

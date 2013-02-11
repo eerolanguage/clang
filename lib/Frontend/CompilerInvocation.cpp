@@ -1437,6 +1437,7 @@ static void ParsePreprocessorOutputArgs(PreprocessorOutputOptions &Opts,
   case frontend::PluginAction:
   case frontend::PrintDeclContext:
   case frontend::RewriteObjC:
+  case frontend::RewriteEeroToObjC:
   case frontend::RewriteTest:
   case frontend::RunAnalysis:
   case frontend::MigrateSource:
