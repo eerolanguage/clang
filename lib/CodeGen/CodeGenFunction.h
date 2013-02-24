@@ -1179,11 +1179,10 @@ private:
   llvm::Value *CXXABIThisValue;
   llvm::Value *CXXThisValue;
 
-  /// CXXVTTDecl - When generating code for a base object constructor or
-  /// base object destructor with virtual bases, this will hold the implicit
-  /// VTT parameter.
-  ImplicitParamDecl *CXXVTTDecl;
-  llvm::Value *CXXVTTValue;
+  /// CXXStructorImplicitParamDecl - When generating code for a constructor or
+  /// destructor, this will hold the implicit argument (e.g. VTT).
+  ImplicitParamDecl *CXXStructorImplicitParamDecl;
+  llvm::Value *CXXStructorImplicitParamValue;
 
   /// OutermostConditional - Points to the outermost active
   /// conditional control.  This is used so that we know if a
@@ -1402,6 +1401,7 @@ public:
 
   void EmitConstructorBody(FunctionArgList &Args);
   void EmitDestructorBody(FunctionArgList &Args);
+  void emitImplicitAssignmentOperatorBody(FunctionArgList &Args);
   void EmitFunctionBody(FunctionArgList &Args);
 
   void EmitForwardingCallToLambda(const CXXRecordDecl *Lambda,
@@ -1777,9 +1777,19 @@ public:
 
   /// LoadCXXVTT - Load the VTT parameter to base constructors/destructors have
   /// virtual bases.
+  // FIXME: Every place that calls LoadCXXVTT is something
+  // that needs to be abstracted properly.
   llvm::Value *LoadCXXVTT() {
-    assert(CXXVTTValue && "no VTT value for this function");
-    return CXXVTTValue;
+    assert(CXXStructorImplicitParamValue && "no VTT value for this function");
+    return CXXStructorImplicitParamValue;
+  }
+
+  /// LoadCXXStructorImplicitParam - Load the implicit parameter
+  /// for a constructor/destructor.
+  llvm::Value *LoadCXXStructorImplicitParam() {
+    assert(CXXStructorImplicitParamValue &&
+           "no implicit argument value for this function");
+    return CXXStructorImplicitParamValue;
   }
 
   /// GetAddressOfBaseOfCompleteClass - Convert the given pointer to a
@@ -1886,13 +1896,25 @@ public:
     /// Must be an object within its lifetime.
     TCK_MemberCall,
     /// Checking the 'this' pointer for a constructor call.
-    TCK_ConstructorCall
+    TCK_ConstructorCall,
+    /// Checking the operand of a static_cast to a derived pointer type. Must be
+    /// null or an object within its lifetime.
+    TCK_DowncastPointer,
+    /// Checking the operand of a static_cast to a derived reference type. Must
+    /// be an object within its lifetime.
+    TCK_DowncastReference
   };
 
   /// \brief Emit a check that \p V is the address of storage of the
   /// appropriate size and alignment for an object of type \p Type.
   void EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc, llvm::Value *V,
                      QualType Type, CharUnits Alignment = CharUnits::Zero());
+
+  /// \brief Emit a check that \p Base points into an array object, which
+  /// we can access at index \p Index. \p Accessed should be \c false if we
+  /// this expression is used as an lvalue, for instance in "&Arr[Idx]".
+  void EmitBoundsCheck(const Expr *E, const Expr *Base, llvm::Value *Index,
+                       QualType IndexType, bool Accessed);
 
   llvm::Value *EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
                                        bool isInc, bool isPre);
@@ -2171,7 +2193,8 @@ public:
   LValue EmitObjCEncodeExprLValue(const ObjCEncodeExpr *E);
   LValue EmitPredefinedLValue(const PredefinedExpr *E);
   LValue EmitUnaryOpLValue(const UnaryOperator *E);
-  LValue EmitArraySubscriptExpr(const ArraySubscriptExpr *E);
+  LValue EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
+                                bool Accessed = false);
   LValue EmitExtVectorElementExpr(const ExtVectorElementExpr *E);
   LValue EmitMemberExpr(const MemberExpr *E);
   LValue EmitObjCIsaExpr(const ObjCIsaExpr *E);
@@ -2294,7 +2317,8 @@ public:
                            llvm::Value *Callee,
                            ReturnValueSlot ReturnValue,
                            llvm::Value *This,
-                           llvm::Value *VTT,
+                           llvm::Value *ImplicitParam,
+                           QualType ImplicitParamTy,
                            CallExpr::const_arg_iterator ArgBeg,
                            CallExpr::const_arg_iterator ArgEnd);
   RValue EmitCXXMemberCallExpr(const CXXMemberCallExpr *E,

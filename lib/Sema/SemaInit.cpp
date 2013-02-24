@@ -3262,10 +3262,9 @@ static OverloadingResult TryRefInitWithConversionFunction(Sema &S,
     return Result;
 
   FunctionDecl *Function = Best->Function;
-
-  // This is the overload that will actually be used for the initialization, so
-  // mark it as used.
-  S.MarkFunctionReferenced(DeclLoc, Function);
+  // This is the overload that will be used for this initialization step if we
+  // use this initialization. Mark it as referenced.
+  Function->setReferenced();
 
   // Compute the returned type of the conversion.
   if (isa<CXXConversionDecl>(Function))
@@ -3831,7 +3830,7 @@ static void TryUserDefinedConversion(Sema &S,
   }
 
   FunctionDecl *Function = Best->Function;
-  S.MarkFunctionReferenced(DeclLoc, Function);
+  Function->setReferenced();
   bool HadMultipleCandidates = (CandidateSet.size() > 1);
 
   if (isa<CXXConstructorDecl>(Function)) {
@@ -4609,8 +4608,6 @@ static ExprResult CopyObject(Sema &S,
     return S.Owned(CurInitExpr);
   }
 
-  S.MarkFunctionReferenced(Loc, Constructor);
-
   // Determine the arguments required to actually perform the
   // constructor call (we might have derived-to-base conversions, or
   // the copy constructor may have default arguments).
@@ -4902,9 +4899,9 @@ InitializationSequence::Perform(Sema &S,
           if (DeclaratorDecl *DD = Entity.getDecl()) {
             if (TypeSourceInfo *TInfo = DD->getTypeSourceInfo()) {
               TypeLoc TL = TInfo->getTypeLoc();
-              if (IncompleteArrayTypeLoc *ArrayLoc
-                                      = dyn_cast<IncompleteArrayTypeLoc>(&TL))
-              Brackets = ArrayLoc->getBracketsRange();
+              if (IncompleteArrayTypeLoc ArrayLoc =
+                      TL.getAs<IncompleteArrayTypeLoc>())
+                Brackets = ArrayLoc.getBracketsRange();
             }
           }
 
@@ -5554,7 +5551,8 @@ InitializationSequence::Perform(Sema &S,
 
 /// Somewhere within T there is an uninitialized reference subobject.
 /// Dig it out and diagnose it.
-bool DiagnoseUninitializedReference(Sema &S, SourceLocation Loc, QualType T) {
+static bool DiagnoseUninitializedReference(Sema &S, SourceLocation Loc,
+                                           QualType T) {
   if (T->isReferenceType()) {
     S.Diag(Loc, diag::err_reference_without_init)
       << T.getNonReferenceType();

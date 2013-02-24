@@ -356,17 +356,6 @@ private:
 
 }
 
-static bool isInCLinkageSpecification(const Decl *D) {
-  D = D->getCanonicalDecl();
-  for (const DeclContext *DC = getEffectiveDeclContext(D);
-       !DC->isTranslationUnit(); DC = getEffectiveParentContext(DC)) {
-    if (const LinkageSpecDecl *Linkage = dyn_cast<LinkageSpecDecl>(DC))
-      return Linkage->getLanguage() == LinkageSpecDecl::lang_c;
-  }
-
-  return false;
-}
-
 bool ItaniumMangleContext::shouldMangleDeclName(const NamedDecl *D) {
   // In C, functions with no attributes never need to be mangled. Fastpath them.
   if (!getASTContext().getLangOpts().CPlusPlus && !D->hasAttrs())
@@ -377,20 +366,38 @@ bool ItaniumMangleContext::shouldMangleDeclName(const NamedDecl *D) {
   if (D->hasAttr<AsmLabelAttr>())
     return true;
 
-  // Clang's "overloadable" attribute extension to C/C++ implies name mangling
-  // (always) as does passing a C++ member function and a function
-  // whose name is not a simple identifier.
   const FunctionDecl *FD = dyn_cast<FunctionDecl>(D);
-  if (FD && (FD->hasAttr<OverloadableAttr>() || isa<CXXMethodDecl>(FD) ||
-             !FD->getDeclName().isIdentifier()))
-    return true;
+  if (FD) {
+    LanguageLinkage L = FD->getLanguageLinkage();
+    // Overloadable functions need mangling.
+    if (FD->hasAttr<OverloadableAttr>())
+      return true;
+
+    // "main" is not mangled.
+    if (FD->isMain())
+      return false;
+
+    // C++ functions and those whose names are not a simple identifier need
+    // mangling.
+    if (!FD->getDeclName().isIdentifier() || L == CXXLanguageLinkage)
+      return true;
+
+    // C functions are not mangled.
+    if (L == CLanguageLinkage)
+      return false;
+  }
 
   // Otherwise, no mangling is done outside C++ mode.
   if (!getASTContext().getLangOpts().CPlusPlus)
     return false;
 
-  // Variables at global scope with non-internal linkage are not mangled
-  if (!FD) {
+  const VarDecl *VD = dyn_cast<VarDecl>(D);
+  if (VD) {
+    // C variables are not mangled.
+    if (VD->isExternC())
+      return false;
+
+    // Variables at global scope with non-internal linkage are not mangled
     const DeclContext *DC = getEffectiveDeclContext(D);
     // Check for extern variable declared locally.
     if (DC->isFunctionOrMethod() && D->hasLinkage())
@@ -399,14 +406,6 @@ bool ItaniumMangleContext::shouldMangleDeclName(const NamedDecl *D) {
     if (DC->isTranslationUnit() && D->getLinkage() != InternalLinkage)
       return false;
   }
-
-  // Class members are always mangled.
-  if (getEffectiveDeclContext(D)->isRecord())
-    return true;
-
-  // C functions and "main" are not mangled.
-  if ((FD && FD->isMain()) || isInCLinkageSpecification(D))
-    return false;
 
   return true;
 }

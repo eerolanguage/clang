@@ -373,6 +373,14 @@ public:
   }
 
 private:
+  /// \brief If getDecl exists as a member of U, returns whether the inner
+  /// matcher matches Node.getDecl().
+  template <typename U>
+  bool matchesSpecialized(const U &Node, ASTMatchFinder *Finder, 
+                          BoundNodesTreeBuilder *Builder) const {
+    return matchesDecl(Node.getDecl(), Finder, Builder);
+  }
+
   /// \brief Extracts the CXXRecordDecl or EnumDecl of a QualType and returns
   /// whether the inner matcher matches on it.
   bool matchesSpecialized(const QualType &Node, ASTMatchFinder *Finder,

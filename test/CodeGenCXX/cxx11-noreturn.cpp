@@ -2,7 +2,9 @@
 
 int g();
 
-// CHECK: _Z1fv(){{.*}} noreturn
+// CHECK: _Z1fv(){{.*}} [[NR:#[0-9]+]]
 [[noreturn]] int f() {
   while (g()) {}
 }
+
+// CHECK: attributes [[NR]] = { noreturn nounwind{{.*}} }

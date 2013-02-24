@@ -296,9 +296,8 @@ bool edit::rewriteToObjCSubscriptSyntax(const ObjCMessageExpr *Msg,
   if (!Method)
     return false;
 
-  const ObjCInterfaceDecl *
-    IFace = NS.getASTContext().getObjContainingInterface(
-                                          const_cast<ObjCMethodDecl *>(Method));
+  const ObjCInterfaceDecl *IFace =
+      NS.getASTContext().getObjContainingInterface(Method);
   if (!IFace)
     return false;
   Selector Sel = Msg->getSelector();
@@ -694,7 +693,7 @@ static bool getLiteralInfo(SourceRange literalRange,
   if (text.empty())
     return false;
 
-  llvm::Optional<bool> UpperU, UpperL; 
+  Optional<bool> UpperU, UpperL;
   bool UpperF = false;
 
   struct Suff {
@@ -778,7 +777,7 @@ static bool rewriteToNumberLiteral(const ObjCMessageExpr *Msg,
 
   ASTContext &Ctx = NS.getASTContext();
   Selector Sel = Msg->getSelector();
-  llvm::Optional<NSAPI::NSNumberLiteralMethodKind>
+  Optional<NSAPI::NSNumberLiteralMethodKind>
     MKOpt = NS.getNSNumberLiteralMethodKind(Sel);
   if (!MKOpt)
     return false;
@@ -982,7 +981,7 @@ static bool rewriteToNumericBoxedExpression(const ObjCMessageExpr *Msg,
 
   ASTContext &Ctx = NS.getASTContext();
   Selector Sel = Msg->getSelector();
-  llvm::Optional<NSAPI::NSNumberLiteralMethodKind>
+  Optional<NSAPI::NSNumberLiteralMethodKind>
     MKOpt = NS.getNSNumberLiteralMethodKind(Sel);
   if (!MKOpt)
     return false;

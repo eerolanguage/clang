@@ -67,12 +67,12 @@ void ExprEngine::VisitBinaryOperator(const BinaryOperator* B,
         // TODO: This can be removed after we enable history tracking with
         // SymSymExpr.
         unsigned Count = currBldrCtx->blockCount();
-        if (isa<Loc>(LeftV) &&
+        if (LeftV.getAs<Loc>() &&
             RHS->getType()->isIntegerType() && RightV.isUnknown()) {
           RightV = svalBuilder.conjureSymbolVal(RHS, LCtx, RHS->getType(),
                                                 Count);
         }
-        if (isa<Loc>(RightV) &&
+        if (RightV.getAs<Loc>() &&
             LHS->getType()->isIntegerType() && LeftV.isUnknown()) {
           LeftV = svalBuilder.conjureSymbolVal(LHS, LCtx, LHS->getType(),
                                                Count);
@@ -471,19 +471,20 @@ void ExprEngine::VisitDeclStmt(const DeclStmt *DS, ExplodedNode *Pred,
 
       SVal InitVal = state->getSVal(InitEx, LC);
 
-      if (InitVal == state->getLValue(VD, LC) ||
-          (VD->getType()->isArrayType() &&
-           isa<CXXConstructExpr>(InitEx->IgnoreImplicit()))) {
+      if (isa<CXXConstructExpr>(InitEx->IgnoreImplicit())) {
         // We constructed the object directly in the variable.
         // No need to bind anything.
         B.generateNode(DS, UpdatedN, state);
       } else {
         // We bound the temp obj region to the CXXConstructExpr. Now recover
         // the lazy compound value when the variable is not a reference.
-        if (AMgr.getLangOpts().CPlusPlus && VD->getType()->isRecordType() && 
-            !VD->getType()->isReferenceType() && isa<loc::MemRegionVal>(InitVal)){
-          InitVal = state->getSVal(cast<loc::MemRegionVal>(InitVal).getRegion());
-          assert(isa<nonloc::LazyCompoundVal>(InitVal));
+        if (AMgr.getLangOpts().CPlusPlus && VD->getType()->isRecordType() &&
+            !VD->getType()->isReferenceType()) {
+          if (Optional<loc::MemRegionVal> M =
+                  InitVal.getAs<loc::MemRegionVal>()) {
+            InitVal = state->getSVal(M->getRegion());
+            assert(InitVal.getAs<nonloc::LazyCompoundVal>());
+          }
         }
         
         // Recover some path-sensitivity if a scalar value evaluated to
@@ -520,16 +521,16 @@ void ExprEngine::VisitLogicalExpr(const BinaryOperator* B, ExplodedNode *Pred,
   ProgramStateRef state = Pred->getState();
 
   ExplodedNode *N = Pred;
-  while (!isa<BlockEntrance>(N->getLocation())) {
+  while (!N->getLocation().getAs<BlockEntrance>()) {
     ProgramPoint P = N->getLocation();
-    assert(isa<PreStmt>(P)|| isa<PreStmtPurgeDeadSymbols>(P));
+    assert(P.getAs<PreStmt>()|| P.getAs<PreStmtPurgeDeadSymbols>());
     (void) P;
     assert(N->pred_size() == 1);
     N = *N->pred_begin();
   }
   assert(N->pred_size() == 1);
   N = *N->pred_begin();
-  BlockEdge BE = cast<BlockEdge>(N->getLocation());
+  BlockEdge BE = N->getLocation().castAs<BlockEdge>();
   SVal X;
 
   // Determine the value of the expression by introspecting how we
@@ -551,14 +552,14 @@ void ExprEngine::VisitLogicalExpr(const BinaryOperator* B, ExplodedNode *Pred,
     // in SrcBlock is the value of the enclosing expression.
     // However, we still need to constrain that value to be 0 or 1.
     assert(!SrcBlock->empty());
-    CFGStmt Elem = cast<CFGStmt>(*SrcBlock->rbegin());
+    CFGStmt Elem = SrcBlock->rbegin()->castAs<CFGStmt>();
     const Expr *RHS = cast<Expr>(Elem.getStmt());
     SVal RHSVal = N->getState()->getSVal(RHS, Pred->getLocationContext());
 
     if (RHSVal.isUndef()) {
       X = RHSVal;
     } else {
-      DefinedOrUnknownSVal DefinedRHS = cast<DefinedOrUnknownSVal>(RHSVal);
+      DefinedOrUnknownSVal DefinedRHS = RHSVal.castAs<DefinedOrUnknownSVal>();
       ProgramStateRef StTrue, StFalse;
       llvm::tie(StTrue, StFalse) = N->getState()->assume(DefinedRHS);
       if (StTrue) {
@@ -640,11 +641,11 @@ void ExprEngine::VisitGuardedExpr(const Expr *Ex,
 
   for (const ExplodedNode *N = Pred ; N ; N = *N->pred_begin()) {
     ProgramPoint PP = N->getLocation();
-    if (isa<PreStmtPurgeDeadSymbols>(PP) || isa<BlockEntrance>(PP)) {
+    if (PP.getAs<PreStmtPurgeDeadSymbols>() || PP.getAs<BlockEntrance>()) {
       assert(N->pred_size() == 1);
       continue;
     }
-    SrcBlock = cast<BlockEdge>(&PP)->getSrc();
+    SrcBlock = PP.castAs<BlockEdge>().getSrc();
     break;
   }
 
@@ -656,7 +657,7 @@ void ExprEngine::VisitGuardedExpr(const Expr *Ex,
   for (CFGBlock::const_reverse_iterator I = SrcBlock->rbegin(),
                                         E = SrcBlock->rend(); I != E; ++I) {
     CFGElement CE = *I;
-    if (CFGStmt *CS = dyn_cast<CFGStmt>(&CE)) {
+    if (Optional<CFGStmt> CS = CE.getAs<CFGStmt>()) {
       const Expr *ValEx = cast<Expr>(CS->getStmt());
       hasValue = true;
       V = state->getSVal(ValEx, LCtx);
@@ -810,11 +811,11 @@ void ExprEngine::VisitUnaryOperator(const UnaryOperator* U,
           llvm_unreachable("Invalid Opcode.");
         case UO_Not:
           // FIXME: Do we need to handle promotions?
-          state = state->BindExpr(U, LCtx, evalComplement(cast<NonLoc>(V)));
+          state = state->BindExpr(U, LCtx, evalComplement(V.castAs<NonLoc>()));
           break;
         case UO_Minus:
           // FIXME: Do we need to handle promotions?
-          state = state->BindExpr(U, LCtx, evalMinus(cast<NonLoc>(V)));
+          state = state->BindExpr(U, LCtx, evalMinus(V.castAs<NonLoc>()));
           break;
         case UO_LNot:
           // C99 6.5.3.3: "The expression !E is equivalent to (0==E)."
@@ -822,17 +823,16 @@ void ExprEngine::VisitUnaryOperator(const UnaryOperator* U,
           //  Note: technically we do "E == 0", but this is the same in the
           //    transfer functions as "0 == E".
           SVal Result;          
-          if (isa<Loc>(V)) {
+          if (Optional<Loc> LV = V.getAs<Loc>()) {
             Loc X = svalBuilder.makeNull();
-            Result = evalBinOp(state, BO_EQ, cast<Loc>(V), X,
-                               U->getType());
+            Result = evalBinOp(state, BO_EQ, *LV, X, U->getType());
           }
           else if (Ex->getType()->isFloatingType()) {
             // FIXME: handle floating point types.
             Result = UnknownVal();
           } else {
             nonloc::ConcreteInt X(getBasicVals().getValue(0, Ex->getType()));
-            Result = evalBinOp(state, BO_EQ, cast<NonLoc>(V), X,
+            Result = evalBinOp(state, BO_EQ, V.castAs<NonLoc>(), X,
                                U->getType());
           }
           
@@ -874,7 +874,7 @@ void ExprEngine::VisitIncrementDecrementOperator(const UnaryOperator* U,
       Bldr.generateNode(U, *I, state->BindExpr(U, LCtx, V2_untested));
       continue;
     }
-    DefinedSVal V2 = cast<DefinedSVal>(V2_untested);
+    DefinedSVal V2 = V2_untested.castAs<DefinedSVal>();
     
     // Handle all other values.
     BinaryOperator::Opcode Op = U->isIncrementOp() ? BO_Add : BO_Sub;

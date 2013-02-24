@@ -3332,13 +3332,12 @@ CFG* CFG::buildCFG(const Decl *D, Stmt *Statement, ASTContext *C,
 const CXXDestructorDecl *
 CFGImplicitDtor::getDestructorDecl(ASTContext &astContext) const {
   switch (getKind()) {
-    case CFGElement::Invalid:
     case CFGElement::Statement:
     case CFGElement::Initializer:
       llvm_unreachable("getDestructorDecl should only be used with "
                        "ImplicitDtors");
     case CFGElement::AutomaticObjectDtor: {
-      const VarDecl *var = cast<CFGAutomaticObjDtor>(this)->getVarDecl();
+      const VarDecl *var = castAs<CFGAutomaticObjDtor>().getVarDecl();
       QualType ty = var->getType();
       ty = ty.getNonReferenceType();
       while (const ArrayType *arrayType = astContext.getAsArrayType(ty)) {
@@ -3351,7 +3350,7 @@ CFGImplicitDtor::getDestructorDecl(ASTContext &astContext) const {
     }
     case CFGElement::TemporaryDtor: {
       const CXXBindTemporaryExpr *bindExpr =
-        cast<CFGTemporaryDtor>(this)->getBindTemporaryExpr();
+        castAs<CFGTemporaryDtor>().getBindTemporaryExpr();
       const CXXTemporary *temp = bindExpr->getTemporary();
       return temp->getDestructor();
     }
@@ -3406,7 +3405,7 @@ static BlkExprMapTy* PopulateBlkExprMap(CFG& cfg) {
 
   for (CFG::iterator I=cfg.begin(), E=cfg.end(); I != E; ++I)
     for (CFGBlock::iterator BI=(*I)->begin(), EI=(*I)->end(); BI != EI; ++BI)
-      if (const CFGStmt *S = BI->getAs<CFGStmt>())
+      if (Optional<CFGStmt> S = BI->getAs<CFGStmt>())
         FindSubExprAssignments(S->getStmt(), SubExprAssignments);
 
   for (CFG::iterator I=cfg.begin(), E=cfg.end(); I != E; ++I) {
@@ -3415,7 +3414,7 @@ static BlkExprMapTy* PopulateBlkExprMap(CFG& cfg) {
     // block-level that are block-level expressions.
 
     for (CFGBlock::iterator BI=(*I)->begin(), EI=(*I)->end(); BI != EI; ++BI) {
-      const CFGStmt *CS = BI->getAs<CFGStmt>();
+      Optional<CFGStmt> CS = BI->getAs<CFGStmt>();
       if (!CS)
         continue;
       if (const Expr *Exp = dyn_cast<Expr>(CS->getStmt())) {
@@ -3531,7 +3530,7 @@ public:
       unsigned j = 1;
       for (CFGBlock::const_iterator BI = (*I)->begin(), BEnd = (*I)->end() ;
            BI != BEnd; ++BI, ++j ) {        
-        if (const CFGStmt *SE = BI->getAs<CFGStmt>()) {
+        if (Optional<CFGStmt> SE = BI->getAs<CFGStmt>()) {
           const Stmt *stmt= SE->getStmt();
           std::pair<unsigned, unsigned> P((*I)->getBlockID(), j);
           StmtMap[stmt] = P;
@@ -3721,7 +3720,7 @@ public:
 
 static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
                        const CFGElement &E) {
-  if (const CFGStmt *CS = E.getAs<CFGStmt>()) {
+  if (Optional<CFGStmt> CS = E.getAs<CFGStmt>()) {
     const Stmt *S = CS->getStmt();
     
     if (Helper) {
@@ -3769,7 +3768,7 @@ static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
     if (isa<Expr>(S))
       OS << '\n';
 
-  } else if (const CFGInitializer *IE = E.getAs<CFGInitializer>()) {
+  } else if (Optional<CFGInitializer> IE = E.getAs<CFGInitializer>()) {
     const CXXCtorInitializer *I = IE->getInitializer();
     if (I->isBaseInitializer())
       OS << I->getBaseClass()->getAsCXXRecordDecl()->getName();
@@ -3784,7 +3783,8 @@ static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
       OS << " (Base initializer)\n";
     else OS << " (Member initializer)\n";
 
-  } else if (const CFGAutomaticObjDtor *DE = E.getAs<CFGAutomaticObjDtor>()){
+  } else if (Optional<CFGAutomaticObjDtor> DE =
+                 E.getAs<CFGAutomaticObjDtor>()) {
     const VarDecl *VD = DE->getVarDecl();
     Helper->handleDecl(VD, OS);
 
@@ -3796,19 +3796,19 @@ static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
     OS << ".~" << T->getAsCXXRecordDecl()->getName().str() << "()";
     OS << " (Implicit destructor)\n";
 
-  } else if (const CFGBaseDtor *BE = E.getAs<CFGBaseDtor>()) {
+  } else if (Optional<CFGBaseDtor> BE = E.getAs<CFGBaseDtor>()) {
     const CXXBaseSpecifier *BS = BE->getBaseSpecifier();
     OS << "~" << BS->getType()->getAsCXXRecordDecl()->getName() << "()";
     OS << " (Base object destructor)\n";
 
-  } else if (const CFGMemberDtor *ME = E.getAs<CFGMemberDtor>()) {
+  } else if (Optional<CFGMemberDtor> ME = E.getAs<CFGMemberDtor>()) {
     const FieldDecl *FD = ME->getFieldDecl();
     const Type *T = FD->getType()->getBaseElementTypeUnsafe();
     OS << "this->" << FD->getName();
     OS << ".~" << T->getAsCXXRecordDecl()->getName() << "()";
     OS << " (Member object destructor)\n";
 
-  } else if (const CFGTemporaryDtor *TE = E.getAs<CFGTemporaryDtor>()) {
+  } else if (Optional<CFGTemporaryDtor> TE = E.getAs<CFGTemporaryDtor>()) {
     const CXXBindTemporaryExpr *BT = TE->getBindTemporaryExpr();
     OS << "~" << BT->getType()->getAsCXXRecordDecl()->getName() << "()";
     OS << " (Temporary object destructor)\n";

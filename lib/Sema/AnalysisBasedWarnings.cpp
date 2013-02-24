@@ -41,6 +41,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/ImmutableMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -157,7 +158,7 @@ static ControlFlowKind CheckFallThrough(AnalysisDeclContext &AC) {
     CFGBlock::const_reverse_iterator ri = B.rbegin(), re = B.rend();
 
     for ( ; ri != re ; ++ri)
-      if (isa<CFGStmt>(*ri))
+      if (ri->getAs<CFGStmt>())
         break;
 
     // No more CFGElements in the block?
@@ -171,7 +172,7 @@ static ControlFlowKind CheckFallThrough(AnalysisDeclContext &AC) {
       continue;
     }
 
-    CFGStmt CS = cast<CFGStmt>(*ri);
+    CFGStmt CS = ri->castAs<CFGStmt>();
     const Stmt *S = CS.getStmt();
     if (isa<ReturnStmt>(S)) {
       HasLiveReturn = true;
@@ -761,7 +762,7 @@ namespace {
           for (CFGBlock::const_reverse_iterator ElemIt = P->rbegin(),
                                                 ElemEnd = P->rend();
                ElemIt != ElemEnd; ++ElemIt) {
-            if (const CFGStmt *CS = ElemIt->getAs<CFGStmt>()) {
+            if (Optional<CFGStmt> CS = ElemIt->getAs<CFGStmt>()) {
               if (const AttributedStmt *AS = asFallThroughAttr(CS->getStmt())) {
                 S.Diag(AS->getLocStart(),
                        diag::warn_fallthrough_attr_unreachable);
@@ -832,7 +833,7 @@ namespace {
       for (CFGBlock::const_reverse_iterator ElemIt = B.rbegin(),
                                             ElemEnd = B.rend();
                                             ElemIt != ElemEnd; ++ElemIt) {
-        if (const CFGStmt *CS = ElemIt->getAs<CFGStmt>())
+        if (Optional<CFGStmt> CS = ElemIt->getAs<CFGStmt>())
           return CS->getStmt();
       }
       // Workaround to detect a statement thrown out by CFGBuilder:
@@ -1149,7 +1150,11 @@ struct SLocSort {
 class UninitValsDiagReporter : public UninitVariablesHandler {
   Sema &S;
   typedef SmallVector<UninitUse, 2> UsesVec;
-  typedef llvm::DenseMap<const VarDecl *, std::pair<UsesVec*, bool> > UsesMap;
+  typedef std::pair<UsesVec*, bool> MappedType;
+  // Prefer using MapVector to DenseMap, so that iteration order will be
+  // the same as insertion order. This is needed to obtain a deterministic
+  // order of diagnostics when calling flushDiagnostics().
+  typedef llvm::MapVector<const VarDecl *, MappedType> UsesMap;
   UsesMap *uses;
   
 public:
@@ -1158,11 +1163,11 @@ public:
     flushDiagnostics();
   }
 
-  std::pair<UsesVec*, bool> &getUses(const VarDecl *vd) {
+  MappedType &getUses(const VarDecl *vd) {
     if (!uses)
       uses = new UsesMap();
 
-    UsesMap::mapped_type &V = (*uses)[vd];
+    MappedType &V = (*uses)[vd];
     UsesVec *&vec = V.first;
     if (!vec)
       vec = new UsesVec();
@@ -1181,12 +1186,10 @@ public:
   void flushDiagnostics() {
     if (!uses)
       return;
-    
-    // FIXME: This iteration order, and thus the resulting diagnostic order,
-    //        is nondeterministic.
+
     for (UsesMap::iterator i = uses->begin(), e = uses->end(); i != e; ++i) {
       const VarDecl *vd = i->first;
-      const UsesMap::mapped_type &V = i->second;
+      const MappedType &V = i->second;
 
       UsesVec *vec = V.first;
       bool hasSelfInit = V.second;

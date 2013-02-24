@@ -573,6 +573,11 @@ private:
 
     // Initialize the ASTContext
     Context.InitBuiltinTypes(*Target);
+
+    // We didn't have access to the comment options when the ASTContext was
+    // constructed, so register them now.
+    Context.getCommentCommandTraits().registerCommentOptions(
+        LangOpt.CommentOpts);
   }
 };
 
@@ -842,7 +847,8 @@ class MacroDefinitionTrackerPPCallbacks : public PPCallbacks {
 public:
   explicit MacroDefinitionTrackerPPCallbacks(unsigned &Hash) : Hash(Hash) { }
   
-  virtual void MacroDefined(const Token &MacroNameTok, const MacroInfo *MI) {
+  virtual void MacroDefined(const Token &MacroNameTok,
+                            const MacroDirective *MD) {
     Hash = llvm::HashString(MacroNameTok.getIdentifierInfo()->getName(), Hash);
   }
 };

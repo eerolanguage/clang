@@ -71,6 +71,7 @@ class CXXCtorInitializer;
 class GlobalModuleIndex;
 class GotoStmt;
 class MacroDefinition;
+class MacroDirective;
 class NamedDecl;
 class OpaqueValueExpr;
 class Preprocessor;
@@ -426,7 +427,7 @@ private:
   /// If the pointer at index I is non-NULL, then it refers to the
   /// MacroInfo for the identifier with ID=I+1 that has already
   /// been loaded.
-  std::vector<MacroInfo *> MacrosLoaded;
+  std::vector<MacroDirective *> MacrosLoaded;
 
   typedef ContinuousRangeMap<serialization::MacroID, ModuleFile *, 4>
     GlobalMacroMapType;
@@ -473,7 +474,7 @@ private:
 
     union {
       Decl *D;
-      MacroInfo *MI;
+      MacroDirective *MD;
     };
 
     IdentifierInfo *Id;
@@ -481,11 +482,11 @@ private:
   public:
     HiddenName(Decl *D) : Kind(Declaration), Loc(), D(D), Id() { }
 
-    HiddenName(IdentifierInfo *II, MacroInfo *MI)
-      : Kind(MacroVisibility), Loc(), MI(MI), Id(II) { }
+    HiddenName(IdentifierInfo *II, MacroDirective *MD)
+      : Kind(MacroVisibility), Loc(), MD(MD), Id(II) { }
 
-    HiddenName(IdentifierInfo *II, MacroInfo *MI, SourceLocation Loc)
-      : Kind(MacroUndef), Loc(Loc.getRawEncoding()), MI(MI), Id(II) { }
+    HiddenName(IdentifierInfo *II, MacroDirective *MD, SourceLocation Loc)
+      : Kind(MacroUndef), Loc(Loc.getRawEncoding()), MD(MD), Id(II) { }
 
     NameKind getKind() const { return Kind; }
 
@@ -494,10 +495,10 @@ private:
       return D;
     }
 
-    std::pair<IdentifierInfo *, MacroInfo *> getMacro() const {
+    std::pair<IdentifierInfo *, MacroDirective *> getMacro() const {
       assert((getKind() == MacroUndef || getKind() == MacroVisibility)
              && "Hidden name is not a macro!");
-      return std::make_pair(Id, MI);
+      return std::make_pair(Id, MD);
     }
 
     SourceLocation getMacroUndefLoc() const {
@@ -792,19 +793,13 @@ private:
   /// Number of CXX base specifiers currently loaded
   unsigned NumCXXBaseSpecifiersLoaded;
 
-  /// \brief An IdentifierInfo that has been loaded but whose top-level
-  /// declarations of the same name have not (yet) been loaded.
-  struct PendingIdentifierInfo {
-    IdentifierInfo *II;
-    SmallVector<uint32_t, 4> DeclIDs;
-  };
-
   /// \brief The set of identifiers that were read while the AST reader was
   /// (recursively) loading declarations.
   ///
   /// The declarations on the identifier chain for these identifiers will be
   /// loaded once the recursive loading has completed.
-  std::deque<PendingIdentifierInfo> PendingIdentifierInfos;
+  llvm::MapVector<IdentifierInfo *, SmallVector<uint32_t, 4> >
+    PendingIdentifierInfos;
 
   /// \brief The generation number of each identifier, which keeps track of
   /// the last time we loaded information about this identifier.
@@ -832,6 +827,21 @@ private:
 
   /// \brief Keeps track of the elements added to PendingDeclChains.
   llvm::SmallSet<serialization::DeclID, 16> PendingDeclChainsKnown;
+
+  /// \brief The Decl IDs for the Sema/Lexical DeclContext of a Decl that has
+  /// been loaded but its DeclContext was not set yet.
+  struct PendingDeclContextInfo {
+    Decl *D;
+    serialization::GlobalDeclID SemaDC;
+    serialization::GlobalDeclID LexicalDC;
+  };
+
+  /// \brief The set of Decls that have been loaded but their DeclContexts are
+  /// not set yet.
+  ///
+  /// The DeclContexts for these Decls will be set once recursive loading has
+  /// been completed.
+  std::deque<PendingDeclContextInfo> PendingDeclContextInfos;
 
   /// \brief The set of Objective-C categories that have been deserialized
   /// since the last time the declaration chains were linked.
@@ -1076,6 +1086,14 @@ private:
 
   void finishPendingActions();
 
+  void addPendingDeclContextInfo(Decl *D,
+                                 serialization::GlobalDeclID SemaDC,
+                                 serialization::GlobalDeclID LexicalDC) {
+    assert(D);
+    PendingDeclContextInfo Info = { D, SemaDC, LexicalDC };
+    PendingDeclContextInfos.push_back(Info);
+  }
+
   /// \brief Produce an error diagnostic and return true.
   ///
   /// This routine should only be used for fatal errors that have to
@@ -1256,8 +1274,8 @@ public:
 
   /// \brief Optionally returns true or false if the preallocated preprocessed
   /// entity with index \p Index came from file \p FID.
-  virtual llvm::Optional<bool> isPreprocessedEntityInFileID(unsigned Index,
-                                                            FileID FID);
+  virtual Optional<bool> isPreprocessedEntityInFileID(unsigned Index,
+                                                      FileID FID);
 
   /// \brief Read the header file information for the given file entry.
   virtual HeaderFileInfo GetHeaderFileInfo(const FileEntry *FE);
@@ -1559,7 +1577,7 @@ public:
   void SetIdentifierInfo(unsigned ID, IdentifierInfo *II);
   void SetGloballyVisibleDecls(IdentifierInfo *II,
                                const SmallVectorImpl<uint32_t> &DeclIDs,
-                               bool Nonrecursive = false);
+                               SmallVectorImpl<Decl *> *Decls = 0);
 
   /// \brief Report a diagnostic.
   DiagnosticBuilder Diag(unsigned DiagID);
@@ -1587,7 +1605,7 @@ public:
                                                     unsigned LocalID);
 
   /// \brief Retrieve the macro with the given ID.
-  MacroInfo *getMacro(serialization::MacroID ID, MacroInfo *Hint = 0);
+  MacroDirective *getMacro(serialization::MacroID ID, MacroDirective *Hint = 0);
 
   /// \brief Retrieve the global macro ID corresponding to the given local
   /// ID within the given module file.
@@ -1746,7 +1764,7 @@ public:
   Expr *ReadSubExpr();
 
   /// \brief Reads the macro record located at the given offset.
-  void ReadMacroRecord(ModuleFile &F, uint64_t Offset, MacroInfo *Hint = 0);
+  void ReadMacroRecord(ModuleFile &F, uint64_t Offset, MacroDirective *Hint = 0);
 
   /// \brief Determine the global preprocessed entity ID that corresponds to
   /// the given local ID within the given module.

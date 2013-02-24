@@ -59,7 +59,7 @@ public:
   unsigned size() const { return map.size(); }
   
   /// Returns the bit vector index for a given declaration.
-  llvm::Optional<unsigned> getValueIndex(const VarDecl *d) const;
+  Optional<unsigned> getValueIndex(const VarDecl *d) const;
 };
 }
 
@@ -74,10 +74,10 @@ void DeclToIndex::computeMap(const DeclContext &dc) {
   }
 }
 
-llvm::Optional<unsigned> DeclToIndex::getValueIndex(const VarDecl *d) const {
+Optional<unsigned> DeclToIndex::getValueIndex(const VarDecl *d) const {
   llvm::DenseMap<const VarDecl *, unsigned>::const_iterator I = map.find(d);
   if (I == map.end())
-    return llvm::Optional<unsigned>();
+    return None;
   return I->second;
 }
 
@@ -132,7 +132,7 @@ public:
 
   Value getValue(const CFGBlock *block, const CFGBlock *dstBlock,
                  const VarDecl *vd) {
-    const llvm::Optional<unsigned> &idx = declToIndex.getValueIndex(vd);
+    const Optional<unsigned> &idx = declToIndex.getValueIndex(vd);
     assert(idx.hasValue());
     return getValueVector(block)[idx.getValue()];
   }
@@ -193,7 +193,7 @@ void CFGBlockValues::resetScratch() {
 }
 
 ValueVector::reference CFGBlockValues::operator[](const VarDecl *vd) {
-  const llvm::Optional<unsigned> &idx = declToIndex.getValueIndex(vd);
+  const Optional<unsigned> &idx = declToIndex.getValueIndex(vd);
   assert(idx.hasValue());
   return scratch[idx.getValue()];
 }
@@ -746,9 +746,8 @@ static bool runOnBlock(const CFGBlock *block, const CFG &cfg,
   TransferFunctions tf(vals, cfg, block, ac, classification, handler);
   for (CFGBlock::const_iterator I = block->begin(), E = block->end(); 
        I != E; ++I) {
-    if (const CFGStmt *cs = dyn_cast<CFGStmt>(&*I)) {
+    if (Optional<CFGStmt> cs = I->getAs<CFGStmt>())
       tf.Visit(const_cast<Stmt*>(cs->getStmt()));
-    }
   }
   return vals.updateValueVectorWithScratch(block);
 }

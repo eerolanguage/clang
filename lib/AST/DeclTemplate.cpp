@@ -184,9 +184,8 @@ static void GenerateInjectedTemplateArgs(ASTContext &Context,
     if (TemplateTypeParmDecl *TTP = dyn_cast<TemplateTypeParmDecl>(*Param)) {
       QualType ArgType = Context.getTypeDeclType(TTP);
       if (TTP->isParameterPack())
-        ArgType = Context.getPackExpansionType(ArgType, 
-                                               llvm::Optional<unsigned>());
-      
+        ArgType = Context.getPackExpansionType(ArgType, None);
+
       Arg = TemplateArgument(ArgType);
     } else if (NonTypeTemplateParmDecl *NTTP =
                dyn_cast<NonTypeTemplateParmDecl>(*Param)) {
@@ -197,13 +196,12 @@ static void GenerateInjectedTemplateArgs(ASTContext &Context,
       
       if (NTTP->isParameterPack())
         E = new (Context) PackExpansionExpr(Context.DependentTy, E,
-                                            NTTP->getLocation(),
-                                            llvm::Optional<unsigned>());
+                                            NTTP->getLocation(), None);
       Arg = TemplateArgument(E);
     } else {
       TemplateTemplateParmDecl *TTP = cast<TemplateTemplateParmDecl>(*Param);
       if (TTP->isParameterPack())
-        Arg = TemplateArgument(TemplateName(TTP), llvm::Optional<unsigned>());
+        Arg = TemplateArgument(TemplateName(TTP), Optional<unsigned>());
       else
         Arg = TemplateArgument(TemplateName(TTP));
     }
@@ -304,7 +302,7 @@ ClassTemplateDecl *ClassTemplateDecl::CreateDeserialized(ASTContext &C,
   return new (Mem) ClassTemplateDecl(EmptyShell());
 }
 
-void ClassTemplateDecl::LoadLazySpecializations() {
+void ClassTemplateDecl::LoadLazySpecializations() const {
   Common *CommonPtr = getCommonPtr();
   if (CommonPtr->LazySpecializations) {
     ASTContext &Context = getASTContext();
@@ -316,7 +314,7 @@ void ClassTemplateDecl::LoadLazySpecializations() {
 }
 
 llvm::FoldingSetVector<ClassTemplateSpecializationDecl> &
-ClassTemplateDecl::getSpecializations() {
+ClassTemplateDecl::getSpecializations() const {
   LoadLazySpecializations();
   return getCommonPtr()->Specializations;
 }  
@@ -745,17 +743,13 @@ ClassTemplateSpecializationDecl::CreateDeserialized(ASTContext &C,
   return Result;
 }
 
-void
-ClassTemplateSpecializationDecl::getNameForDiagnostic(std::string &S,
-                                                  const PrintingPolicy &Policy,
-                                                      bool Qualified) const {
-  NamedDecl::getNameForDiagnostic(S, Policy, Qualified);
+void ClassTemplateSpecializationDecl::getNameForDiagnostic(
+    raw_ostream &OS, const PrintingPolicy &Policy, bool Qualified) const {
+  NamedDecl::getNameForDiagnostic(OS, Policy, Qualified);
 
   const TemplateArgumentList &TemplateArgs = getTemplateArgs();
-  S += TemplateSpecializationType::PrintTemplateArgumentList(
-                                                          TemplateArgs.data(),
-                                                          TemplateArgs.size(),
-                                                             Policy);
+  TemplateSpecializationType::PrintTemplateArgumentList(
+      OS, TemplateArgs.data(), TemplateArgs.size(), Policy);
 }
 
 ClassTemplateDecl *

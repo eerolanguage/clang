@@ -1,19 +1,25 @@
 // Check that we split debug output properly
 //
 // REQUIRES: asserts
-// RUN: %clang -target x86_64-unknown-linux-gnu -ccc-print-phases \
-// RUN:   -gsplit-dwarf -arch x86_64 %s 2> %t
+// RUN: %clang -target x86_64-unknown-linux-gnu -gsplit-dwarf -c -### %s 2> %t
 // RUN: FileCheck -check-prefix=CHECK-ACTIONS < %t %s
 //
-// CHECK-ACTIONS: 0: input, "{{.*}}split-debug.c", c
-// CHECK-ACTIONS: 4: split-debug, {3}, object
+// CHECK-ACTIONS: objcopy{{.*}}--extract-dwo{{.*}}"split-debug.dwo"
+// CHECK-ACTIONS: objcopy{{.*}}--strip-dwo{{.*}}"split-debug.o"
 
-// Check output name derivation.
-//
-// RUN: %clang -target x86_64-unknown-linux-gnu -ccc-print-bindings \
-// RUN:   -gsplit-dwarf -arch x86_64 -c %s 2> %t
-// RUN: FileCheck -check-prefix=CHECK-OUTPUT-NAME < %t %s
-//
-// CHECK-OUTPUT-NAME:# "x86_64-unknown-linux-gnu" - "clang", inputs: ["{{.*}}split-debug.c"], output: "{{.*}}split-debug{{.*}}.o"
-// CHECK-OUTPUT-NAME:# "x86_64-unknown-linux-gnu" - "linuxtools::SplitDebug", inputs: ["{{.*}}split-debug{{.*}}.o"], output: "{{.*}}split-debug{{.*}}.o"
 
+// RUN: %clang -target x86_64-macosx -gsplit-dwarf -c -### %s 2> %t
+// RUN: FileCheck -check-prefix=CHECK-NO-ACTIONS < %t %s
+//
+// CHECK-NO-ACTIONS-NOT: -split-dwarf
+
+
+// RUN: %clang -target x86_64-unknown-linux-gnu -gsplit-dwarf -o Bad.x -### %s 2> %t
+// RUN: FileCheck -check-prefix=CHECK-BAD < %t %s
+//
+// CHECK-BAD-NOT: "Bad.dwo"
+
+// RUN: %clang -target x86_64-unknown-linux-gnu -gsplit-dwarf -c -### %s 2> %t
+// RUN: FileCheck -check-prefix=CHECK-OPTION < %t %s
+//
+// CHECK-OPTION: "-split-dwarf-file" "split-debug.dwo"

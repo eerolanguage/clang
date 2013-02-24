@@ -1219,11 +1219,6 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
 
   IfScope.Exit();
 
-  // If the condition was invalid, discard the if statement.  We could recover
-  // better by replacing it with a valid expr, but don't do that yet.
-  if (CondExp.isInvalid() && !CondVar)
-    return StmtError();
-
   // If the then or else stmt is invalid and the other is valid (and present),
   // make turn the invalid one into a null stmt to avoid dropping the other
   // part.  If both are invalid, return error.
@@ -1591,9 +1586,6 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     // Parse declaration, which eats the ';'.
     if (!C99orCXXorObjC)   // Use of C99-style for loops in C90 mode?
       Diag(Tok, diag::ext_c99_variable_decl_in_for_loop);
-
-    ParsedAttributesWithRange attrs(AttrFactory);
-    MaybeParseCXX11Attributes(attrs);
 
     // In C++0x, "for (T NS:a" might not be a typo for ::
     bool MightBeForRangeStmt = getLangOpts().CPlusPlus;
@@ -2342,7 +2334,7 @@ Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
          (getLangOpts().OffSideRule && !PP.isInLegacyHeader()));
   SourceLocation LBraceLoc = Tok.getLocation();
 
-  if (SkipFunctionBodies && Actions.canSkipFunctionBody(Decl) &&
+  if (SkipFunctionBodies && (!Decl || Actions.canSkipFunctionBody(Decl)) &&
       trySkippingFunctionBody()) {
     BodyScope.Exit();
     return Actions.ActOnSkippedFunctionBody(Decl);

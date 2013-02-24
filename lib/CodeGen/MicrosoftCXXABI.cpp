@@ -45,16 +45,20 @@ public:
   void BuildDestructorSignature(const CXXDestructorDecl *Ctor,
                                 CXXDtorType Type,
                                 CanQualType &ResTy,
-                                SmallVectorImpl<CanQualType> &ArgTys) {
-    // 'this' is already in place
-    // TODO: 'for base' flag
-  }
+                                SmallVectorImpl<CanQualType> &ArgTys);
 
   void BuildInstanceFunctionParams(CodeGenFunction &CGF,
                                    QualType &ResTy,
                                    FunctionArgList &Params);
 
   void EmitInstanceFunctionProlog(CodeGenFunction &CGF);
+
+  RValue EmitVirtualDestructorCall(CodeGenFunction &CGF,
+                                   const CXXDestructorDecl *Dtor,
+                                   CXXDtorType DtorType,
+                                   SourceLocation CallLoc,
+                                   ReturnValueSlot ReturnValue,
+                                   llvm::Value *This);
 
   void EmitGuardedInit(CodeGenFunction &CGF, const VarDecl &D,
                        llvm::GlobalVariable *DeclPtr,
@@ -121,12 +125,44 @@ void MicrosoftCXXABI::BuildConstructorSignature(const CXXConstructorDecl *Ctor,
   ResTy = ArgTys[0];
 }
 
+void MicrosoftCXXABI::BuildDestructorSignature(const CXXDestructorDecl *Dtor,
+                                               CXXDtorType Type,
+                                               CanQualType &ResTy,
+                                        SmallVectorImpl<CanQualType> &ArgTys) {
+  // 'this' is already in place
+  // TODO: 'for base' flag
+
+  if (Type == Dtor_Deleting) {
+    // The scalar deleting destructor takes an implicit bool parameter.
+    ArgTys.push_back(CGM.getContext().BoolTy);
+  }
+}
+
+static bool IsDeletingDtor(GlobalDecl GD) {
+  const CXXMethodDecl* MD = cast<CXXMethodDecl>(GD.getDecl());
+  if (isa<CXXDestructorDecl>(MD)) {
+    return GD.getDtorType() == Dtor_Deleting;
+  }
+  return false;
+}
+
 void MicrosoftCXXABI::BuildInstanceFunctionParams(CodeGenFunction &CGF,
                                                   QualType &ResTy,
                                                   FunctionArgList &Params) {
   BuildThisParam(CGF, Params);
   if (needThisReturn(CGF.CurGD)) {
     ResTy = Params[0]->getType();
+  }
+  if (IsDeletingDtor(CGF.CurGD)) {
+    ASTContext &Context = getContext();
+
+    ImplicitParamDecl *ShouldDelete
+      = ImplicitParamDecl::Create(Context, 0,
+                                  CGF.CurGD.getDecl()->getLocation(),
+                                  &Context.Idents.get("should_call_delete"),
+                                  Context.BoolTy);
+    Params.push_back(ShouldDelete);
+    getStructorImplicitParamDecl(CGF) = ShouldDelete;
   }
 }
 
@@ -135,6 +171,38 @@ void MicrosoftCXXABI::EmitInstanceFunctionProlog(CodeGenFunction &CGF) {
   if (needThisReturn(CGF.CurGD)) {
     CGF.Builder.CreateStore(getThisValue(CGF), CGF.ReturnValue);
   }
+  if (IsDeletingDtor(CGF.CurGD)) {
+    assert(getStructorImplicitParamDecl(CGF) &&
+           "no implicit parameter for a deleting destructor?");
+    getStructorImplicitParamValue(CGF)
+      = CGF.Builder.CreateLoad(
+          CGF.GetAddrOfLocalVar(getStructorImplicitParamDecl(CGF)),
+          "should_call_delete");
+  }
+}
+
+RValue MicrosoftCXXABI::EmitVirtualDestructorCall(CodeGenFunction &CGF,
+                                                  const CXXDestructorDecl *Dtor,
+                                                  CXXDtorType DtorType,
+                                                  SourceLocation CallLoc,
+                                                  ReturnValueSlot ReturnValue,
+                                                  llvm::Value *This) {
+  assert(DtorType == Dtor_Deleting || DtorType == Dtor_Complete);
+
+  // We have only one destructor in the vftable but can get both behaviors
+  // by passing an implicit bool parameter.
+  const CGFunctionInfo *FInfo
+      = &CGM.getTypes().arrangeCXXDestructor(Dtor, Dtor_Deleting);
+  llvm::Type *Ty = CGF.CGM.getTypes().GetFunctionType(*FInfo);
+  llvm::Value *Callee = CGF.BuildVirtualCall(Dtor, Dtor_Deleting, This, Ty);
+
+  ASTContext &Context = CGF.getContext();
+  llvm::Value *ImplicitParam
+    = llvm::ConstantInt::get(llvm::IntegerType::getInt1Ty(CGF.getLLVMContext()),
+                             DtorType == Dtor_Deleting);
+
+  return CGF.EmitCXXMemberCall(Dtor, CallLoc, Callee, ReturnValue, This,
+                               ImplicitParam, Context.BoolTy, 0, 0);
 }
 
 bool MicrosoftCXXABI::requiresArrayCookie(const CXXDeleteExpr *expr,

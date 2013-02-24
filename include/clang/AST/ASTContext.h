@@ -57,28 +57,12 @@ namespace clang {
   class TargetInfo;
   class CXXABI;
   // Decls
-  class DeclContext;
-  class CXXConversionDecl;
-  class CXXMethodDecl;
-  class CXXRecordDecl;
-  class Decl;
-  class FieldDecl;
   class MangleContext;
   class ObjCIvarDecl;
-  class ObjCIvarRefExpr;
   class ObjCPropertyDecl;
-  class ParmVarDecl;
-  class RecordDecl;
-  class StoredDeclsMap;
-  class TagDecl;
-  class TemplateTemplateParmDecl;
-  class TemplateTypeParmDecl;
-  class TranslationUnitDecl;
-  class TypeDecl;
-  class TypedefNameDecl;
+  class UnresolvedSetIterator;
   class UsingDecl;
   class UsingShadowDecl;
-  class UnresolvedSetIterator;
 
   namespace Builtin { class Context; }
 
@@ -91,7 +75,7 @@ namespace clang {
 class ASTContext : public RefCountedBase<ASTContext> {
   ASTContext &this_() { return *this; }
 
-  mutable std::vector<Type*> Types;
+  mutable SmallVector<Type *, 0> Types;
   mutable llvm::FoldingSet<ExtQuals> ExtQualNodes;
   mutable llvm::FoldingSet<ComplexType> ComplexTypes;
   mutable llvm::FoldingSet<PointerType> PointerTypes;
@@ -764,7 +748,7 @@ public:
   ASTMutationListener *getASTMutationListener() const { return Listener; }
 
   void PrintStats() const;
-  const std::vector<Type*>& getTypes() const { return Types; }
+  const SmallVectorImpl<Type *>& getTypes() const { return Types; }
 
   /// \brief Retrieve the declaration for the 128-bit signed integer type.
   TypedefDecl *getInt128Decl() const;
@@ -1039,7 +1023,7 @@ public:
                                             const TemplateArgument *Args) const;
 
   QualType getPackExpansionType(QualType Pattern,
-                                llvm::Optional<unsigned> NumExpansions);
+                                Optional<unsigned> NumExpansions);
 
   QualType getObjCInterfaceType(const ObjCInterfaceDecl *Decl,
                                 ObjCInterfaceDecl *PrevDecl = 0) const;
@@ -1924,8 +1908,8 @@ public:
   //                    Type Iterators.
   //===--------------------------------------------------------------------===//
 
-  typedef std::vector<Type*>::iterator       type_iterator;
-  typedef std::vector<Type*>::const_iterator const_type_iterator;
+  typedef SmallVectorImpl<Type *>::iterator       type_iterator;
+  typedef SmallVectorImpl<Type *>::const_iterator const_type_iterator;
 
   type_iterator types_begin() { return Types.begin(); }
   type_iterator types_end() { return Types.end(); }
@@ -2119,7 +2103,8 @@ private:
                                   bool EncodingProperty = false,
                                   bool StructField = false,
                                   bool EncodeBlockParameters = false,
-                                  bool EncodeClassNames = false) const;
+                                  bool EncodeClassNames = false,
+                                  bool EncodePointerToObjCTypedef = false) const;
 
   // Adds the encoding of the structure's members.
   void getObjCEncodingForStructureImpl(RecordDecl *RD, std::string &S,

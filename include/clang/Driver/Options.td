@@ -327,6 +327,9 @@ def fcatch_undefined_behavior : Flag<["-"], "fcatch-undefined-behavior">, Group<
 def fclasspath_EQ : Joined<["-"], "fclasspath=">, Group<f_Group>;
 def fcolor_diagnostics : Flag<["-"], "fcolor-diagnostics">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Use colors in diagnostics">;
+def fcomment_block_commands : CommaJoined<["-"], "fcomment-block-commands=">, Group<f_clang_Group>, Flags<[CC1Option]>,
+  HelpText<"Treat each comma separated argument in <arg> as a documentation comment block command">,
+  MetaVarName<"<arg>">;
 def fcommon : Flag<["-"], "fcommon">, Group<f_Group>;
 def fcompile_resource_EQ : Joined<["-"], "fcompile-resource=">, Group<f_Group>;
 def fconstant_cfstrings : Flag<["-"], "fconstant-cfstrings">, Group<f_Group>;
@@ -389,6 +392,7 @@ def fno_fast_math : Flag<["-"], "fno-fast-math">, Group<f_Group>;
 def fmath_errno : Flag<["-"], "fmath-errno">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Require math functions to indicate errors by setting errno">;
 def fno_math_errno : Flag<["-"], "fno-math-errno">, Group<f_Group>;
+def fbracket_depth_EQ : Joined<["-"], "fbracket-depth=">, Group<f_Group>;
 def fsignaling_math : Flag<["-"], "fsignaling-math">, Group<f_Group>;
 def fno_signaling_math : Flag<["-"], "fno-signaling-math">, Group<f_Group>;
 def fsanitize_EQ : CommaJoined<["-"], "fsanitize=">, Group<f_clang_Group>,
@@ -723,10 +727,14 @@ def fuse_cxa_atexit : Flag<["-"], "fuse-cxa-atexit">, Group<f_Group>;
 def fuse_init_array : Flag<["-"], "fuse-init-array">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Use .init_array instead of .ctors">;
 def fverbose_asm : Flag<["-"], "fverbose-asm">, Group<f_Group>;
-def fvisibility_EQ : Joined<["-"], "fvisibility=">, Group<f_Group>;
+def fvisibility_EQ : Joined<["-"], "fvisibility=">, Group<f_Group>,
+  HelpText<"Set the default symbol visibility for all global declarations">;
 def fvisibility_inlines_hidden : Flag<["-"], "fvisibility-inlines-hidden">, Group<f_Group>,
   HelpText<"Give inline C++ member functions default visibility by default">,
   Flags<[CC1Option]>;
+def fvisibility_ms_compat : Flag<["-"], "fvisibility-ms-compat">, Group<f_Group>,
+  HelpText<"Give global types 'default' visibility and global functions and "
+           "variables 'hidden' visibility by default">;
 def fwrapv : Flag<["-"], "fwrapv">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Treat signed integer overflow as two's complement">;
 def fwritable_strings : Flag<["-"], "fwritable-strings">, Group<f_Group>, Flags<[CC1Option]>,

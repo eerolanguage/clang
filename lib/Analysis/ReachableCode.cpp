@@ -95,7 +95,7 @@ static bool isValidDeadStmt(const Stmt *S) {
 
 const Stmt *DeadCodeScan::findDeadCode(const clang::CFGBlock *Block) {
   for (CFGBlock::const_iterator I = Block->begin(), E = Block->end(); I!=E; ++I)
-    if (const CFGStmt *CS = I->getAs<CFGStmt>()) {
+    if (Optional<CFGStmt> CS = I->getAs<CFGStmt>()) {
       const Stmt *S = CS->getStmt();
       if (isValidDeadStmt(S))
         return S;

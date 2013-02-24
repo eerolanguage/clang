@@ -306,14 +306,15 @@ StringRef Preprocessor::getLastMacroWithSpelling(
   StringRef BestSpelling;
   for (Preprocessor::macro_iterator I = macro_begin(), E = macro_end();
        I != E; ++I) {
-    if (!I->second->isObjectLike())
+    if (!I->second->getInfo()->isObjectLike())
       continue;
-    const MacroInfo *MI = I->second->findDefinitionAtLoc(Loc, SourceMgr);
-    if (!MI)
+    const MacroDirective *
+      MD = I->second->findDirectiveAtLoc(Loc, SourceMgr);
+    if (!MD)
       continue;
-    if (!MacroDefinitionEquals(MI, Tokens))
+    if (!MacroDefinitionEquals(MD->getInfo(), Tokens))
       continue;
-    SourceLocation Location = I->second->getDefinitionLoc();
+    SourceLocation Location = I->second->getInfo()->getDefinitionLoc();
     // Choose the macro defined latest.
     if (BestLocation.isInvalid() ||
         (Location.isValid() &&
@@ -669,10 +670,11 @@ void Preprocessor::HandleIdentifier(Token &Identifier) {
   }
 
   // If this is a macro to be expanded, do it.
-  if (MacroInfo *MI = getMacroInfo(&II)) {
+  if (MacroDirective *MD = getMacroDirective(&II)) {
+    MacroInfo *MI = MD->getInfo();
     if (!DisableMacroExpansion) {
       if (!Identifier.isExpandDisabled() && MI->isEnabled()) {
-        if (!HandleMacroExpandedIdentifier(Identifier, MI))
+        if (!HandleMacroExpandedIdentifier(Identifier, MD))
           return;
       } else {
         // C99 6.10.3.4p2 says that a disabled macro may never again be

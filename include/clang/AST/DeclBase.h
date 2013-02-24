@@ -1090,6 +1090,10 @@ public:
   /// a C++ extern "C" linkage spec.
   bool isExternCContext() const;
 
+  /// \brief Determines whether this context is, or is nested within,
+  /// a C++ extern "C++" linkage spec.
+  bool isExternCXXContext() const;
+
   /// \brief Determine whether this declaration context is equivalent
   /// to the declaration context DC.
   bool Equals(const DeclContext *DC) const {
@@ -1477,9 +1481,9 @@ public:
   // Low-level accessors
     
   /// \brief Mark the lookup table as needing to be built.  This should be
-  /// used only if setHasExternalLexicalStorage() has been called.
+  /// used only if setHasExternalLexicalStorage() has been called on any
+  /// decl context for which this is the primary context.
   void setMustBuildLookupTable() {
-    assert(ExternalLexicalStorage && "Requires external lexical storage");
     LookupPtr.setInt(true);
   }
 
@@ -1508,7 +1512,7 @@ public:
   /// declarations visible in this context.
   void setHasExternalVisibleStorage(bool ES = true) {
     ExternalVisibleStorage = ES;
-    if (ES)
+    if (ES && LookupPtr.getPointer())
       NeedToReconcileExternalVisibleStorage = true;
   }
 

@@ -477,7 +477,7 @@ namespace clang {
 
       optional = false; // the closing delim is no longer optional
       
-      if (getDepth() < MaxDepth) {
+      if (getDepth() < P.getLangOpts().BracketDepth) {
         LOpen = (P.*Consumer)();
         return false;
       }

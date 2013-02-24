@@ -44,9 +44,6 @@ namespace clang {
     unsigned &Idx;
     TypeID TypeIDForTypeDecl;
     
-    DeclID DeclContextIDForTemplateParmDecl;
-    DeclID LexicalDeclContextIDForTemplateParmDecl;
-
     bool HasPendingBody;
 
     uint64_t GetCurrentCursorOffset();
@@ -268,6 +265,7 @@ namespace clang {
     void VisitFriendTemplateDecl(FriendTemplateDecl *D);
     void VisitStaticAssertDecl(StaticAssertDecl *D);
     void VisitBlockDecl(BlockDecl *BD);
+    void VisitEmptyDecl(EmptyDecl *D);
 
     std::pair<uint64_t, uint64_t> VisitDeclContext(DeclContext *DC);
     
@@ -329,14 +327,6 @@ void ASTDeclReader::Visit(Decl *D) {
       Reader.PendingBodies[FD] = GetCurrentCursorOffset();
       HasPendingBody = true;
     }
-  } else if (D->isTemplateParameter()) {
-    // If we have a fully initialized template parameter, we can now
-    // set its DeclContext.
-    DeclContext *SemaDC = cast<DeclContext>(
-                              Reader.GetDecl(DeclContextIDForTemplateParmDecl));
-    DeclContext *LexicalDC = cast<DeclContext>(
-                       Reader.GetDecl(LexicalDeclContextIDForTemplateParmDecl));
-    D->setDeclContextsImpl(SemaDC, LexicalDC, Reader.getContext());
   }
 }
 
@@ -346,8 +336,11 @@ void ASTDeclReader::VisitDecl(Decl *D) {
     // parameter immediately, because the template parameter might be
     // used in the formulation of its DeclContext. Use the translation
     // unit DeclContext as a placeholder.
-    DeclContextIDForTemplateParmDecl = ReadDeclID(Record, Idx);
-    LexicalDeclContextIDForTemplateParmDecl = ReadDeclID(Record, Idx);
+    GlobalDeclID SemaDCIDForTemplateParmDecl = ReadDeclID(Record, Idx);
+    GlobalDeclID LexicalDCIDForTemplateParmDecl = ReadDeclID(Record, Idx);
+    Reader.addPendingDeclContextInfo(D,
+                                     SemaDCIDForTemplateParmDecl,
+                                     LexicalDCIDForTemplateParmDecl);
     D->setDeclContext(Reader.getContext().getTranslationUnitDecl()); 
   } else {
     DeclContext *SemaDC = ReadDeclAs<DeclContext>(Record, Idx);
@@ -526,6 +519,8 @@ void ASTDeclReader::VisitFunctionDecl(FunctionDecl *FD) {
   FD->HasImplicitReturnZero = Record[Idx++];
   FD->IsConstexpr = Record[Idx++];
   FD->HasSkippedBody = Record[Idx++];
+  FD->HasCachedLinkage = true;
+  FD->CachedLinkage = Record[Idx++];
   FD->EndRangeLoc = ReadSourceLocation(Record, Idx);
 
   switch ((FunctionDecl::TemplatedKind)Record[Idx++]) {
@@ -908,6 +903,8 @@ void ASTDeclReader::VisitVarDecl(VarDecl *VD) {
   VD->VarDeclBits.CXXForRangeDecl = Record[Idx++];
   VD->VarDeclBits.ARCPseudoStrong = Record[Idx++];
   VD->VarDeclBits.IsConstexpr = Record[Idx++];
+  VD->HasCachedLinkage = true;
+  VD->CachedLinkage = Record[Idx++];
   
   // Only true variables (not parameters or implicit parameters) can be merged.
   if (VD->getKind() == Decl::Var)
@@ -1530,6 +1527,10 @@ void ASTDeclReader::VisitStaticAssertDecl(StaticAssertDecl *D) {
   D->RParenLoc = ReadSourceLocation(Record, Idx);
 }
 
+void ASTDeclReader::VisitEmptyDecl(EmptyDecl *D) {
+  VisitDecl(D);
+}
+
 std::pair<uint64_t, uint64_t>
 ASTDeclReader::VisitDeclContext(DeclContext *DC) {
   uint64_t LexicalOffset = Record[Idx++];
@@ -1810,6 +1811,30 @@ ASTDeclReader::FindExistingResult ASTDeclReader::findExisting(NamedDecl *D) {
   
   if (DC->isTranslationUnit() && Reader.SemaObj) {
     IdentifierResolver &IdResolver = Reader.SemaObj->IdResolver;
+
+    // Temporarily consider the identifier to be up-to-date. We don't want to
+    // cause additional lookups here.
+    class UpToDateIdentifierRAII {
+      IdentifierInfo *II;
+      bool WasOutToDate;
+
+    public:
+      explicit UpToDateIdentifierRAII(IdentifierInfo *II)
+        : II(II), WasOutToDate(false)
+      {
+        if (II) {
+          WasOutToDate = II->isOutOfDate();
+          if (WasOutToDate)
+            II->setOutOfDate(false);
+        }
+      }
+
+      ~UpToDateIdentifierRAII() {
+        if (WasOutToDate)
+          II->setOutOfDate(true);
+      }
+    } UpToDate(Name.getAsIdentifierInfo());
+
     for (IdentifierResolver::iterator I = IdResolver.begin(Name), 
                                    IEnd = IdResolver.end();
          I != IEnd; ++I) {
@@ -2108,6 +2133,9 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
     // Note: last entry of the ImportDecl record is the number of stored source 
     // locations.
     D = ImportDecl::CreateDeserialized(Context, ID, Record.back());
+    break;
+  case DECL_EMPTY:
+    D = EmptyDecl::CreateDeserialized(Context, ID);
     break;
   }
 

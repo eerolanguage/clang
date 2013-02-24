@@ -3167,6 +3167,10 @@ public:
     WCharType = UnsignedInt;
     LongDoubleFormat = &llvm::APFloat::IEEEquad;
 
+    // AArch64 backend supports 64-bit operations at the moment. In principle
+    // 128-bit is possible if register-pairs are used.
+    MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
+
     TheCXXABI.set(TargetCXXABI::GenericAArch64);
   }
   virtual void getTargetDefines(const LangOptions &Opts,
@@ -3716,6 +3720,12 @@ public:
 
   virtual CallingConvCheckResult checkCallingConvention(CallingConv CC) const {
     return (CC == CC_AAPCS || CC == CC_AAPCS_VFP) ? CCCR_OK : CCCR_Warning;
+  }
+
+  virtual int getEHDataRegisterNumber(unsigned RegNo) const {
+    if (RegNo == 0) return 0;
+    if (RegNo == 1) return 1;
+    return -1;
   }
 };
 
@@ -4429,6 +4439,12 @@ public:
       std::find(Features.begin(), Features.end(), "+soft-float");
     if (it != Features.end())
       Features.erase(it);
+  }
+
+  virtual int getEHDataRegisterNumber(unsigned RegNo) const {
+    if (RegNo == 0) return 4;
+    if (RegNo == 1) return 5;
+    return -1;
   }
 };
 

@@ -1402,7 +1402,7 @@ private:
   // [...] () -> type {...}
   ExprResult ParseLambdaExpression();
   ExprResult TryParseLambdaExpression();
-  llvm::Optional<unsigned> ParseLambdaIntroducer(LambdaIntroducer &Intro);
+  Optional<unsigned> ParseLambdaIntroducer(LambdaIntroducer &Intro);
   bool TryParseLambdaIntroducer(LambdaIntroducer &Intro);
   ExprResult ParseLambdaExpressionAfterIntroducer(
                LambdaIntroducer &Intro);
@@ -1920,7 +1920,8 @@ public:
                            Declarator::TheContext Context
                              = Declarator::TypeNameContext,
                            AccessSpecifier AS = AS_none,
-                           Decl **OwnedType = 0);
+                           Decl **OwnedType = 0,
+                           ParsedAttributes *Attrs = 0);
 
 private:
   void ParseBlockId(SourceLocation CaretLoc);
@@ -1934,6 +1935,17 @@ private:
     return DiagnoseProhibitedCXX11Attribute();
   }
   bool DiagnoseProhibitedCXX11Attribute();
+  void CheckMisplacedCXX11Attribute(ParsedAttributesWithRange &Attrs,
+                                    SourceLocation CorrectLocation) {
+    if (!getLangOpts().CPlusPlus11)
+      return;
+    if ((Tok.isNot(tok::l_square) || NextToken().isNot(tok::l_square)) &&
+        Tok.isNot(tok::kw_alignas))
+      return;
+    DiagnoseMisplacedCXX11Attribute(Attrs, CorrectLocation);
+  }
+  void DiagnoseMisplacedCXX11Attribute(ParsedAttributesWithRange &Attrs,
+                                       SourceLocation CorrectLocation);
 
   void ProhibitAttributes(ParsedAttributesWithRange &attrs) {
     if (!attrs.Range.isValid()) return;
@@ -2179,7 +2191,7 @@ private:
                            ParsedAttributesWithRange &Attributes);
   void ParseCXXMemberSpecification(SourceLocation StartLoc,
                                    SourceLocation AttrFixitLoc,
-                                   ParsedAttributes &Attrs,
+                                   ParsedAttributesWithRange &Attrs,
                                    unsigned TagType,
                                    Decl *TagDecl);
   ExprResult ParseCXXMemberInitializer(Decl *D, bool IsFunction,

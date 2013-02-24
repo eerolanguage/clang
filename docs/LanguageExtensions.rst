@@ -1488,8 +1488,8 @@ C11's ``<stdatomic.h>`` header.  These builtins provide the semantics of the
 Non-standard C++11 Attributes
 =============================
 
-Clang supports one non-standard C++11 attribute.  It resides in the ``clang``
-attribute namespace.
+Clang's non-standard C++11 attributes live in the ``clang`` attribute
+namespace.
 
 The ``clang::fallthrough`` attribute
 ------------------------------------
@@ -1535,6 +1535,28 @@ Here is an example:
   case 77:  // warning: unannotated fall-through
     r();
   }
+
+``gnu::`` attributes
+--------------------
+
+Clang also supports GCC's ``gnu`` attribute namespace. All GCC attributes which
+are accepted with the ``__attribute__((foo))`` syntax are also accepted as
+``[[gnu::foo]]``. This only extends to attributes which are specified by GCC
+(see the list of `GCC function attributes
+<http://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html>`_, `GCC variable
+attributes <http://gcc.gnu.org/onlinedocs/gcc/Variable-Attributes.html>`_, and
+`GCC type attributes
+<http://gcc.gnu.org/onlinedocs/gcc/Type-Attributes.html>`_. As with the GCC
+implementation, these attributes must appertain to the *declarator-id* in a
+declaration, which means they must go either at the start of the declaration or
+immediately after the name being declared.
+
+For example, this applies the GNU ``unused`` attribute to ``a`` and ``f``, and
+also applies the GNU ``noreturn`` attribute to ``f``.
+
+.. code-block:: c++
+
+  [[gnu::unused]] int a, f [[gnu::noreturn]] ();
 
 Target-Specific Extensions
 ==========================
@@ -1914,7 +1936,7 @@ Clang implements two kinds of checks with this attribute.
    for functions that accept a ``va_list`` argument (for example, ``vprintf``).
    GCC does not emit ``-Wformat-nonliteral`` warning for calls to such
    fuctions.  Clang does not warn if the format string comes from a function
-   parameter, where function is annotated with a compatible attribute,
+   parameter, where the function is annotated with a compatible attribute,
    otherwise it warns.  For example:
 
    .. code-block:: c
@@ -1928,16 +1950,14 @@ Clang implements two kinds of checks with this attribute.
      }
 
    In this case we warn because ``s`` contains a format string for a
-   ``scanf``-like function, but it is passed it to a ``printf``-like function.
+   ``scanf``-like function, but it is passed to a ``printf``-like function.
 
    If the attribute is removed, clang still warns, because the format string is
    not a string literal.
 
-   But in this case Clang does not warn because the format string ``s`` and
-   corresponding arguments are annotated.  If the arguments are incorrect,
-   caller of ``foo`` will get a warning.
+   Another example:
 
-   .. code-block: c
+   .. code-block:: c
 
      __attribute__((__format__ (__printf__, 1, 3)))
      void foo(const char* s, char *buf, ...) {
@@ -1947,3 +1967,6 @@ Clang implements two kinds of checks with this attribute.
        vprintf(s, ap); // warning
      }
 
+   In this case Clang does not warn because the format string ``s`` and
+   the corresponding arguments are annotated.  If the arguments are
+   incorrect, the caller of ``foo`` will receive a warning.

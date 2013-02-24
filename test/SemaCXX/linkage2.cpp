@@ -2,20 +2,22 @@
 
 namespace test1 {
   int x; // expected-note {{previous definition is here}}
-  static int y; // expected-note {{previous definition is here}}
+  static int y;
   void f() {} // expected-note {{previous definition is here}}
 
   extern "C" {
     extern int x; // expected-error {{declaration of 'x' has a different language linkage}}
-    extern int y; // expected-error {{declaration of 'y' has a different language linkage}}
+    extern int y; // OK, has internal linkage, so no language linkage.
     void f(); // expected-error {{declaration of 'f' has a different language linkage}}
   }
 }
 
+// This is OK. Both test2_f don't have language linkage since they have
+// internal linkage.
 extern "C" {
-  static void test2_f() { // expected-note {{previous definition is here}}
+  static void test2_f() {
   }
-  static void test2_f(int x) { // expected-error {{conflicting types for 'test2_f'}}
+  static void test2_f(int x) {
   }
 }
 
@@ -69,5 +71,57 @@ namespace test6 {
     get_future<int>();
     typedef int& U;
     shared_future<int&> f1 = get_future<int&>();
+  }
+}
+
+// This is OK. The variables have internal linkage and therefore no language
+// linkage.
+extern "C" {
+  static int test7_x;
+}
+extern "C++" {
+  extern int test7_x;
+}
+extern "C++" {
+  static int test7_y;
+}
+extern "C" {
+  extern int test7_y;
+}
+extern "C" { typedef int test7_F(); static test7_F test7_f; }
+extern "C++" { extern test7_F test7_f; }
+
+// FIXME: This should be invalid. The function has no language linkage, but
+// the function type has, so this is redeclaring the function with a different
+// type.
+extern "C++" {
+  static void test8_f();
+}
+extern "C" {
+  extern void test8_f();
+}
+extern "C" {
+  static void test8_g();
+}
+extern "C++" {
+  extern void test8_g();
+}
+
+extern "C" {
+  void __attribute__((overloadable)) test9_f(int c); // expected-note {{previous declaration is here}}
+}
+extern "C++" {
+  void __attribute__((overloadable)) test9_f(int c); // expected-error {{declaration of 'test9_f' has a different language linkage}}
+}
+
+extern "C" {
+  void __attribute__((overloadable)) test10_f(int);
+  void __attribute__((overloadable)) test10_f(double);
+}
+
+extern "C" {
+  void test11_f() {
+    void  __attribute__((overloadable)) test11_g(int);
+    void  __attribute__((overloadable)) test11_g(double);
   }
 }

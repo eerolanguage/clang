@@ -510,7 +510,7 @@ static TemplateArgumentLoc translateTemplateArgument(Sema &SemaRef,
     TemplateName Template = Arg.getAsTemplate().get();
     TemplateArgument TArg;
     if (Arg.getEllipsisLoc().isValid())
-      TArg = TemplateArgument(Template, llvm::Optional<unsigned int>());
+      TArg = TemplateArgument(Template, Optional<unsigned int>());
     else
       TArg = Template;
     return TemplateArgumentLoc(TArg,
@@ -3023,7 +3023,7 @@ static bool diagnoseArityMismatch(Sema &S, TemplateDecl *Template,
 ///
 /// In \c A<int,int>::B, \c NTs and \c TTs have expanded pack size 2, and \c Us
 /// is not a pack expansion, so returns an empty Optional.
-static llvm::Optional<unsigned> getExpandedPackSize(NamedDecl *Param) {
+static Optional<unsigned> getExpandedPackSize(NamedDecl *Param) {
   if (NonTypeTemplateParmDecl *NTTP
         = dyn_cast<NonTypeTemplateParmDecl>(Param)) {
     if (NTTP->isExpandedParameterPack())
@@ -3036,7 +3036,7 @@ static llvm::Optional<unsigned> getExpandedPackSize(NamedDecl *Param) {
       return TTP->getNumExpansionTemplateParameters();
   }
 
-  return llvm::Optional<unsigned>();
+  return None;
 }
 
 /// \brief Check that the given template argument list is well-formed
@@ -3068,7 +3068,7 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
        Param != ParamEnd; /* increment in loop */) {
     // If we have an expanded parameter pack, make sure we don't have too
     // many arguments.
-    if (llvm::Optional<unsigned> Expansions = getExpandedPackSize(*Param)) {
+    if (Optional<unsigned> Expansions = getExpandedPackSize(*Param)) {
       if (*Expansions == ArgumentPack.size()) {
         // We're done with this parameter pack. Pack up its arguments and add
         // them to the list.
@@ -6956,15 +6956,15 @@ Sema::ActOnTypenameType(Scope *S, SourceLocation TypenameLoc,
 
   TypeSourceInfo *TSI = Context.CreateTypeSourceInfo(T);
   if (isa<DependentNameType>(T)) {
-    DependentNameTypeLoc TL = cast<DependentNameTypeLoc>(TSI->getTypeLoc());
+    DependentNameTypeLoc TL = TSI->getTypeLoc().castAs<DependentNameTypeLoc>();
     TL.setElaboratedKeywordLoc(TypenameLoc);
     TL.setQualifierLoc(QualifierLoc);
     TL.setNameLoc(IdLoc);
   } else {
-    ElaboratedTypeLoc TL = cast<ElaboratedTypeLoc>(TSI->getTypeLoc());
+    ElaboratedTypeLoc TL = TSI->getTypeLoc().castAs<ElaboratedTypeLoc>();
     TL.setElaboratedKeywordLoc(TypenameLoc);
     TL.setQualifierLoc(QualifierLoc);
-    cast<TypeSpecTypeLoc>(TL.getNamedTypeLoc()).setNameLoc(IdLoc);
+    TL.getNamedTypeLoc().castAs<TypeSpecTypeLoc>().setNameLoc(IdLoc);
   }
 
   return CreateParsedType(T, TSI);
@@ -7054,12 +7054,12 @@ static bool isEnableIf(NestedNameSpecifierLoc NNS, const IdentifierInfo &II,
   if (!NNS || !NNS.getNestedNameSpecifier()->getAsType())
     return false;
   TypeLoc EnableIfTy = NNS.getTypeLoc();
-  TemplateSpecializationTypeLoc *EnableIfTSTLoc =
-    dyn_cast<TemplateSpecializationTypeLoc>(&EnableIfTy);
-  if (!EnableIfTSTLoc || EnableIfTSTLoc->getNumArgs() == 0)
+  TemplateSpecializationTypeLoc EnableIfTSTLoc =
+      EnableIfTy.getAs<TemplateSpecializationTypeLoc>();
+  if (!EnableIfTSTLoc || EnableIfTSTLoc.getNumArgs() == 0)
     return false;
   const TemplateSpecializationType *EnableIfTST =
-    cast<TemplateSpecializationType>(EnableIfTSTLoc->getTypePtr());
+    cast<TemplateSpecializationType>(EnableIfTSTLoc.getTypePtr());
 
   // ... which names a complete class template declaration...
   const TemplateDecl *EnableIfDecl =
@@ -7074,7 +7074,7 @@ static bool isEnableIf(NestedNameSpecifierLoc NNS, const IdentifierInfo &II,
     return false;
 
   // Assume the first template argument is the condition.
-  CondRange = EnableIfTSTLoc->getArgLoc(0).getSourceRange();
+  CondRange = EnableIfTSTLoc.getArgLoc(0).getSourceRange();
   return true;
 }
 

@@ -1,7 +1,7 @@
-// RUN: %clang_cc1 -emit-llvm -o - %s | FileCheck %s
-// RUN: %clang_cc1 -emit-llvm -o - %s -fsanitize=address | FileCheck -check-prefix ASAN %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin -emit-llvm -o - %s | FileCheck -check-prefix=WITHOUT %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin -emit-llvm -o - %s -fsanitize=address | FileCheck -check-prefix=ASAN %s
 // RUN: echo "src:%s" > %t
-// RUN: %clang_cc1 -emit-llvm -o - %s -fsanitize=address -fsanitize-blacklist=%t | FileCheck %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin -emit-llvm -o - %s -fsanitize=address -fsanitize-blacklist=%t | FileCheck -check-prefix=BL %s
 
 // FIXME: %t is like "src:x:\path\to\clang\test\CodeGen\address-safety-attr.cpp"
 // REQUIRES: shell
@@ -10,31 +10,36 @@
 // when AddressSanitizer is enabled, unless no_address_safety_analysis attribute
 // is present.
 
-// CHECK-NOT:  NoAddressSafety1{{.*}} address_safety
-// ASAN-NOT:  NoAddressSafety1{{.*}} address_safety
+// WITHOUT:  NoAddressSafety1{{.*}}) #[[NOATTR:[0-9]+]]
+// BL:  NoAddressSafety1{{.*}}) #[[NOATTR:[0-9]+]]
+// ASAN:  NoAddressSafety1{{.*}}) #[[NOATTR:[0-9]+]]
 __attribute__((no_address_safety_analysis))
 int NoAddressSafety1(int *a) { return *a; }
 
-// CHECK-NOT:  NoAddressSafety2{{.*}} address_safety
-// ASAN-NOT:  NoAddressSafety2{{.*}} address_safety
+// WITHOUT:  NoAddressSafety2{{.*}}) #[[NOATTR]]
+// BL:  NoAddressSafety2{{.*}}) #[[NOATTR]]
+// ASAN:  NoAddressSafety2{{.*}}) #[[NOATTR]]
 __attribute__((no_address_safety_analysis))
 int NoAddressSafety2(int *a);
 int NoAddressSafety2(int *a) { return *a; }
 
-// CHECK-NOT:  AddressSafetyOk{{.*}} address_safety
-// ASAN: AddressSafetyOk{{.*}} address_safety
+// WITHOUT:  AddressSafetyOk{{.*}}) #[[NOATTR]]
+// BL:  AddressSafetyOk{{.*}}) #[[NOATTR]]
+// ASAN: AddressSafetyOk{{.*}}) #[[WITH:[0-9]+]]
 int AddressSafetyOk(int *a) { return *a; }
 
-// CHECK-NOT:  TemplateNoAddressSafety{{.*}} address_safety
-// ASAN-NOT: TemplateNoAddressSafety{{.*}} address_safety
+// WITHOUT:  TemplateAddressSafetyOk{{.*}}) #[[NOATTR]]
+// BL:  TemplateAddressSafetyOk{{.*}}) #[[NOATTR]]
+// ASAN: TemplateAddressSafetyOk{{.*}}) #[[WITH]]
+template<int i>
+int TemplateAddressSafetyOk() { return i; }
+
+// WITHOUT:  TemplateNoAddressSafety{{.*}}) #[[NOATTR]]
+// BL:  TemplateNoAddressSafety{{.*}}) #[[NOATTR]]
+// ASAN: TemplateNoAddressSafety{{.*}}) #[[NOATTR]]
 template<int i>
 __attribute__((no_address_safety_analysis))
 int TemplateNoAddressSafety() { return i; }
-
-// CHECK-NOT:  TemplateAddressSafetyOk{{.*}} address_safety
-// ASAN: TemplateAddressSafetyOk{{.*}} address_safety
-template<int i>
-int TemplateAddressSafetyOk() { return i; }
 
 int force_instance = TemplateAddressSafetyOk<42>()
                    + TemplateNoAddressSafety<42>();
@@ -42,5 +47,15 @@ int force_instance = TemplateAddressSafetyOk<42>()
 // Check that __cxx_global_var_init* get the address_safety attribute.
 int global1 = 0;
 int global2 = *(int*)((char*)&global1+1);
-// CHECK-NOT: @__cxx_global_var_init{{.*}}address_safety
-// ASAN: @__cxx_global_var_init{{.*}}address_safety
+// WITHOUT: @__cxx_global_var_init{{.*}}#[[GVI:[0-9]+]]
+// BL: @__cxx_global_var_init{{.*}}#[[GVI:[0-9]+]]
+// ASAN: @__cxx_global_var_init{{.*}}#[[GVI:[0-9]+]]
+
+// WITHOUT: attributes #[[NOATTR]] = { nounwind{{.*}} }
+// WITHOUT: attributes #[[GVI]] = { nounwind{{.*}} }
+// BL: attributes #[[NOATTR]] = { nounwind{{.*}} }
+// BL: attributes #[[GVI]] = { nounwind{{.*}} }
+
+// ASAN: attributes #[[NOATTR]] = { nounwind{{.*}} }
+// ASAN: attributes #[[WITH]] = { address_safety nounwind{{.*}} }
+// ASAN: attributes #[[GVI]] = { address_safety nounwind{{.*}} }

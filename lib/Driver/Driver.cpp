@@ -34,8 +34,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 
-// FIXME: It would prevent to include llvm-config.h
-// if it were included before system_error.h.
+// FIXME: It would prevent us from including llvm-config.h
+// if config.h were included before system_error.h.
 #include "clang/Config/config.h"
 
 using namespace clang::driver;
@@ -1108,27 +1108,11 @@ void Driver::BuildActions(const ToolChain &TC, const DerivedArgList &Args,
       Current.reset(ConstructPhaseAction(Args, Phase, Current.take()));
       if (Current->getType() == types::TY_Nothing)
         break;
-      else if (Current->getType() == types::TY_Object &&
-               Args.hasArg(options::OPT_gsplit_dwarf)) {
-        ActionList Input;
-        Input.push_back(Current.take());
-        Current.reset(new SplitDebugJobAction(Input, types::TY_Object));
-      }
     }
 
     // If we ended with something, add to the output list.
     if (Current)
       Actions.push_back(Current.take());
-  }
-
-  if (!SplitInputs.empty()) {
-    for (ActionList::iterator i = SplitInputs.begin(), e = SplitInputs.end();
-         i != e; ++i) {
-      Action *Act = *i;
-      ActionList Inputs;
-      Inputs.push_back(Act);
-      Actions.push_back(new SplitDebugJobAction(Inputs, types::TY_Object));
-    }
   }
 
   // Add a link action if necessary.
@@ -1389,17 +1373,11 @@ void Driver::BuildJobsForAction(Compilation &C,
   InputInfoList InputInfos;
   for (ActionList::const_iterator it = Inputs->begin(), ie = Inputs->end();
        it != ie; ++it) {
-    // Treat dsymutil sub-jobs as being at the top-level too, they shouldn't get
-    // temporary output names.
-    //
+    // Treat dsymutil and verify sub-jobs as being at the top-level too, they
+    // shouldn't get temporary output names.
     // FIXME: Clean this up.
     bool SubJobAtTopLevel = false;
-    if (AtTopLevel && isa<DsymutilJobAction>(A))
-      SubJobAtTopLevel = true;
-
-    // Also treat verify sub-jobs as being at the top-level. They don't
-    // produce any output and so don't need temporary output names.
-    if (AtTopLevel && isa<VerifyJobAction>(A))
+    if (AtTopLevel && (isa<DsymutilJobAction>(A) || isa<VerifyJobAction>(A)))
       SubJobAtTopLevel = true;
 
     InputInfo II;
@@ -1419,8 +1397,6 @@ void Driver::BuildJobsForAction(Compilation &C,
   // Determine the place to write output to, if any.
   if (JA->getType() == types::TY_Nothing)
     Result = InputInfo(A->getType(), BaseInput);
-  else if (isa<SplitDebugJobAction>(A))
-    Result = InputInfos[0];
   else
     Result = InputInfo(GetNamedOutputPath(C, *JA, BaseInput, AtTopLevel),
                        A->getType(), BaseInput);

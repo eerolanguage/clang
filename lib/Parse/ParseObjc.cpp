@@ -3314,7 +3314,7 @@ ExprResult Parser::ParseObjCDictionaryLiteral(SourceLocation AtLoc) {
     // We have a valid expression. Collect it in a vector so we can
     // build the argument list.
     ObjCDictionaryElement Element = { 
-      KeyExpr.get(), ValueExpr.get(), EllipsisLoc, llvm::Optional<unsigned>()
+      KeyExpr.get(), ValueExpr.get(), EllipsisLoc, None 
     };
     Elements.push_back(Element);
     

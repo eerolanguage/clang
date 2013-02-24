@@ -217,16 +217,18 @@ ObjCInterfaceDecl::FindPropertyVisibleInPrimaryClass(
   return 0;
 }
 
-void ObjCInterfaceDecl::collectPropertiesToImplement(PropertyMap &PM) const {
+void ObjCInterfaceDecl::collectPropertiesToImplement(PropertyMap &PM,
+                                                     PropertyDeclOrder &PO) const {
   for (ObjCContainerDecl::prop_iterator P = prop_begin(),
       E = prop_end(); P != E; ++P) {
     ObjCPropertyDecl *Prop = *P;
     PM[Prop->getIdentifier()] = Prop;
+    PO.push_back(Prop);
   }
   for (ObjCInterfaceDecl::all_protocol_iterator
       PI = all_referenced_protocol_begin(),
       E = all_referenced_protocol_end(); PI != E; ++PI)
-    (*PI)->collectPropertiesToImplement(PM);
+    (*PI)->collectPropertiesToImplement(PM, PO);
   // Note, the properties declared only in class extensions are still copied
   // into the main @interface's property list, and therefore we don't
   // explicitly, have to search class extension properties.
@@ -1074,6 +1076,20 @@ void ObjCInterfaceDecl::setImplementation(ObjCImplementationDecl *ImplD) {
   getASTContext().setObjCImplementation(getDefinition(), ImplD);
 }
 
+namespace {
+  struct SynthesizeIvarChunk {
+    uint64_t Size;
+    ObjCIvarDecl *Ivar;
+    SynthesizeIvarChunk(uint64_t size, ObjCIvarDecl *ivar)
+      : Size(size), Ivar(ivar) {}
+  };
+
+  bool operator<(const SynthesizeIvarChunk & LHS,
+                 const SynthesizeIvarChunk &RHS) {
+      return LHS.Size < RHS.Size;
+  }
+}
+
 /// all_declared_ivar_begin - return first ivar declared in this class,
 /// its extensions and its implementation. Lazily build the list on first
 /// access.
@@ -1110,14 +1126,33 @@ ObjCIvarDecl *ObjCInterfaceDecl::all_declared_ivar_begin() {
   
   if (ObjCImplementationDecl *ImplDecl = getImplementation()) {
     if (!ImplDecl->ivar_empty()) {
-      ObjCImplementationDecl::ivar_iterator I = ImplDecl->ivar_begin(),
-                                            E = ImplDecl->ivar_end();
-      if (!data().IvarList) {
-        data().IvarList = *I; ++I;
-        curIvar = data().IvarList;
+      SmallVector<SynthesizeIvarChunk, 16> layout;
+      for (ObjCImplementationDecl::ivar_iterator I = ImplDecl->ivar_begin(),
+           E = ImplDecl->ivar_end(); I != E; ++I) {
+        ObjCIvarDecl *IV = *I;
+        if (IV->getSynthesize() && !IV->isInvalidDecl()) {
+          layout.push_back(SynthesizeIvarChunk(
+                             IV->getASTContext().getTypeSize(IV->getType()), IV));
+          continue;
+        }
+        if (!data().IvarList)
+          data().IvarList = *I;
+        else
+          curIvar->setNextIvar(*I);
+        curIvar = *I;
       }
-      for ( ;I != E; curIvar = *I, ++I)
-        curIvar->setNextIvar(*I);
+      
+      if (!layout.empty()) {
+        // Order synthesized ivars by their size.
+        std::stable_sort(layout.begin(), layout.end());
+        unsigned Ix = 0, EIx = layout.size();
+        if (!data().IvarList) {
+          data().IvarList = layout[0].Ivar; Ix++;
+          curIvar = data().IvarList;
+        }
+        for ( ; Ix != EIx; curIvar = layout[Ix].Ivar, Ix++)
+          curIvar->setNextIvar(layout[Ix].Ivar);
+      }
     }
   }
   return data().IvarList;
@@ -1400,7 +1435,8 @@ void ObjCProtocolDecl::startDefinition() {
     RD->Data = this->Data;
 }
 
-void ObjCProtocolDecl::collectPropertiesToImplement(PropertyMap &PM) const {
+void ObjCProtocolDecl::collectPropertiesToImplement(PropertyMap &PM,
+                                                    PropertyDeclOrder &PO) const {
   
   if (const ObjCProtocolDecl *PDecl = getDefinition()) {
     for (ObjCProtocolDecl::prop_iterator P = PDecl->prop_begin(),
@@ -1408,11 +1444,12 @@ void ObjCProtocolDecl::collectPropertiesToImplement(PropertyMap &PM) const {
       ObjCPropertyDecl *Prop = *P;
       // Insert into PM if not there already.
       PM.insert(std::make_pair(Prop->getIdentifier(), Prop));
+      PO.push_back(Prop);
     }
     // Scan through protocol's protocols.
     for (ObjCProtocolDecl::protocol_iterator PI = PDecl->protocol_begin(),
          E = PDecl->protocol_end(); PI != E; ++PI)
-      (*PI)->collectPropertiesToImplement(PM);
+      (*PI)->collectPropertiesToImplement(PM, PO);
   }
 }
 

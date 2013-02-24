@@ -237,7 +237,7 @@ void Sema::DiagnoseUnusedExprResult(const Stmt *S) {
 
     // We really do want to use the non-canonical type here.
     if (T == Context.VoidPtrTy) {
-      PointerTypeLoc TL = cast<PointerTypeLoc>(TI->getTypeLoc());
+      PointerTypeLoc TL = TI->getTypeLoc().castAs<PointerTypeLoc>();
 
       Diag(Loc, diag::warn_unused_voidptr)
         << FixItHint::CreateRemoval(TL.getStarLoc());
@@ -429,6 +429,13 @@ StmtResult
 Sema::ActOnIfStmt(SourceLocation IfLoc, FullExprArg CondVal, Decl *CondVar,
                   Stmt *thenStmt, SourceLocation ElseLoc,
                   Stmt *elseStmt) {
+  // If the condition was invalid, discard the if statement.  We could recover
+  // better by replacing it with a valid expr, but don't do that yet.
+  if (!CondVal.get() && !CondVar) {
+    getCurFunction()->setHasDroppedStmt();
+    return StmtError();
+  }
+
   ExprResult CondResult(CondVal.release());
 
   VarDecl *ConditionVar = 0;

@@ -469,11 +469,16 @@ def err_destructor_template_id : Error<
   "destructor name %0 does not refer to a template">;
 def err_default_arg_unparsed : Error<
   "unexpected end of default argument expression">;
-def err_parser_impl_limit_overflow : Error<
-  "parser recursion limit reached, program too complex">, DefaultFatal;
+def err_bracket_depth_exceeded : Error<
+  "bracket nesting level exceeded maximum of %0">, DefaultFatal;
+def note_bracket_depth : Note<
+  "use -fbracket-depth=N to increase maximum nesting level">;
 def err_misplaced_ellipsis_in_declaration : Error<
   "'...' must %select{immediately precede declared identifier|"
   "be innermost component of anonymous pack declaration}0">;
+def ext_abstract_pack_declarator_parens : ExtWarn<
+  "ISO C++11 requires a parenthesized pack declaration to have a name">,
+  InGroup<DiagGroup<"anonymous-pack-parens">>;
 
 // C++ derived classes
 def err_dup_virtual : Error<"duplicate 'virtual' in base specifier">;
@@ -515,8 +520,6 @@ def err_attributes_not_allowed : Error<"an attribute list cannot appear here">;
 def err_l_square_l_square_not_attribute : Error<
   "C++11 only allows consecutive left square brackets when "
   "introducing an attribute">;
-def err_alignas_pack_exp_unsupported : Error<
-  "pack expansions in alignment specifiers are not supported yet">;
 def err_ms_declspec_type : Error<
   "__declspec attributes must be an identifier or string literal">;
 def warn_ms_declspec_unknown : Warning<
