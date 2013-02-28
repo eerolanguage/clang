@@ -276,9 +276,9 @@ void CodeGenModule::setGlobalVisibility(llvm::GlobalValue *GV,
   }
 
   // Set visibility for definitions.
-  NamedDecl::LinkageInfo LV = D->getLinkageAndVisibility();
-  if (LV.visibilityExplicit() || !GV->hasAvailableExternallyLinkage())
-    GV->setVisibility(GetLLVMVisibility(LV.visibility()));
+  LinkageInfo LV = D->getLinkageAndVisibility();
+  if (LV.isVisibilityExplicit() || !GV->hasAvailableExternallyLinkage())
+    GV->setVisibility(GetLLVMVisibility(LV.getVisibility()));
 }
 
 static llvm::GlobalVariable::ThreadLocalMode GetLLVMTLSModel(StringRef S) {
@@ -617,12 +617,16 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   else if (LangOpts.getStackProtector() == LangOptions::SSPReq)
     F->addFnAttr(llvm::Attribute::StackProtectReq);
 
-  if (SanOpts.Address) {
-    // When AddressSanitizer is enabled, set AddressSafety attribute
-    // unless __attribute__((no_address_safety_analysis)) is used.
-    if (!D->hasAttr<NoAddressSafetyAnalysisAttr>())
-      F->addFnAttr(llvm::Attribute::AddressSafety);
-  }
+  // When AddressSanitizer is enabled, set SanitizeAddress attribute
+  // unless __attribute__((no_sanitize_address)) is used.
+  if (SanOpts.Address && !D->hasAttr<NoSanitizeAddressAttr>())
+    F->addFnAttr(llvm::Attribute::SanitizeAddress);
+  // Same for ThreadSanitizer and __attribute__((no_sanitize_thread))
+  if (SanOpts.Thread && !D->hasAttr<NoSanitizeThreadAttr>())
+    F->addFnAttr(llvm::Attribute::SanitizeThread);
+  // Same for MemorySanitizer and __attribute__((no_sanitize_memory))
+  if (SanOpts.Memory && !D->hasAttr<NoSanitizeMemoryAttr>())
+    F->addFnAttr(llvm::Attribute::SanitizeMemory);
 
   unsigned alignment = D->getMaxAlignment() / Context.getCharWidth();
   if (alignment)
@@ -689,9 +693,9 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD,
   } else {
     F->setLinkage(llvm::Function::ExternalLinkage);
 
-    NamedDecl::LinkageInfo LV = FD->getLinkageAndVisibility();
-    if (LV.linkage() == ExternalLinkage && LV.visibilityExplicit()) {
-      F->setVisibility(GetLLVMVisibility(LV.visibility()));
+    LinkageInfo LV = FD->getLinkageAndVisibility();
+    if (LV.getLinkage() == ExternalLinkage && LV.isVisibilityExplicit()) {
+      F->setVisibility(GetLLVMVisibility(LV.getVisibility()));
     }
   }
 
@@ -1429,8 +1433,8 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
     GV->setConstant(isTypeConstant(D->getType(), false));
 
     // Set linkage and visibility in case we never see a definition.
-    NamedDecl::LinkageInfo LV = D->getLinkageAndVisibility();
-    if (LV.linkage() != ExternalLinkage) {
+    LinkageInfo LV = D->getLinkageAndVisibility();
+    if (LV.getLinkage() != ExternalLinkage) {
       // Don't set internal linkage on declarations.
     } else {
       if (D->hasAttr<DLLImportAttr>())
@@ -1439,8 +1443,8 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
         GV->setLinkage(llvm::GlobalValue::ExternalWeakLinkage);
 
       // Set visibility on a declaration only if it's explicit.
-      if (LV.visibilityExplicit())
-        GV->setVisibility(GetLLVMVisibility(LV.visibility()));
+      if (LV.isVisibilityExplicit())
+        GV->setVisibility(GetLLVMVisibility(LV.getVisibility()));
     }
 
     if (D->isThreadSpecified())

@@ -18,7 +18,7 @@ Trivial getTrivial() {
 }
 
 const Trivial &getTrivialRef() {
-  return Trivial(42); // expected-warning {{Address of stack memory associated with temporary object of type 'struct Trivial' returned to caller}}
+  return Trivial(42); // expected-warning {{Address of stack memory associated with temporary object of type 'Trivial' returned to caller}}
 }
 
 
@@ -27,7 +27,7 @@ NonTrivial getNonTrivial() {
 }
 
 const NonTrivial &getNonTrivialRef() {
-  return NonTrivial(42); // expected-warning {{Address of stack memory associated with temporary object of type 'struct NonTrivial' returned to caller}}
+  return NonTrivial(42); // expected-warning {{Address of stack memory associated with temporary object of type 'NonTrivial' returned to caller}}
 }
 
 namespace rdar13265460 {
@@ -59,6 +59,20 @@ namespace rdar13265460 {
 
     const Trivial &baseRef = getTrivialSub();
     clang_analyzer_eval(baseRef.value == 42); // expected-warning{{TRUE}}
+  }
+}
+
+namespace rdar13281951 {
+  struct Derived : public Trivial {
+    Derived(int value) : Trivial(value), value2(-value) {}
+    int value2;
+  };
+
+  void test() {
+    Derived obj(1);
+    obj.value = 42;
+    const Trivial * const &pointerRef = &obj;
+    clang_analyzer_eval(pointerRef->value == 42); // expected-warning{{TRUE}}
   }
 }
 

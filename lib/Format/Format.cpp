@@ -61,7 +61,7 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.Standard = FormatStyle::LS_Auto;
   GoogleStyle.IndentCaseLabels = true;
   GoogleStyle.SpacesBeforeTrailingComments = 2;
-  GoogleStyle.BinPackParameters = false;
+  GoogleStyle.BinPackParameters = true;
   GoogleStyle.AllowAllParametersOfDeclarationOnNextLine = true;
   GoogleStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = true;
   GoogleStyle.AllowShortIfStatementsOnASingleLine = false;
@@ -74,6 +74,7 @@ FormatStyle getGoogleStyle() {
 FormatStyle getChromiumStyle() {
   FormatStyle ChromiumStyle = getGoogleStyle();
   ChromiumStyle.AllowAllParametersOfDeclarationOnNextLine = false;
+  ChromiumStyle.BinPackParameters = false;
   ChromiumStyle.Standard = FormatStyle::LS_Cpp03;
   ChromiumStyle.DerivePointerBinding = false;
   return ChromiumStyle;
@@ -257,12 +258,6 @@ private:
   SourceManager &SourceMgr;
   tooling::Replacements Replaces;
 };
-
-static bool isVarDeclName(const AnnotatedToken &Tok) {
-  return Tok.Parent != NULL && Tok.is(tok::identifier) &&
-         (Tok.Parent->Type == TT_PointerOrReference ||
-          Tok.Parent->is(tok::identifier));
-}
 
 class UnwrappedLineFormatter {
 public:
@@ -498,8 +493,8 @@ private:
                  ((RootToken.is(tok::kw_for) && State.ParenLevel == 1) ||
                   State.ParenLevel == 0)) {
         State.Column = State.VariablePos;
-      } else if (State.NextToken->Parent->ClosesTemplateDeclaration ||
-                 Current.Type == TT_StartOfName) {
+      } else if (Previous.ClosesTemplateDeclaration ||
+                 (Current.Type == TT_StartOfName && State.ParenLevel == 0)) {
         State.Column = State.Stack.back().Indent - 4;
       } else if (Current.Type == TT_ObjCSelectorName) {
         if (State.Stack.back().ColonPos > Current.FormatTok.TokenLength) {
@@ -510,7 +505,8 @@ private:
           State.Stack.back().ColonPos =
               State.Column + Current.FormatTok.TokenLength;
         }
-      } else if (Previous.Type == TT_ObjCMethodExpr || isVarDeclName(Current)) {
+      } else if (Previous.Type == TT_ObjCMethodExpr ||
+                 Current.Type == TT_StartOfName) {
         State.Column = State.Stack.back().Indent + 4;
       } else {
         State.Column = State.Stack.back().Indent;
@@ -523,9 +519,11 @@ private:
         State.Stack.back().BreakBeforeParameter = false;
 
       if (!DryRun) {
-        unsigned NewLines =
-            std::max(1u, std::min(Current.FormatTok.NewlinesBefore,
-                                  Style.MaxEmptyLinesToKeep + 1));
+        unsigned NewLines = 1;
+        if (Current.Type == TT_LineComment)
+          NewLines =
+              std::max(NewLines, std::min(Current.FormatTok.NewlinesBefore,
+                                          Style.MaxEmptyLinesToKeep + 1));
         if (!Line.InPPDirective)
           Whitespaces.replaceWhitespace(Current, NewLines, State.Column,
                                         WhitespaceStartColumn, Style);
@@ -544,6 +542,9 @@ private:
       for (unsigned i = 0, e = State.Stack.size() - 1; i != e; ++i) {
         State.Stack[i].BreakBeforeParameter = true;
       }
+      if (Current.is(tok::period) || Current.is(tok::arrow))
+        State.Stack.back().BreakBeforeParameter = true;
+
       // If we break after {, we should also break before the corresponding }.
       if (Previous.is(tok::l_brace))
         State.Stack.back().BreakBeforeClosingBrace = true;
@@ -551,14 +552,15 @@ private:
       if (State.Stack.back().AvoidBinPacking) {
         // If we are breaking after '(', '{', '<', this is not bin packing
         // unless AllowAllParametersOfDeclarationOnNextLine is false.
-        if ((Previous.isNot(tok::l_paren) && Previous.isNot(tok::l_brace) &&
-             Previous.Type != TT_TemplateOpener) ||
+        if ((Previous.isNot(tok::l_paren) && Previous.isNot(tok::l_brace)) ||
             (!Style.AllowAllParametersOfDeclarationOnNextLine &&
              Line.MustBeDeclaration))
           State.Stack.back().BreakBeforeParameter = true;
       }
     } else {
-      if (Current.is(tok::equal))
+      // FIXME: Put VariablePos into ParenState and remove second part of if().
+      if (Current.is(tok::equal) &&
+          (RootToken.is(tok::kw_for) || State.ParenLevel == 0))
         State.VariablePos = State.Column - Previous.FormatTok.TokenLength;
 
       unsigned Spaces = State.NextToken->SpacesRequiredBefore;
@@ -731,7 +733,9 @@ private:
       TailOffset += SplitPoint + 1;
       TailLength -= SplitPoint + 1;
       OffsetFromStart = 1;
-      Penalty += 100;
+      Penalty += Style.PenaltyExcessCharacter;
+      for (unsigned i = 0, e = State.Stack.size(); i != e; ++i)
+        State.Stack[i].BreakBeforeParameter = true;
     }
     State.Column = StartColumn + TailLength;
     return Penalty;

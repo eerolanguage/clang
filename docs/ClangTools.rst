@@ -116,4 +116,12 @@ Ideas for new Tools
 * C++ cast conversion tool.  Will convert C-style casts (``(type) value``) to
   appropriate C++ cast (``static_cast``, ``const_cast`` or
   ``reinterpret_cast``).
+* Non-member ``begin()`` and ``end()`` conversion tool.  Will convert
+  ``foo.begin()`` into ``begin(foo)`` and similarly for ``end()``, where
+  ``foo`` is a standard container.  We could also detect similar patterns for
+  arrays.
+* A tool to remove ``auto``.  Will convert ``auto`` to an explicit type or add
+  comments with deduced types.  The motivation is that there are developers
+  that don't want to use ``auto`` because they are afraid that they might lose
+  control over their code.
 

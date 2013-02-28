@@ -182,14 +182,16 @@ ExprEngine::createTemporaryRegionIfNeeded(ProgramStateRef State,
   // bindings for a base type. Start by stripping and recording base casts.
   SmallVector<const CastExpr *, 4> Casts;
   const Expr *Inner = Ex->IgnoreParens();
-  while (const CastExpr *CE = dyn_cast<CastExpr>(Inner)) {
-    if (CE->getCastKind() == CK_DerivedToBase ||
-        CE->getCastKind() == CK_UncheckedDerivedToBase)
-      Casts.push_back(CE);
-    else if (CE->getCastKind() != CK_NoOp)
-      break;
+  if (V.getAs<NonLoc>()) {
+    while (const CastExpr *CE = dyn_cast<CastExpr>(Inner)) {
+      if (CE->getCastKind() == CK_DerivedToBase ||
+          CE->getCastKind() == CK_UncheckedDerivedToBase)
+        Casts.push_back(CE);
+      else if (CE->getCastKind() != CK_NoOp)
+        break;
 
-    Inner = CE->getSubExpr()->IgnoreParens();
+      Inner = CE->getSubExpr()->IgnoreParens();
+    }
   }
 
   // Create a temporary object region for the inner expression (which may have
@@ -685,7 +687,8 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       StmtNodeBuilder Bldr2(PreVisit, Tmp, *currBldrCtx);
 
       const LocationContext *LCtx = Pred->getLocationContext();
-      const Expr *ArgE = cast<CXXDefaultArgExpr>(S)->getExpr();
+      const CXXDefaultArgExpr *DefaultE = cast<CXXDefaultArgExpr>(S);
+      const Expr *ArgE = DefaultE->getExpr();
 
       // Avoid creating and destroying a lot of APSInts.
       SVal V;
@@ -700,7 +703,10 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
         else
           V = State->getSVal(ArgE, LCtx);
 
-        State = State->BindExpr(S, LCtx, V);
+        State = State->BindExpr(DefaultE, LCtx, V);
+        if (DefaultE->isGLValue())
+          State = createTemporaryRegionIfNeeded(State, LCtx, DefaultE,
+                                                DefaultE);
         Bldr2.generateNode(S, *I, State);
       }
 

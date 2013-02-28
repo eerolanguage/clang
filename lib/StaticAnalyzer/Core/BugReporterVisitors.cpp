@@ -222,6 +222,11 @@ public:
     // Don't print any more notes after this one.
     Mode = Satisfied;
 
+    // Ignore aggregate rvalues.
+    if (V.getAs<nonloc::LazyCompoundVal>() ||
+        V.getAs<nonloc::CompoundVal>())
+      return 0;
+
     const Expr *RetE = Ret->getRetValue();
     assert(RetE && "Tracking a return value for a void function");
     RetE = RetE->IgnoreParenCasts();
@@ -354,7 +359,7 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
                                                        BugReporterContext &BRC,
                                                        BugReport &BR) {
 
-  if (satisfied)
+  if (Satisfied)
     return NULL;
 
   const ExplodedNode *StoreSite = 0;
@@ -373,13 +378,20 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
     }
   }
 
-  // Otherwise, check that Succ has this binding and Pred does not, i.e. this is
-  // where the binding first occurred.
+  // Otherwise, see if this is the store site:
+  // (1) Succ has this binding and Pred does not, i.e. this is
+  //     where the binding first occurred.
+  // (2) Succ has this binding and is a PostStore node for this region, i.e.
+  //     the same binding was re-assigned here.
   if (!StoreSite) {
     if (Succ->getState()->getSVal(R) != V)
       return NULL;
-    if (Pred->getState()->getSVal(R) == V)
-      return NULL;
+
+    if (Pred->getState()->getSVal(R) == V) {
+      Optional<PostStore> PS = Succ->getLocationAs<PostStore>();
+      if (!PS || PS->getLocationValue() != R)
+        return NULL;
+    }
 
     StoreSite = Succ;
 
@@ -395,22 +407,23 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
     // 'this' should never be NULL, but this visitor isn't just for NULL and
     // UndefinedVal.)
     if (Optional<CallEnter> CE = Succ->getLocationAs<CallEnter>()) {
-      const VarRegion *VR = cast<VarRegion>(R);
-      const ParmVarDecl *Param = cast<ParmVarDecl>(VR->getDecl());
-      
-      ProgramStateManager &StateMgr = BRC.getStateManager();
-      CallEventManager &CallMgr = StateMgr.getCallEventManager();
+      if (const VarRegion *VR = dyn_cast<VarRegion>(R)) {
+        const ParmVarDecl *Param = cast<ParmVarDecl>(VR->getDecl());
+        
+        ProgramStateManager &StateMgr = BRC.getStateManager();
+        CallEventManager &CallMgr = StateMgr.getCallEventManager();
 
-      CallEventRef<> Call = CallMgr.getCaller(CE->getCalleeContext(),
-                                              Succ->getState());
-      InitE = Call->getArgExpr(Param->getFunctionScopeIndex());
-      IsParam = true;
+        CallEventRef<> Call = CallMgr.getCaller(CE->getCalleeContext(),
+                                                Succ->getState());
+        InitE = Call->getArgExpr(Param->getFunctionScopeIndex());
+        IsParam = true;
+      }
     }
   }
 
   if (!StoreSite)
     return NULL;
-  satisfied = true;
+  Satisfied = true;
 
   // If we have an expression that provided the value, try to track where it
   // came from.
@@ -449,8 +462,9 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
         if (const BlockDataRegion *BDR =
               dyn_cast_or_null<BlockDataRegion>(V.getAsRegion())) {
           if (const VarRegion *OriginalR = BDR->getOriginalRegion(VR)) {
-            V = State->getSVal(OriginalR);
-            BR.addVisitor(new FindLastStoreBRVisitor(V, OriginalR));
+            if (Optional<KnownSVal> KV =
+                State->getSVal(OriginalR).getAs<KnownSVal>())
+              BR.addVisitor(new FindLastStoreBRVisitor(*KV, OriginalR));
           }
         }
       }
@@ -460,7 +474,9 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
       if (!R)
         return 0;
 
-      os << "Variable '" << *VR->getDecl() << "' ";
+      os << '\'';
+      R->printPretty(os);
+      os << "' ";
 
       if (V.getAs<loc::ConcreteInt>()) {
         bool b = false;
@@ -495,30 +511,32 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
       }
     }
   } else if (StoreSite->getLocation().getAs<CallEnter>()) {
-    const ParmVarDecl *Param = cast<ParmVarDecl>(cast<VarRegion>(R)->getDecl());
+    if (const VarRegion *VR = dyn_cast<VarRegion>(R)) {
+      const ParmVarDecl *Param = cast<ParmVarDecl>(VR->getDecl());
 
-    os << "Passing ";
+      os << "Passing ";
 
-    if (V.getAs<loc::ConcreteInt>()) {
-      if (Param->getType()->isObjCObjectPointerType())
-        os << "nil object reference";
-      else
-        os << "null pointer value";
-    } else if (V.isUndef()) {
-      os << "uninitialized value";
-    } else if (Optional<nonloc::ConcreteInt> CI =
-                   V.getAs<nonloc::ConcreteInt>()) {
-      os << "the value " << CI->getValue();
-    } else {
-      os << "value";
+      if (V.getAs<loc::ConcreteInt>()) {
+        if (Param->getType()->isObjCObjectPointerType())
+          os << "nil object reference";
+        else
+          os << "null pointer value";
+      } else if (V.isUndef()) {
+        os << "uninitialized value";
+      } else if (Optional<nonloc::ConcreteInt> CI =
+                     V.getAs<nonloc::ConcreteInt>()) {
+        os << "the value " << CI->getValue();
+      } else {
+        os << "value";
+      }
+
+      // Printed parameter indexes are 1-based, not 0-based.
+      unsigned Idx = Param->getFunctionScopeIndex() + 1;
+      os << " via " << Idx << llvm::getOrdinalSuffix(Idx) << " parameter '";
+
+      R->printPretty(os);
+      os << '\'';
     }
-
-    // Printed parameter indexes are 1-based, not 0-based.
-    unsigned Idx = Param->getFunctionScopeIndex() + 1;
-    os << " via " << Idx << llvm::getOrdinalSuffix(Idx) << " parameter '";
-
-    R->printPretty(os);
-    os << '\'';
   }
 
   if (os.str().empty()) {
@@ -553,7 +571,7 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
   // Construct a new PathDiagnosticPiece.
   ProgramPoint P = StoreSite->getLocation();
   PathDiagnosticLocation L;
-  if (P.getAs<CallEnter>())
+  if (P.getAs<CallEnter>() && InitE)
     L = PathDiagnosticLocation(InitE, BRC.getSourceManager(),
                                P.getLocationContext());
   else
@@ -661,14 +679,47 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N, const Stmt *S,
     // C++ user-defined implicit conversions, because those have a constructor
     // or function call inside.
     Ex = Ex->IgnoreParenCasts();
-    if (const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(Ex)) {
-      // FIXME: Right now we only track VarDecls because it's non-trivial to
-      // get a MemRegion for any other DeclRefExprs. <rdar://problem/12114812>
-      if (const VarDecl *VD = dyn_cast<VarDecl>(DR->getDecl())) {
-        ProgramStateManager &StateMgr = state->getStateManager();
-        MemRegionManager &MRMgr = StateMgr.getRegionManager();
-        const VarRegion *R = MRMgr.getVarRegion(VD, N->getLocationContext());
 
+    if (ExplodedGraph::isInterestingLValueExpr(Ex)) {
+      const MemRegion *R = 0;
+
+      // First check if this is a DeclRefExpr for a C++ reference type.
+      // For those, we want the location of the reference.
+      if (const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(Ex)) {
+        if (const VarDecl *VD = dyn_cast<VarDecl>(DR->getDecl())) {
+          if (VD->getType()->isReferenceType()) {
+            ProgramStateManager &StateMgr = state->getStateManager();
+            MemRegionManager &MRMgr = StateMgr.getRegionManager();
+            R = MRMgr.getVarRegion(VD, N->getLocationContext());
+          }
+        }
+      }
+
+      // For all other cases, find the location by scouring the ExplodedGraph.
+      if (!R) {
+        // Find the ExplodedNode where the lvalue (the value of 'Ex')
+        // was computed.  We need this for getting the location value.
+        const ExplodedNode *LVNode = N;
+        const Expr *SearchEx = Ex;
+        if (const OpaqueValueExpr *OPE = dyn_cast<OpaqueValueExpr>(Ex)) {
+          SearchEx = OPE->getSourceExpr();
+        }
+        while (LVNode) {
+          if (Optional<PostStmt> P = LVNode->getLocation().getAs<PostStmt>()) {
+            if (P->getStmt() == SearchEx)
+              break;
+          }
+          LVNode = LVNode->getFirstPred();
+        }
+        assert(LVNode && "Unable to find the lvalue node.");
+        ProgramStateRef LVState = LVNode->getState();
+        if (Optional<Loc> L =
+              LVState->getSVal(Ex, LVNode->getLocationContext()).getAs<Loc>()) {
+          R = L->getAsRegion();
+        }
+      }
+
+      if (R) {
         // Mark both the variable region and its contents as interesting.
         SVal V = state->getRawSVal(loc::MemRegionVal(R));
 
@@ -691,6 +742,12 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N, const Stmt *S,
         report.markInteresting(V);
         report.addVisitor(new UndefOrNullArgVisitor(R));
 
+        if (isa<SymbolicRegion>(R)) {
+          TrackConstraintBRVisitor *VI =
+            new TrackConstraintBRVisitor(loc::MemRegionVal(R), false);
+          report.addVisitor(VI);
+        }
+
         // If the contents are symbolic, find out when they became null.
         if (V.getAsLocSymbol()) {
           BugReporterVisitor *ConstraintTracker =
@@ -698,20 +755,20 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N, const Stmt *S,
           report.addVisitor(ConstraintTracker);
         }
 
-        report.addVisitor(new FindLastStoreBRVisitor(V, R));
+        if (Optional<KnownSVal> KV = V.getAs<KnownSVal>())
+          report.addVisitor(new FindLastStoreBRVisitor(*KV, R));
         return true;
       }
     }
   }
 
-  // If the expression does NOT refer to a variable, we can still track
-  // constraints on its contents.
+  // If the expression is not an "lvalue expression", we can still
+  // track the constraints on its contents.
   SVal V = state->getSValAsScalarOrLoc(S, N->getLocationContext());
 
   // Uncomment this to find cases where we aren't properly getting the
   // base value that was dereferenced.
   // assert(!V.isUnknownOrUndef());
-
   // Is it a symbolic value?
   if (Optional<loc::MemRegionVal> L = V.getAs<loc::MemRegionVal>()) {
     // At this point we are dealing with the region's LValue.
@@ -743,13 +800,10 @@ FindLastStoreBRVisitor::createVisitorObject(const ExplodedNode *N,
   assert(R && "The memory region is null.");
 
   ProgramStateRef state = N->getState();
-  SVal V = state->getSVal(R);
-  if (V.isUnknown())
-    return 0;
-
-  return new FindLastStoreBRVisitor(V, R);
+  if (Optional<KnownSVal> KV = state->getSVal(R).getAs<KnownSVal>())
+    return new FindLastStoreBRVisitor(*KV, R);
+  return 0;
 }
-
 
 PathDiagnosticPiece *NilReceiverBRVisitor::VisitNode(const ExplodedNode *N,
                                                      const ExplodedNode *PrevN,
@@ -808,7 +862,7 @@ void FindLastStoreBRVisitor::registerStatementVarDecls(BugReport &BR,
 
         if (V.getAs<loc::ConcreteInt>() || V.getAs<nonloc::ConcreteInt>()) {
           // Register a new visitor with the BugReport.
-          BR.addVisitor(new FindLastStoreBRVisitor(V, R));
+          BR.addVisitor(new FindLastStoreBRVisitor(V.castAs<KnownSVal>(), R));
         }
       }
     }

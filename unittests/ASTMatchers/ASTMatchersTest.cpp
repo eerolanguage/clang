@@ -323,6 +323,23 @@ TEST(DeclarationMatcher, ClassDerivedFromDependentTemplateSpecialization) {
      recordDecl(hasName("B"), isDerivedFrom(recordDecl()))));
 }
 
+TEST(DeclarationMatcher, hasDeclContext) {
+  EXPECT_TRUE(matches(
+      "namespace N {"
+      "  namespace M {"
+      "    class D {};"
+      "  }"
+      "}",
+      recordDecl(hasDeclContext(namedDecl(hasName("M"))))));
+  EXPECT_TRUE(notMatches(
+      "namespace N {"
+      "  namespace M {"
+      "    class D {};"
+      "  }"
+      "}",
+      recordDecl(hasDeclContext(namedDecl(hasName("N"))))));
+}
+
 TEST(ClassTemplate, DoesNotMatchClass) {
   DeclarationMatcher ClassX = classTemplateDecl(hasName("X"));
   EXPECT_TRUE(notMatches("class X;", ClassX));
@@ -818,12 +835,24 @@ TEST(HasDeclaration, HasDeclarationOfEnumType) {
                           qualType(hasDeclaration(enumDecl(hasName("X")))))))));
 }
 
+TEST(HasDeclaration, HasGetDeclTraitTest) {
+  EXPECT_TRUE(internal::has_getDecl<TypedefType>::value);
+  EXPECT_TRUE(internal::has_getDecl<RecordType>::value);
+  EXPECT_FALSE(internal::has_getDecl<TemplateSpecializationType>::value);
+}
+
 TEST(HasDeclaration, HasDeclarationOfTypeWithDecl) {
   EXPECT_TRUE(matches("typedef int X; X a;",
                       varDecl(hasName("a"),
                               hasType(typedefType(hasDeclaration(decl()))))));
 
   // FIXME: Add tests for other types with getDecl() (e.g. RecordType)
+}
+
+TEST(HasDeclaration, HasDeclarationOfTemplateSpecializationType) {
+  EXPECT_TRUE(matches("template <typename T> class A {}; A<int> a;",
+                      varDecl(hasType(templateSpecializationType(
+                          hasDeclaration(namedDecl(hasName("A"))))))));
 }
 
 TEST(HasType, TakesQualTypeMatcherAndMatchesExpr) {
@@ -1411,6 +1440,18 @@ TEST(Matcher, MatchesSpecificArgument) {
       "A<int, bool> a;",
       classTemplateSpecializationDecl(hasTemplateArgument(
           1, refersToType(asString("int"))))));
+}
+
+TEST(Matcher, MatchesAccessSpecDecls) {
+  EXPECT_TRUE(matches("class C { public: int i; };", accessSpecDecl()));
+  EXPECT_TRUE(
+      matches("class C { public: int i; };", accessSpecDecl(isPublic())));
+  EXPECT_TRUE(
+      notMatches("class C { public: int i; };", accessSpecDecl(isProtected())));
+  EXPECT_TRUE(
+      notMatches("class C { public: int i; };", accessSpecDecl(isPrivate())));
+
+  EXPECT_TRUE(notMatches("class C { int i; };", accessSpecDecl()));
 }
 
 TEST(Matcher, ConstructorCall) {
@@ -2281,6 +2322,34 @@ TEST(Member, MatchesMember) {
   EXPECT_TRUE(notMatches(
       "struct A { float f; }; void f() { A a; a.f = 2.0f; }",
       memberExpr(hasDeclaration(fieldDecl(hasType(isInteger()))))));
+}
+
+TEST(Member, UnderstandsAccess) {
+  EXPECT_TRUE(matches(
+      "struct A { int i; };", fieldDecl(isPublic(), hasName("i"))));
+  EXPECT_TRUE(notMatches(
+      "struct A { int i; };", fieldDecl(isProtected(), hasName("i"))));
+  EXPECT_TRUE(notMatches(
+      "struct A { int i; };", fieldDecl(isPrivate(), hasName("i"))));
+
+  EXPECT_TRUE(notMatches(
+      "class A { int i; };", fieldDecl(isPublic(), hasName("i"))));
+  EXPECT_TRUE(notMatches(
+      "class A { int i; };", fieldDecl(isProtected(), hasName("i"))));
+  EXPECT_TRUE(matches(
+      "class A { int i; };", fieldDecl(isPrivate(), hasName("i"))));
+
+  EXPECT_TRUE(notMatches(
+      "class A { protected: int i; };", fieldDecl(isPublic(), hasName("i"))));
+  EXPECT_TRUE(matches("class A { protected: int i; };",
+                      fieldDecl(isProtected(), hasName("i"))));
+  EXPECT_TRUE(notMatches(
+      "class A { protected: int i; };", fieldDecl(isPrivate(), hasName("i"))));
+  
+  // Non-member decls have the AccessSpecifier AS_none and thus aren't matched.
+  EXPECT_TRUE(notMatches("int i;", varDecl(isPublic(), hasName("i"))));
+  EXPECT_TRUE(notMatches("int i;", varDecl(isProtected(), hasName("i"))));
+  EXPECT_TRUE(notMatches("int i;", varDecl(isPrivate(), hasName("i"))));
 }
 
 TEST(Member, MatchesMemberAllocationFunction) {
@@ -3358,6 +3427,66 @@ TEST(TypeMatching, MatchesPointersToConstTypes) {
 TEST(TypeMatching, MatchesTypedefTypes) {
   EXPECT_TRUE(matches("typedef int X; X a;", varDecl(hasName("a"),
                                                      hasType(typedefType()))));
+}
+
+TEST(TypeMatching, MatchesTemplateSpecializationType) {
+  EXPECT_TRUE(matches("template <typename T> class A{}; A<int> a;",
+                      templateSpecializationType()));
+}
+
+TEST(TypeMatching, MatchesRecordType) {
+  EXPECT_TRUE(matches("class C{}; C c;", recordType()));
+  EXPECT_TRUE(matches("struct S{}; S s;",
+                      recordType(hasDeclaration(recordDecl(hasName("S"))))));
+  EXPECT_TRUE(notMatches("int i;",
+                         recordType(hasDeclaration(recordDecl(hasName("S"))))));
+}
+
+TEST(TypeMatching, MatchesElaboratedType) {
+  EXPECT_TRUE(matches(
+    "namespace N {"
+    "  namespace M {"
+    "    class D {};"
+    "  }"
+    "}"
+    "N::M::D d;", elaboratedType()));
+  EXPECT_TRUE(matches("class C {} c;", elaboratedType()));
+  EXPECT_TRUE(notMatches("class C {}; C c;", elaboratedType()));
+}
+
+TEST(ElaboratedTypeNarrowing, hasQualifier) {
+  EXPECT_TRUE(matches(
+    "namespace N {"
+    "  namespace M {"
+    "    class D {};"
+    "  }"
+    "}"
+    "N::M::D d;",
+    elaboratedType(hasQualifier(hasPrefix(specifiesNamespace(hasName("N")))))));
+  EXPECT_TRUE(notMatches(
+    "namespace M {"
+    "  class D {};"
+    "}"
+    "M::D d;",
+    elaboratedType(hasQualifier(hasPrefix(specifiesNamespace(hasName("N")))))));
+}
+
+TEST(ElaboratedTypeNarrowing, namesType) {
+  EXPECT_TRUE(matches(
+    "namespace N {"
+    "  namespace M {"
+    "    class D {};"
+    "  }"
+    "}"
+    "N::M::D d;",
+    elaboratedType(elaboratedType(namesType(recordType(
+        hasDeclaration(namedDecl(hasName("D")))))))));
+  EXPECT_TRUE(notMatches(
+    "namespace M {"
+    "  class D {};"
+    "}"
+    "M::D d;",
+    elaboratedType(elaboratedType(namesType(typedefType())))));
 }
 
 TEST(NNS, MatchesNestedNameSpecifiers) {

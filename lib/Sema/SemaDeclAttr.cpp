@@ -19,6 +19,7 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/Mangle.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
@@ -610,8 +611,8 @@ static void handleScopedLockableAttr(Sema &S, Decl *D,
                                 Attr.getAttributeSpellingListIndex()));
 }
 
-static void handleNoThreadSafetyAttr(Sema &S, Decl *D,
-                                     const AttributeList &Attr) {
+static void handleNoThreadSafetyAnalysis(Sema &S, Decl *D,
+                                         const AttributeList &Attr) {
   assert(!Attr.isInvalid());
 
   if (!checkAttributeNumArgs(S, Attr, 0))
@@ -627,7 +628,7 @@ static void handleNoThreadSafetyAttr(Sema &S, Decl *D,
                                                           S.Context));
 }
 
-static void handleNoAddressSafetyAttr(Sema &S, Decl *D,
+static void handleNoSanitizeAddressAttr(Sema &S, Decl *D,
                                       const AttributeList &Attr) {
   assert(!Attr.isInvalid());
 
@@ -635,14 +636,48 @@ static void handleNoAddressSafetyAttr(Sema &S, Decl *D,
     return;
 
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
       << Attr.getName() << ExpectedFunctionOrMethod;
     return;
   }
 
   D->addAttr(::new (S.Context)
-             NoAddressSafetyAnalysisAttr(Attr.getRange(), S.Context,
-                                         Attr.getAttributeSpellingListIndex()));
+             NoSanitizeAddressAttr(Attr.getRange(), S.Context,
+                                   Attr.getAttributeSpellingListIndex()));
+}
+
+static void handleNoSanitizeMemory(Sema &S, Decl *D,
+                                   const AttributeList &Attr) {
+  assert(!Attr.isInvalid());
+
+  if (!checkAttributeNumArgs(S, Attr, 0))
+    return;
+
+  if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
+    return;
+  }
+
+  D->addAttr(::new (S.Context) NoSanitizeMemoryAttr(Attr.getRange(),
+                                                         S.Context));
+}
+
+static void handleNoSanitizeThread(Sema &S, Decl *D,
+                                   const AttributeList &Attr) {
+  assert(!Attr.isInvalid());
+
+  if (!checkAttributeNumArgs(S, Attr, 0))
+    return;
+
+  if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
+    return;
+  }
+
+  D->addAttr(::new (S.Context) NoSanitizeThreadAttr(Attr.getRange(),
+                                                    S.Context));
 }
 
 static bool checkAcquireOrderAttrCommon(Sema &S, Decl *D,
@@ -4817,11 +4852,17 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_ScopedLockable:
     handleScopedLockableAttr(S, D, Attr);
     break;
-  case AttributeList::AT_NoAddressSafetyAnalysis:
-    handleNoAddressSafetyAttr(S, D, Attr);
+  case AttributeList::AT_NoSanitizeAddress:
+    handleNoSanitizeAddressAttr(S, D, Attr);
     break;
   case AttributeList::AT_NoThreadSafetyAnalysis:
-    handleNoThreadSafetyAttr(S, D, Attr);
+    handleNoThreadSafetyAnalysis(S, D, Attr);
+    break;
+  case AttributeList::AT_NoSanitizeThread:
+    handleNoSanitizeThread(S, D, Attr);
+    break;
+  case AttributeList::AT_NoSanitizeMemory:
+    handleNoSanitizeMemory(S, D, Attr);
     break;
   case AttributeList::AT_Lockable:
     handleLockableAttr(S, D, Attr);
@@ -5056,11 +5097,18 @@ void Sema::ProcessDeclAttributes(Scope *S, Decl *D, const Declarator &PD,
   if (Inheritable) {
     LoadExternalWeakUndeclaredIdentifiers();
     if (!WeakUndeclaredIdentifiers.empty()) {
-      if (NamedDecl *ND = dyn_cast<NamedDecl>(D)) {
+      NamedDecl *ND = NULL;
+      if (VarDecl *VD = dyn_cast<VarDecl>(D))
+        if (VD->isExternC())
+          ND = VD;
+      if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
+        if (FD->isExternC())
+          ND = FD;
+      if (ND) {
         if (IdentifierInfo *Id = ND->getIdentifier()) {
           llvm::DenseMap<IdentifierInfo*,WeakInfo>::iterator I
             = WeakUndeclaredIdentifiers.find(Id);
-          if (I != WeakUndeclaredIdentifiers.end() && ND->hasLinkage()) {
+          if (I != WeakUndeclaredIdentifiers.end()) {
             WeakInfo W = I->second;
             DeclApplyPragmaWeak(S, ND, W);
             WeakUndeclaredIdentifiers[Id] = W;
