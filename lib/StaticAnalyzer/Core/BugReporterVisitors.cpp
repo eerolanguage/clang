@@ -27,6 +27,8 @@
 using namespace clang;
 using namespace ento;
 
+using llvm::FoldingSetNodeID;
+
 //===----------------------------------------------------------------------===//
 // Utility functions.
 //===----------------------------------------------------------------------===//
@@ -222,13 +224,24 @@ public:
     // Don't print any more notes after this one.
     Mode = Satisfied;
 
+    const Expr *RetE = Ret->getRetValue();
+    assert(RetE && "Tracking a return value for a void function");
+
+    // Handle cases where a reference is returned and then immediately used.
+    Optional<Loc> LValue;
+    if (RetE->isGLValue()) {
+      if ((LValue = V.getAs<Loc>())) {
+        SVal RValue = State->getRawSVal(*LValue, RetE->getType());
+        if (RValue.getAs<DefinedSVal>())
+          V = RValue;
+      }
+    }
+
     // Ignore aggregate rvalues.
     if (V.getAs<nonloc::LazyCompoundVal>() ||
         V.getAs<nonloc::CompoundVal>())
       return 0;
 
-    const Expr *RetE = Ret->getRetValue();
-    assert(RetE && "Tracking a return value for a void function");
     RetE = RetE->IgnoreParenCasts();
 
     // If we can't prove the return value is 0, just mark it interesting, and
@@ -267,10 +280,20 @@ public:
       Out << "Returning zero";
     }
 
-    // FIXME: We should have a more generalized location printing mechanism.
-    if (const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(RetE))
-      if (const DeclaratorDecl *DD = dyn_cast<DeclaratorDecl>(DR->getDecl()))
-        Out << " (loaded from '" << *DD << "')";
+    if (LValue) {
+      if (const MemRegion *MR = LValue->getAsRegion()) {
+        if (MR->canPrintPretty()) {
+          Out << " (reference to '";
+          MR->printPretty(Out);
+          Out << "')";
+        }
+      }
+    } else {
+      // FIXME: We should have a more generalized location printing mechanism.
+      if (const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(RetE))
+        if (const DeclaratorDecl *DD = dyn_cast<DeclaratorDecl>(DR->getDecl()))
+          Out << " (loaded from '" << *DD << "')";
+    }
 
     PathDiagnosticLocation L(Ret, BRC.getSourceManager(), StackFrame);
     return new PathDiagnosticEventPiece(L, Out.str());
@@ -642,6 +665,49 @@ TrackConstraintBRVisitor::VisitNode(const ExplodedNode *N,
   return NULL;
 }
 
+SuppressInlineDefensiveChecksVisitor::
+SuppressInlineDefensiveChecksVisitor(DefinedSVal Value, const ExplodedNode *N)
+  : V(Value), IsSatisfied(false) {
+
+  assert(N->getState()->isNull(V).isConstrainedTrue() &&
+         "The visitor only tracks the cases where V is constrained to 0");
+}
+
+void SuppressInlineDefensiveChecksVisitor::Profile(FoldingSetNodeID &ID) const {
+  static int id = 0;
+  ID.AddPointer(&id);
+  ID.Add(V);
+}
+
+const char *SuppressInlineDefensiveChecksVisitor::getTag() {
+  return "IDCVisitor";
+}
+
+PathDiagnosticPiece *
+SuppressInlineDefensiveChecksVisitor::VisitNode(const ExplodedNode *N,
+                                                const ExplodedNode *PrevN,
+                                                BugReporterContext &BRC,
+                                                BugReport &BR) {
+  if (IsSatisfied)
+    return 0;
+  
+  // Check if in the previous state it was feasible for this value
+  // to *not* be null.
+  if (PrevN->getState()->assume(V, true)) {
+    IsSatisfied = true;
+
+    // TODO: Investigate if missing the transition point, where V
+    //       is non-null in N could lead to false negatives.
+
+    // Check if this is inline defensive checks.
+    const LocationContext *CurLC = PrevN->getLocationContext();
+    const LocationContext *ReportLC = BR.getErrorNode()->getLocationContext();
+    if (CurLC != ReportLC && !CurLC->isParentOf(ReportLC))
+      BR.markInvalid("Suppress IDC", CurLC);
+  }
+  return 0;
+}
+
 bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N, const Stmt *S,
                                         BugReport &report, bool IsArg) {
   if (!S || !N)
@@ -751,8 +817,16 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N, const Stmt *S,
         // If the contents are symbolic, find out when they became null.
         if (V.getAsLocSymbol()) {
           BugReporterVisitor *ConstraintTracker =
-              new TrackConstraintBRVisitor(V.castAs<DefinedSVal>(), false);
+            new TrackConstraintBRVisitor(V.castAs<DefinedSVal>(), false);
           report.addVisitor(ConstraintTracker);
+
+          // Add visitor, which will suppress inline defensive checks.
+          if (N->getState()->isNull(V).isConstrainedTrue()) {
+            BugReporterVisitor *IDCSuppressor =
+              new SuppressInlineDefensiveChecksVisitor(V.castAs<DefinedSVal>(),
+                                                       N);
+            report.addVisitor(IDCSuppressor);
+          }
         }
 
         if (Optional<KnownSVal> KV = V.getAs<KnownSVal>())
@@ -766,6 +840,12 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N, const Stmt *S,
   // track the constraints on its contents.
   SVal V = state->getSValAsScalarOrLoc(S, N->getLocationContext());
 
+  // If the value came from an inlined function call, we should at least make
+  // sure that function isn't pruned in our output.
+  if (const Expr *E = dyn_cast<Expr>(S))
+    S = E->IgnoreParenCasts();
+  ReturnVisitor::addVisitorIfNecessary(N, S, report);
+
   // Uncomment this to find cases where we aren't properly getting the
   // base value that was dereferenced.
   // assert(!V.isUnknownOrUndef());
@@ -777,18 +857,11 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N, const Stmt *S,
     const MemRegion *RegionRVal = RVal.getAsRegion();
     report.addVisitor(new UndefOrNullArgVisitor(L->getRegion()));
 
-
     if (RegionRVal && isa<SymbolicRegion>(RegionRVal)) {
       report.markInteresting(RegionRVal);
       report.addVisitor(new TrackConstraintBRVisitor(
         loc::MemRegionVal(RegionRVal), false));
     }
-  } else {
-    // Otherwise, if the value came from an inlined function call,
-    // we should at least make sure that function isn't pruned in our output.
-    if (const Expr *E = dyn_cast<Expr>(S))
-      S = E->IgnoreParenCasts();
-    ReturnVisitor::addVisitorIfNecessary(N, S, report);
   }
 
   return true;

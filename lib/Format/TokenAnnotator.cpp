@@ -464,6 +464,7 @@ private:
 public:
   LineType parseLine() {
     int PeriodsAndArrows = 0;
+    AnnotatedToken *LastPeriodOrArrow = NULL;
     bool CanBeBuilderTypeStmt = true;
     if (CurrentToken->is(tok::hash)) {
       parsePreprocessorDirective();
@@ -472,8 +473,10 @@ public:
     while (CurrentToken != NULL) {
       if (CurrentToken->is(tok::kw_virtual))
         KeywordVirtualFound = true;
-      if (CurrentToken->is(tok::period) || CurrentToken->is(tok::arrow))
+      if (CurrentToken->is(tok::period) || CurrentToken->is(tok::arrow)) {
         ++PeriodsAndArrows;
+        LastPeriodOrArrow = CurrentToken;
+      }
       AnnotatedToken *TheToken = CurrentToken;
       if (!consumeToken())
         return LT_Invalid;
@@ -485,8 +488,10 @@ public:
       return LT_VirtualFunctionDecl;
 
     // Assume a builder-type call if there are 2 or more "." and "->".
-    if (PeriodsAndArrows >= 2 && CanBeBuilderTypeStmt)
+    if (PeriodsAndArrows >= 2 && CanBeBuilderTypeStmt) {
+      LastPeriodOrArrow->LastInChainOfCalls = true;
       return LT_BuilderTypeCall;
+    }
 
     if (Line.First.Type == TT_ObjCMethodSpecifier) {
       if (Contexts.back().FirstObjCSelectorName != NULL)
@@ -639,6 +644,9 @@ private:
     const AnnotatedToken *NextToken = getNextToken(Tok);
     if (NextToken == NULL)
       return TT_Unknown;
+
+    if (PrevToken->is(tok::l_paren) && !IsExpression)
+      return TT_PointerOrReference;
 
     if (PrevToken->is(tok::l_paren) || PrevToken->is(tok::l_square) ||
         PrevToken->is(tok::l_brace) || PrevToken->is(tok::comma) ||
@@ -880,8 +888,6 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     else
       return 100;
   }
-  if (Left.is(tok::l_brace) && Right.isNot(tok::l_brace))
-    return 50;
   if (Left.is(tok::equal) && Right.is(tok::l_brace))
     return 150;
   if (Left.is(tok::coloncolon))
@@ -917,7 +923,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 20;
 
   if (Left.is(tok::l_paren) || Left.is(tok::l_square) ||
-      Left.Type == TT_TemplateOpener)
+      Left.is(tok::l_brace) || Left.Type == TT_TemplateOpener)
     return 20;
 
   if (Right.is(tok::lessless)) {
@@ -936,7 +942,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
 
   if (Level != prec::Unknown)
     return Level;
-  
+
   return 3;
 }
 
@@ -1027,6 +1033,8 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
 
   if (Tok.Parent->is(tok::comma))
     return true;
+  if (Tok.is(tok::comma))
+    return false;
   if (Tok.Type == TT_CtorInitializerColon || Tok.Type == TT_ObjCBlockLParen)
     return true;
   if (Tok.Parent->FormatTok.Tok.is(tok::kw_operator))
@@ -1036,6 +1044,11 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
   if (Tok.is(tok::colon))
     return Line.First.isNot(tok::kw_case) && !Tok.Children.empty() &&
            Tok.Type != TT_ObjCMethodExpr;
+  if (Tok.is(tok::l_paren) && !Tok.Children.empty() &&
+      Tok.Children[0].Type == TT_PointerOrReference &&
+      !Tok.Children[0].Children.empty() &&
+      Tok.Children[0].Children[0].isNot(tok::r_paren))
+    return true;
   if (Tok.Parent->Type == TT_UnaryOperator || Tok.Parent->Type == TT_CastRParen)
     return false;
   if (Tok.Type == TT_UnaryOperator)
@@ -1048,6 +1061,8 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
            Tok.Parent->Type == TT_TemplateCloser &&
            Style.Standard != FormatStyle::LS_Cpp11;
   }
+  if (Tok.is(tok::arrowstar) || Tok.Parent->is(tok::arrowstar))
+    return false;
   if (Tok.Type == TT_BinaryOperator || Tok.Parent->Type == TT_BinaryOperator)
     return true;
   if (Tok.Parent->Type == TT_TemplateCloser && Tok.is(tok::l_paren))
@@ -1088,6 +1103,9 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
     return false;
   if (Left.is(tok::equal) && Line.Type == LT_VirtualFunctionDecl)
     return false;
+  if (Left.is(tok::l_paren) && Right.is(tok::l_paren) && Left.Parent &&
+      Left.Parent->is(tok::kw___attribute))
+    return false;
 
   if (Right.Type == TT_LineComment)
     // We rely on MustBreakBefore being set correctly here as we should not
@@ -1116,7 +1134,7 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
          Right.is(tok::colon) || Left.is(tok::coloncolon) ||
          Left.is(tok::semi) || Left.is(tok::l_brace) ||
          (Left.is(tok::r_paren) && Left.Type != TT_CastRParen &&
-          Right.is(tok::identifier)) ||
+          (Right.is(tok::identifier) || Right.is(tok::kw___attribute))) ||
          (Left.is(tok::l_paren) && !Right.is(tok::r_paren)) ||
          (Left.is(tok::l_square) && !Right.is(tok::r_square));
 }

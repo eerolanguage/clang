@@ -23,6 +23,7 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Frontend/CodeGenOptions.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
@@ -1021,6 +1022,65 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
     // Attributes that should go on the call site only.
     if (!CodeGenOpts.SimplifyLibCalls)
       FuncAttrs.addAttribute(llvm::Attribute::NoBuiltin);
+  } else {
+    // Attributes that should go on the function, but not the call site.
+    if (!CodeGenOpts.CodeModel.empty())
+      FuncAttrs.addAttribute("code-model", CodeGenOpts.CodeModel);
+    if (!CodeGenOpts.RelocationModel.empty())
+      FuncAttrs.addAttribute("relocation-model", CodeGenOpts.RelocationModel);
+
+    if (CodeGenOpts.FloatABI == "soft" || CodeGenOpts.FloatABI == "softfp")
+      FuncAttrs.addAttribute("float-abi", "soft");
+    else if (CodeGenOpts.FloatABI == "hard")
+      FuncAttrs.addAttribute("float-abi", "hard");
+
+    if (!CodeGenOpts.DisableFPElim) {
+      /* ignore */ ;
+    } else if (CodeGenOpts.OmitLeafFramePointer) {
+      FuncAttrs.addAttribute("no-frame-pointer-elim-non-leaf");
+    } else {
+      FuncAttrs.addAttribute("no-frame-pointer-elim");
+      FuncAttrs.addAttribute("no-frame-pointer-elim-non-leaf");
+    }
+
+    switch (CodeGenOpts.getFPContractMode()) {
+    case CodeGenOptions::FPC_Off:
+      FuncAttrs.addAttribute("fp-contract-model", "strict");
+      break;
+    case CodeGenOptions::FPC_On:
+      FuncAttrs.addAttribute("fp-contract-model", "standard");
+      break;
+    case CodeGenOptions::FPC_Fast:
+      FuncAttrs.addAttribute("fp-contract-model", "fast");
+      break;
+    }
+
+    if (CodeGenOpts.LessPreciseFPMAD)
+      FuncAttrs.addAttribute("less-precise-fpmad");
+    if (CodeGenOpts.NoInfsFPMath)
+      FuncAttrs.addAttribute("no-infs-fp-math");
+    if (CodeGenOpts.NoNaNsFPMath)
+      FuncAttrs.addAttribute("no-nans-fp-math");
+    if (CodeGenOpts.NoZeroInitializedInBSS)
+      FuncAttrs.addAttribute("no-zero-init-in-bss");
+    if (CodeGenOpts.UnsafeFPMath)
+      FuncAttrs.addAttribute("unsafe-fp-math");
+    if (CodeGenOpts.SoftFloat)
+      FuncAttrs.addAttribute("use-soft-float");
+    if (CodeGenOpts.StackAlignment)
+      FuncAttrs.addAttribute("stack-align-override",
+                             llvm::utostr(CodeGenOpts.StackAlignment));
+    if (CodeGenOpts.StackRealignment)
+      FuncAttrs.addAttribute("realign-stack");
+    if (CodeGenOpts.DisableTailCalls)
+      FuncAttrs.addAttribute("disable-tail-calls");
+    if (!CodeGenOpts.TrapFuncName.empty())
+      FuncAttrs.addAttribute("trap-func-name", CodeGenOpts.TrapFuncName);
+    if (LangOpts.PIELevel != 0)
+      FuncAttrs.addAttribute("pie");
+    if (CodeGenOpts.SSPBufferSize)
+      FuncAttrs.addAttribute("ssp-buffers-size",
+                             llvm::utostr(CodeGenOpts.SSPBufferSize));
   }
 
   QualType RetTy = FI.getReturnType();
@@ -1894,6 +1954,85 @@ CodeGenFunction::AddObjCARCExceptionMetadata(llvm::Instruction *Inst) {
                       CGM.getNoObjCARCExceptionsMetadata());
 }
 
+/// Emits a call to the given no-arguments nounwind runtime function.
+llvm::CallInst *
+CodeGenFunction::EmitNounwindRuntimeCall(llvm::Value *callee,
+                                         const llvm::Twine &name) {
+  return EmitNounwindRuntimeCall(callee, ArrayRef<llvm::Value*>(), name);
+}
+
+/// Emits a call to the given nounwind runtime function.
+llvm::CallInst *
+CodeGenFunction::EmitNounwindRuntimeCall(llvm::Value *callee,
+                                         ArrayRef<llvm::Value*> args,
+                                         const llvm::Twine &name) {
+  llvm::CallInst *call = EmitRuntimeCall(callee, args, name);
+  call->setDoesNotThrow();
+  return call;
+}
+
+/// Emits a simple call (never an invoke) to the given no-arguments
+/// runtime function.
+llvm::CallInst *
+CodeGenFunction::EmitRuntimeCall(llvm::Value *callee,
+                                 const llvm::Twine &name) {
+  return EmitRuntimeCall(callee, ArrayRef<llvm::Value*>(), name);
+}
+
+/// Emits a simple call (never an invoke) to the given runtime
+/// function.
+llvm::CallInst *
+CodeGenFunction::EmitRuntimeCall(llvm::Value *callee,
+                                 ArrayRef<llvm::Value*> args,
+                                 const llvm::Twine &name) {
+  llvm::CallInst *call = Builder.CreateCall(callee, args, name);
+  call->setCallingConv(getRuntimeCC());
+  return call;
+}
+
+/// Emits a call or invoke to the given noreturn runtime function.
+void CodeGenFunction::EmitNoreturnRuntimeCallOrInvoke(llvm::Value *callee,
+                                               ArrayRef<llvm::Value*> args) {
+  if (getInvokeDest()) {
+    llvm::InvokeInst *invoke = 
+      Builder.CreateInvoke(callee,
+                           getUnreachableBlock(),
+                           getInvokeDest(),
+                           args);
+    invoke->setDoesNotReturn();
+    invoke->setCallingConv(getRuntimeCC());
+  } else {
+    llvm::CallInst *call = Builder.CreateCall(callee, args);
+    call->setDoesNotReturn();
+    call->setCallingConv(getRuntimeCC());
+    Builder.CreateUnreachable();
+  }
+}
+
+/// Emits a call or invoke instruction to the given nullary runtime
+/// function.
+llvm::CallSite
+CodeGenFunction::EmitRuntimeCallOrInvoke(llvm::Value *callee,
+                                         const Twine &name) {
+  return EmitRuntimeCallOrInvoke(callee, ArrayRef<llvm::Value*>(), name);
+}
+
+/// Emits a call or invoke instruction to the given runtime function.
+llvm::CallSite
+CodeGenFunction::EmitRuntimeCallOrInvoke(llvm::Value *callee,
+                                         ArrayRef<llvm::Value*> args,
+                                         const Twine &name) {
+  llvm::CallSite callSite = EmitCallOrInvoke(callee, args, name);
+  callSite.setCallingConv(getRuntimeCC());
+  return callSite;
+}
+
+llvm::CallSite
+CodeGenFunction::EmitCallOrInvoke(llvm::Value *Callee,
+                                  const Twine &Name) {
+  return EmitCallOrInvoke(Callee, ArrayRef<llvm::Value *>(), Name);
+}
+
 /// Emits a call or invoke instruction to the given function, depending
 /// on the current state of the EH stack.
 llvm::CallSite
@@ -1917,12 +2056,6 @@ CodeGenFunction::EmitCallOrInvoke(llvm::Value *Callee,
     AddObjCARCExceptionMetadata(Inst);
 
   return Inst;
-}
-
-llvm::CallSite
-CodeGenFunction::EmitCallOrInvoke(llvm::Value *Callee,
-                                  const Twine &Name) {
-  return EmitCallOrInvoke(Callee, ArrayRef<llvm::Value *>(), Name);
 }
 
 static void checkArgMatches(llvm::Value *Elt, unsigned &ArgNo,
