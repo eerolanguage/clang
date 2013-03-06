@@ -1373,16 +1373,50 @@ static const unsigned R600AddrSpaceMap[] = {
   3     // cuda_shared
 };
 
+static const char *DescriptionStringR600 =
+  "e"
+  "-p:32:32:32"
+  "-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32"
+  "-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128"
+  "-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-v2048:2048:2048"
+  "-n32:64";
+
+static const char *DescriptionStringR600DoubleOps =
+  "e"
+  "-p:32:32:32"
+  "-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64"
+  "-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128"
+  "-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-v2048:2048:2048"
+  "-n32:64";
+
+static const char *DescriptionStringSI =
+  "e"
+  "-p:64:64:64"
+  "-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64"
+  "-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128"
+  "-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-v2048:2048:2048"
+  "-n32:64";
+
 class R600TargetInfo : public TargetInfo {
+  /// \brief The GPU profiles supported by the R600 target.
+  enum GPUKind {
+    GK_NONE,
+    GK_R600,
+    GK_R600_DOUBLE_OPS,
+    GK_R700,
+    GK_R700_DOUBLE_OPS,
+    GK_EVERGREEN,
+    GK_EVERGREEN_DOUBLE_OPS,
+    GK_NORTHERN_ISLANDS,
+    GK_CAYMAN,
+    GK_SOUTHERN_ISLANDS
+  } GPU;
+
 public:
-  R600TargetInfo(const std::string& triple) : TargetInfo(triple) {
-    DescriptionString =
-          "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16"
-          "-i32:32:32-i64:64:64-f32:32:32-f64:64:64-f80:32:32"
-          "-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64"
-          "-v96:128:128-v128:128:128-v192:256:256-v256:256:256"
-          "-v512:512:512-v1024:1024:1024-v2048:2048:2048"
-          "-n8:16:32:64";
+  R600TargetInfo(const std::string& triple)
+    : TargetInfo(triple),
+      GPU(GK_R600) {
+    DescriptionString = DescriptionStringR600;
     AddrSpaceMap = &R600AddrSpaceMap;
   }
 
@@ -1423,6 +1457,65 @@ public:
     return TargetInfo::CharPtrBuiltinVaList;
   }
 
+  virtual bool setCPU(const std::string &Name) {
+    GPU = llvm::StringSwitch<GPUKind>(Name)
+      .Case("r600" ,    GK_R600)
+      .Case("rv610",    GK_R600)
+      .Case("rv620",    GK_R600)
+      .Case("rv630",    GK_R600)
+      .Case("rv635",    GK_R600)
+      .Case("rs780",    GK_R600)
+      .Case("rs880",    GK_R600)
+      .Case("rv670",    GK_R600_DOUBLE_OPS)
+      .Case("rv710",    GK_R700)
+      .Case("rv730",    GK_R700)
+      .Case("rv740",    GK_R700_DOUBLE_OPS)
+      .Case("rv770",    GK_R700_DOUBLE_OPS)
+      .Case("palm",     GK_EVERGREEN)
+      .Case("cedar",    GK_EVERGREEN)
+      .Case("sumo",     GK_EVERGREEN)
+      .Case("sumo2",    GK_EVERGREEN)
+      .Case("redwood",  GK_EVERGREEN)
+      .Case("juniper",  GK_EVERGREEN)
+      .Case("hemlock",  GK_EVERGREEN_DOUBLE_OPS)
+      .Case("cypress",  GK_EVERGREEN_DOUBLE_OPS)
+      .Case("barts",    GK_NORTHERN_ISLANDS)
+      .Case("turks",    GK_NORTHERN_ISLANDS)
+      .Case("caicos",   GK_NORTHERN_ISLANDS)
+      .Case("cayman",   GK_CAYMAN)
+      .Case("aruba",    GK_CAYMAN)
+      .Case("SI",       GK_SOUTHERN_ISLANDS)
+      .Case("pitcairn", GK_SOUTHERN_ISLANDS)
+      .Case("verde",    GK_SOUTHERN_ISLANDS)
+      .Case("oland",    GK_SOUTHERN_ISLANDS)
+      .Default(GK_NONE);
+
+    if (GPU == GK_NONE) {
+      return false;
+    }
+
+    // Set the correct data layout
+    switch (GPU) {
+    case GK_NONE:
+    case GK_R600:
+    case GK_R700:
+    case GK_EVERGREEN:
+    case GK_NORTHERN_ISLANDS:
+      DescriptionString = DescriptionStringR600;
+      break;
+    case GK_R600_DOUBLE_OPS:
+    case GK_R700_DOUBLE_OPS:
+    case GK_EVERGREEN_DOUBLE_OPS:
+    case GK_CAYMAN:
+      DescriptionString = DescriptionStringR600DoubleOps;
+      break;
+    case GK_SOUTHERN_ISLANDS:
+      DescriptionString = DescriptionStringSI;
+      break;
+    }
+
+    return true;
+  }
 };
 
 } // end anonymous namespace
@@ -3462,7 +3555,7 @@ public:
     else if (CPU == "cortex-a8" || CPU == "cortex-a15" ||
              CPU == "cortex-a9" || CPU == "cortex-a9-mp")
       Features["neon"] = true;
-    else if (CPU == "swift") {
+    else if (CPU == "swift" || CPU == "cortex-a7") {
       Features["vfp4"] = true;
       Features["neon"] = true;
     }
@@ -3535,7 +3628,8 @@ public:
       .Cases("arm1176jz-s", "arm1176jzf-s", "6ZK")
       .Cases("arm1136jf-s", "mpcorenovfp", "mpcore", "6K")
       .Cases("arm1156t2-s", "arm1156t2f-s", "6T2")
-      .Cases("cortex-a5", "cortex-a8", "cortex-a9", "cortex-a15", "7A")
+      .Cases("cortex-a5", "cortex-a7", "cortex-a8", "7A")
+      .Cases("cortex-a9", "cortex-a15", "7A")
       .Case("cortex-r5", "7R")
       .Case("cortex-a9-mp", "7F")
       .Case("swift", "7S")
@@ -4392,6 +4486,9 @@ public:
     case 'l': // lo register
     case 'x': // hilo register pair
       Info.setAllowsRegister();
+      return true;
+    case 'R': // An address that can be used in a non-macro load or store
+      Info.setAllowsMemory();
       return true;
     }
   }

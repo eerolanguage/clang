@@ -352,16 +352,25 @@ void Sema::CheckExtraCXXDefaultArguments(Declarator &D) {
   //   parameter pack. If it is specified in a
   //   parameter-declaration-clause, it shall not occur within a
   //   declarator or abstract-declarator of a parameter-declaration.
+  bool MightBeFunction = D.isFunctionDeclarationContext();
   for (unsigned i = 0, e = D.getNumTypeObjects(); i != e; ++i) {
     DeclaratorChunk &chunk = D.getTypeObject(i);
     if (chunk.Kind == DeclaratorChunk::Function) {
+      if (MightBeFunction) {
+        // This is a function declaration. It can have default arguments, but
+        // keep looking in case its return type is a function type with default
+        // arguments.
+        MightBeFunction = false;
+        continue;
+      }
       for (unsigned argIdx = 0, e = chunk.Fun.NumArgs; argIdx != e; ++argIdx) {
         ParmVarDecl *Param =
           cast<ParmVarDecl>(chunk.Fun.ArgInfo[argIdx].Param);
         if (Param->hasUnparsedDefaultArg()) {
           CachedTokens *Toks = chunk.Fun.ArgInfo[argIdx].DefaultArgTokens;
           Diag(Param->getLocation(), diag::err_param_default_argument_nonfunc)
-            << SourceRange((*Toks)[1].getLocation(), Toks->back().getLocation());
+            << SourceRange((*Toks)[1].getLocation(),
+                           Toks->back().getLocation());
           delete Toks;
           chunk.Fun.ArgInfo[argIdx].DefaultArgTokens = 0;
         } else if (Param->getDefaultArg()) {
@@ -370,6 +379,8 @@ void Sema::CheckExtraCXXDefaultArguments(Declarator &D) {
           Param->setDefaultArg(0);
         }
       }
+    } else if (chunk.Kind != DeclaratorChunk::Paren) {
+      MightBeFunction = false;
     }
   }
 }
@@ -5109,7 +5120,6 @@ bool Sema::SpecialMemberIsTrivial(CXXMethodDecl *MD, CXXSpecialMember CSM,
   CXXRecordDecl *RD = MD->getParent();
 
   bool ConstArg = false;
-  ParmVarDecl *Param0 = MD->getNumParams() ? MD->getParamDecl(0) : 0;
 
   // C++11 [class.copy]p12, p25:
   //   A [special member] is trivial if its declared parameter type is the same
@@ -5124,6 +5134,7 @@ bool Sema::SpecialMemberIsTrivial(CXXMethodDecl *MD, CXXSpecialMember CSM,
   case CXXCopyAssignment: {
     // Trivial copy operations always have const, non-volatile parameter types.
     ConstArg = true;
+    const ParmVarDecl *Param0 = MD->getParamDecl(0);
     const ReferenceType *RT = Param0->getType()->getAs<ReferenceType>();
     if (!RT || RT->getPointeeType().getCVRQualifiers() != Qualifiers::Const) {
       if (Diagnose)
@@ -5139,6 +5150,7 @@ bool Sema::SpecialMemberIsTrivial(CXXMethodDecl *MD, CXXSpecialMember CSM,
   case CXXMoveConstructor:
   case CXXMoveAssignment: {
     // Trivial move operations always have non-cv-qualified parameters.
+    const ParmVarDecl *Param0 = MD->getParamDecl(0);
     const RValueReferenceType *RT =
       Param0->getType()->getAs<RValueReferenceType>();
     if (!RT || RT->getPointeeType().getCVRQualifiers()) {
@@ -10225,8 +10237,8 @@ Decl *Sema::ActOnExceptionDeclarator(Scope *S, Declarator &D) {
   bool Invalid = D.isInvalidType();
 
   // Check for unexpanded parameter packs.
-  if (TInfo && DiagnoseUnexpandedParameterPack(D.getIdentifierLoc(), TInfo,
-                                               UPPC_ExceptionType)) {
+  if (DiagnoseUnexpandedParameterPack(D.getIdentifierLoc(), TInfo,
+                                      UPPC_ExceptionType)) {
     TInfo = Context.getTrivialTypeSourceInfo(Context.IntTy, 
                                              D.getIdentifierLoc());
     Invalid = true;

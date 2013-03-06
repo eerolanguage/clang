@@ -303,6 +303,11 @@ typedef int (*test_param27)(int aaa);
 /// \param aaa Meow.
 typedef test_param27 test_param28;
 
+// rdar://13066276
+// expected-warning@+1 {{'@param' command used in a comment that is not attached to a function declaration}}
+/// @param aaa Meow.
+typedef unsigned int test_param29;
+
 
 // expected-warning@+1 {{'\tparam' command used in a comment that is not attached to a template declaration}}
 /// \tparam T Aaa
@@ -400,6 +405,12 @@ class test_tparam19 { };
 
 // ----
 
+// expected-warning@+1 {{'@tparam' command used in a comment that is not attached to a template declaration}}
+/// @tparam T Aaa
+int test_tparam22;
+
+// ----
+
 
 /// Aaa
 /// \deprecated Bbb
@@ -436,6 +447,14 @@ void test_deprecated_6(int a) {
 /// \deprecated
 template<typename T>
 void test_deprecated_7(T aaa);
+
+
+// rdar://12397511
+// expected-note@+2 {{previous command '\headerfile' here}}
+// expected-warning@+2 {{duplicated command '\headerfile'}}
+/// \headerfile ""
+/// \headerfile foo.h
+int test__headerfile_1(int a);
 
 
 /// \invariant aaa
@@ -524,6 +543,23 @@ enum test_returns_wrong_decl_8 {
 /// \returns Aaa
 namespace test_returns_wrong_decl_10 { };
 
+// rdar://13066276
+// expected-warning@+1 {{'@returns' command used in a comment that is not attached to a function or method declaration}}
+/// @returns Aaa
+typedef unsigned int test_returns_wrong_decl_11;
+
+// rdar://13094352
+// expected-warning@+1 {{'@function' command should be used in a comment attached to a function declaration}}
+/*!	@function test_function
+*/
+typedef unsigned int Base64Flags;
+unsigned test_function(Base64Flags inFlags);
+
+// expected-warning@+1 {{'@callback' command should be used in a comment attached to a pointer to function declaration}}
+/*! @callback test_callback
+*/
+typedef unsigned int BaseFlags;
+unsigned (*test_callback)(BaseFlags inFlags);
 
 // expected-warning@+1 {{'\endverbatim' command does not terminate a verbatim text block}}
 /// \endverbatim
@@ -886,24 +922,3 @@ int test_nocrash12();
 // expected-warning@+1 {{empty paragraph passed to '@param' command}}
 ///@param x@param y
 int test_nocrash13(int x, int y);
-
-// rdar://12397511
-
-// expected-note@+2 {{previous command '\headerfile' here}}
-// expected-warning@+2 {{duplicated command '\headerfile'}}
-/// \headerfile "" 
-/// \headerfile foo.h 
-int test_duplicate_headerfile1(int);
-
-
-// rdar://13066276
-// expected-warning@+1 {{'@return' command used in a comment that is not attached to a function or method declaration}}
-/** @return s */
-struct s* f(void);
-struct s;
-
-// expected-warning@+1 {{'\return' command used in a comment that is not attached to a function or method declaration}}
-/** \return s */
-struct q* g(void);
-struct q;
-

@@ -2758,6 +2758,7 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
       Diag(ReturnLoc, DiagID) << getCurMethodDecl()->getDeclName() << 1/*meth*/;
     Result = new (Context) ReturnStmt(ReturnLoc);
   } else {
+    assert(RetValExp || FnRetType->isDependentType());
     const VarDecl *NRVOCandidate = 0;
     if (!FnRetType->isDependentType() && !RetValExp->isTypeDependent()) {
       // we have a non-void function with an expression, continue checking

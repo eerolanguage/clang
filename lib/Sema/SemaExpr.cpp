@@ -547,7 +547,7 @@ ExprResult Sema::UsualUnaryConversions(Expr *E) {
   // First, convert to an r-value.
   ExprResult Res = DefaultFunctionArrayLvalueConversion(E);
   if (Res.isInvalid())
-    return Owned(E);
+    return ExprError();
   E = Res.take();
 
   QualType Ty = E->getType();
@@ -598,7 +598,7 @@ ExprResult Sema::DefaultArgumentPromotion(Expr *E) {
 
   ExprResult Res = UsualUnaryConversions(E);
   if (Res.isInvalid())
-    return Owned(E);
+    return ExprError();
   E = Res.take();
 
   // If this is a 'float' or '__fp16' (CVR qualified or typedef) promote to
@@ -3346,33 +3346,56 @@ static bool checkArithmeticOnObjCPointer(Sema &S,
 }
 
 ExprResult
-Sema::ActOnArraySubscriptExpr(Scope *S, Expr *Base, SourceLocation LLoc,
-                              Expr *Idx, SourceLocation RLoc) {
+Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base, SourceLocation lbLoc,
+                              Expr *idx, SourceLocation rbLoc) {
   // Since this might be a postfix expression, get rid of ParenListExprs.
-  ExprResult Result = MaybeConvertParenListExprToParenExpr(S, Base);
-  if (Result.isInvalid()) return ExprError();
-  Base = Result.take();
+  if (isa<ParenListExpr>(base)) {
+    ExprResult result = MaybeConvertParenListExprToParenExpr(S, base);
+    if (result.isInvalid()) return ExprError();
+    base = result.take();
+  }
 
-  Expr *LHSExp = Base, *RHSExp = Idx;
+  // Handle any non-overload placeholder types in the base and index
+  // expressions.  We can't handle overloads here because the other
+  // operand might be an overloadable type, in which case the overload
+  // resolution for the operator overload should get the first crack
+  // at the overload.
+  if (base->getType()->isNonOverloadPlaceholderType()) {
+    ExprResult result = CheckPlaceholderExpr(base);
+    if (result.isInvalid()) return ExprError();
+    base = result.take();
+  }
+  if (idx->getType()->isNonOverloadPlaceholderType()) {
+    ExprResult result = CheckPlaceholderExpr(idx);
+    if (result.isInvalid()) return ExprError();
+    idx = result.take();
+  }
 
+  // Build an unanalyzed expression if either operand is type-dependent.
   if (getLangOpts().CPlusPlus &&
-      (LHSExp->isTypeDependent() || RHSExp->isTypeDependent())) {
-    return Owned(new (Context) ArraySubscriptExpr(LHSExp, RHSExp,
+      (base->isTypeDependent() || idx->isTypeDependent())) {
+    return Owned(new (Context) ArraySubscriptExpr(base, idx,
                                                   Context.DependentTy,
                                                   VK_LValue, OK_Ordinary,
-                                                  RLoc));
+                                                  rbLoc));
   }
 
+  // Use C++ overloaded-operator rules if either operand has record
+  // type.  The spec says to do this if either type is *overloadable*,
+  // but enum types can't declare subscript operators or conversion
+  // operators, so there's nothing interesting for overload resolution
+  // to do if there aren't any record types involved.
+  //
+  // ObjC pointers have their own subscripting logic that is not tied
+  // to overload resolution and so should not take this path.
   if (getLangOpts().CPlusPlus &&
-      (LHSExp->getType()->isRecordType() ||
-       LHSExp->getType()->isEnumeralType() ||
-       RHSExp->getType()->isRecordType() ||
-       RHSExp->getType()->isEnumeralType()) &&
-      !LHSExp->getType()->isObjCObjectPointerType()) {
-    return CreateOverloadedArraySubscriptExpr(LLoc, RLoc, Base, Idx);
+      (base->getType()->isRecordType() ||
+       (!base->getType()->isObjCObjectPointerType() &&
+        idx->getType()->isRecordType()))) {
+    return CreateOverloadedArraySubscriptExpr(lbLoc, rbLoc, base, idx);
   }
 
-  return CreateBuiltinArraySubscriptExpr(Base, LLoc, Idx, RLoc);
+  return CreateBuiltinArraySubscriptExpr(base, lbLoc, idx, rbLoc);
 }
 
 ExprResult
@@ -3817,11 +3840,8 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
     if (Proto->getResultType() == Context.UnknownAnyTy &&
         FDecl && FDecl->isExternC()) {
       for (unsigned i = ArgIx; i != NumArgs; ++i) {
-        ExprResult arg;
-        if (isa<ExplicitCastExpr>(Args[i]->IgnoreParens()))
-          arg = DefaultFunctionArrayLvalueConversion(Args[i]);
-        else
-          arg = DefaultVariadicArgumentPromotion(Args[i], CallType, FDecl);
+        QualType paramType; // ignored
+        ExprResult arg = checkUnknownAnyArg(CallLoc, Args[i], paramType);
         Invalid |= arg.isInvalid();
         AllArgs.push_back(arg.take());
       }
@@ -12073,20 +12093,27 @@ ExprResult Sema::forceUnknownAnyToType(Expr *E, QualType ToType) {
   return RebuildUnknownAnyExpr(*this, ToType).Visit(E);
 }
 
-QualType Sema::checkUnknownAnyArg(Expr *&arg) {
-  // Filter out placeholders.
-  ExprResult argR = CheckPlaceholderExpr(arg);
-  if (argR.isInvalid()) return QualType();
-  arg = argR.take();
-
-  // If the argument is an explicit cast, use that exact type as the
-  // effective parameter type.
-  if (ExplicitCastExpr *castArg = dyn_cast<ExplicitCastExpr>(arg)) {
-    return castArg->getTypeAsWritten();
+ExprResult Sema::checkUnknownAnyArg(SourceLocation callLoc,
+                                    Expr *arg, QualType &paramType) {
+  // If the syntactic form of the argument is not an explicit cast of
+  // any sort, just do default argument promotion.
+  ExplicitCastExpr *castArg = dyn_cast<ExplicitCastExpr>(arg->IgnoreParens());
+  if (!castArg) {
+    ExprResult result = DefaultArgumentPromotion(arg);
+    if (result.isInvalid()) return ExprError();
+    paramType = result.get()->getType();
+    return result;
   }
 
-  // Otherwise, try to pass by value.
-  return arg->getType().getUnqualifiedType();
+  // Otherwise, use the type that was written in the explicit cast.
+  assert(!arg->hasPlaceholderType());
+  paramType = castArg->getTypeAsWritten();
+
+  // Copy-initialize a parameter of that type.
+  InitializedEntity entity =
+    InitializedEntity::InitializeParameter(Context, paramType,
+                                           /*consumed*/ false);
+  return PerformCopyInitialization(entity, callLoc, Owned(arg));
 }
 
 static ExprResult diagnoseUnknownAnyExpr(Sema &S, Expr *E) {

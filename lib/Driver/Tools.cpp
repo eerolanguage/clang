@@ -456,11 +456,12 @@ static const char *getLLVMArchSuffixForARM(StringRef CPU) {
     .Cases("arm1136j-s",  "arm1136jf-s",  "arm1176jz-s", "v6")
     .Cases("arm1176jzf-s",  "mpcorenovfp",  "mpcore", "v6")
     .Cases("arm1156t2-s",  "arm1156t2f-s", "v6t2")
-    .Cases("cortex-a5", "cortex-a8", "cortex-a9", "cortex-a15", "v7")
+    .Cases("cortex-a5", "cortex-a7", "cortex-a8", "v7")
+    .Cases("cortex-a9", "cortex-a15", "v7")
     .Case("cortex-r5", "v7r")
-    .Case("cortex-m3", "v7m")
-    .Case("cortex-m4", "v7m")
     .Case("cortex-m0", "v6m")
+    .Case("cortex-m3", "v7m")
+    .Case("cortex-m4", "v7em")
     .Case("cortex-a9-mp", "v7f")
     .Case("swift", "v7s")
     .Default("");
@@ -516,7 +517,9 @@ static std::string getARMTargetCPU(const ArgList &Args,
     .Case("armv6j", "arm1136j-s")
     .Cases("armv6z", "armv6zk", "arm1176jzf-s")
     .Case("armv6t2", "arm1156t2-s")
+    .Cases("armv6m", "armv6-m", "cortex-m0")
     .Cases("armv7", "armv7a", "armv7-a", "cortex-a8")
+    .Cases("armv7em", "armv7e-m", "cortex-m4")
     .Cases("armv7f", "armv7-f", "cortex-a9-mp")
     .Cases("armv7s", "armv7-s", "swift")
     .Cases("armv7r", "armv7-r", "cortex-r4")
@@ -524,7 +527,6 @@ static std::string getARMTargetCPU(const ArgList &Args,
     .Case("ep9312", "ep9312")
     .Case("iwmmxt", "iwmmxt")
     .Case("xscale", "xscale")
-    .Cases("armv6m", "armv6-m", "cortex-m0")
     // If all else failed, return the most base CPU LLVM supports.
     .Default("arm7tdmi");
 }
@@ -596,8 +598,9 @@ static void addFPMathArgs(const Driver &D, const Arg *A, const ArgList &Args,
     CmdArgs.push_back("-target-feature");
     CmdArgs.push_back("+neonfp");
     
-    if (CPU != "cortex-a8" && CPU != "cortex-a9" && CPU != "cortex-a9-mp" &&
-        CPU != "cortex-a15" && CPU != "cortex-a5")
+    if (CPU != "cortex-a5" && CPU != "cortex-a7" &&
+        CPU != "cortex-a8" && CPU != "cortex-a9" &&
+        CPU != "cortex-a9-mp" && CPU != "cortex-a15")
       D.Diag(diag::err_drv_invalid_feature) << "-mfpmath=neon" << CPU;
     
   } else if (FPMath == "vfp" || FPMath == "vfp2" || FPMath == "vfp3" ||
@@ -4000,8 +4003,9 @@ llvm::Triple::ArchType darwin::getArchTypeForDarwinArchName(StringRef Str) {
            llvm::Triple::x86)
     .Case("x86_64", llvm::Triple::x86_64)
     // This is derived from the driver driver.
-    .Cases("arm", "armv4t", "armv5", "armv6", llvm::Triple::arm)
-    .Cases("armv7", "armv7f", "armv7k", "armv7s", "xscale", llvm::Triple::arm)
+    .Cases("arm", "armv4t", "armv5", "armv6", "armv6m", llvm::Triple::arm)
+    .Cases("armv7", "armv7em", "armv7f", "armv7k", "armv7m", llvm::Triple::arm)
+    .Cases("armv7s", "xscale", llvm::Triple::arm)
     .Case("r600", llvm::Triple::r600)
     .Case("nvptx", llvm::Triple::nvptx)
     .Case("nvptx64", llvm::Triple::nvptx64)
@@ -5631,8 +5635,8 @@ void linuxtools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
 static void AddLibgcc(llvm::Triple Triple, const Driver &D,
                       ArgStringList &CmdArgs, const ArgList &Args) {
   bool isAndroid = Triple.getEnvironment() == llvm::Triple::Android;
-  bool StaticLibgcc = Args.hasArg(options::OPT_static) ||
-                      Args.hasArg(options::OPT_static_libgcc);
+  bool StaticLibgcc = Args.hasArg(options::OPT_static_libgcc) ||
+                      Args.hasArg(options::OPT_static);
   if (!D.CCCIsCXX)
     CmdArgs.push_back("-lgcc");
 

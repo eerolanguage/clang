@@ -172,6 +172,28 @@ TEST_F(FormatTest, RemovesTrailingWhitespaceOfFormattedLine) {
             format("int a;  \nint b;    ", 0, 0, getLLVMStyle()));
 }
 
+TEST_F(FormatTest, FormatsCorrectRegionForLeadingWhitespace) {
+  EXPECT_EQ("int b;\nint a;",
+            format("int b;\n   int a;", 7, 0, getLLVMStyle()));
+  EXPECT_EQ("int b;\n   int a;",
+            format("int b;\n   int a;", 6, 0, getLLVMStyle()));
+
+  EXPECT_EQ("#define A  \\\n"
+            "  int a;   \\\n"
+            "  int b;",
+            format("#define A  \\\n"
+                   "  int a;   \\\n"
+                   "    int b;",
+                   26, 0, getLLVMStyleWithColumns(12)));
+  EXPECT_EQ("#define A  \\\n"
+            "  int a;   \\\n"
+            "    int b;",
+            format("#define A  \\\n"
+                   "  int a;   \\\n"
+                   "    int b;",
+                   25, 0, getLLVMStyleWithColumns(12)));
+}
+
 TEST_F(FormatTest, ReformatsMovedLines) {
   EXPECT_EQ(
       "template <typename T> T *getFETokenInfo() const {\n"
@@ -3021,6 +3043,14 @@ TEST_F(FormatTest, BreakStringLiterals) {
   EXPECT_EQ("\"some\"\n"
             "\" text\"",
             format("\"some text\"", getLLVMStyleWithColumns(6)));
+  EXPECT_EQ("\"some\"\n"
+            "\" tex\"\n"
+            "\" and\"",
+            format("\"some tex and\"", getLLVMStyleWithColumns(6)));
+  EXPECT_EQ("\"some\"\n"
+            "\"/tex\"\n"
+            "\"/and\"",
+            format("\"some/tex/and\"", getLLVMStyleWithColumns(6)));
 
   EXPECT_EQ("variable =\n"
             "    \"long string \"\n"
