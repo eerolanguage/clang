@@ -1602,18 +1602,21 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
   }
 
   case Type::Atomic: {
+    // Start with the base type information.
     std::pair<uint64_t, unsigned> Info
       = getTypeInfo(cast<AtomicType>(T)->getValueType());
     Width = Info.first;
     Align = Info.second;
-    if (Width != 0 && Width <= Target->getMaxAtomicPromoteWidth() &&
-        llvm::isPowerOf2_64(Width)) {
-      // We can potentially perform lock-free atomic operations for this
-      // type; promote the alignment appropriately.
-      // FIXME: We could potentially promote the width here as well...
-      // is that worthwhile?  (Non-struct atomic types generally have
-      // power-of-two size anyway, but structs might not.  Requires a bit
-      // of implementation work to make sure we zero out the extra bits.)
+
+    // If the size of the type doesn't exceed the platform's max
+    // atomic promotion width, make the size and alignment more
+    // favorable to atomic operations:
+    if (Width != 0 && Width <= Target->getMaxAtomicPromoteWidth()) {
+      // Round the size up to a power of 2.
+      if (!llvm::isPowerOf2_64(Width))
+        Width = llvm::NextPowerOf2(Width);
+
+      // Set the alignment equal to the size.
       Align = static_cast<unsigned>(Width);
     }
   }
@@ -1971,8 +1974,10 @@ const FunctionType *ASTContext::adjustFunctionType(const FunctionType *T,
     const FunctionProtoType *FPT = cast<FunctionProtoType>(T);
     FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
     EPI.ExtInfo = Info;
-    Result = getFunctionType(FPT->getResultType(), FPT->arg_type_begin(),
-                             FPT->getNumArgs(), EPI);
+    Result = getFunctionType(FPT->getResultType(),
+                             ArrayRef<QualType>(FPT->arg_type_begin(),
+                                                FPT->getNumArgs()),
+                             EPI);
   }
 
   return cast<FunctionType>(Result.getTypePtr());
@@ -2637,13 +2642,15 @@ static bool isCanonicalResultType(QualType T) {
 /// getFunctionType - Return a normal function type with a typed argument
 /// list.  isVariadic indicates whether the argument list includes '...'.
 QualType
-ASTContext::getFunctionType(QualType ResultTy,
-                            const QualType *ArgArray, unsigned NumArgs,
+ASTContext::getFunctionType(QualType ResultTy, ArrayRef<QualType> ArgArray,
                             const FunctionProtoType::ExtProtoInfo &EPI) const {
+  size_t NumArgs = ArgArray.size();
+
   // Unique functions, to guarantee there is only one function of a particular
   // structure.
   llvm::FoldingSetNodeID ID;
-  FunctionProtoType::Profile(ID, ResultTy, ArgArray, NumArgs, EPI, *this);
+  FunctionProtoType::Profile(ID, ResultTy, ArgArray.begin(), NumArgs, EPI,
+                             *this);
 
   void *InsertPos = 0;
   if (FunctionProtoType *FTP =
@@ -2686,9 +2693,7 @@ ASTContext::getFunctionType(QualType ResultTy,
       CanResultTy = getQualifiedType(CanResultTy.getUnqualifiedType(), Qs);
     }
 
-    Canonical = getFunctionType(CanResultTy,
-                                CanonicalArgs.data(), NumArgs,
-                                CanonicalEPI);
+    Canonical = getFunctionType(CanResultTy, CanonicalArgs, CanonicalEPI);
 
     // Get the new insert position for the node we care about.
     FunctionProtoType *NewIP =
@@ -2721,7 +2726,7 @@ ASTContext::getFunctionType(QualType ResultTy,
   FunctionProtoType *FTP = (FunctionProtoType*) Allocate(Size, TypeAlignment);
   FunctionProtoType::ExtProtoInfo newEPI = EPI;
   newEPI.ExtInfo = EPI.ExtInfo.withCallingConv(CallConv);
-  new (FTP) FunctionProtoType(ResultTy, ArgArray, NumArgs, Canonical, newEPI);
+  new (FTP) FunctionProtoType(ResultTy, ArgArray, Canonical, newEPI);
   Types.push_back(FTP);
   FunctionProtoTypes.InsertNode(FTP, InsertPos);
   return QualType(FTP, 0);
@@ -6791,7 +6796,7 @@ QualType ASTContext::mergeFunctionTypes(QualType lhs, QualType rhs,
 
     FunctionProtoType::ExtProtoInfo EPI = lproto->getExtProtoInfo();
     EPI.ExtInfo = einfo;
-    return getFunctionType(retType, types.begin(), types.size(), EPI);
+    return getFunctionType(retType, types, EPI);
   }
 
   if (lproto) allRTypes = false;
@@ -6828,8 +6833,10 @@ QualType ASTContext::mergeFunctionTypes(QualType lhs, QualType rhs,
 
     FunctionProtoType::ExtProtoInfo EPI = proto->getExtProtoInfo();
     EPI.ExtInfo = einfo;
-    return getFunctionType(retType, proto->arg_type_begin(),
-                           proto->getNumArgs(), EPI);
+    return getFunctionType(retType,
+                           ArrayRef<QualType>(proto->arg_type_begin(),
+                                              proto->getNumArgs()),
+                           EPI);
   }
 
   if (allLTypes) return lhs;
@@ -7162,8 +7169,10 @@ QualType ASTContext::mergeObjCGCQualifiers(QualType LHS, QualType RHS) {
         FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
         EPI.ExtInfo = getFunctionExtInfo(LHS);
         QualType ResultType
-          = getFunctionType(OldReturnType, FPT->arg_type_begin(),
-                            FPT->getNumArgs(), EPI);
+          = getFunctionType(OldReturnType,
+                            ArrayRef<QualType>(FPT->arg_type_begin(),
+                                               FPT->getNumArgs()),
+                            EPI);
         return ResultType;
       }
     }
@@ -7555,7 +7564,7 @@ QualType ASTContext::GetBuiltinType(unsigned Id,
   EPI.ExtInfo = EI;
   EPI.Variadic = Variadic;
 
-  return getFunctionType(ResType, ArgTypes.data(), ArgTypes.size(), EPI);
+  return getFunctionType(ResType, ArgTypes, EPI);
 }
 
 GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) {

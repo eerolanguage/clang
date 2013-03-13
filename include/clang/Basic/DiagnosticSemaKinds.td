@@ -1680,6 +1680,8 @@ def err_attribute_argument_outof_range : Error<
 def err_init_priority_object_attr : Error<
   "can only use 'init_priority' attribute on file-scope definitions "
   "of objects of class type">;
+def err_attribute_argument_vec_type_hint : Error<
+  "invalid attribute argument %0 - expecting a vector or vectorizable scalar type">;
 def err_attribute_argument_n_not_int : Error<
   "'%0' attribute requires parameter %1 to be an integer constant">;
 def err_attribute_argument_n_not_string : Error<

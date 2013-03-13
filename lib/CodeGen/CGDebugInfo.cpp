@@ -1314,7 +1314,7 @@ llvm::DIType CGDebugInfo::getOrCreateInterfaceType(QualType D,
                                                    SourceLocation Loc) {
   assert(CGM.getCodeGenOpts().getDebugInfo() >= CodeGenOptions::LimitedDebugInfo);
   llvm::DIType T = getOrCreateType(D, getOrCreateFile(Loc));
-  DBuilder.retainType(T);
+  RetainedTypes.push_back(D.getAsOpaquePtr());
   return T;
 }
 
@@ -1343,7 +1343,7 @@ llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty) {
   LexicalBlockStack.push_back(FwdDeclNode);
   RegionMap[Ty->getDecl()] = llvm::WeakVH(FwdDecl);
 
-  // Add this to the completed types cache since we're completing it.
+  // Add this to the completed-type cache while we're completing it recursively.
   CompletedTypeCache[QualType(Ty, 0).getAsOpaquePtr()] = FwdDecl;
 
   // Convert all the elements.
@@ -1436,7 +1436,8 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
 
   // Otherwise, insert it into the CompletedTypeCache so that recursive uses
   // will find it and we're emitting the complete type.
-  CompletedTypeCache[QualType(Ty, 0).getAsOpaquePtr()] = RealDecl;
+  QualType QualTy = QualType(Ty, 0);
+  CompletedTypeCache[QualTy.getAsOpaquePtr()] = RealDecl;
   // Push the struct on region stack.
   llvm::TrackingVH<llvm::MDNode> FwdDeclNode(RealDecl);
 
@@ -1561,6 +1562,12 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
 
   llvm::DIArray Elements = DBuilder.getOrCreateArray(EltTys);
   FwdDeclNode->replaceOperandWith(10, Elements);
+
+  // If the implementation is not yet set, we do not want to mark it
+  // as complete. An implementation may declare additional
+  // private ivars that we would miss otherwise.
+  if (ID->getImplementation() == 0)
+    CompletedTypeCache.erase(QualTy.getAsOpaquePtr());
   
   LexicalBlockStack.pop_back();
   return llvm::DIType(FwdDeclNode);
@@ -1771,6 +1778,13 @@ llvm::DIType CGDebugInfo::getTypeOrNull(QualType Ty) {
   Ty = UnwrapTypeForDebugInfo(Ty, CGM.getContext());
   
   // Check for existing entry.
+  if (Ty->getTypeClass() == Type::ObjCInterface) {
+    llvm::Value *V = getCachedInterfaceTypeOrNull(Ty);
+    if (V)
+      return llvm::DIType(cast<llvm::MDNode>(V));
+    else return llvm::DIType();
+  }
+
   llvm::DenseMap<void *, llvm::WeakVH>::iterator it =
     TypeCache.find(Ty.getAsOpaquePtr());
   if (it != TypeCache.end()) {
@@ -1790,17 +1804,37 @@ llvm::DIType CGDebugInfo::getCompletedTypeOrNull(QualType Ty) {
   Ty = UnwrapTypeForDebugInfo(Ty, CGM.getContext());
 
   // Check for existing entry.
+  llvm::Value *V = 0;
   llvm::DenseMap<void *, llvm::WeakVH>::iterator it =
     CompletedTypeCache.find(Ty.getAsOpaquePtr());
-  if (it != CompletedTypeCache.end()) {
-    // Verify that the debug info still exists.
-    if (llvm::Value *V = it->second)
-      return llvm::DIType(cast<llvm::MDNode>(V));
+  if (it != CompletedTypeCache.end())
+    V = it->second;
+  else {
+    V = getCachedInterfaceTypeOrNull(Ty);
   }
+
+  // Verify that any cached debug info still exists.
+  if (V != 0)
+    return llvm::DIType(cast<llvm::MDNode>(V));
 
   return llvm::DIType();
 }
 
+/// getCachedInterfaceTypeOrNull - Get the type from the interface
+/// cache, unless it needs to regenerated. Otherwise return null.
+llvm::Value *CGDebugInfo::getCachedInterfaceTypeOrNull(QualType Ty) {
+  // Is there a cached interface that hasn't changed?
+  llvm::DenseMap<void *, std::pair<llvm::WeakVH, unsigned > >
+    ::iterator it1 = ObjCInterfaceCache.find(Ty.getAsOpaquePtr());
+
+  if (it1 != ObjCInterfaceCache.end())
+    if (ObjCInterfaceDecl* Decl = getObjCInterfaceDecl(Ty))
+      if (Checksum(Decl) == it1->second.second)
+        // Return cached forward declaration.
+        return it1->second.first;
+
+  return 0;
+}
 
 /// getOrCreateType - Get the type from the cache or create a new
 /// one if necessary.
@@ -1818,19 +1852,61 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
 
   // Otherwise create the type.
   llvm::DIType Res = CreateTypeNode(Ty, Unit);
+  void* TyPtr = Ty.getAsOpaquePtr();
+
+  // And update the type cache.
+  TypeCache[TyPtr] = Res;
 
   llvm::DIType TC = getTypeOrNull(Ty);
   if (TC.Verify() && TC.isForwardDecl())
-    ReplaceMap.push_back(std::make_pair(Ty.getAsOpaquePtr(),
-                                        static_cast<llvm::Value*>(TC)));
-  
-  // And update the type cache.
-  TypeCache[Ty.getAsOpaquePtr()] = Res;
+    ReplaceMap.push_back(std::make_pair(TyPtr, static_cast<llvm::Value*>(TC)));
+  else if (ObjCInterfaceDecl* Decl = getObjCInterfaceDecl(Ty)) {
+    // Interface types may have elements added to them by a
+    // subsequent implementation or extension, so we keep them in
+    // the ObjCInterfaceCache together with a checksum. Instead of
+    // the (possibly) incomplete interace type, we return a forward
+    // declaration that gets RAUW'd in CGDebugInfo::finalize().
+    llvm::DenseMap<void *, std::pair<llvm::WeakVH, unsigned > >
+      ::iterator it = ObjCInterfaceCache.find(TyPtr);
+    if (it != ObjCInterfaceCache.end())
+      TC = llvm::DIType(cast<llvm::MDNode>(it->second.first));
+    else
+      TC = DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
+				      Decl->getName(), TheCU, Unit,
+				      getLineNumber(Decl->getLocation()),
+				      TheCU.getLanguage());
+    // Store the forward declaration in the cache.
+    ObjCInterfaceCache[TyPtr] = std::make_pair(TC, Checksum(Decl));
+
+    // Register the type for replacement in finalize().
+    ReplaceMap.push_back(std::make_pair(TyPtr, static_cast<llvm::Value*>(TC)));
+    return TC;
+  }
 
   if (!Res.isForwardDecl())
-    CompletedTypeCache[Ty.getAsOpaquePtr()] = Res;
+    CompletedTypeCache[TyPtr] = Res;
 
   return Res;
+}
+
+/// Currently the checksum merely consists of the number of ivars.
+unsigned CGDebugInfo::Checksum(const ObjCInterfaceDecl
+			       *InterfaceDecl) {
+  unsigned IvarNo = 0;
+  for (const ObjCIvarDecl *Ivar = InterfaceDecl->all_declared_ivar_begin();
+       Ivar != 0; Ivar = Ivar->getNextIvar()) ++IvarNo;
+  return IvarNo;
+}
+
+ObjCInterfaceDecl *CGDebugInfo::getObjCInterfaceDecl(QualType Ty) {
+  switch (Ty->getTypeClass()) {
+  case Type::ObjCObjectPointer:
+    return getObjCInterfaceDecl(cast<ObjCObjectPointerType>(Ty)->getPointeeType());
+  case Type::ObjCInterface:
+    return cast<ObjCInterfaceType>(Ty)->getDecl();
+  default:
+    return 0;
+  }
 }
 
 /// CreateTypeNode - Create a new debug type node.
@@ -2878,10 +2954,17 @@ void CGDebugInfo::finalize() {
       if (llvm::Value *V = it->second)
         RepTy = llvm::DIType(cast<llvm::MDNode>(V));
     }
-    
+
     if (Ty.Verify() && Ty.isForwardDecl() && RepTy.Verify()) {
       Ty.replaceAllUsesWith(RepTy);
     }
   }
+
+  // We keep our own list of retained types, because we need to look
+  // up the final type in the type cache.
+  for (std::vector<void *>::const_iterator RI = RetainedTypes.begin(),
+         RE = RetainedTypes.end(); RI != RE; ++RI)
+    DBuilder.retainType(llvm::DIType(cast<llvm::MDNode>(TypeCache[*RI])));
+
   DBuilder.finalize();
 }

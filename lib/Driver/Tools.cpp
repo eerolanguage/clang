@@ -1429,12 +1429,18 @@ static bool ShouldDisableCFI(const ArgList &Args,
                        Default);
 }
 
-static bool ShouldDisableDwarfDirectory(const ArgList &Args,
-                                        const ToolChain &TC) {
+static bool ShouldUseIntegratedAssembler(const ArgList &Args,
+                                         const ToolChain &TC) {
   bool IsIADefault = TC.IsIntegratedAssemblerDefault();
   bool UseIntegratedAs = Args.hasFlag(options::OPT_integrated_as,
                                       options::OPT_no_integrated_as,
                                       IsIADefault);
+  return UseIntegratedAs;
+}
+
+static bool ShouldDisableDwarfDirectory(const ArgList &Args,
+                                        const ToolChain &TC) {
+  bool UseIntegratedAs = ShouldUseIntegratedAssembler(Args, TC);
   bool UseDwarfDirectory = Args.hasFlag(options::OPT_fdwarf_directory_asm,
                                         options::OPT_fno_dwarf_directory_asm,
                                         UseIntegratedAs);
@@ -2334,8 +2340,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (Output.isFilename()) {
       CmdArgs.push_back("-coverage-file");
       SmallString<128> CoverageFilename(Output.getFilename());
-      if (!C.getArgs().hasArg(options::OPT_no_canonical_prefixes))
-        llvm::sys::fs::make_absolute(CoverageFilename);
+      if (llvm::sys::path::is_relative(CoverageFilename.str())) {
+        if (const char *pwd = ::getenv("PWD")) {
+          if (llvm::sys::path::is_absolute(pwd)) {
+            SmallString<128> Pwd(pwd);
+            llvm::sys::path::append(Pwd, CoverageFilename.str());
+            CoverageFilename.swap(Pwd);
+          }
+        }
+      }
       CmdArgs.push_back(Args.MakeArgString(CoverageFilename));
     }
   }
@@ -2772,6 +2785,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (AllowedInCXX || !types::isCXX(InputType)) {
       CmdArgs.push_back("-fmodules");
       HaveModules = true;
+    }
+
+    if (HaveModules && !ShouldUseIntegratedAssembler(Args, getToolChain())) {
+      D.Diag(diag::err_drv_modules_integrated_as);
+      D.Diag(diag::note_drv_modules_integrated_as);
+      return;
     }
   }
 

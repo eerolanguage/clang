@@ -1632,7 +1632,9 @@ void Lexer::LexStringLiteral(Token &Result, const char *CurPtr,
       (Kind == tok::utf8_string_literal ||
        Kind == tok::utf16_string_literal ||
        Kind == tok::utf32_string_literal))
-    Diag(BufferPtr, diag::warn_cxx98_compat_unicode_literal);
+    Diag(BufferPtr, getLangOpts().CPlusPlus
+           ? diag::warn_cxx98_compat_unicode_literal
+           : diag::warn_c99_compat_unicode_literal);
 
   char C = getAndAdvanceChar(CurPtr, Result);
   while (C != '"') {
@@ -1797,7 +1799,9 @@ void Lexer::LexCharConstant(Token &Result, const char *CurPtr,
 
   if (!isLexingRawMode() &&
       (Kind == tok::utf16_char_constant || Kind == tok::utf32_char_constant))
-    Diag(BufferPtr, diag::warn_cxx98_compat_unicode_literal);
+    Diag(BufferPtr, getLangOpts().CPlusPlus
+           ? diag::warn_cxx98_compat_unicode_literal
+           : diag::warn_c99_compat_unicode_literal);
 
   char C = getAndAdvanceChar(CurPtr, Result);
   if (C == '\'' && 
@@ -2852,11 +2856,11 @@ LexNextToken:
     MIOpt.ReadToken();
     return LexNumericConstant(Result, CurPtr);
 
-  case 'u':   // Identifier (uber) or C++0x UTF-8 or UTF-16 string literal
+  case 'u':   // Identifier (uber) or C11/C++11 UTF-8 or UTF-16 string literal
     // Notify MIOpt that we read a non-whitespace/non-comment token.
     MIOpt.ReadToken();
 
-    if (LangOpts.CPlusPlus11) {
+    if (LangOpts.CPlusPlus11 || LangOpts.C11) {
       Char = getCharAndSize(CurPtr, SizeTmp);
 
       // UTF-16 string literal
@@ -2870,7 +2874,8 @@ LexNextToken:
                                tok::utf16_char_constant);
 
       // UTF-16 raw string literal
-      if (Char == 'R' && getCharAndSize(CurPtr + SizeTmp, SizeTmp2) == '"')
+      if (Char == 'R' && LangOpts.CPlusPlus11 &&
+          getCharAndSize(CurPtr + SizeTmp, SizeTmp2) == '"')
         return LexRawStringLiteral(Result,
                                ConsumeChar(ConsumeChar(CurPtr, SizeTmp, Result),
                                            SizeTmp2, Result),
@@ -2886,7 +2891,7 @@ LexNextToken:
                                            SizeTmp2, Result),
                                tok::utf8_string_literal);
 
-        if (Char2 == 'R') {
+        if (Char2 == 'R' && LangOpts.CPlusPlus11) {
           unsigned SizeTmp3;
           char Char3 = getCharAndSize(CurPtr + SizeTmp + SizeTmp2, SizeTmp3);
           // UTF-8 raw string literal
@@ -2904,11 +2909,11 @@ LexNextToken:
     // treat u like the start of an identifier.
     return LexIdentifier(Result, CurPtr);
 
-  case 'U':   // Identifier (Uber) or C++0x UTF-32 string literal
+  case 'U':   // Identifier (Uber) or C11/C++11 UTF-32 string literal
     // Notify MIOpt that we read a non-whitespace/non-comment token.
     MIOpt.ReadToken();
 
-    if (LangOpts.CPlusPlus11) {
+    if (LangOpts.CPlusPlus11 || LangOpts.C11) {
       Char = getCharAndSize(CurPtr, SizeTmp);
 
       // UTF-32 string literal
@@ -2922,7 +2927,8 @@ LexNextToken:
                                tok::utf32_char_constant);
 
       // UTF-32 raw string literal
-      if (Char == 'R' && getCharAndSize(CurPtr + SizeTmp, SizeTmp2) == '"')
+      if (Char == 'R' && LangOpts.CPlusPlus11 &&
+          getCharAndSize(CurPtr + SizeTmp, SizeTmp2) == '"')
         return LexRawStringLiteral(Result,
                                ConsumeChar(ConsumeChar(CurPtr, SizeTmp, Result),
                                            SizeTmp2, Result),

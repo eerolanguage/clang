@@ -944,12 +944,39 @@ public:
                           SourceRange Brackets, DeclarationName Entity);
   QualType BuildExtVectorType(QualType T, Expr *ArraySize,
                               SourceLocation AttrLoc);
+
+  /// \brief Build a function type.
+  ///
+  /// This routine checks the function type according to C++ rules and
+  /// under the assumption that the result type and parameter types have
+  /// just been instantiated from a template. It therefore duplicates
+  /// some of the behavior of GetTypeForDeclarator, but in a much
+  /// simpler form that is only suitable for this narrow use case.
+  ///
+  /// \param T The return type of the function.
+  ///
+  /// \param ParamTypes The parameter types of the function. This array
+  /// will be modified to account for adjustments to the types of the
+  /// function parameters.
+  ///
+  /// \param Loc The location of the entity whose type involves this
+  /// function type or, if there is no such entity, the location of the
+  /// type that will have function type.
+  ///
+  /// \param Entity The name of the entity that involves the function
+  /// type, if known.
+  ///
+  /// \param EPI Extra information about the function type. Usually this will
+  /// be taken from an existing function with the same prototype.
+  ///
+  /// \returns A suitable function type, if there are no errors. The
+  /// unqualified type will always be a FunctionProtoType.
+  /// Otherwise, returns a NULL type.
   QualType BuildFunctionType(QualType T,
-                             QualType *ParamTypes, unsigned NumParamTypes,
-                             bool Variadic, bool HasTrailingReturn,
-                             unsigned Quals, RefQualifierKind RefQualifier,
+                             llvm::MutableArrayRef<QualType> ParamTypes,
                              SourceLocation Loc, DeclarationName Entity,
-                             FunctionType::ExtInfo Info);
+                             const FunctionProtoType::ExtProtoInfo &EPI);
+
   QualType BuildMemberPointerType(QualType T, QualType Class,
                                   SourceLocation Loc,
                                   DeclarationName Entity);

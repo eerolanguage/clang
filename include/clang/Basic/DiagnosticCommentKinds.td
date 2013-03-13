@@ -73,19 +73,22 @@ def warn_doc_param_not_attached_to_a_function_decl : Warning<
   "a function declaration">,
   InGroup<Documentation>, DefaultIgnore;
 
-def warn_doc_function_not_attached_to_a_function_decl : Warning<
-  "'%select{\\|@}0function' command should be used in a comment attached to a "
-  "function declaration">,
+def warn_doc_function_method_decl_mismatch : Warning<
+  "'%select{\\|@}0%select{function|method|callback}1' command should be "
+  "used in a comment attached to "
+  "%select{a function|an Objective-C method|a pointer to function}2 declaration">,
   InGroup<Documentation>, DefaultIgnore;
   
-def warn_doc_callback_not_attached_to_a_function_ptr_decl : Warning<
-  "'%select{\\|@}0callback' command should be used in a comment attached to a "
-  "pointer to function declaration">,
+def warn_doc_api_container_decl_mismatch : Warning<
+  "'%select{\\|@}0%select{class|interface|protocol|struct|union}1' "
+  "command should not be used in a comment attached to a "
+  "non-%select{class|interface|protocol|struct|union}2 declaration">,
   InGroup<Documentation>, DefaultIgnore;
-
-def warn_doc_method_not_attached_to_a_objc_method_decl : Warning<
-  "'%select{\\|@}0method' command should be used in a comment attached to an "
-  "objective-c method declaration">,
+  
+def warn_doc_container_decl_mismatch : Warning<
+  "'%select{\\|@}0%select{classdesign|coclass|dependency|helper"
+  "|helperclass|helps|instancesize|ownership|performance|security|superclass}1' "
+  "command should not be used in a comment attached to a non-container declaration">,
   InGroup<Documentation>, DefaultIgnore;
   
 def warn_doc_param_duplicate : Warning<

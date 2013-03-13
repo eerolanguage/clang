@@ -2417,15 +2417,10 @@ Sema::SubstituteExplicitTemplateArguments(
     return TDK_SubstitutionFailure;
 
   if (FunctionType) {
-    *FunctionType = BuildFunctionType(ResultType,
-                                      ParamTypes.data(), ParamTypes.size(),
-                                      Proto->isVariadic(),
-                                      Proto->hasTrailingReturn(),
-                                      Proto->getTypeQuals(),
-                                      Proto->getRefQualifier(),
+    *FunctionType = BuildFunctionType(ResultType, ParamTypes,
                                       Function->getLocation(),
                                       Function->getDeclName(),
-                                      Proto->getExtInfo());
+                                      Proto->getExtProtoInfo());
     if (FunctionType->isNull() || Trap.hasErrorOccurred())
       return TDK_SubstitutionFailure;
   }

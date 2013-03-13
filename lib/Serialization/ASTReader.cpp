@@ -41,6 +41,7 @@
 #include "clang/Serialization/GlobalModuleIndex.h"
 #include "clang/Serialization/ModuleManager.h"
 #include "clang/Serialization/SerializationDiagnostic.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Bitcode/BitstreamReader.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -1294,24 +1295,28 @@ ASTReader::getGlobalPreprocessedEntityID(ModuleFile &M, unsigned LocalID) const 
   return LocalID + I->second;
 }
 
-unsigned HeaderFileInfoTrait::ComputeHash(const char *path) {
-  return llvm::HashString(llvm::sys::path::filename(path));
+unsigned HeaderFileInfoTrait::ComputeHash(internal_key_ref ikey) {
+  return llvm::hash_combine(ikey.Size, ikey.ModTime);
 }
     
 HeaderFileInfoTrait::internal_key_type 
-HeaderFileInfoTrait::GetInternalKey(const char *path) { return path; }
+HeaderFileInfoTrait::GetInternalKey(const FileEntry *FE) {
+  internal_key_type ikey = { FE->getSize(), FE->getModificationTime(),
+                             FE->getName() };
+  return ikey;
+}
     
-bool HeaderFileInfoTrait::EqualKey(internal_key_type a, internal_key_type b) {
-  if (strcmp(a, b) == 0)
-    return true;
-  
-  if (llvm::sys::path::filename(a) != llvm::sys::path::filename(b))
+bool HeaderFileInfoTrait::EqualKey(internal_key_ref a, internal_key_ref b) {
+  if (a.Size != b.Size || a.ModTime != b.ModTime)
     return false;
 
+  if (strcmp(a.Filename, b.Filename) == 0)
+    return true;
+  
   // Determine whether the actual files are equivalent.
   FileManager &FileMgr = Reader.getFileManager();
-  const FileEntry *FEA = FileMgr.getFile(a);
-  const FileEntry *FEB = FileMgr.getFile(b);
+  const FileEntry *FEA = FileMgr.getFile(a.Filename);
+  const FileEntry *FEB = FileMgr.getFile(b.Filename);
   return (FEA && FEA == FEB);
 }
     
@@ -1319,11 +1324,20 @@ std::pair<unsigned, unsigned>
 HeaderFileInfoTrait::ReadKeyDataLength(const unsigned char*& d) {
   unsigned KeyLen = (unsigned) clang::io::ReadUnalignedLE16(d);
   unsigned DataLen = (unsigned) *d++;
-  return std::make_pair(KeyLen + 1, DataLen);
+  return std::make_pair(KeyLen, DataLen);
 }
-    
+
+HeaderFileInfoTrait::internal_key_type
+HeaderFileInfoTrait::ReadKey(const unsigned char *d, unsigned) {
+  internal_key_type ikey;
+  ikey.Size = off_t(clang::io::ReadUnalignedLE64(d));
+  ikey.ModTime = time_t(clang::io::ReadUnalignedLE64(d));
+  ikey.Filename = (const char *)d;
+  return ikey;
+}
+
 HeaderFileInfoTrait::data_type 
-HeaderFileInfoTrait::ReadData(const internal_key_type, const unsigned char *d,
+HeaderFileInfoTrait::ReadData(internal_key_ref, const unsigned char *d,
                               unsigned DataLen) {
   const unsigned char *End = d + DataLen;
   using namespace clang::io;
@@ -1588,7 +1602,7 @@ InputFile ASTReader::getInputFile(ModuleFile &F, unsigned ID, bool Complain) {
 #endif
          )) {
       if (Complain)
-        Error(diag::err_fe_pch_file_modified, Filename);
+        Error(diag::err_fe_pch_file_modified, Filename, F.FileName);
       IsOutOfDate = true;
     }
 
@@ -1666,10 +1680,12 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       Error("malformed block record in AST file");
       return Failure;
     case llvm::BitstreamEntry::EndBlock:
-      // Validate all of the input files.
+      // Validate all of the non-system input files.
       if (!DisableValidation) {
         bool Complain = (ClientLoadCapabilities & ARR_OutOfDate) == 0;
-        for (unsigned I = 0, N = Record[0]; I < N; ++I) {
+        // All user input files reside at the index range [0, Record[1]).
+        // Record is the one from INPUT_FILE_OFFSETS.
+        for (unsigned I = 0, N = Record[1]; I < N; ++I) {
           InputFile IF = getInputFile(F, I+1, Complain);
           if (!IF.getFile() || IF.isOutOfDate())
             return OutOfDate;
@@ -2476,7 +2492,6 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
     case HEADER_SEARCH_TABLE: {
       F.HeaderFileInfoTableData = Blob.data();
       F.LocalNumHeaderFileInfos = Record[1];
-      F.HeaderFileFrameworkStrings = Blob.data() + Record[2];
       if (Record[0]) {
         F.HeaderFileInfoTable
           = HeaderFileInfoLookupTable::Create(
@@ -3985,7 +4000,7 @@ ASTReader::findBeginPreprocessedEntity(SourceLocation BLoc) const {
 
   GlobalSLocOffsetMapType::const_iterator
     SLocMapI = GlobalSLocOffsetMap.find(SourceManager::MaxLoadedOffset -
-                                        BLoc.getOffset());
+                                        BLoc.getOffset() - 1);
   assert(SLocMapI != GlobalSLocOffsetMap.end() &&
          "Corrupted global sloc offset map");
 
@@ -4033,7 +4048,7 @@ ASTReader::findEndPreprocessedEntity(SourceLocation ELoc) const {
 
   GlobalSLocOffsetMapType::const_iterator
     SLocMapI = GlobalSLocOffsetMap.find(SourceManager::MaxLoadedOffset -
-                                        ELoc.getOffset());
+                                        ELoc.getOffset() - 1);
   assert(SLocMapI != GlobalSLocOffsetMap.end() &&
          "Corrupted global sloc offset map");
 
@@ -4092,23 +4107,17 @@ Optional<bool> ASTReader::isPreprocessedEntityInFileID(unsigned Index,
 namespace {
   /// \brief Visitor used to search for information about a header file.
   class HeaderFileInfoVisitor {
-    ASTReader &Reader;
     const FileEntry *FE;
     
     Optional<HeaderFileInfo> HFI;
     
   public:
-    HeaderFileInfoVisitor(ASTReader &Reader, const FileEntry *FE)
-      : Reader(Reader), FE(FE) { }
+    explicit HeaderFileInfoVisitor(const FileEntry *FE)
+      : FE(FE) { }
     
     static bool visit(ModuleFile &M, void *UserData) {
       HeaderFileInfoVisitor *This
         = static_cast<HeaderFileInfoVisitor *>(UserData);
-      
-      HeaderFileInfoTrait Trait(This->Reader, M, 
-                                &This->Reader.getPreprocessor().getHeaderSearchInfo(),
-                                M.HeaderFileFrameworkStrings,
-                                This->FE->getName());
       
       HeaderFileInfoLookupTable *Table
         = static_cast<HeaderFileInfoLookupTable *>(M.HeaderFileInfoTable);
@@ -4116,8 +4125,7 @@ namespace {
         return false;
 
       // Look in the on-disk hash table for an entry for this file name.
-      HeaderFileInfoLookupTable::iterator Pos = Table->find(This->FE->getName(),
-                                                            &Trait);
+      HeaderFileInfoLookupTable::iterator Pos = Table->find(This->FE);
       if (Pos == Table->end())
         return false;
 
@@ -4130,7 +4138,7 @@ namespace {
 }
 
 HeaderFileInfo ASTReader::GetHeaderFileInfo(const FileEntry *FE) {
-  HeaderFileInfoVisitor Visitor(*this, FE);
+  HeaderFileInfoVisitor Visitor(FE);
   ModuleMgr.visit(&HeaderFileInfoVisitor::visit, &Visitor);
   if (Optional<HeaderFileInfo> HFI = Visitor.getHeaderFileInfo()) {
     if (Listener)
@@ -4387,8 +4395,7 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
     } else if (EST == EST_Unevaluated) {
       EPI.ExceptionSpecDecl = ReadDeclAs<FunctionDecl>(*Loc.F, Record, Idx);
     }
-    return Context.getFunctionType(ResultType, ParamTypes.data(), NumParams,
-                                    EPI);
+    return Context.getFunctionType(ResultType, ParamTypes, EPI);
   }
 
   case TYPE_UNRESOLVED_USING: {

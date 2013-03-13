@@ -3493,7 +3493,7 @@ bool UnnamedLocalNoLinkageFinder::VisitTagDecl(const TagDecl *Tag) {
     return true;
   }
 
-  if (!Tag->getDeclName() && !Tag->getTypedefNameForAnonDecl()) {
+  if (!Tag->hasNameForLinkage()) {
     S.Diag(SR.getBegin(),
            S.getLangOpts().CPlusPlus11 ?
              diag::warn_cxx98_compat_template_arg_unnamed_type :
@@ -5648,11 +5648,15 @@ Decl *Sema::ActOnStartOfFunctionTemplateDef(Scope *FnBodyScope,
 /// \brief Strips various properties off an implicit instantiation
 /// that has just been explicitly specialized.
 static void StripImplicitInstantiation(NamedDecl *D) {
-  // FIXME: "make check" is clean if the call to dropAttrs() is commented out.
   D->dropAttrs();
 
   if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
     FD->setInlineSpecified(false);
+
+    for (FunctionDecl::param_iterator I = FD->param_begin(),
+                                      E = FD->param_end();
+         I != E; ++I)
+      (*I)->dropAttrs();
   }
 }
 
@@ -5946,8 +5950,9 @@ Sema::CheckFunctionTemplateSpecialization(FunctionDecl *FD,
           FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
           EPI.TypeQuals |= Qualifiers::Const;
           FT = Context.getFunctionType(FPT->getResultType(),
-                                       FPT->arg_type_begin(),
-                                       FPT->getNumArgs(), EPI);
+                                       ArrayRef<QualType>(FPT->arg_type_begin(),
+                                                          FPT->getNumArgs()),
+                                       EPI);
         }
       }
 

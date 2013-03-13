@@ -675,7 +675,7 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
   //       has the typedef name for linkage purposes (7.1.3); or
   } else if (const TagDecl *Tag = dyn_cast<TagDecl>(D)) {
     // Unnamed tags have no linkage.
-    if (!Tag->getDeclName() && !Tag->getTypedefNameForAnonDecl())
+    if (!Tag->hasNameForLinkage())
       return LinkageInfo::none();
 
     // If this is a class template specialization, consider the
@@ -1049,8 +1049,7 @@ static LinkageInfo getLVForLocalDecl(const NamedDecl *D,
   }
 
   if (const VarDecl *Var = dyn_cast<VarDecl>(D)) {
-    if (Var->getStorageClassAsWritten() == SC_Extern ||
-        Var->getStorageClassAsWritten() == SC_PrivateExtern) {
+    if (Var->hasExternalStorageAsWritten()) {
       if (Var->isInAnonymousNamespace() &&
           !Var->getDeclContext()->isExternCContext())
         return LinkageInfo::uniqueExternal();
@@ -1600,9 +1599,8 @@ VarDecl::DefinitionKind VarDecl::isThisDeclarationADefinition(
   // AST for 'extern "C" int foo;' is annotated with 'extern'.
   if (hasExternalStorage())
     return DeclarationOnly;
-  
-  if (getStorageClassAsWritten() == SC_Extern ||
-       getStorageClassAsWritten() == SC_PrivateExtern) {
+
+  if (hasExternalStorageAsWritten()) {
     for (const VarDecl *PrevVar = getPreviousDecl();
          PrevVar; PrevVar = PrevVar->getPreviousDecl()) {
       if (PrevVar->getLinkage() == InternalLinkage)

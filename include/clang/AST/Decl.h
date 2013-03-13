@@ -214,6 +214,11 @@ public:
   /// \brief Determine what kind of linkage this entity has.
   Linkage getLinkage() const;
 
+  /// \brief True if this decl has external linkage.
+  bool hasExternalLinkage() const {
+    return getLinkage() == ExternalLinkage;
+  }
+
   /// \brief Determines the visibility of this entity.
   Visibility getVisibility() const {
     return getLinkageAndVisibility().getVisibility();
@@ -793,11 +798,18 @@ public:
     return getStorageClass() == SC_Static && !isFileVarDecl();
   }
 
-  /// hasExternStorage - Returns true if a variable has extern or
-  /// __private_extern__ storage.
+  /// \brief Returns true if a variable has extern or __private_extern__
+  /// storage.
   bool hasExternalStorage() const {
     return getStorageClass() == SC_Extern ||
            getStorageClass() == SC_PrivateExtern;
+  }
+
+  /// \brief Returns true if a variable was written with extern or
+  /// __private_extern__ storage.
+  bool hasExternalStorageAsWritten() const {
+    return getStorageClassAsWritten() == SC_Extern ||
+           getStorageClassAsWritten() == SC_PrivateExtern;
   }
 
   /// hasGlobalStorage - Returns true for all variables that do not
@@ -2556,6 +2568,25 @@ public:
   bool isClass()  const { return getTagKind() == TTK_Class; }
   bool isUnion()  const { return getTagKind() == TTK_Union; }
   bool isEnum()   const { return getTagKind() == TTK_Enum; }
+
+  /// Is this tag type named, either directly or via being defined in
+  /// a typedef of this type?
+  ///
+  /// C++11 [basic.link]p8:
+  ///   A type is said to have linkage if and only if:
+  ///     - it is a class or enumeration type that is named (or has a
+  ///       name for linkage purposes) and the name has linkage; ...
+  /// C++11 [dcl.typedef]p9:
+  ///   If the typedef declaration defines an unnamed class (or enum),
+  ///   the first typedef-name declared by the declaration to be that
+  ///   class type (or enum type) is used to denote the class type (or
+  ///   enum type) for linkage purposes only.
+  ///
+  /// C does not have an analogous rule, but the same concept is
+  /// nonetheless useful in some places.
+  bool hasNameForLinkage() const {
+    return (getDeclName() || getTypedefNameForAnonDecl());
+  }
 
   TypedefNameDecl *getTypedefNameForAnonDecl() const {
     return hasExtInfo() ? 0 :

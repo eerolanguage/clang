@@ -313,6 +313,13 @@ TEST(DeclarationMatcher, ClassIsDerived) {
       recordDecl(isDerivedFrom(recordDecl(hasName("X")).bind("test")))));
 }
 
+TEST(DeclarationMatcher, hasMethod) {
+  EXPECT_TRUE(matches("class A { void func(); };",
+                      recordDecl(hasMethod(hasName("func")))));
+  EXPECT_TRUE(notMatches("class A { void func(); };",
+                         recordDecl(hasMethod(isPublic()))));
+}
+
 TEST(DeclarationMatcher, ClassDerivedFromDependentTemplateSpecialization) {
   EXPECT_TRUE(matches(
      "template <typename T> struct A {"
@@ -1022,6 +1029,12 @@ TEST(Matcher, HasOperatorNameForOverloadedOperatorCall) {
               "bool operator&&(Y x, Y y) { return true; }; "
               "Y a; Y b; bool c = a && b;",
               OpCallLessLess));
+  DeclarationMatcher ClassWithOpStar =
+    recordDecl(hasMethod(hasOverloadedOperatorName("*")));
+  EXPECT_TRUE(matches("class Y { int operator*(); };",
+                      ClassWithOpStar));
+  EXPECT_TRUE(notMatches("class Y { void myOperator(); };",
+              ClassWithOpStar)) ;
 }
 
 TEST(Matcher, NestedOverloadedOperatorCalls) {
@@ -1327,6 +1340,18 @@ TEST(Matcher, References) {
       notMatches("class X {}; void y(X y) { X x = y; }", ReferenceClassX));
   EXPECT_TRUE(
       notMatches("class X {}; void y(X *y) { X *&x = y; }", ReferenceClassX));
+}
+
+TEST(QualType, hasCanonicalType) {
+  EXPECT_TRUE(notMatches("typedef int &int_ref;"
+                         "int a;"
+                         "int_ref b = a;",
+                         varDecl(hasType(qualType(referenceType())))));
+  EXPECT_TRUE(
+      matches("typedef int &int_ref;"
+              "int a;"
+              "int_ref b = a;",
+              varDecl(hasType(qualType(hasCanonicalType(referenceType()))))));
 }
 
 TEST(HasParameter, CallsInnerMatcher) {
@@ -3373,6 +3398,10 @@ TEST(TypeMatching, PointerTypes) {
                                            hasType(pointerType()))));
   EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ptr"),
                                            hasType(referenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ptr"),
+                                           hasType(lValueReferenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ptr"),
+                                           hasType(rValueReferenceType()))));
 
   Fragment = "int *ptr;";
   EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ptr"),
@@ -3393,6 +3422,54 @@ TEST(TypeMatching, PointerTypes) {
                                            hasType(pointerType()))));
   EXPECT_TRUE(matches(Fragment, varDecl(hasName("ref"),
                                         hasType(referenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("ref"),
+                                        hasType(lValueReferenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ref"),
+                                           hasType(rValueReferenceType()))));
+
+  Fragment = "int &&ref = 2;";
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ref"),
+                                           hasType(blockPointerType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ref"),
+                                           hasType(memberPointerType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ref"),
+                                           hasType(pointerType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("ref"),
+                                        hasType(referenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("ref"),
+                                           hasType(lValueReferenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("ref"),
+                                        hasType(rValueReferenceType()))));
+}
+
+TEST(TypeMatching, AutoRefTypes) {
+  std::string Fragment = "auto a = 1;"
+                         "auto b = a;"
+                         "auto &c = a;"
+                         "auto &&d = c;"
+                         "auto &&e = 2;";
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("a"),
+                                           hasType(referenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("b"),
+                                           hasType(referenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("c"),
+                                        hasType(referenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("c"),
+                                        hasType(lValueReferenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("c"),
+                                           hasType(rValueReferenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("d"),
+                                        hasType(referenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("d"),
+                                        hasType(lValueReferenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("d"),
+                                           hasType(rValueReferenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("e"),
+                                        hasType(referenceType()))));
+  EXPECT_TRUE(notMatches(Fragment, varDecl(hasName("e"),
+                                           hasType(lValueReferenceType()))));
+  EXPECT_TRUE(matches(Fragment, varDecl(hasName("e"),
+                                        hasType(rValueReferenceType()))));
 }
 
 TEST(TypeMatching, PointeeTypes) {
