@@ -1414,36 +1414,32 @@ static void addExceptionArgs(const ArgList &Args, types::ID InputType,
     CmdArgs.push_back("-fexceptions");
 }
 
+/// \brief Check if the toolchain should use the integrated assembler.
+static bool ShouldUseIntegratedAssembler(const ArgList &Args,
+                                         const ToolChain &TC) {
+  return Args.hasFlag(options::OPT_integrated_as,
+                      options::OPT_no_integrated_as,
+                      TC.IsIntegratedAssemblerDefault());
+}
+
 static bool ShouldDisableCFI(const ArgList &Args,
                              const ToolChain &TC) {
   bool Default = true;
   if (TC.getTriple().isOSDarwin()) {
     // The native darwin assembler doesn't support cfi directives, so
     // we disable them if we think the .s file will be passed to it.
-    Default = Args.hasFlag(options::OPT_integrated_as,
-                           options::OPT_no_integrated_as,
-                           TC.IsIntegratedAssemblerDefault());
+    Default = ShouldUseIntegratedAssembler(Args, TC);
   }
   return !Args.hasFlag(options::OPT_fdwarf2_cfi_asm,
                        options::OPT_fno_dwarf2_cfi_asm,
                        Default);
 }
 
-static bool ShouldUseIntegratedAssembler(const ArgList &Args,
-                                         const ToolChain &TC) {
-  bool IsIADefault = TC.IsIntegratedAssemblerDefault();
-  bool UseIntegratedAs = Args.hasFlag(options::OPT_integrated_as,
-                                      options::OPT_no_integrated_as,
-                                      IsIADefault);
-  return UseIntegratedAs;
-}
-
 static bool ShouldDisableDwarfDirectory(const ArgList &Args,
                                         const ToolChain &TC) {
-  bool UseIntegratedAs = ShouldUseIntegratedAssembler(Args, TC);
   bool UseDwarfDirectory = Args.hasFlag(options::OPT_fdwarf_directory_asm,
                                         options::OPT_fno_dwarf_directory_asm,
-                                        UseIntegratedAs);
+                                        ShouldUseIntegratedAssembler(Args, TC));
   return !UseDwarfDirectory;
 }
 
@@ -1487,6 +1483,8 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args)
       AsanZeroBaseShadow(false) {
   unsigned AllKinds = 0;  // All kinds of sanitizers that were turned on
                           // at least once (possibly, disabled further).
+  unsigned AllRemovedKinds = 0;  // All kinds of sanitizers that were explicitly
+                                 // removed at least once.
   for (ArgList::const_iterator I = Args.begin(), E = Args.end(); I != E; ++I) {
     unsigned Add, Remove;
     if (!parse(D, Args, *I, Add, Remove, true))
@@ -1495,6 +1493,12 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args)
     Kind |= Add;
     Kind &= ~Remove;
     AllKinds |= Add;
+    AllRemovedKinds |= Remove;
+  }
+  // Assume -fsanitize=address implies -fsanitize=init-order, if the latter is
+  // not disabled explicitly.
+  if ((Kind & Address) != 0 && (AllRemovedKinds & InitOrder) == 0) {
+    Kind |= InitOrder;
   }
 
   UbsanTrapOnError =
@@ -2786,12 +2790,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fmodules");
       HaveModules = true;
     }
-
-    if (HaveModules && !ShouldUseIntegratedAssembler(Args, getToolChain())) {
-      D.Diag(diag::err_drv_modules_integrated_as);
-      D.Diag(diag::note_drv_modules_integrated_as);
-      return;
-    }
   }
 
   // If a module path was provided, pass it along. Otherwise, use a temporary
@@ -2816,8 +2814,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_fmodules_ignore_macro);
 
   // -fmodules-autolink (on by default when modules is enabled) automatically
-  // links against libraries for imported modules.
-  if (HaveModules &&
+  // links against libraries for imported modules.  This requires the
+  // integrated assembler.
+  if (HaveModules && ShouldUseIntegratedAssembler(Args, getToolChain()) &&
       Args.hasFlag(options::OPT_fmodules_autolink,
                    options::OPT_fno_modules_autolink,
                    true)) {

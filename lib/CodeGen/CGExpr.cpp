@@ -1800,10 +1800,6 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
 
     bool isBlockVariable = VD->hasAttr<BlocksAttr>();
 
-    bool NonGCable = VD->hasLocalStorage() &&
-                     !VD->getType()->isReferenceType() &&
-                     !isBlockVariable;
-
     llvm::Value *V = LocalDeclMap.lookup(VD);
     if (!V && VD->isStaticLocal()) 
       V = CGM.getStaticLocalDeclAddress(VD);
@@ -1837,10 +1833,20 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
       LV = MakeAddrLValue(V, T, Alignment);
     }
 
+    bool isLocalStorage = VD->hasLocalStorage();
+
+    bool NonGCable = isLocalStorage &&
+                     !VD->getType()->isReferenceType() &&
+                     !isBlockVariable;
     if (NonGCable) {
       LV.getQuals().removeObjCGCAttr();
       LV.setNonGC(true);
     }
+
+    bool isImpreciseLifetime =
+      (isLocalStorage && !VD->hasAttr<ObjCPreciseLifetimeAttr>());
+    if (isImpreciseLifetime)
+      LV.setARCPreciseLifetime(ARCImpreciseLifetime);
     setObjCGCLValueClass(getContext(), E, LV);
     return LV;
   }
@@ -2849,8 +2855,14 @@ RValue CodeGenFunction::EmitRValueForField(LValue LV,
 
 RValue CodeGenFunction::EmitCallExpr(const CallExpr *E, 
                                      ReturnValueSlot ReturnValue) {
-  if (CGDebugInfo *DI = getDebugInfo())
-    DI->EmitLocation(Builder, E->getLocStart());
+  if (CGDebugInfo *DI = getDebugInfo()) {
+    SourceLocation Loc = E->getLocStart();
+    // Force column info to be generated so we can differentiate
+    // multiple call sites on the same line in the debug info.
+    const FunctionDecl* Callee = E->getDirectCallee();
+    bool ForceColumnInfo = Callee && Callee->isInlineSpecified();
+    DI->EmitLocation(Builder, Loc, ForceColumnInfo);
+  }
 
   // Builtins never have block type.
   if (E->getCallee()->getType()->isBlockPointerType())
@@ -2907,7 +2919,7 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
       case Qualifiers::OCL_Strong:
         EmitARCRelease(Builder.CreateLoad(BaseValue, 
                           PseudoDtor->getDestroyedType().isVolatileQualified()),
-                       /*precise*/ true);
+                       ARCPreciseLifetime);
         break;
 
       case Qualifiers::OCL_Weak:

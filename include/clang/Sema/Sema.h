@@ -200,6 +200,8 @@ class Sema {
   ///\brief Whether Sema has generated a multiplexer and has to delete it.
   bool isMultiplexExternalSource;
 
+  static bool mightHaveNonExternalLinkage(const DeclaratorDecl *FD);
+
 public:
   typedef OpaquePtr<DeclGroupRef> DeclGroupPtrTy;
   typedef OpaquePtr<TemplateName> TemplateTy;
@@ -7502,6 +7504,8 @@ private:
   /// The parser maintains this state here.
   Scope *CurScope;
 
+  mutable IdentifierInfo *Ident_super;
+
 protected:
   friend class Parser;
   friend class InitializationSequence;
@@ -7518,6 +7522,8 @@ public:
   /// itself and in routines directly invoked from the parser and *never* from
   /// template substitution or instantiation.
   Scope *getCurScope() const { return CurScope; }
+
+  IdentifierInfo *getSuperIdentifier() const;
 
   Decl *getObjCDeclContext() const;
 

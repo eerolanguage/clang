@@ -90,7 +90,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
     AccessCheckingSFINAE(false), InNonInstantiationSFINAEContext(false),
     NonInstantiationEntries(0), ArgumentPackSubstitutionIndex(-1),
     CurrentInstantiationScope(0), TyposCorrected(0),
-    AnalysisWarnings(*this)
+    AnalysisWarnings(*this), Ident_super(0)
 {
   TUScope = 0;
 
@@ -332,6 +332,9 @@ static bool ShouldRemoveFromUnused(Sema *SemaRef, const DeclaratorDecl *D) {
   if (D->getMostRecentDecl()->isUsed())
     return true;
 
+  if (D->hasExternalLinkage())
+    return true;
+
   if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
     // UnusedFileScopedDecls stores the first declaration.
     // The declaration may have become definition so check again.
@@ -359,9 +362,6 @@ static bool ShouldRemoveFromUnused(Sema *SemaRef, const DeclaratorDecl *D) {
     if (DeclToCheck != VD)
       return !SemaRef->ShouldWarnIfUnusedFileScopedDecl(DeclToCheck);
   }
-
-  if (D->hasExternalLinkage())
-    return true;
 
   return false;
 }
@@ -616,6 +616,12 @@ void Sema::ActOnEndOfTranslationUnit() {
       << I->first;
   }
 
+  if (LangOpts.CPlusPlus11 &&
+      Diags.getDiagnosticLevel(diag::warn_delegating_ctor_cycle,
+                               SourceLocation())
+        != DiagnosticsEngine::Ignored)
+    CheckDelegatingCtorCycles();
+
   if (TUKind == TU_Module) {
     // If we are building a module, resolve all of the exported declarations
     // now.
@@ -699,12 +705,6 @@ void Sema::ActOnEndOfTranslationUnit() {
       Consumer.CompleteTentativeDefinition(VD);
 
   }
-
-  if (LangOpts.CPlusPlus11 &&
-      Diags.getDiagnosticLevel(diag::warn_delegating_ctor_cycle,
-                               SourceLocation())
-        != DiagnosticsEngine::Ignored)
-    CheckDelegatingCtorCycles();
 
   // If there were errors, disable 'unused' warnings since they will mostly be
   // noise.
@@ -1301,4 +1301,10 @@ bool Sema::tryToRecoverWithCall(ExprResult &E, const PartialDiagnostic &PD,
   notePlausibleOverloads(*this, Loc, Overloads, IsPlausibleResult);
   E = ExprError();
   return true;
+}
+
+IdentifierInfo *Sema::getSuperIdentifier() const {
+  if (!Ident_super)
+    Ident_super = &Context.Idents.get("super");
+  return Ident_super;
 }

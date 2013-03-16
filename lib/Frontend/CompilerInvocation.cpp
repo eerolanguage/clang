@@ -394,10 +394,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
             << Args.getLastArg(OPT_coverage_version_EQ)->getAsString(Args)
             << CoverageVersion;
       } else {
-        Opts.CoverageVersion[0] = CoverageVersion[3];
-        Opts.CoverageVersion[1] = CoverageVersion[2];
-        Opts.CoverageVersion[2] = CoverageVersion[1];
-        Opts.CoverageVersion[3] = CoverageVersion[0];
+        memcpy(Opts.CoverageVersion, CoverageVersion.data(), 4);
       }
     }
   }
@@ -564,6 +561,7 @@ bool clang::ParseDiagnosticArgs(DiagnosticOptions &Opts, ArgList &Args,
   Opts.VerifyDiagnostics = Args.hasArg(OPT_verify);
   Opts.ElideType = !Args.hasArg(OPT_fno_elide_type);
   Opts.ShowTemplateTree = Args.hasArg(OPT_fdiagnostics_show_template_tree);
+  Opts.WarnOnSpellCheck = Args.hasArg(OPT_fwarn_on_spellcheck);
   Opts.ErrorLimit = Args.getLastArgIntValue(OPT_ferror_limit, 0, Diags);
   Opts.MacroBacktraceLimit
     = Args.getLastArgIntValue(OPT_fmacro_backtrace_limit,
