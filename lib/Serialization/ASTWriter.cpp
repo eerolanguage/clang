@@ -1034,6 +1034,8 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
 
       Record.push_back((unsigned)(*M)->Kind); // FIXME: Stable encoding
       AddSourceLocation((*M)->ImportLoc, Record);
+      Record.push_back((*M)->File->getSize());
+      Record.push_back((*M)->File->getModificationTime());
       // FIXME: This writes the absolute path for AST files we depend on.
       const std::string &FileName = (*M)->FileName;
       Record.push_back(FileName.size());
@@ -1275,7 +1277,7 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
   // detecting whether the system headers may have changed, because it is too
   // expensive to stat() all of the system headers.
   FileManager &FileMgr = SourceMgr.getFileManager();
-  if (!HSOpts.Sysroot.empty()) {
+  if (!HSOpts.Sysroot.empty() && !Chain) {
     llvm::SmallString<128> SDKSettingsFileName(HSOpts.Sysroot);
     llvm::sys::path::append(SDKSettingsFileName, "SDKSettings.plist");
     if (const FileEntry *SDKSettingsFile = FileMgr.getFile(SDKSettingsFileName)) {
@@ -2133,6 +2135,7 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // InferSubmodules...
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // InferExplicit...
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // InferExportWild...
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // ConfigMacrosExh...
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Name
   unsigned DefinitionAbbrev = Stream.EmitAbbrev(Abbrev);
 
@@ -2172,6 +2175,17 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));     // Name
   unsigned LinkLibraryAbbrev = Stream.EmitAbbrev(Abbrev);
 
+  Abbrev = new BitCodeAbbrev();
+  Abbrev->Add(BitCodeAbbrevOp(SUBMODULE_CONFIG_MACRO));
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));    // Macro name
+  unsigned ConfigMacroAbbrev = Stream.EmitAbbrev(Abbrev);
+
+  Abbrev = new BitCodeAbbrev();
+  Abbrev->Add(BitCodeAbbrevOp(SUBMODULE_CONFLICT));
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));  // Other module
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));    // Message
+  unsigned ConflictAbbrev = Stream.EmitAbbrev(Abbrev);
+
   // Write the submodule metadata block.
   RecordData Record;
   Record.push_back(getNumberOfModules(WritingModule));
@@ -2202,6 +2216,7 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
     Record.push_back(Mod->InferSubmodules);
     Record.push_back(Mod->InferExplicitSubmodules);
     Record.push_back(Mod->InferExportWildcard);
+    Record.push_back(Mod->ConfigMacrosExhaustive);
     Stream.EmitRecordWithBlob(DefinitionAbbrev, Record, Mod->Name);
     
     // Emit the requirements.
@@ -2284,6 +2299,25 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
       Record.push_back(Mod->LinkLibraries[I].IsFramework);
       Stream.EmitRecordWithBlob(LinkLibraryAbbrev, Record,
                                 Mod->LinkLibraries[I].Library);
+    }
+
+    // Emit the conflicts.
+    for (unsigned I = 0, N = Mod->Conflicts.size(); I != N; ++I) {
+      Record.clear();
+      Record.push_back(SUBMODULE_CONFLICT);
+      unsigned OtherID = getSubmoduleID(Mod->Conflicts[I].Other);
+      assert(OtherID && "Unknown submodule!");
+      Record.push_back(OtherID);
+      Stream.EmitRecordWithBlob(ConflictAbbrev, Record,
+                                Mod->Conflicts[I].Message);
+    }
+
+    // Emit the configuration macros.
+    for (unsigned I = 0, N =  Mod->ConfigMacros.size(); I != N; ++I) {
+      Record.clear();
+      Record.push_back(SUBMODULE_CONFIG_MACRO);
+      Stream.EmitRecordWithBlob(ConfigMacroAbbrev, Record,
+                                Mod->ConfigMacros[I]);
     }
 
     // Queue up the submodules of this module.

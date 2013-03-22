@@ -380,13 +380,14 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.VerifyModule = !Args.hasArg(OPT_disable_llvm_verifier);
   Opts.SanitizeRecover = !Args.hasArg(OPT_fno_sanitize_recover);
 
+  Opts.DisableGCov = Args.hasArg(OPT_test_coverage);
   Opts.EmitGcovArcs = Args.hasArg(OPT_femit_coverage_data);
   Opts.EmitGcovNotes = Args.hasArg(OPT_femit_coverage_notes);
   if (Opts.EmitGcovArcs || Opts.EmitGcovNotes) {
   Opts.CoverageFile = Args.getLastArgValue(OPT_coverage_file);
     Opts.CoverageExtraChecksum = Args.hasArg(OPT_coverage_cfg_checksum);
-    Opts.CoverageFunctionNamesInData =
-        Args.hasArg(OPT_coverage_function_names_in_data);
+    Opts.CoverageNoFunctionNamesInData =
+        Args.hasArg(OPT_coverage_no_function_names_in_data);
     if (Args.hasArg(OPT_coverage_version_EQ)) {
       StringRef CoverageVersion = Args.getLastArgValue(OPT_coverage_version_EQ);
       if (CoverageVersion.size() != 4) {

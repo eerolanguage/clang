@@ -119,7 +119,14 @@ public:
   /// \brief Whether, when inferring submodules, the inferr submodules should
   /// export all modules they import (e.g., the equivalent of "export *").
   unsigned InferExportWildcard : 1;
-  
+
+  /// \brief Whether the set of configuration macros is exhaustive.
+  ///
+  /// When the set of configuration macros is exhaustive, meaning
+  /// that no identifier not in this list should affect how the module is
+  /// built.
+  unsigned ConfigMacrosExhaustive : 1;
+
   /// \brief Describes the visibility of the various names within a
   /// particular module.
   enum NameVisibilityKind {
@@ -190,6 +197,35 @@ public:
   /// an entity from this module is used.
   llvm::SmallVector<LinkLibrary, 2> LinkLibraries;
 
+  /// \brief The set of "configuration macros", which are macros that
+  /// (intentionally) change how this module is built.
+  std::vector<std::string> ConfigMacros;
+
+  /// \brief An unresolved conflict with another module.
+  struct UnresolvedConflict {
+    /// \brief The (unresolved) module id.
+    ModuleId Id;
+
+    /// \brief The message provided to the user when there is a conflict.
+    std::string Message;
+  };
+
+  /// \brief The list of conflicts for which the module-id has not yet been
+  /// resolved.
+  std::vector<UnresolvedConflict> UnresolvedConflicts;
+
+  /// \brief A conflict between two modules.
+  struct Conflict {
+    /// \brief The module that this module conflicts with.
+    Module *Other;
+
+    /// \brief The message provided to the user when there is a conflict.
+    std::string Message;
+  };
+
+  /// \brief The list of conflicts.
+  std::vector<Conflict> Conflicts;
+
   /// \brief Construct a top-level module.
   explicit Module(StringRef Name, SourceLocation DefinitionLoc,
                   bool IsFramework)
@@ -197,7 +233,8 @@ public:
       IsAvailable(true), IsFromModuleFile(false), IsFramework(IsFramework), 
       IsExplicit(false), IsSystem(false),
       InferSubmodules(false), InferExplicitSubmodules(false),
-      InferExportWildcard(false), NameVisibility(Hidden) { }
+      InferExportWildcard(false), ConfigMacrosExhaustive(false),
+      NameVisibility(Hidden) { }
   
   /// \brief Construct a new module or submodule.
   Module(StringRef Name, SourceLocation DefinitionLoc, Module *Parent, 
@@ -328,7 +365,7 @@ public:
   ///
   /// \returns The submodule if found, or NULL otherwise.
   Module *findSubmodule(StringRef Name) const;
-  
+
   typedef std::vector<Module *>::iterator submodule_iterator;
   typedef std::vector<Module *>::const_iterator submodule_const_iterator;
   

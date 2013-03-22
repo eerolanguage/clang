@@ -1357,7 +1357,7 @@ public:
   bool diagnoseQualifiedDeclaration(CXXScopeSpec &SS, DeclContext *DC,
                                     DeclarationName Name,
                                     SourceLocation Loc);
-  void DiagnoseFunctionSpecifiers(Declarator& D);
+  void DiagnoseFunctionSpecifiers(const DeclSpec &DS);
   void CheckShadow(Scope *S, VarDecl *D, const LookupResult& R);
   void CheckShadow(Scope *S, VarDecl *D);
   void CheckCastAlign(Expr *Op, QualType T, SourceRange TRange);
@@ -1523,7 +1523,8 @@ public:
                                    DeclSpec &DS);
   Decl *ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
                                    DeclSpec &DS,
-                                   MultiTemplateParamsArg TemplateParams);
+                                   MultiTemplateParamsArg TemplateParams,
+                                   bool IsExplicitInstantiation = false);
 
   Decl *BuildAnonymousStructOrUnion(Scope *S, DeclSpec &DS,
                                     AccessSpecifier AS,
@@ -2645,6 +2646,7 @@ public:
   }
 
   StmtResult ActOnExprStmt(ExprResult Arg);
+  StmtResult ActOnExprStmtError();
 
   StmtResult ActOnNullStmt(SourceLocation SemiLoc,
                            bool HasLeadingEmptyMacro = false);
@@ -3669,6 +3671,11 @@ public:
   ImplicitExceptionSpecification
   ComputeDefaultedDtorExceptionSpec(CXXMethodDecl *MD);
 
+  /// \brief Determine what sort of exception specification an inheriting
+  /// constructor of a class will have.
+  ImplicitExceptionSpecification
+  ComputeInheritingCtorExceptionSpec(CXXMethodDecl *MD);
+
   /// \brief Evaluate the implicit exception specification for a defaulted
   /// special member function.
   void EvaluateImplicitExceptionSpec(SourceLocation Loc, CXXMethodDecl *MD);
@@ -3721,11 +3728,15 @@ public:
   void AdjustDestructorExceptionSpec(CXXRecordDecl *ClassDecl,
                                      CXXDestructorDecl *Destructor);
 
-  /// \brief Declare all inherited constructors for the given class.
+  /// \brief Declare all inheriting constructors for the given class.
   ///
-  /// \param ClassDecl The class declaration into which the inherited
+  /// \param ClassDecl The class declaration into which the inheriting
   /// constructors will be added.
-  void DeclareInheritedConstructors(CXXRecordDecl *ClassDecl);
+  void DeclareInheritingConstructors(CXXRecordDecl *ClassDecl);
+
+  /// \brief Define the specified inheriting constructor.
+  void DefineInheritingConstructor(SourceLocation UseLoc,
+                                   CXXConstructorDecl *Constructor);
 
   /// \brief Declare the implicit copy constructor for the given class.
   ///
@@ -7089,6 +7100,11 @@ public:
   /// \brief If the given expression involves a message send to a method
   /// with a related result type, emit a note describing what happened.
   void EmitRelatedResultTypeNote(const Expr *E);
+
+  /// \brief Given that we had incompatible pointer types in a return
+  /// statement, check whether we're in a method with a related result
+  /// type, and if so, emit a note describing what happened.
+  void EmitRelatedResultTypeNoteForReturn(QualType destType);
 
   /// CheckBooleanCondition - Diagnose problems involving the use of
   /// the given expression as a boolean condition (e.g. in an if

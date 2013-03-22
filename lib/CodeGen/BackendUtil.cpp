@@ -302,7 +302,8 @@ void EmitAssemblyHelper::CreatePasses(TargetMachine *TM) {
   // Set up the per-module pass manager.
   PassManager *MPM = getPerModulePasses(TM);
 
-  if (CodeGenOpts.EmitGcovArcs || CodeGenOpts.EmitGcovNotes) {
+  if (!CodeGenOpts.DisableGCov &&
+      (CodeGenOpts.EmitGcovArcs || CodeGenOpts.EmitGcovNotes)) {
     // Not using 'GCOVOptions::getDefault' allows us to avoid exiting if
     // LLVM's -default-gcov-version flag is set to something invalid.
     GCOVOptions Options;
@@ -311,9 +312,8 @@ void EmitAssemblyHelper::CreatePasses(TargetMachine *TM) {
     memcpy(Options.Version, CodeGenOpts.CoverageVersion, 4);
     Options.UseCfgChecksum = CodeGenOpts.CoverageExtraChecksum;
     Options.NoRedZone = CodeGenOpts.DisableRedZone;
-    // FIXME: the clang flag name is backwards.
     Options.FunctionNamesInData =
-        !CodeGenOpts.CoverageFunctionNamesInData;
+        !CodeGenOpts.CoverageNoFunctionNamesInData;
     MPM->add(createGCOVProfilerPass(Options));
     if (CodeGenOpts.getDebugInfo() == CodeGenOptions::NoDebugInfo)
       MPM->add(createStripSymbolsPass(true));

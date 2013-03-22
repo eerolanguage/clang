@@ -1299,14 +1299,12 @@ static const Tool &SelectToolForJob(Compilation &C, const ToolChain *TC,
   // bottom up, so what we are actually looking for is an assembler job with a
   // compiler input.
 
-  if (C.getArgs().hasFlag(options::OPT_integrated_as,
-                          options::OPT_no_integrated_as,
-                          TC->IsIntegratedAssemblerDefault()) &&
+  if (TC->useIntegratedAs() &&
       !C.getArgs().hasArg(options::OPT_save_temps) &&
       isa<AssembleJobAction>(JA) &&
       Inputs->size() == 1 && isa<CompileJobAction>(*Inputs->begin())) {
-    const Tool &Compiler = TC->SelectTool(
-      C, cast<JobAction>(**Inputs->begin()), (*Inputs)[0]->getInputs());
+    const Tool &Compiler =
+      TC->SelectTool(cast<JobAction>(**Inputs->begin()));
     if (Compiler.hasIntegratedAssembler()) {
       Inputs = &(*Inputs)[0]->getInputs();
       ToolForJob = &Compiler;
@@ -1315,7 +1313,7 @@ static const Tool &SelectToolForJob(Compilation &C, const ToolChain *TC,
 
   // Otherwise use the tool for the current job.
   if (!ToolForJob)
-    ToolForJob = &TC->SelectTool(C, *JA, *Inputs);
+    ToolForJob = &TC->SelectTool(*JA);
 
   // See if we should use an integrated preprocessor. We do so when we have
   // exactly one input, since this is the only use case we care about
@@ -1692,7 +1690,7 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
           Target.getArch() == llvm::Triple::x86_64 ||
           Target.getArch() == llvm::Triple::arm ||
           Target.getArch() == llvm::Triple::thumb)
-        TC = new toolchains::DarwinClang(*this, Target);
+        TC = new toolchains::DarwinClang(*this, Target, Args);
       else
         TC = new toolchains::Darwin_Generic_GCC(*this, Target, Args);
       break;
@@ -1724,14 +1722,14 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       TC = new toolchains::Solaris(*this, Target, Args);
       break;
     case llvm::Triple::Win32:
-      TC = new toolchains::Windows(*this, Target);
+      TC = new toolchains::Windows(*this, Target, Args);
       break;
     case llvm::Triple::MinGW32:
       // FIXME: We need a MinGW toolchain. Fallthrough for now.
     default:
       // TCE is an OSless target
       if (Target.getArchName() == "tce") {
-        TC = new toolchains::TCEToolChain(*this, Target);
+        TC = new toolchains::TCEToolChain(*this, Target, Args);
         break;
       }
 
@@ -1742,8 +1740,7 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
   return *TC;
 }
 
-bool Driver::ShouldUseClangCompiler(const Compilation &C, const JobAction &JA,
-                                    const llvm::Triple &Triple) const {
+bool Driver::ShouldUseClangCompiler(const JobAction &JA) const {
   // Check if user requested no clang, or clang doesn't understand this type (we
   // only handle single inputs for now).
   if (JA.size() != 1 ||
