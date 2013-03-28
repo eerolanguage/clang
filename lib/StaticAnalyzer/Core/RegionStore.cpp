@@ -833,14 +833,22 @@ RegionStoreManager::removeSubRegionBindings(RegionBindingsConstRef B,
                                             const SubRegion *Top) {
   BindingKey TopKey = BindingKey::Make(Top, BindingKey::Default);
   const MemRegion *ClusterHead = TopKey.getBaseRegion();
+
   if (Top == ClusterHead) {
     // We can remove an entire cluster's bindings all in one go.
     return B.remove(Top);
   }
 
   const ClusterBindings *Cluster = B.lookup(ClusterHead);
-  if (!Cluster)
+  if (!Cluster) {
+    // If we're invalidating a region with a symbolic offset, we need to make
+    // sure we don't treat the base region as uninitialized anymore.
+    if (TopKey.hasSymbolicOffset()) {
+      const SubRegion *Concrete = TopKey.getConcreteOffsetRegion();
+      return B.addBinding(Concrete, BindingKey::Default, UnknownVal());
+    }
     return B;
+  }
 
   SmallVector<BindingPair, 32> Bindings;
   collectSubRegionBindings(Bindings, svalBuilder, *Cluster, Top, TopKey,
@@ -854,7 +862,8 @@ RegionStoreManager::removeSubRegionBindings(RegionBindingsConstRef B,
 
   // If we're invalidating a region with a symbolic offset, we need to make sure
   // we don't treat the base region as uninitialized anymore.
-  // FIXME: This isn't very precise; see the example in the loop.
+  // FIXME: This isn't very precise; see the example in
+  // collectSubRegionBindings.
   if (TopKey.hasSymbolicOffset()) {
     const SubRegion *Concrete = TopKey.getConcreteOffsetRegion();
     Result = Result.add(BindingKey::Make(Concrete, BindingKey::Default),
@@ -1445,8 +1454,7 @@ SVal RegionStoreManager::getBindingForElement(RegionBindingsConstRef B,
       }
     }
   }
-  return getBindingForFieldOrElementCommon(B, R, R->getElementType(),
-                                           superR);
+  return getBindingForFieldOrElementCommon(B, R, R->getElementType(),superR);
 }
 
 SVal RegionStoreManager::getBindingForField(RegionBindingsConstRef B,

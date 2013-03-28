@@ -490,6 +490,7 @@ TEST_F(FormatTest, FormatsLabels) {
 //===----------------------------------------------------------------------===//
 
 TEST_F(FormatTest, UnderstandsSingleLineComments) {
+  verifyFormat("//* */");
   verifyFormat("// line 1\n"
                "// line 2\n"
                "void f() {}\n");
@@ -593,6 +594,21 @@ TEST_F(FormatTest, UnderstandsSingleLineComments) {
       "    aaaaaaaaaaaaaaaaaaaaaa);  // 81 cols with this comment");
 }
 
+TEST_F(FormatTest, CanFormatCommentsLocally) {
+  EXPECT_EQ("int a;    // comment\n"
+            "int    b; // comment",
+            format("int   a; // comment\n"
+                   "int    b; // comment",
+                   0, 0, getLLVMStyle()));
+  EXPECT_EQ("int   a; // comment\n"
+            "         // line 2\n"
+            "int b;",
+            format("int   a; // comment\n"
+                   "            // line 2\n"
+                   "int b;",
+                   28, 0, getLLVMStyle()));
+}
+
 TEST_F(FormatTest, RemovesTrailingWhitespaceOfComments) {
   EXPECT_EQ("// comment", format("// comment  "));
   EXPECT_EQ("int aaaaaaa, bbbbbbb; // comment",
@@ -665,6 +681,26 @@ TEST_F(FormatTest, AlignsMultiLineComments) {
                    " */"));
 }
 
+TEST_F(FormatTest, SplitsLongCxxComments) {
+  EXPECT_EQ("// A comment that\n"
+            "// doesn't fit on\n"
+            "// one line",
+            format("// A comment that doesn't fit on one line",
+                   getLLVMStyleWithColumns(20)));
+  EXPECT_EQ("if (true) // A comment that\n"
+            "          // doesn't fit on\n"
+            "          // one line",
+            format("if (true) // A comment that doesn't fit on one line   ",
+                   getLLVMStyleWithColumns(30)));
+  EXPECT_EQ("//    Don't_touch_leading_whitespace",
+            format("//    Don't_touch_leading_whitespace",
+                   getLLVMStyleWithColumns(20)));
+  EXPECT_EQ(
+      "//Don't add leading\n"
+      "//whitespace",
+      format("//Don't add leading whitespace", getLLVMStyleWithColumns(20)));
+}
+
 TEST_F(FormatTest, SplitsLongLinesInComments) {
   EXPECT_EQ("/* This is a long\n"
             " * comment that\n"
@@ -711,10 +747,10 @@ TEST_F(FormatTest, SplitsLongLinesInComments) {
                    " */",
                    getLLVMStyleWithColumns(20)));
   EXPECT_EQ("/*\n"
-            " * This_comment_can_not_be_broken_into_lines\n"
+            " *    This_comment_can_not_be_broken_into_lines\n"
             " */",
             format("/*\n"
-                   " * This_comment_can_not_be_broken_into_lines\n"
+                   " *    This_comment_can_not_be_broken_into_lines\n"
                    " */",
                    getLLVMStyleWithColumns(20)));
   EXPECT_EQ("{\n"
@@ -899,6 +935,28 @@ TEST_F(FormatTest, UnderstandsAccessSpecifiers) {
                      " private:\n"
                      "  void f() {}\n"
                      "};");
+}
+
+TEST_F(FormatTest, SeparatesLogicalBlocks) {
+  EXPECT_EQ("class A {\n"
+            "public:\n"
+            "  void f();\n"
+            "\n"
+            "private:\n"
+            "  void g() {}\n"
+            "  // test\n"
+            "protected:\n"
+            "  int h;\n"
+            "};",
+            format("class A {\n"
+                   "public:\n"
+                   "void f();\n"
+                   "private:\n"
+                   "void g() {}\n"
+                   "// test\n"
+                   "protected:\n"
+                   "int h;\n"
+                   "};"));
 }
 
 TEST_F(FormatTest, FormatsDerivedClass) {
@@ -1150,13 +1208,13 @@ TEST_F(FormatTest, HandlePreprocessorDirectiveContext) {
             "#define A(  \\\n"
             "    A, B)\n"
             "#include \"b.h\"\n"
-            "// some comment\n",
+            "// somecomment\n",
             format("  // some comment\n"
                    "  #include \"a.h\"\n"
                    "#define A(A,\\\n"
                    "    B)\n"
                    "    #include \"b.h\"\n"
-                   " // some comment\n",
+                   " // somecomment\n",
                    getLLVMStyleWithColumns(13)));
 }
 
@@ -2066,6 +2124,8 @@ TEST_F(FormatTest, UnderstandsUnaryOperators) {
                "case -1:\n"
                "  break;\n"
                "}");
+  verifyFormat("#define X -1");
+  verifyFormat("#define X -kConstant");
 
   verifyFormat("const NSPoint kBrowserFrameViewPatternOffset = { -5, +3 };");
   verifyFormat("const NSPoint kBrowserFrameViewPatternOffset = { +5, -3 };");
@@ -2424,7 +2484,7 @@ TEST_F(FormatTest, IncorrectCodeMissingSemicolon) {
 
 TEST_F(FormatTest, IndentationWithinColumnLimitNotPossible) {
   verifyFormat("int aaaaaaaa =\n"
-               "    // Overly long comment\n"
+               "    // Overlylongcomment\n"
                "    b;",
                getLLVMStyleWithColumns(20));
   verifyFormat("function(\n"
@@ -2797,6 +2857,7 @@ TEST_F(FormatTest, FormatForObjectiveCMethodDecls) {
 
   // If there's no return type (very rare in practice!), LLVM and Google style
   // agree.
+  verifyFormat("- foo;");
   verifyFormat("- foo:(int)f;");
   verifyGoogleFormat("- foo:(int)foo;");
 }

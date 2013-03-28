@@ -3180,6 +3180,8 @@ Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
     if (DS.getTypeQualifiers() & DeclSpec::TQ_volatile)
       Diag(DS.getConstSpecLoc(), DiagID) << "volatile";
     // Restrict is covered above.
+    if (DS.getTypeQualifiers() & DeclSpec::TQ_atomic)
+      Diag(DS.getAtomicSpecLoc(), DiagID) << "_Atomic";
   }
 
   // Warn about ignored type attributes, for example:
@@ -3416,18 +3418,23 @@ Decl *Sema::BuildAnonymousStructOrUnion(Scope *S, DeclSpec &DS,
     if (DS.getTypeQualifiers()) {
       if (DS.getTypeQualifiers() & DeclSpec::TQ_const)
         Diag(DS.getConstSpecLoc(), diag::ext_anonymous_struct_union_qualified)
-          << Record->isUnion() << 0 
+          << Record->isUnion() << "const"
           << FixItHint::CreateRemoval(DS.getConstSpecLoc());
       if (DS.getTypeQualifiers() & DeclSpec::TQ_volatile)
-        Diag(DS.getVolatileSpecLoc(), 
+        Diag(DS.getVolatileSpecLoc(),
              diag::ext_anonymous_struct_union_qualified)
-          << Record->isUnion() << 1
+          << Record->isUnion() << "volatile"
           << FixItHint::CreateRemoval(DS.getVolatileSpecLoc());
       if (DS.getTypeQualifiers() & DeclSpec::TQ_restrict)
-        Diag(DS.getRestrictSpecLoc(), 
+        Diag(DS.getRestrictSpecLoc(),
              diag::ext_anonymous_struct_union_qualified)
-          << Record->isUnion() << 2 
+          << Record->isUnion() << "restrict"
           << FixItHint::CreateRemoval(DS.getRestrictSpecLoc());
+      if (DS.getTypeQualifiers() & DeclSpec::TQ_atomic)
+        Diag(DS.getAtomicSpecLoc(),
+             diag::ext_anonymous_struct_union_qualified)
+          << Record->isUnion() << "_Atomic"
+          << FixItHint::CreateRemoval(DS.getAtomicSpecLoc());
 
       DS.ClearTypeQualifiers();
     }
@@ -7154,6 +7161,14 @@ namespace {
       Visit(Base);
     }
 
+    void VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+      if (E->getNumArgs() > 0)
+        if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E->getArg(0)))
+          HandleDeclRefExpr(DRE);
+
+      Inherited::VisitCXXOperatorCallExpr(E);
+    }
+
     void VisitUnaryOperator(UnaryOperator *E) {
       // For POD record types, addresses of its own members are well-defined.
       if (E->getOpcode() == UO_AddrOf && isRecordType &&
@@ -9921,7 +9936,8 @@ CreateNewDecl:
     // If this is an undefined enum, warn.
     if (TUK != TUK_Definition && !Invalid) {
       TagDecl *Def;
-      if (getLangOpts().CPlusPlus11 && cast<EnumDecl>(New)->isFixed()) {
+      if ((getLangOpts().CPlusPlus11 || getLangOpts().ObjC2) &&
+          cast<EnumDecl>(New)->isFixed()) {
         // C++0x: 7.2p2: opaque-enum-declaration.
         // Conflicts are diagnosed above. Do nothing.
       }

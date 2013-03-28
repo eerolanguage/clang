@@ -129,7 +129,14 @@ namespace clang {
 
     /// \brief An ID number that refers to a macro in an AST file.
     typedef uint32_t MacroID;
-    
+
+    /// \brief A global ID number that refers to a macro in an AST file.
+    typedef uint32_t GlobalMacroID;
+
+    /// \brief A local to a module ID number that refers to a macro in an
+    /// AST file.
+    typedef uint32_t LocalMacroID;
+
     /// \brief The number of predefined macro IDs.
     const unsigned int NUM_PREDEF_MACRO_IDS = 1;
 
@@ -522,9 +529,9 @@ namespace clang {
       /// macro definition.
       MACRO_OFFSET = 47,
 
-      /// \brief Record of updates for a macro that was modified after
-      /// being deserialized.
-      MACRO_UPDATES = 48,
+      /// \brief Mapping table from the identifier ID to the offset of the
+      /// macro directive history for the identifier.
+      MACRO_TABLE = 48,
 
       /// \brief Record code for undefined but used functions and variables that
       /// need a definition in this TU.
@@ -565,7 +572,10 @@ namespace clang {
 
       /// \brief Describes one token.
       /// [PP_TOKEN, SLoc, Length, IdentInfoID, Kind, Flags]
-      PP_TOKEN = 3
+      PP_TOKEN = 3,
+
+      /// \brief The macro directives history for a particular identifier.
+      PP_MACRO_DIRECTIVE_HISTORY = 4
     };
 
     /// \brief Record types used within a preprocessor detail block.
@@ -1036,6 +1046,8 @@ namespace clang {
       DECL_CLASS_SCOPE_FUNCTION_SPECIALIZATION,
       /// \brief An ImportDecl recording a module import.
       DECL_IMPORT,
+      /// \brief A OMPThreadPrivateDecl record.
+      DECL_OMP_THREADPRIVATE,
       /// \brief An EmptyDecl record.
       DECL_EMPTY
     };

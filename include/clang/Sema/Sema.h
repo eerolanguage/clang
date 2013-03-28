@@ -132,6 +132,7 @@ namespace clang {
   class ObjCMethodDecl;
   class ObjCPropertyDecl;
   class ObjCProtocolDecl;
+  class OMPThreadPrivateDecl;
   class OverloadCandidateSet;
   class OverloadExpr;
   class ParenListExpr;
@@ -933,10 +934,10 @@ public:
   // Type Analysis / Processing: SemaType.cpp.
   //
 
-  QualType BuildQualifiedType(QualType T, SourceLocation Loc, Qualifiers Qs);
-  QualType BuildQualifiedType(QualType T, SourceLocation Loc, unsigned CVR) {
-    return BuildQualifiedType(T, Loc, Qualifiers::fromCVRMask(CVR));
-  }
+  QualType BuildQualifiedType(QualType T, SourceLocation Loc, Qualifiers Qs,
+                              const DeclSpec *DS = 0);
+  QualType BuildQualifiedType(QualType T, SourceLocation Loc, unsigned CVRA,
+                              const DeclSpec *DS = 0);
   QualType BuildPointerType(QualType T,
                             SourceLocation Loc, DeclarationName Entity);
   QualType BuildReferenceType(QualType T, bool LValueRef,
@@ -3046,7 +3047,8 @@ public:
   ExprResult BuildDeclRefExpr(ValueDecl *D, QualType Ty,
                               ExprValueKind VK,
                               const DeclarationNameInfo &NameInfo,
-                              const CXXScopeSpec *SS = 0);
+                              const CXXScopeSpec *SS = 0,
+                              NamedDecl *FoundD = 0);
   ExprResult
   BuildAnonymousStructUnionMemberReference(const CXXScopeSpec &SS,
                                            SourceLocation nameLoc,
@@ -3079,7 +3081,7 @@ public:
                                       bool NeedsADL);
   ExprResult BuildDeclarationNameExpr(const CXXScopeSpec &SS,
                                       const DeclarationNameInfo &NameInfo,
-                                      NamedDecl *D);
+                                      NamedDecl *D, NamedDecl *FoundD = 0);
 
   ExprResult BuildLiteralOperatorCall(LookupResult &R,
                                       DeclarationNameInfo &SuffixInfo,
@@ -3825,6 +3827,10 @@ public:
                                SmallVectorImpl<Expr*> &ConvertedArgs,
                                bool AllowExplicit = false,
                                bool IsListInitialization = false);
+
+  ParsedType getInheritingConstructorName(CXXScopeSpec &SS,
+                                          SourceLocation NameLoc,
+                                          IdentifierInfo &Name);
 
   ParsedType getDestructorName(SourceLocation TildeLoc,
                                IdentifierInfo &II, SourceLocation NameLoc,
@@ -6663,6 +6669,18 @@ public:
                       unsigned SpellingListIndex, bool IsPackExpansion);
   void AddAlignedAttr(SourceRange AttrRange, Decl *D, TypeSourceInfo *T,
                       unsigned SpellingListIndex, bool IsPackExpansion);
+
+  // OpenMP directives and clauses.
+
+  /// \brief Called on well-formed '#pragma omp threadprivate'.
+  DeclGroupPtrTy ActOnOpenMPThreadprivateDirective(
+                        SourceLocation Loc,
+                        Scope *CurScope,
+                        ArrayRef<DeclarationNameInfo> IdList);
+  /// \brief Build a new OpenMPThreadPrivateDecl and check its correctness.
+  OMPThreadPrivateDecl *CheckOMPThreadPrivateDecl(
+                        SourceLocation Loc,
+                        ArrayRef<DeclRefExpr *> VarList);
 
   /// \brief The kind of conversion being performed.
   enum CheckedConversionKind {

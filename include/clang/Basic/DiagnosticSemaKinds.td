@@ -533,9 +533,8 @@ def err_conflicting_ivar_name : Error<
   "conflicting instance variable names: %0 vs %1">;
 def err_inconsistant_ivar_count : Error<
   "inconsistent number of instance variables specified">;
-def warn_incomplete_impl : Warning<"incomplete implementation">,
+def warn_undef_method_impl : Warning<"method definition for %0 not found">,
   InGroup<DiagGroup<"incomplete-implementation">>;
-def note_undef_method_impl : Note<"method definition for %0 not found">;
 def note_required_for_protocol_at : 
   Note<"required for direct or indirect protocol %0">;
 
@@ -643,9 +642,11 @@ def warn_objc_property_no_assignment_attribute : Warning<
   "'assign' is assumed">,
   InGroup<ObjCPropertyNoAttribute>;
 def warn_objc_isa_use : Warning<
-  "direct access to Objective-C's isa is deprecated "
-  "in favor of object_setClass() and object_getClass()">,
-  InGroup<DiagGroup<"deprecated-objc-isa-usage">>;
+  "direct access to Objective-C's isa is deprecated in favor of "
+  "object_getClass()">, InGroup<DeprecatedObjCIsaUsage>;
+def warn_objc_isa_assign : Warning<
+  "assignment to Objective-C's isa is deprecated in favor of "
+  "object_setClass()">, InGroup<DeprecatedObjCIsaUsage>;
 def warn_objc_property_default_assign_on_object : Warning<
   "default property attribute 'assign' not appropriate for non-GC object">,
   InGroup<ObjCPropertyNoAttribute>;
@@ -1173,8 +1174,7 @@ def warn_cxx98_compat_static_data_member_in_union : Warning<
 def err_union_member_of_reference_type : Error<
   "union member %0 has reference type %1">;
 def ext_anonymous_struct_union_qualified : Extension<
-  "anonymous %select{struct|union}0 cannot be '%select{const|volatile|"
-  "restrict}1'">;
+  "anonymous %select{struct|union}0 cannot be '%1'">;
 def err_different_return_type_for_overriding_virtual_function : Error<
   "virtual function %0 has a different return type "
   "%diff{($) than the function it overrides (which has return type $)|"
@@ -4065,6 +4065,8 @@ def err_subscript_function_type : Error<
   "subscript of pointer to function type %0">;
 def err_subscript_incomplete_type : Error<
   "subscript of pointer to incomplete type %0">;
+def err_dereference_incomplete_type : Error<
+  "dereference of pointer to incomplete type %0">;
 def ext_gnu_subscript_void_type : Extension<
   "subscript of a pointer to void is a GNU extension">, InGroup<PointerArith>;
 def err_typecheck_member_reference_struct_union : Error<
@@ -6211,6 +6213,22 @@ def err_sampler_argument_required : Error<
   "sampler_t variable required - got %0">;
 def err_wrong_sampler_addressspace: Error<
   "sampler type cannot be used with the __local and __global address space qualifiers">;
+
+// OpenMP support.
+def err_omp_expected_var_arg_suggest : Error<
+  "%0 is not a global variable, static local variable or static data member%select{|; did you mean %2?}1">;
+def err_omp_global_var_arg : Error<
+  "arguments of '#pragma omp %0' must have %select{global storage|static storage duration}1">;
+def err_omp_ref_type_arg : Error<
+  "arguments of '#pragma omp %0' cannot be of reference type %1">;
+def err_omp_var_scope : Error<
+  "'#pragma omp %0' must appear in the scope of the %1 variable declaration">;
+def err_omp_var_used : Error<
+  "'#pragma omp %0' must precede all references to variable %1">;
+def err_omp_var_thread_local : Error<
+  "variable %0 cannot be threadprivate because it is thread-local">;
+def err_omp_incomplete_type : Error<
+  "a threadprivate variable must not have incomplete type %0">;
 
 } // end of sema category
 

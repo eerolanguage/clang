@@ -22,9 +22,9 @@
 #include "clang/Basic/FileSystemOptions.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Basic/Version.h"
 #include "clang/Lex/ExternalPreprocessorSource.h"
 #include "clang/Lex/HeaderSearch.h"
-#include "clang/Lex/PPMutationListener.h"
 #include "clang/Lex/PreprocessingRecord.h"
 #include "clang/Sema/ExternalSemaSource.h"
 #include "clang/Serialization/ASTBitCodes.h"
@@ -99,6 +99,14 @@ class ASTUnresolvedSet;
 class ASTReaderListener {
 public:
   virtual ~ASTReaderListener();
+
+  /// \brief Receives the full Clang version information.
+  ///
+  /// \returns true to indicate that the version is invalid. Subclasses should
+  /// generally defer to this implementation.
+  virtual bool ReadFullVersionInformation(StringRef FullVersion) {
+    return FullVersion != getClangFullRepositoryVersion();
+  }
 
   /// \brief Receives the language options.
   ///
@@ -430,7 +438,7 @@ private:
   /// If the pointer at index I is non-NULL, then it refers to the
   /// MacroInfo for the identifier with ID=I+1 that has already
   /// been loaded.
-  std::vector<MacroDirective *> MacrosLoaded;
+  std::vector<MacroInfo *> MacrosLoaded;
 
   typedef ContinuousRangeMap<serialization::MacroID, ModuleFile *, 4>
     GlobalMacroMapType;
@@ -439,15 +447,6 @@ private:
   /// macro resides along with the offset that should be added to the
   /// global macro ID to produce a local ID.
   GlobalMacroMapType GlobalMacroMap;
-
-  typedef llvm::DenseMap<serialization::MacroID,
-            SmallVector<std::pair<serialization::SubmoduleID,
-                                        MacroUpdate>, 1> >
-    MacroUpdatesMap;
-
-  /// \brief Mapping from (global) macro IDs to the set of updates to be
-  /// performed to the corresponding macro.
-  MacroUpdatesMap MacroUpdates;
 
   /// \brief A vector containing submodules that have already been loaded.
   ///
@@ -468,13 +467,10 @@ private:
   public:
     enum NameKind {
       Declaration,
-      MacroVisibility,
-      MacroUndef
+      MacroVisibility
     } Kind;
 
   private:
-    unsigned Loc;
-
     union {
       Decl *D;
       MacroDirective *MD;
@@ -483,13 +479,10 @@ private:
     IdentifierInfo *Id;
 
   public:
-    HiddenName(Decl *D) : Kind(Declaration), Loc(), D(D), Id() { }
+    HiddenName(Decl *D) : Kind(Declaration), D(D), Id() { }
 
     HiddenName(IdentifierInfo *II, MacroDirective *MD)
-      : Kind(MacroVisibility), Loc(), MD(MD), Id(II) { }
-
-    HiddenName(IdentifierInfo *II, MacroDirective *MD, SourceLocation Loc)
-      : Kind(MacroUndef), Loc(Loc.getRawEncoding()), MD(MD), Id(II) { }
+      : Kind(MacroVisibility), MD(MD), Id(II) { }
 
     NameKind getKind() const { return Kind; }
 
@@ -499,14 +492,8 @@ private:
     }
 
     std::pair<IdentifierInfo *, MacroDirective *> getMacro() const {
-      assert((getKind() == MacroUndef || getKind() == MacroVisibility)
-             && "Hidden name is not a macro!");
+      assert(getKind() == MacroVisibility && "Hidden name is not a macro!");
       return std::make_pair(Id, MD);
-    }
-
-    SourceLocation getMacroUndefLoc() const {
-      assert(getKind() == MacroUndef && "Hidden name is not an undef!");
-      return SourceLocation::getFromRawEncoding(Loc);
     }
 };
 
@@ -564,8 +551,35 @@ private:
   /// global method pool for this selector.
   llvm::DenseMap<Selector, unsigned> SelectorGeneration;
 
-  typedef llvm::MapVector<IdentifierInfo *,
-                          SmallVector<serialization::MacroID, 2> >
+  struct PendingMacroInfo {
+    ModuleFile *M;
+
+    struct ModuleMacroDataTy {
+      serialization::GlobalMacroID GMacID;
+      unsigned ImportLoc;
+    };
+    struct PCHMacroDataTy {
+      uint64_t MacroDirectivesOffset;
+    };
+
+    union {
+      ModuleMacroDataTy ModuleMacroData;
+      PCHMacroDataTy PCHMacroData;
+    };
+
+    PendingMacroInfo(ModuleFile *M,
+                     serialization::GlobalMacroID GMacID,
+                     SourceLocation ImportLoc) : M(M) {
+      ModuleMacroData.GMacID = GMacID;
+      ModuleMacroData.ImportLoc = ImportLoc.getRawEncoding();
+    }
+
+    PendingMacroInfo(ModuleFile *M, uint64_t MacroDirectivesOffset) : M(M) {
+      PCHMacroData.MacroDirectivesOffset = MacroDirectivesOffset;
+    }
+  };
+
+  typedef llvm::MapVector<IdentifierInfo *, SmallVector<PendingMacroInfo, 2> >
     PendingMacroIDsMap;
 
   /// \brief Mapping from identifiers that have a macro history to the global
@@ -1201,7 +1215,7 @@ public:
                          bool Complain);
   
   /// \brief Make the names within this set of hidden names visible.
-  void makeNamesVisible(const HiddenNames &Names);
+  void makeNamesVisible(const HiddenNames &Names, Module *Owner);
   
   /// \brief Set the AST callbacks listener.
   void setListener(ASTReaderListener *listener) {
@@ -1619,8 +1633,16 @@ public:
   serialization::IdentifierID getGlobalIdentifierID(ModuleFile &M,
                                                     unsigned LocalID);
 
+  void resolvePendingMacro(IdentifierInfo *II, const PendingMacroInfo &PMInfo);
+
+  void installPCHMacroDirectives(IdentifierInfo *II,
+                                 ModuleFile &M, uint64_t Offset);
+
+  void installImportedMacro(IdentifierInfo *II, MacroDirective *MD,
+                            Module *Owner);
+
   /// \brief Retrieve the macro with the given ID.
-  MacroDirective *getMacro(serialization::MacroID ID, MacroDirective *Hint = 0);
+  MacroInfo *getMacro(serialization::MacroID ID);
 
   /// \brief Retrieve the global macro ID corresponding to the given local
   /// ID within the given module file.
@@ -1779,20 +1801,32 @@ public:
   Expr *ReadSubExpr();
 
   /// \brief Reads the macro record located at the given offset.
-  void ReadMacroRecord(ModuleFile &F, uint64_t Offset, MacroDirective *Hint = 0);
+  MacroInfo *ReadMacroRecord(ModuleFile &F, uint64_t Offset);
 
   /// \brief Determine the global preprocessed entity ID that corresponds to
   /// the given local ID within the given module.
   serialization::PreprocessedEntityID
   getGlobalPreprocessedEntityID(ModuleFile &M, unsigned LocalID) const;
 
-  /// \brief Note that the identifier has a macro history.
+  /// \brief Add a macro to resolve imported from a module.
   ///
   /// \param II The name of the macro.
+  /// \param M The module file.
+  /// \param GMacID The global macro ID that is associated with this identifier.
+  /// \param ImportLoc The location where the module is imported.
+  void addPendingMacroFromModule(IdentifierInfo *II,
+                                 ModuleFile *M,
+                                 serialization::GlobalMacroID GMacID,
+                                 SourceLocation ImportLoc);
+
+  /// \brief Add a macro to deserialize its macro directive history from a PCH.
   ///
-  /// \param IDs The global macro IDs that are associated with this identifier.
-  void setIdentifierIsMacro(IdentifierInfo *II,
-                            ArrayRef<serialization::MacroID> IDs);
+  /// \param II The name of the macro.
+  /// \param M The module file.
+  /// \param MacroDirectivesOffset Offset of the serialized macro directive
+  /// history.
+  void addPendingMacroFromPCH(IdentifierInfo *II,
+                              ModuleFile *M, uint64_t MacroDirectivesOffset);
 
   /// \brief Read the set of macros defined by this external macro source.
   virtual void ReadDefinedMacros();

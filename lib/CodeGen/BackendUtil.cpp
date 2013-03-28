@@ -527,6 +527,7 @@ void EmitAssemblyHelper::EmitAssembly(BackendAction Action, raw_ostream *OS) {
                       Action != Backend_EmitBC &&
                       Action != Backend_EmitLL);
   TargetMachine *TM = CreateTargetMachine(UsesCodeGen);
+  if (UsesCodeGen && !TM) return;
   CreatePasses(TM);
 
   switch (Action) {

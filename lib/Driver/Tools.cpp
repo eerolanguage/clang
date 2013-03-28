@@ -1575,7 +1575,8 @@ SanitizerArgs::SanitizerArgs(const Driver &D, const ArgList &Args)
 
 static void addSanitizerRTLinkFlagsLinux(
     const ToolChain &TC, const ArgList &Args, ArgStringList &CmdArgs,
-    const StringRef Sanitizer, bool BeforeLibStdCXX) {
+    const StringRef Sanitizer, bool BeforeLibStdCXX,
+    bool ExportSymbols = true) {
   // Sanitizer runtime is located in the Linux library directory and
   // has name "libclang_rt.<Sanitizer>-<ArchName>.a".
   SmallString<128> LibSanitizer(TC.getDriver().ResourceDir);
@@ -1599,7 +1600,17 @@ static void addSanitizerRTLinkFlagsLinux(
 
   CmdArgs.push_back("-lpthread");
   CmdArgs.push_back("-ldl");
-  CmdArgs.push_back("-export-dynamic");
+
+  // If possible, use a dynamic symbols file to export the symbols from the
+  // runtime library. If we can't do so, use -export-dynamic instead to export
+  // all symbols from the binary.
+  if (ExportSymbols) {
+    if (llvm::sys::fs::exists(LibSanitizer + ".syms"))
+      CmdArgs.push_back(
+          Args.MakeArgString("--dynamic-list=" + LibSanitizer + ".syms"));
+    else
+      CmdArgs.push_back("-export-dynamic");
+  }
 }
 
 /// If AddressSanitizer is enabled, add appropriate linker flags (Linux).
@@ -1666,7 +1677,7 @@ static void addUbsanRTLinux(const ToolChain &TC, const ArgList &Args,
   // Need a copy of sanitizer_common. This could come from another sanitizer
   // runtime; if we're not including one, include our own copy.
   if (!HasOtherSanitizerRt)
-    addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "san", true);
+    addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "san", true, false);
 
   addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "ubsan", false);
 
@@ -1849,6 +1860,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-S");
     } else if (JA.getType() == types::TY_AST) {
       CmdArgs.push_back("-emit-pch");
+    } else if (JA.getType() == types::TY_ModuleFile) {
+      CmdArgs.push_back("-module-file-info");
     } else if (JA.getType() == types::TY_RewrittenObjC) {
       CmdArgs.push_back("-rewrite-objc");
       rewriteKind = RK_NonFragile;
@@ -1902,6 +1915,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       
       CmdArgs.push_back("-analyzer-checker=deadcode");
       
+      if (types::isCXX(Inputs[0].getType()))
+        CmdArgs.push_back("-analyzer-checker=cplusplus");
+
       // Enable the following experimental checkers for testing. 
       CmdArgs.push_back("-analyzer-checker=security.insecureAPI.UncheckedReturn");
       CmdArgs.push_back("-analyzer-checker=security.insecureAPI.getpw");
@@ -2815,6 +2831,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Pass through all -fmodules-ignore-macro arguments.
   Args.AddAllArgs(CmdArgs, options::OPT_fmodules_ignore_macro);
+  Args.AddLastArg(CmdArgs, options::OPT_fmodules_prune_interval);
+  Args.AddLastArg(CmdArgs, options::OPT_fmodules_prune_after);
 
   // -fmodules-autolink (on by default when modules is enabled) automatically
   // links against libraries for imported modules.  This requires the
@@ -3682,6 +3700,9 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
     else if (II.getType() == types::TY_AST)
       D.Diag(diag::err_drv_no_ast_support)
         << getToolChain().getTripleString();
+    else if (II.getType() == types::TY_ModuleFile)
+      D.Diag(diag::err_drv_no_module_support)
+        << getToolChain().getTripleString();
 
     if (types::canTypeBeUserSpecified(II.getType())) {
       CmdArgs.push_back("-x");
@@ -3812,6 +3833,9 @@ void hexagon::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     else if (II.getType() == types::TY_AST)
       D.Diag(clang::diag::err_drv_no_ast_support)
         << getToolChain().getTripleString();
+    else if (II.getType() == types::TY_ModuleFile)
+      D.Diag(diag::err_drv_no_module_support)
+      << getToolChain().getTripleString();
 
     if (II.isFilename())
       CmdArgs.push_back(II.getFilename());

@@ -313,9 +313,7 @@ private:
     switch (Tok->FormatTok.Tok.getKind()) {
     case tok::plus:
     case tok::minus:
-      // At the start of the line, +/- specific ObjectiveC method
-      // declarations.
-      if (Tok->Parent == NULL)
+      if (Tok->Parent == NULL && Line.MustBeDeclaration)
         Tok->Type = TT_ObjCMethodSpecifier;
       break;
     case tok::colon:

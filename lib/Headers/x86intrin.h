@@ -46,6 +46,10 @@
 #include <popcntintrin.h>
 #endif
 
+#ifdef __PRFCHW__
+#include <prfchwintrin.h>
+#endif
+
 #ifdef __SSE4A__
 #include <ammintrin.h>
 #endif

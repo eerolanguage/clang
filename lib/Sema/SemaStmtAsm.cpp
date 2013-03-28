@@ -124,11 +124,14 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
 
     // Check that the output exprs are valid lvalues.
     Expr *OutputExpr = Exprs[i];
-    if (CheckAsmLValue(OutputExpr, *this)) {
+    if (CheckAsmLValue(OutputExpr, *this))
       return StmtError(Diag(OutputExpr->getLocStart(),
-                  diag::err_asm_invalid_lvalue_in_output)
-        << OutputExpr->getSourceRange());
-    }
+                            diag::err_asm_invalid_lvalue_in_output)
+                       << OutputExpr->getSourceRange());
+
+    if (RequireCompleteType(OutputExpr->getLocStart(), Exprs[i]->getType(),
+                            diag::err_dereference_incomplete_type))
+      return StmtError();
 
     OutputConstraintInfos.push_back(Info);
   }
@@ -181,8 +184,13 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     InputConstraintInfos.push_back(Info);
 
     const Type *Ty = Exprs[i]->getType().getTypePtr();
-    if (Ty->isDependentType() || Ty->isIncompleteType())
+    if (Ty->isDependentType())
       continue;
+
+    if (!Ty->isVoidType() || !Info.allowsMemory())
+      if (RequireCompleteType(InputExpr->getLocStart(), Exprs[i]->getType(),
+                              diag::err_dereference_incomplete_type))
+        return StmtError();
 
     unsigned Size = Context.getTypeSize(Ty);
     if (!Context.getTargetInfo().validateInputSize(Literal->getString(),

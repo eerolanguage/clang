@@ -1311,29 +1311,25 @@ void Sema::ActOnBaseSpecifiers(Decl *ClassDecl, CXXBaseSpecifier **Bases,
                        (CXXBaseSpecifier**)(Bases), NumBases);
 }
 
-static CXXRecordDecl *GetClassForType(QualType T) {
-  if (const RecordType *RT = T->getAs<RecordType>())
-    return cast<CXXRecordDecl>(RT->getDecl());
-  else if (const InjectedClassNameType *ICT = T->getAs<InjectedClassNameType>())
-    return ICT->getDecl();
-  else
-    return 0;
-}
-
 /// \brief Determine whether the type \p Derived is a C++ class that is
 /// derived from the type \p Base.
 bool Sema::IsDerivedFrom(QualType Derived, QualType Base) {
   if (!getLangOpts().CPlusPlus)
     return false;
   
-  CXXRecordDecl *DerivedRD = GetClassForType(Derived);
+  CXXRecordDecl *DerivedRD = Derived->getAsCXXRecordDecl();
   if (!DerivedRD)
     return false;
   
-  CXXRecordDecl *BaseRD = GetClassForType(Base);
+  CXXRecordDecl *BaseRD = Base->getAsCXXRecordDecl();
   if (!BaseRD)
     return false;
-  
+
+  // If either the base or the derived type is invalid, don't try to
+  // check whether one is derived from the other.
+  if (BaseRD->isInvalidDecl() || DerivedRD->isInvalidDecl())
+    return false;
+
   // FIXME: instantiate DerivedRD if necessary.  We need a PoI for this.
   return DerivedRD->hasDefinition() && DerivedRD->isDerivedFrom(BaseRD);
 }
@@ -1344,11 +1340,11 @@ bool Sema::IsDerivedFrom(QualType Derived, QualType Base, CXXBasePaths &Paths) {
   if (!getLangOpts().CPlusPlus)
     return false;
   
-  CXXRecordDecl *DerivedRD = GetClassForType(Derived);
+  CXXRecordDecl *DerivedRD = Derived->getAsCXXRecordDecl();
   if (!DerivedRD)
     return false;
   
-  CXXRecordDecl *BaseRD = GetClassForType(Base);
+  CXXRecordDecl *BaseRD = Base->getAsCXXRecordDecl();
   if (!BaseRD)
     return false;
   
@@ -3436,7 +3432,7 @@ bool CheckRedundantInit(Sema &S,
     return false;
   }
 
-  if (FieldDecl *Field = Init->getMember())
+  if (FieldDecl *Field = Init->getAnyMember())
     S.Diag(Init->getSourceLocation(),
            diag::err_multiple_mem_initialization)
       << Field->getDeclName()
@@ -4376,9 +4372,15 @@ void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
   if (Type->hasExceptionSpec()) {
     // Delay the check if this is the first declaration of the special member,
     // since we may not have parsed some necessary in-class initializers yet.
-    if (First)
+    if (First) {
+      // If the exception specification needs to be instantiated, do so now,
+      // before we clobber it with an EST_Unevaluated specification below.
+      if (Type->getExceptionSpecType() == EST_Uninstantiated) {
+        InstantiateExceptionSpec(MD->getLocStart(), MD);
+        Type = MD->getType()->getAs<FunctionProtoType>();
+      }
       DelayedDefaultedMemberExceptionSpecs.push_back(std::make_pair(MD, Type));
-    else
+    } else
       CheckExplicitlyDefaultedMemberExceptionSpec(MD, Type);
   }
 
@@ -11022,6 +11024,9 @@ void Sema::SetDeclDefaulted(Decl *Dcl, SourceLocation DefaultLoc) {
       // on it.
       Pattern->isDefined(Primary);
 
+    // If the method was defaulted on its first declaration, we will have
+    // already performed the checking in CheckCompletedCXXClass. Such a
+    // declaration doesn't trigger an implicit definition.
     if (Primary == Primary->getCanonicalDecl())
       return;
 

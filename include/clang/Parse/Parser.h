@@ -14,6 +14,7 @@
 #ifndef LLVM_CLANG_PARSE_PARSER_H
 #define LLVM_CLANG_PARSE_PARSER_H
 
+#include "clang/Basic/OpenMPKinds.h"
 #include "clang/Basic/OperatorPrecedence.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Lex/CodeCompletionHandler.h"
@@ -147,6 +148,7 @@ class Parser : public CodeCompletionHandler {
   OwningPtr<PragmaHandler> FPContractHandler;
   OwningPtr<PragmaHandler> OpenCLExtensionHandler;
   OwningPtr<CommentHandler> CommentSemaHandler;
+  OwningPtr<PragmaHandler> OpenMPHandler;
 
   /// Whether the '>' token acts as an operator or not. This will be
   /// true except when we are parsing an expression within a C++
@@ -248,12 +250,12 @@ public:
   /// This does not work with all kinds of tokens: strings and specific other
   /// tokens must be consumed with custom methods below.  This returns the
   /// location of the consumed token.
-  SourceLocation ConsumeToken() {
+  SourceLocation ConsumeToken(bool ConsumeCodeCompletionTok = false) {
     assert(!isTokenStringLiteral() && !isTokenParen() && !isTokenBracket() &&
            !isTokenBrace() &&
            "Should consume special tokens with Consume*Token");
 
-    if (Tok.is(tok::code_completion))
+    if (!ConsumeCodeCompletionTok && Tok.is(tok::code_completion))
       return handleUnexpectedCodeCompletionToken();
 
     PrevTokLocation = Tok.getLocation();
@@ -292,7 +294,7 @@ private:
   /// ConsumeAnyToken - Dispatch to the right Consume* method based on the
   /// current token type.  This should only be used in cases where the type of
   /// the token really isn't known, e.g. in error recovery.
-  SourceLocation ConsumeAnyToken() {
+  SourceLocation ConsumeAnyToken(bool ConsumeCodeCompletionTok = false) {
     if (isTokenParen())
       return ConsumeParen();
     else if (isTokenBracket())
@@ -302,7 +304,7 @@ private:
     else if (isTokenStringLiteral())
       return ConsumeStringToken();
     else
-      return ConsumeToken();
+      return ConsumeToken(ConsumeCodeCompletionTok);
   }
 
   /// ConsumeParen - This consume method keeps the paren count up-to-date.
@@ -1392,7 +1394,8 @@ private:
                                       ParsedType ObjectType,
                                       bool EnteringContext,
                                       bool *MayBePseudoDestructor = 0,
-                                      bool IsTypename = false);
+                                      bool IsTypename = false,
+                                      IdentifierInfo **LastII = 0);
 
   void CheckForLParenAfterColonColon();
 
@@ -2116,7 +2119,8 @@ private:
                                DirectDeclParseFunction DirectDeclParser);
 
   void ParseTypeQualifierListOpt(DeclSpec &DS, bool GNUAttributesAllowed = true,
-                                 bool CXX11AttributesAllowed = true);
+                                 bool CXX11AttributesAllowed = true,
+                                 bool AtomicAllowed = true);
   void ParseDirectDeclarator(Declarator &D);
   void ParseParenDeclarator(Declarator &D);
   void ParseFunctionDeclarator(Declarator &D,
@@ -2224,6 +2228,11 @@ private:
                                   ParsedType ObjectType,
                                   UnqualifiedId &Result);
 
+  //===--------------------------------------------------------------------===//
+  // OpenMP: Directives and clauses.
+  DeclGroupPtrTy ParseOpenMPDeclarativeDirective();
+  bool ParseOpenMPSimpleVarList(OpenMPDirectiveKind Kind,
+                                SmallVectorImpl<DeclarationNameInfo> &IdList);
 public:
   bool ParseUnqualifiedId(CXXScopeSpec &SS, bool EnteringContext,
                           bool AllowDestructorName,
