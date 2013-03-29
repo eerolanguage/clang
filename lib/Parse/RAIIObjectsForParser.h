@@ -437,12 +437,12 @@ namespace clang {
 
         case tok::pipe:
           Close = tok::pipe; 
-          Consumer = &Parser::ConsumeToken;
+          Consumer = &Parser::ConsumeTokenNoArgs;
           break;
 
         case tok::less:
           Close = tok::greater; 
-          Consumer = &Parser::ConsumeToken;
+          Consumer = &Parser::ConsumeTokenNoArgs;
           break;
       }      
     }

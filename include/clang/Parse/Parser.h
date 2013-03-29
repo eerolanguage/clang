@@ -263,6 +263,10 @@ public:
     return PrevTokLocation;
   }
 
+  SourceLocation ConsumeTokenNoArgs() {
+    return ConsumeToken();
+  }
+
 private:
   //===--------------------------------------------------------------------===//
   // Low-Level token peeking and consumption methods.
