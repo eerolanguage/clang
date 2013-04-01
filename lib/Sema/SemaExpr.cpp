@@ -450,6 +450,34 @@ static void CheckForNullPointerDereference(Sema &S, Expr *E) {
   }
 }
 
+static void DiagnoseDirectIsaAccess(Sema &S, const ObjCIvarRefExpr *OIRE,
+                                    bool IsAssign) {
+  const ObjCIvarDecl *IV = OIRE->getDecl();
+  if (!IV)
+    return;
+  
+  DeclarationName MemberName = IV->getDeclName();
+  IdentifierInfo *Member = MemberName.getAsIdentifierInfo();
+  if (!Member || !Member->isStr("isa"))
+    return;
+  
+  const Expr *Base = OIRE->getBase();
+  QualType BaseType = Base->getType();
+  if (OIRE->isArrow())
+    BaseType = BaseType->getPointeeType();
+  if (const ObjCObjectType *OTy = BaseType->getAs<ObjCObjectType>())
+    if (ObjCInterfaceDecl *IDecl = OTy->getInterface()) {
+      ObjCInterfaceDecl *ClassDeclared = 0;
+      ObjCIvarDecl *IV = IDecl->lookupInstanceVariable(Member, ClassDeclared);
+      if (!ClassDeclared->getSuperClass()
+          && (*ClassDeclared->ivar_begin()) == IV) {
+        S.Diag(OIRE->getLocation(), IsAssign ? diag::warn_objc_isa_assign
+                                             : diag::warn_objc_isa_use);
+        S.Diag(IV->getLocation(), diag::note_ivar_decl);
+      }
+    }
+}
+
 ExprResult Sema::DefaultLvalueConversion(Expr *E) {
   // Handle any placeholder expressions which made it here.
   if (E->getType()->isPlaceholderType()) {
@@ -491,9 +519,22 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
   }
 
   CheckForNullPointerDereference(*this, E);
-  if (isa<ObjCIsaExpr>(E->IgnoreParens()))
-    Diag(E->getExprLoc(), diag::warn_objc_isa_use);
-
+  if (const ObjCIsaExpr *OISA = dyn_cast<ObjCIsaExpr>(E->IgnoreParenCasts())) {
+    NamedDecl *ObjectGetClass = LookupSingleName(TUScope,
+                                     &Context.Idents.get("object_getClass"),
+                                     SourceLocation(), LookupOrdinaryName);
+    if (ObjectGetClass)
+      Diag(E->getExprLoc(), diag::warn_objc_isa_use) <<
+        FixItHint::CreateInsertion(OISA->getLocStart(), "object_getClass(") <<
+        FixItHint::CreateReplacement(
+                    SourceRange(OISA->getOpLoc(), OISA->getIsaMemberLoc()), ")");
+    else
+      Diag(E->getExprLoc(), diag::warn_objc_isa_use);
+  }
+  else if (const ObjCIvarRefExpr *OIRE =
+            dyn_cast<ObjCIvarRefExpr>(E->IgnoreParenCasts()))
+    DiagnoseDirectIsaAccess(*this, OIRE, false);
+  
   // C++ [conv.lval]p1:
   //   [...] If T is a non-class type, the type of the prvalue is the
   //   cv-unqualified version of T. Otherwise, the type of the
@@ -3053,6 +3094,24 @@ static bool CheckObjCTraitOperandConstraints(Sema &S, QualType T,
   return false;
 }
 
+/// \brief Check whether E is a pointer from a decayed array type (the decayed
+/// pointer type is equal to T) and emit a warning if it is.
+static void warnOnSizeofOnArrayDecay(Sema &S, SourceLocation Loc, QualType T,
+                                     Expr *E) {
+  // Don't warn if the operation changed the type.
+  if (T != E->getType())
+    return;
+
+  // Now look for array decays.
+  ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(E);
+  if (!ICE || ICE->getCastKind() != CK_ArrayToPointerDecay)
+    return;
+
+  S.Diag(Loc, diag::warn_sizeof_array_decay) << ICE->getSourceRange()
+                                             << ICE->getType()
+                                             << ICE->getSubExpr()->getType();
+}
+
 /// \brief Check the constrains on expression operands to unary type expression
 /// and type traits.
 ///
@@ -3105,6 +3164,16 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(Expr *E,
           Diag(PVD->getLocation(), diag::note_declared_at);
         }
       }
+    }
+
+    // Warn on "sizeof(array op x)" and "sizeof(x op array)", where the array
+    // decays into a pointer and returns an unintended result. This is most
+    // likely a typo for "sizeof(array) op x".
+    if (BinaryOperator *BO = dyn_cast<BinaryOperator>(E->IgnoreParens())) {
+      warnOnSizeofOnArrayDecay(*this, BO->getOperatorLoc(), BO->getType(),
+                               BO->getLHS());
+      warnOnSizeofOnArrayDecay(*this, BO->getOperatorLoc(), BO->getType(),
+                               BO->getRHS());
     }
   }
 
@@ -5377,7 +5446,8 @@ static bool IsArithmeticBinaryExpr(Expr *E, BinaryOperatorKind *Opcode,
     // Make sure this is really a binary operator that is safe to pass into
     // BinaryOperator::getOverloadedOpcode(), e.g. it's not a subscript op.
     OverloadedOperatorKind OO = Call->getOperator();
-    if (OO < OO_Plus || OO > OO_Arrow)
+    if (OO < OO_Plus || OO > OO_Arrow ||
+        OO == OO_PlusPlus || OO == OO_MinusMinus)
       return false;
 
     BinaryOperatorKind OpKind = BinaryOperator::getOverloadedOpcode(OO);
@@ -8590,9 +8660,24 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
   CheckArrayAccess(LHS.get());
   CheckArrayAccess(RHS.get());
 
-  if (isa<ObjCIsaExpr>(LHS.get()->IgnoreParens()))
-    Diag(LHS.get()->getExprLoc(), diag::warn_objc_isa_assign);
-
+  if (const ObjCIsaExpr *OISA = dyn_cast<ObjCIsaExpr>(LHS.get()->IgnoreParenCasts())) {
+    NamedDecl *ObjectSetClass = LookupSingleName(TUScope,
+                                                 &Context.Idents.get("object_setClass"),
+                                                 SourceLocation(), LookupOrdinaryName);
+    if (ObjectSetClass && isa<ObjCIsaExpr>(LHS.get())) {
+      SourceLocation RHSLocEnd = PP.getLocForEndOfToken(RHS.get()->getLocEnd());
+      Diag(LHS.get()->getExprLoc(), diag::warn_objc_isa_assign) <<
+      FixItHint::CreateInsertion(LHS.get()->getLocStart(), "object_setClass(") <<
+      FixItHint::CreateReplacement(SourceRange(OISA->getOpLoc(), OpLoc), ",") <<
+      FixItHint::CreateInsertion(RHSLocEnd, ")");
+    }
+    else
+      Diag(LHS.get()->getExprLoc(), diag::warn_objc_isa_assign);
+  }
+  else if (const ObjCIvarRefExpr *OIRE =
+           dyn_cast<ObjCIvarRefExpr>(LHS.get()->IgnoreParenCasts()))
+    DiagnoseDirectIsaAccess(*this, OIRE, true);
+  
   if (CompResultTy.isNull())
     return Owned(new (Context) BinaryOperator(LHS.take(), RHS.take(), Opc,
                                               ResultTy, VK, OK, OpLoc,

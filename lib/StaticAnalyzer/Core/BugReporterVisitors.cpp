@@ -137,11 +137,12 @@ class ReturnVisitor : public BugReporterVisitorImpl<ReturnVisitor> {
     MaybeUnsuppress,
     Satisfied
   } Mode;
-  bool InitiallySuppressed;
+
+  bool EnableNullFPSuppression;
 
 public:
   ReturnVisitor(const StackFrameContext *Frame, bool Suppressed)
-    : StackFrame(Frame), Mode(Initial), InitiallySuppressed(Suppressed) {}
+    : StackFrame(Frame), Mode(Initial), EnableNullFPSuppression(Suppressed) {}
 
   static void *getTag() {
     static int Tag = 0;
@@ -151,7 +152,7 @@ public:
   virtual void Profile(llvm::FoldingSetNodeID &ID) const {
     ID.AddPointer(ReturnVisitor::getTag());
     ID.AddPointer(StackFrame);
-    ID.AddBoolean(InitiallySuppressed);
+    ID.AddBoolean(EnableNullFPSuppression);
   }
 
   /// Adds a ReturnVisitor if the given statement represents a call that was
@@ -162,7 +163,8 @@ public:
   /// the statement is a call that was inlined, we add the visitor to the
   /// bug report, so it can print a note later.
   static void addVisitorIfNecessary(const ExplodedNode *Node, const Stmt *S,
-                                    BugReport &BR) {
+                                    BugReport &BR,
+                                    bool InEnableNullFPSuppression) {
     if (!CallEvent::isCallStmt(S))
       return;
     
@@ -207,13 +209,13 @@ public:
     assert(Eng && "Cannot file a bug report without an owning engine");
     AnalyzerOptions &Options = Eng->getAnalysisManager().options;
 
-    bool InitiallySuppressed = false;
-    if (Options.shouldSuppressNullReturnPaths())
+    bool EnableNullFPSuppression = false;
+    if (InEnableNullFPSuppression && Options.shouldSuppressNullReturnPaths())
       if (Optional<Loc> RetLoc = RetVal.getAs<Loc>())
-        InitiallySuppressed = State->isNull(*RetLoc).isConstrainedTrue();
+        EnableNullFPSuppression = State->isNull(*RetLoc).isConstrainedTrue();
 
     BR.markInteresting(CalleeContext);
-    BR.addVisitor(new ReturnVisitor(CalleeContext, InitiallySuppressed));
+    BR.addVisitor(new ReturnVisitor(CalleeContext, EnableNullFPSuppression));
   }
 
   /// Returns true if any counter-suppression heuristics are enabled for
@@ -272,12 +274,14 @@ public:
     // make sure to track it into any further inner functions.
     if (!State->isNull(V).isConstrainedTrue()) {
       BR.markInteresting(V);
-      ReturnVisitor::addVisitorIfNecessary(N, RetE, BR);
+      ReturnVisitor::addVisitorIfNecessary(N, RetE, BR,
+                                           EnableNullFPSuppression);
       return 0;
     }
       
     // If we're returning 0, we should track where that 0 came from.
-    bugreporter::trackNullOrUndefValue(N, RetE, BR);
+    bugreporter::trackNullOrUndefValue(N, RetE, BR, /*IsArg*/ false,
+                                       EnableNullFPSuppression);
 
     // Build an appropriate message based on the return value.
     SmallString<64> Msg;
@@ -289,7 +293,7 @@ public:
       // the report is resurrected as valid later on.
       ExprEngine &Eng = BRC.getBugReporter().getEngine();
       AnalyzerOptions &Options = Eng.getAnalysisManager().options;
-      if (InitiallySuppressed && hasCounterSuppression(Options))
+      if (EnableNullFPSuppression && hasCounterSuppression(Options))
         Mode = MaybeUnsuppress;
 
       if (RetE->getType()->isObjCObjectPointerType())
@@ -360,7 +364,8 @@ public:
       if (!State->isNull(*ArgV).isConstrainedTrue())
         continue;
 
-      if (bugreporter::trackNullOrUndefValue(N, ArgE, BR, /*IsArg=*/true))
+      if (bugreporter::trackNullOrUndefValue(N, ArgE, BR, /*IsArg=*/true,
+                                             EnableNullFPSuppression))
         BR.removeInvalidation(ReturnVisitor::getTag(), StackFrame);
 
       // If we /can't/ track the null pointer, we should err on the side of
@@ -390,7 +395,7 @@ public:
   PathDiagnosticPiece *getEndPath(BugReporterContext &BRC,
                                   const ExplodedNode *N,
                                   BugReport &BR) {
-    if (InitiallySuppressed)
+    if (EnableNullFPSuppression)
       BR.markInvalid(ReturnVisitor::getTag(), StackFrame);
     return 0;
   }
@@ -403,6 +408,7 @@ void FindLastStoreBRVisitor ::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddPointer(&tag);
   ID.AddPointer(R);
   ID.Add(V);
+  ID.AddBoolean(EnableNullFPSuppression);
 }
 
 PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
@@ -487,10 +493,11 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
     if (V.isUndef() || V.getAs<loc::ConcreteInt>()) {
       if (!IsParam)
         InitE = InitE->IgnoreParenCasts();
-      bugreporter::trackNullOrUndefValue(StoreSite, InitE, BR, IsParam);
+      bugreporter::trackNullOrUndefValue(StoreSite, InitE, BR, IsParam,
+                                         EnableNullFPSuppression);
     } else {
       ReturnVisitor::addVisitorIfNecessary(StoreSite, InitE->IgnoreParenCasts(),
-                                           BR);
+                                           BR, EnableNullFPSuppression);
     }
   }
 
@@ -520,7 +527,8 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
           if (const VarRegion *OriginalR = BDR->getOriginalRegion(VR)) {
             if (Optional<KnownSVal> KV =
                 State->getSVal(OriginalR).getAs<KnownSVal>())
-              BR.addVisitor(new FindLastStoreBRVisitor(*KV, OriginalR));
+              BR.addVisitor(new FindLastStoreBRVisitor(*KV, OriginalR,
+                                                      EnableNullFPSuppression));
           }
         }
       }
@@ -807,7 +815,8 @@ static const Expr *peelOffOuterExpr(const Stmt *S,
 
 bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
                                         const Stmt *S,
-                                        BugReport &report, bool IsArg) {
+                                        BugReport &report, bool IsArg,
+                                        bool EnableNullFPSuppression) {
   if (!S || !N)
     return false;
 
@@ -830,7 +839,7 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
     // gone too far (though we can likely track the lvalue better anyway).
     do {
       const ProgramPoint &pp = N->getLocation();
-      if (Optional<PostStmt> ps = pp.getAs<PostStmt>()) {
+      if (Optional<StmtPoint> ps = pp.getAs<StmtPoint>()) {
         if (ps->getStmt() == S || ps->getStmt() == Inner)
           break;
       } else if (Optional<CallExitEnd> CEE = pp.getAs<CallExitEnd>()) {
@@ -847,7 +856,14 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
   
   ProgramStateRef state = N->getState();
 
-  // See if the expression we're interested refers to a variable. 
+  // The message send could be nil due to the receiver being nil.
+  // At this point in the path, the receiver should be live since we are at the
+  // message send expr. If it is nil, start tracking it.
+  if (const Expr *Receiver = NilReceiverBRVisitor::getNilReceiver(S, N))
+    trackNullOrUndefValue(N, Receiver, report, IsArg, EnableNullFPSuppression);
+
+
+  // See if the expression we're interested refers to a variable.
   // If so, we can track both its contents and constraints on its value.
   if (Inner && ExplodedGraph::isInterestingLValueExpr(Inner)) {
     const MemRegion *R = 0;
@@ -881,7 +897,8 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
       // got initialized.
       if (const MemRegion *RR = getLocationRegionIfReference(Inner, N)) {
         if (Optional<KnownSVal> KV = LVal.getAs<KnownSVal>())
-          report.addVisitor(new FindLastStoreBRVisitor(*KV, RR));
+          report.addVisitor(new FindLastStoreBRVisitor(*KV, RR,
+                                                      EnableNullFPSuppression));
       }
     }
 
@@ -921,7 +938,8 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
         report.addVisitor(ConstraintTracker);
 
         // Add visitor, which will suppress inline defensive checks.
-        if (N->getState()->isNull(V).isConstrainedTrue()) {
+        if (N->getState()->isNull(V).isConstrainedTrue() &&
+            EnableNullFPSuppression) {
           BugReporterVisitor *IDCSuppressor =
             new SuppressInlineDefensiveChecksVisitor(V.castAs<DefinedSVal>(),
                                                      N);
@@ -930,7 +948,8 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
       }
 
       if (Optional<KnownSVal> KV = V.getAs<KnownSVal>())
-        report.addVisitor(new FindLastStoreBRVisitor(*KV, R));
+        report.addVisitor(new FindLastStoreBRVisitor(*KV, R,
+                                                     EnableNullFPSuppression));
       return true;
     }
   }
@@ -943,7 +962,8 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
   // sure that function isn't pruned in our output.
   if (const Expr *E = dyn_cast<Expr>(S))
     S = E->IgnoreParenCasts();
-  ReturnVisitor::addVisitorIfNecessary(N, S, report);
+
+  ReturnVisitor::addVisitorIfNecessary(N, S, report, EnableNullFPSuppression);
 
   // Uncomment this to find cases where we aren't properly getting the
   // base value that was dereferenced.
@@ -966,14 +986,17 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
   return true;
 }
 
-BugReporterVisitor *
-FindLastStoreBRVisitor::createVisitorObject(const ExplodedNode *N,
-                                            const MemRegion *R) {
-  assert(R && "The memory region is null.");
-
-  ProgramStateRef state = N->getState();
-  if (Optional<KnownSVal> KV = state->getSVal(R).getAs<KnownSVal>())
-    return new FindLastStoreBRVisitor(*KV, R);
+const Expr *NilReceiverBRVisitor::getNilReceiver(const Stmt *S,
+                                                 const ExplodedNode *N) {
+  const ObjCMessageExpr *ME = dyn_cast<ObjCMessageExpr>(S);
+  if (!ME)
+    return 0;
+  if (const Expr *Receiver = ME->getInstanceReceiver()) {
+    ProgramStateRef state = N->getState();
+    SVal V = state->getSVal(Receiver, N->getLocationContext());
+    if (state->isNull(V).isConstrainedTrue())
+      return Receiver;
+  }
   return 0;
 }
 
@@ -984,22 +1007,16 @@ PathDiagnosticPiece *NilReceiverBRVisitor::VisitNode(const ExplodedNode *N,
   Optional<PreStmt> P = N->getLocationAs<PreStmt>();
   if (!P)
     return 0;
-  const ObjCMessageExpr *ME = P->getStmtAs<ObjCMessageExpr>();
-  if (!ME)
-    return 0;
-  const Expr *Receiver = ME->getInstanceReceiver();
-  if (!Receiver)
-    return 0;
 
-  ProgramStateRef state = N->getState();
-  SVal V = state->getSVal(Receiver, N->getLocationContext());
-  if (!state->isNull(V).isConstrainedTrue())
+  const Expr *Receiver = getNilReceiver(P->getStmt(), N);
+  if (!Receiver)
     return 0;
 
   // The receiver was nil, and hence the method was skipped.
   // Register a BugReporterVisitor to issue a message telling us how
   // the receiver was null.
-  bugreporter::trackNullOrUndefValue(N, Receiver, BR);
+  bugreporter::trackNullOrUndefValue(N, Receiver, BR, /*IsArg*/ false,
+                                     /*EnableNullFPSuppression*/ false);
   // Issue a message saying that the method was skipped.
   PathDiagnosticLocation L(Receiver, BRC.getSourceManager(),
                                      N->getLocationContext());
@@ -1009,7 +1026,8 @@ PathDiagnosticPiece *NilReceiverBRVisitor::VisitNode(const ExplodedNode *N,
 
 // Registers every VarDecl inside a Stmt with a last store visitor.
 void FindLastStoreBRVisitor::registerStatementVarDecls(BugReport &BR,
-                                                       const Stmt *S) {
+                                                const Stmt *S,
+                                                bool EnableNullFPSuppression) {
   const ExplodedNode *N = BR.getErrorNode();
   std::deque<const Stmt *> WorkList;
   WorkList.push_back(S);
@@ -1031,7 +1049,8 @@ void FindLastStoreBRVisitor::registerStatementVarDecls(BugReport &BR,
 
         if (V.getAs<loc::ConcreteInt>() || V.getAs<nonloc::ConcreteInt>()) {
           // Register a new visitor with the BugReport.
-          BR.addVisitor(new FindLastStoreBRVisitor(V.castAs<KnownSVal>(), R));
+          BR.addVisitor(new FindLastStoreBRVisitor(V.castAs<KnownSVal>(), R,
+                                                   EnableNullFPSuppression));
         }
       }
     }

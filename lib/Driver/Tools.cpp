@@ -1097,11 +1097,25 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
   }
 
   // Allow override of the Altivec feature.
-  if (Args.hasFlag(options::OPT_fno_altivec, options::OPT_faltivec, false)) {
-    CmdArgs.push_back("-target-feature");
-    CmdArgs.push_back("-altivec");
-  }
+  AddTargetFeature(Args, CmdArgs,
+                   options::OPT_faltivec, options::OPT_fno_altivec,
+                   "altivec");
 
+  AddTargetFeature(Args, CmdArgs,
+                   options::OPT_mfprnd, options::OPT_mno_fprnd,
+                   "fprnd");
+
+  // Note that gcc calls this mfcrf and LLVM calls this mfocrf.
+  AddTargetFeature(Args, CmdArgs,
+                   options::OPT_mmfcrf, options::OPT_mno_mfcrf,
+                   "mfocrf");
+
+  AddTargetFeature(Args, CmdArgs,
+                   options::OPT_mpopcntd, options::OPT_mno_popcntd,
+                   "popcntd");
+
+  // It is really only possible to turn qpx off because turning qpx on is tied
+  // to using the a2q CPU.
   if (Args.hasFlag(options::OPT_mno_qpx, options::OPT_mqpx, false)) {
     CmdArgs.push_back("-target-feature");
     CmdArgs.push_back("-qpx");
@@ -5595,11 +5609,11 @@ void netbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
-void linuxtools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                        const InputInfo &Output,
-                                        const InputInfoList &Inputs,
-                                        const ArgList &Args,
-                                        const char *LinkingOutput) const {
+void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                      const InputInfo &Output,
+                                      const InputInfoList &Inputs,
+                                      const ArgList &Args,
+                                      const char *LinkingOutput) const {
   ArgStringList CmdArgs;
 
   // Add --32/--64 to make sure we get the format we want.
@@ -5716,11 +5730,11 @@ static bool hasMipsN32ABIArg(const ArgList &Args) {
   return A && (A->getValue() == StringRef("n32"));
 }
 
-void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
-                                    const InputInfo &Output,
-                                    const InputInfoList &Inputs,
-                                    const ArgList &Args,
-                                    const char *LinkingOutput) const {
+void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
   const toolchains::Linux& ToolChain =
     static_cast<const toolchains::Linux&>(getToolChain());
   const Driver &D = ToolChain.getDriver();

@@ -224,6 +224,15 @@ public:
                      const CFGBlock *DstT,
                      const CFGBlock *DstF);
 
+  /// Called by CoreEngine.  Used to processing branching behavior
+  /// at static initalizers.
+  void processStaticInitializer(const DeclStmt *DS,
+                                NodeBuilderContext& BuilderCtx,
+                                ExplodedNode *Pred,
+                                ExplodedNodeSet &Dst,
+                                const CFGBlock *DstT,
+                                const CFGBlock *DstF);
+
   /// processIndirectGoto - Called by CoreEngine.  Used to generate successor
   ///  nodes by processing the 'effects' of a computed goto jump.
   void processIndirectGoto(IndirectGotoNodeBuilder& builder);
@@ -467,12 +476,14 @@ protected:
                                               SVal Loc, SVal Val);
   /// Call PointerEscape callback when a value escapes as a result of
   /// region invalidation.
-  ProgramStateRef processPointerEscapedOnInvalidateRegions(
+  /// \param[in] IsConst Specifies that the pointer is const.
+  ProgramStateRef notifyCheckersOfPointerEscape(
                             ProgramStateRef State,
                             const InvalidatedSymbols *Invalidated,
                             ArrayRef<const MemRegion *> ExplicitRegions,
                             ArrayRef<const MemRegion *> Regions,
-                            const CallEvent *Call);
+                            const CallEvent *Call,
+                            bool IsConst);
 
 public:
   // FIXME: 'tag' should be removed, and a LocationContext should be used

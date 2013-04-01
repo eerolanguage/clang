@@ -1344,6 +1344,34 @@ void ExprEngine::processBranch(const Stmt *Condition, const Stmt *Term,
   currBldrCtx = 0;
 }
 
+/// The GDM component containing the set of global variables which have been
+/// previously initialized with explicit initializers.
+REGISTER_TRAIT_WITH_PROGRAMSTATE(InitializedGlobalsSet,
+                                 llvm::ImmutableSet<const VarDecl *>)
+
+void ExprEngine::processStaticInitializer(const DeclStmt *DS,
+                                          NodeBuilderContext &BuilderCtx,
+                                          ExplodedNode *Pred,
+                                          clang::ento::ExplodedNodeSet &Dst,
+                                          const CFGBlock *DstT,
+                                          const CFGBlock *DstF) {
+  currBldrCtx = &BuilderCtx;
+
+  const VarDecl *VD = cast<VarDecl>(DS->getSingleDecl());
+  ProgramStateRef state = Pred->getState();
+  bool initHasRun = state->contains<InitializedGlobalsSet>(VD);
+  BranchNodeBuilder builder(Pred, Dst, BuilderCtx, DstT, DstF);
+
+  if (!initHasRun) {
+    state = state->add<InitializedGlobalsSet>(VD);
+  }
+
+  builder.generateNode(state, initHasRun, Pred);
+  builder.markInfeasible(!initHasRun);
+
+  currBldrCtx = 0;
+}
+
 /// processIndirectGoto - Called by CoreEngine.  Used to generate successor
 ///  nodes by processing the 'effects' of a computed goto jump.
 void ExprEngine::processIndirectGoto(IndirectGotoNodeBuilder &builder) {
@@ -1714,11 +1742,12 @@ ProgramStateRef ExprEngine::processPointerEscapedOnBind(ProgramStateRef State,
 }
 
 ProgramStateRef 
-ExprEngine::processPointerEscapedOnInvalidateRegions(ProgramStateRef State,
+ExprEngine::notifyCheckersOfPointerEscape(ProgramStateRef State,
     const InvalidatedSymbols *Invalidated,
     ArrayRef<const MemRegion *> ExplicitRegions,
     ArrayRef<const MemRegion *> Regions,
-    const CallEvent *Call) {
+    const CallEvent *Call,
+    bool IsConst) {
   
   if (!Invalidated || Invalidated->empty())
     return State;
@@ -1728,7 +1757,17 @@ ExprEngine::processPointerEscapedOnInvalidateRegions(ProgramStateRef State,
                                                            *Invalidated,
                                                            0,
                                                            PSK_EscapeOther);
-    
+
+  // Note: Due to current limitations of RegionStore, we only process the top
+  // level const pointers correctly. The lower level const pointers are
+  // currently treated as non-const.
+  if (IsConst)
+    return getCheckerManager().runCheckersForPointerEscape(State,
+                                                        *Invalidated,
+                                                        Call,
+                                                        PSK_DirectEscapeOnCall,
+                                                        true);
+
   // If the symbols were invalidated by a call, we want to find out which ones 
   // were invalidated directly due to being arguments to the call.
   InvalidatedSymbols SymbolsDirectlyInvalidated;

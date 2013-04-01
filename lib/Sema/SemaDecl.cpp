@@ -1394,7 +1394,7 @@ void Sema::ActOnPopScope(SourceLocation Loc, Scope *S) {
     if (!D->getDeclName()) continue;
 
     // Diagnose unused variables in this scope.
-    if (!S->hasErrorOccurred())
+    if (!S->hasUnrecoverableErrorOccurred())
       DiagnoseUnusedDecl(D);
     
     // If this was a forward reference to a label, verify it was defined.
@@ -7626,7 +7626,8 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   } else if (VDecl->isFileVarDecl()) {
     if (VDecl->getStorageClassAsWritten() == SC_Extern &&
         (!getLangOpts().CPlusPlus ||
-         !Context.getBaseElementType(VDecl->getType()).isConstQualified()))
+         !(Context.getBaseElementType(VDecl->getType()).isConstQualified() ||
+           VDecl->isExternC())))
       Diag(VDecl->getLocation(), diag::warn_extern_init);
 
     // C99 6.7.8p4. All file scoped initializers need to be constant.
