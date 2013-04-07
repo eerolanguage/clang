@@ -2852,7 +2852,7 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
         = VarDecl::Create(SemaRef.Context, SemaRef.CurContext, Loc, Loc,
                           IterationVarName, SizeType,
                         SemaRef.Context.getTrivialTypeSourceInfo(SizeType, Loc),
-                          SC_None, SC_None);
+                          SC_None);
       IndexVariables.push_back(IterationVar);
       
       // Create a reference to the iteration variable.
@@ -4403,7 +4403,7 @@ void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
 
   if (ShouldDeleteSpecialMember(MD, CSM)) {
     if (First) {
-      MD->setDeletedAsWritten();
+      SetDeclDeleted(MD, MD->getLocation());
     } else {
       // C++11 [dcl.fct.def.default]p4:
       //   [For a] user-provided explicitly-defaulted function [...] if such a
@@ -5409,8 +5409,10 @@ void Sema::DiagnoseHiddenVirtualMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
 
     for (unsigned i = 0, e = Data.OverloadedMethods.size(); i != e; ++i) {
       CXXMethodDecl *overloadedMD = Data.OverloadedMethods[i];
-      Diag(overloadedMD->getLocation(),
+      PartialDiagnostic PD = PDiag(
            diag::note_hidden_overloaded_virtual_declared_here) << overloadedMD;
+      HandleFunctionTypeMismatch(PD, MD->getType(), overloadedMD->getType());
+      Diag(overloadedMD->getLocation(), PD);
     }
   }
 }
@@ -7586,7 +7588,7 @@ CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
   DefaultCon->setTrivial(ClassDecl->hasTrivialDefaultConstructor());
 
   if (ShouldDeleteSpecialMember(DefaultCon, CXXDefaultConstructor))
-    DefaultCon->setDeletedAsWritten();
+    SetDeclDeleted(DefaultCon, ClassLoc);
 
   // Note that we have declared this constructor.
   ++ASTContext::NumImplicitDefaultConstructorsDeclared;
@@ -7794,7 +7796,7 @@ void Sema::DeclareInheritingConstructors(CXXRecordDecl *ClassDecl) {
             // Core issue (no number): if the same inheriting constructor is
             // produced by multiple base class constructors from the same base
             // class, the inheriting constructor is defined as deleted.
-            result.first->second.second->setDeletedAsWritten();
+            SetDeclDeleted(result.first->second.second, UsingLoc);
           }
           continue;
         }
@@ -7822,7 +7824,7 @@ void Sema::DeclareInheritingConstructors(CXXRecordDecl *ClassDecl) {
                                                 /*IdentifierInfo=*/0,
                                                 BaseCtorType->getArgType(i),
                                                 /*TInfo=*/0, SC_None,
-                                                SC_None, /*DefaultArg=*/0);
+                                                /*DefaultArg=*/0);
           PD->setScopeInfo(0, i);
           PD->setImplicit();
           ParamDecls.push_back(PD);
@@ -7830,7 +7832,7 @@ void Sema::DeclareInheritingConstructors(CXXRecordDecl *ClassDecl) {
         NewCtor->setParams(ParamDecls);
         NewCtor->setInheritedConstructor(BaseCtor);
         if (BaseCtor->isDeleted())
-          NewCtor->setDeletedAsWritten();
+          SetDeclDeleted(NewCtor, UsingLoc);
 
         ClassDecl->addDecl(NewCtor);
         result.first->second.second = NewCtor;
@@ -7954,7 +7956,7 @@ CXXDestructorDecl *Sema::DeclareImplicitDestructor(CXXRecordDecl *ClassDecl) {
   Destructor->setTrivial(ClassDecl->hasTrivialDestructor());
 
   if (ShouldDeleteSpecialMember(Destructor, CXXDestructor))
-    Destructor->setDeletedAsWritten();
+    SetDeclDeleted(Destructor, ClassLoc);
 
   // Note that we have declared this destructor.
   ++ASTContext::NumImplicitDestructorsDeclared;
@@ -8275,7 +8277,7 @@ buildSingleCopyAssignRecursively(Sema &S, SourceLocation Loc, QualType T,
   VarDecl *IterationVar = VarDecl::Create(S.Context, S.CurContext, Loc, Loc,
                                           IterationVarName, SizeType,
                             S.Context.getTrivialTypeSourceInfo(SizeType, Loc),
-                                          SC_None, SC_None);
+                                          SC_None);
 
   // Initialize the iteration variable to zero.
   llvm::APInt Zero(S.Context.getTypeSize(SizeType), 0);
@@ -8439,8 +8441,8 @@ CXXMethodDecl *Sema::DeclareImplicitCopyAssignment(CXXRecordDecl *ClassDecl) {
   DeclarationNameInfo NameInfo(Name, ClassLoc);
   CXXMethodDecl *CopyAssignment
     = CXXMethodDecl::Create(Context, ClassDecl, ClassLoc, NameInfo, QualType(),
-                            /*TInfo=*/0, /*isStatic=*/false,
-                            /*StorageClassAsWritten=*/SC_None,
+                            /*TInfo=*/0,
+                            /*StorageClass=*/SC_None,
                             /*isInline=*/true, /*isConstexpr=*/false,
                             SourceLocation());
   CopyAssignment->setAccess(AS_public);
@@ -8457,7 +8459,6 @@ CXXMethodDecl *Sema::DeclareImplicitCopyAssignment(CXXRecordDecl *ClassDecl) {
   ParmVarDecl *FromParam = ParmVarDecl::Create(Context, CopyAssignment,
                                                ClassLoc, ClassLoc, /*Id=*/0,
                                                ArgType, /*TInfo=*/0,
-                                               SC_None,
                                                SC_None, 0);
   CopyAssignment->setParams(FromParam);
 
@@ -8474,7 +8475,7 @@ CXXMethodDecl *Sema::DeclareImplicitCopyAssignment(CXXRecordDecl *ClassDecl) {
   //   there is no user-declared move assignment operator, a copy assignment
   //   operator is implicitly declared as defaulted.
   if (ShouldDeleteSpecialMember(CopyAssignment, CXXCopyAssignment))
-    CopyAssignment->setDeletedAsWritten();
+    SetDeclDeleted(CopyAssignment, ClassLoc);
 
   // Note that we have added this copy-assignment operator.
   ++ASTContext::NumImplicitCopyAssignmentOperatorsDeclared;
@@ -8888,8 +8889,8 @@ CXXMethodDecl *Sema::DeclareImplicitMoveAssignment(CXXRecordDecl *ClassDecl) {
   DeclarationNameInfo NameInfo(Name, ClassLoc);
   CXXMethodDecl *MoveAssignment
     = CXXMethodDecl::Create(Context, ClassDecl, ClassLoc, NameInfo, QualType(),
-                            /*TInfo=*/0, /*isStatic=*/false,
-                            /*StorageClassAsWritten=*/SC_None,
+                            /*TInfo=*/0,
+                            /*StorageClass=*/SC_None,
                             /*isInline=*/true,
                             /*isConstexpr=*/false,
                             SourceLocation());
@@ -8907,7 +8908,6 @@ CXXMethodDecl *Sema::DeclareImplicitMoveAssignment(CXXRecordDecl *ClassDecl) {
   ParmVarDecl *FromParam = ParmVarDecl::Create(Context, MoveAssignment,
                                                ClassLoc, ClassLoc, /*Id=*/0,
                                                ArgType, /*TInfo=*/0,
-                                               SC_None,
                                                SC_None, 0);
   MoveAssignment->setParams(FromParam);
 
@@ -9262,7 +9262,6 @@ CXXConstructorDecl *Sema::DeclareImplicitCopyConstructor(
                                                ClassLoc, ClassLoc,
                                                /*IdentifierInfo=*/0,
                                                ArgType, /*TInfo=*/0,
-                                               SC_None,
                                                SC_None, 0);
   CopyConstructor->setParams(FromParam);
 
@@ -9277,7 +9276,7 @@ CXXConstructorDecl *Sema::DeclareImplicitCopyConstructor(
   //   user-declared move assignment operator, a copy constructor is implicitly
   //   declared as defaulted.
   if (ShouldDeleteSpecialMember(CopyConstructor, CXXCopyConstructor))
-    CopyConstructor->setDeletedAsWritten();
+    SetDeclDeleted(CopyConstructor, ClassLoc);
 
   // Note that we have declared this constructor.
   ++ASTContext::NumImplicitCopyConstructorsDeclared;
@@ -9449,7 +9448,6 @@ CXXConstructorDecl *Sema::DeclareImplicitMoveConstructor(
                                                ClassLoc, ClassLoc,
                                                /*IdentifierInfo=*/0,
                                                ArgType, /*TInfo=*/0,
-                                               SC_None,
                                                SC_None, 0);
   MoveConstructor->setParams(FromParam);
 
@@ -10281,7 +10279,7 @@ VarDecl *Sema::BuildExceptionDeclaration(Scope *S,
   }
 
   VarDecl *ExDecl = VarDecl::Create(Context, CurContext, StartLoc, Loc, Name,
-                                    ExDeclType, TInfo, SC_None, SC_None);
+                                    ExDeclType, TInfo, SC_None);
   ExDecl->setExceptionVariable(true);
   
   // In ARC, infer 'retaining' for variables of retainable type.
@@ -10983,6 +10981,7 @@ void Sema::SetDeclDeleted(Decl *Dcl, SourceLocation DelLoc) {
     Diag(DelLoc, diag::err_deleted_non_function);
     return;
   }
+
   if (const FunctionDecl *Prev = Fn->getPreviousDecl()) {
     // Don't consider the implicit declaration we generate for explicit
     // specializations. FIXME: Do not generate these implicit declarations.
@@ -10993,7 +10992,29 @@ void Sema::SetDeclDeleted(Decl *Dcl, SourceLocation DelLoc) {
     }
     // If the declaration wasn't the first, we delete the function anyway for
     // recovery.
+    Fn = Fn->getCanonicalDecl();
   }
+
+  if (Fn->isDeleted())
+    return;
+
+  // See if we're deleting a function which is already known to override a
+  // non-deleted virtual function.
+  if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(Fn)) {
+    bool IssuedDiagnostic = false;
+    for (CXXMethodDecl::method_iterator I = MD->begin_overridden_methods(),
+                                        E = MD->end_overridden_methods();
+         I != E; ++I) {
+      if (!(*MD->begin_overridden_methods())->isDeleted()) {
+        if (!IssuedDiagnostic) {
+          Diag(DelLoc, diag::err_deleted_override) << MD->getDeclName();
+          IssuedDiagnostic = true;
+        }
+        Diag((*I)->getLocation(), diag::note_overridden_virtual_function);
+      }
+    }
+  }
+
   Fn->setDeletedAsWritten();
 }
 

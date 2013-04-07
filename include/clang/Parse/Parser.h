@@ -1164,6 +1164,7 @@ private:
   ExprResult ParseAsmStringLiteral();
 
   // Objective-C External Declarations
+  void MaybeSkipAttributes(tok::ObjCKeywordKind Kind);
   DeclGroupPtrTy ParseObjCAtDirectives();
   DeclGroupPtrTy ParseObjCAtClassDeclaration(SourceLocation atLoc);
   Decl *ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,

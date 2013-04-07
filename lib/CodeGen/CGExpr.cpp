@@ -201,6 +201,7 @@ static llvm::Value *
 EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
                             llvm::Value *&ReferenceTemporary,
                             const CXXDestructorDecl *&ReferenceTemporaryDtor,
+                            const InitListExpr *&ReferenceInitializerList,
                             QualType &ObjCARCReferenceLifetimeType,
                             const NamedDecl *InitializedDecl) {
   const MaterializeTemporaryExpr *M = NULL;
@@ -222,6 +223,7 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
     return EmitExprForReferenceBinding(CGF, EWC->getSubExpr(), 
                                        ReferenceTemporary, 
                                        ReferenceTemporaryDtor,
+                                       ReferenceInitializerList,
                                        ObjCARCReferenceLifetimeType,
                                        InitializedDecl);
   }
@@ -314,9 +316,14 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
     }
     
     if (InitializedDecl) {
-      // Get the destructor for the reference temporary.
-      if (const RecordType *RT =
-            E->getType()->getBaseElementTypeUnsafe()->getAs<RecordType>()) {
+      if (const InitListExpr *ILE = dyn_cast<InitListExpr>(E)) {
+        if (ILE->initializesStdInitializerList()) {
+          ReferenceInitializerList = ILE;
+        }
+      }
+      else if (const RecordType *RT =
+                 E->getType()->getBaseElementTypeUnsafe()->getAs<RecordType>()){
+        // Get the destructor for the reference temporary.
         CXXRecordDecl *ClassDecl = cast<CXXRecordDecl>(RT->getDecl());
         if (!ClassDecl->hasTrivialDestructor())
           ReferenceTemporaryDtor = ClassDecl->getDestructor();
@@ -396,9 +403,11 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
                                             const NamedDecl *InitializedDecl) {
   llvm::Value *ReferenceTemporary = 0;
   const CXXDestructorDecl *ReferenceTemporaryDtor = 0;
+  const InitListExpr *ReferenceInitializerList = 0;
   QualType ObjCARCReferenceLifetimeType;
   llvm::Value *Value = EmitExprForReferenceBinding(*this, E, ReferenceTemporary,
                                                    ReferenceTemporaryDtor,
+                                                   ReferenceInitializerList,
                                                    ObjCARCReferenceLifetimeType,
                                                    InitializedDecl);
   if (SanitizePerformTypeCheck && !E->getType()->isFunctionType()) {
@@ -410,7 +419,8 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
     QualType Ty = E->getType();
     EmitTypeCheck(TCK_ReferenceBinding, E->getExprLoc(), Value, Ty);
   }
-  if (!ReferenceTemporaryDtor && ObjCARCReferenceLifetimeType.isNull())
+  if (!ReferenceTemporaryDtor && !ReferenceInitializerList &&
+      ObjCARCReferenceLifetimeType.isNull())
     return RValue::get(Value);
   
   // Make sure to call the destructor for the reference temporary.
@@ -430,6 +440,9 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
         CleanupArg = cast<llvm::Constant>(ReferenceTemporary);
       }
       CGM.getCXXABI().registerGlobalDtor(*this, CleanupFn, CleanupArg);
+    } else if (ReferenceInitializerList) {
+      EmitStdInitializerListCleanup(ReferenceTemporary,
+                                    ReferenceInitializerList);
     } else {
       assert(!ObjCARCReferenceLifetimeType.isNull());
       // Note: We intentionally do not register a global "destructor" to
@@ -445,6 +458,9 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
                   destroyCXXObject, getLangOpts().Exceptions);
     else
       PushDestructorCleanup(ReferenceTemporaryDtor, ReferenceTemporary);
+  } else if (ReferenceInitializerList) {
+    EmitStdInitializerListCleanup(ReferenceTemporary,
+                                  ReferenceInitializerList);
   } else {
     switch (ObjCARCReferenceLifetimeType.getObjCLifetime()) {
     case Qualifiers::OCL_None:
@@ -1044,7 +1060,8 @@ CodeGenFunction::tryEmitAsConstant(DeclRefExpr *refExpr) {
 llvm::Value *CodeGenFunction::EmitLoadOfScalar(LValue lvalue) {
   return EmitLoadOfScalar(lvalue.getAddress(), lvalue.isVolatile(),
                           lvalue.getAlignment().getQuantity(),
-                          lvalue.getType(), lvalue.getTBAAInfo());
+                          lvalue.getType(), lvalue.getTBAAInfo(),
+                          lvalue.getTBAABaseType(), lvalue.getTBAAOffset());
 }
 
 static bool hasBooleanRepresentation(QualType Ty) {
@@ -1106,7 +1123,9 @@ llvm::MDNode *CodeGenFunction::getRangeForLoadFromType(QualType Ty) {
 
 llvm::Value *CodeGenFunction::EmitLoadOfScalar(llvm::Value *Addr, bool Volatile,
                                               unsigned Alignment, QualType Ty,
-                                              llvm::MDNode *TBAAInfo) {
+                                              llvm::MDNode *TBAAInfo,
+                                              QualType TBAABaseType,
+                                              uint64_t TBAAOffset) {
   // For better performance, handle vector loads differently.
   if (Ty->isVectorType()) {
     llvm::Value *V;
@@ -1158,8 +1177,11 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(llvm::Value *Addr, bool Volatile,
     Load->setVolatile(true);
   if (Alignment)
     Load->setAlignment(Alignment);
-  if (TBAAInfo)
-    CGM.DecorateInstruction(Load, TBAAInfo);
+  if (TBAAInfo) {
+    llvm::MDNode *TBAAPath = CGM.getTBAAStructTagInfo(TBAABaseType, TBAAInfo,
+                                                      TBAAOffset);
+    CGM.DecorateInstruction(Load, TBAAPath);
+  }
 
   if ((SanOpts->Bool && hasBooleanRepresentation(Ty)) ||
       (SanOpts->Enum && Ty->getAs<EnumType>())) {
@@ -1217,7 +1239,8 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, llvm::Value *Addr,
                                         bool Volatile, unsigned Alignment,
                                         QualType Ty,
                                         llvm::MDNode *TBAAInfo,
-                                        bool isInit) {
+                                        bool isInit, QualType TBAABaseType,
+                                        uint64_t TBAAOffset) {
   
   // Handle vectors differently to get better performance.
   if (Ty->isVectorType()) {
@@ -1268,15 +1291,19 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, llvm::Value *Addr,
   llvm::StoreInst *Store = Builder.CreateStore(Value, Addr, Volatile);
   if (Alignment)
     Store->setAlignment(Alignment);
-  if (TBAAInfo)
-    CGM.DecorateInstruction(Store, TBAAInfo);
+  if (TBAAInfo) {
+    llvm::MDNode *TBAAPath = CGM.getTBAAStructTagInfo(TBAABaseType, TBAAInfo,
+                                                      TBAAOffset);
+    CGM.DecorateInstruction(Store, TBAAPath);
+  }
 }
 
 void CodeGenFunction::EmitStoreOfScalar(llvm::Value *value, LValue lvalue,
                                         bool isInit) {
   EmitStoreOfScalar(value, lvalue.getAddress(), lvalue.isVolatile(),
                     lvalue.getAlignment().getQuantity(), lvalue.getType(),
-                    lvalue.getTBAAInfo(), isInit);
+                    lvalue.getTBAAInfo(), isInit, lvalue.getTBAABaseType(),
+                    lvalue.getTBAAOffset());
 }
 
 /// EmitLoadOfLValue - Given an expression that represents a value lvalue, this
@@ -2494,9 +2521,12 @@ LValue CodeGenFunction::EmitLValueForField(LValue base,
 
   llvm::Value *addr = base.getAddress();
   unsigned cvr = base.getVRQualifiers();
+  bool TBAAPath = CGM.getCodeGenOpts().StructPathTBAA;
   if (rec->isUnion()) {
     // For unions, there is no pointer adjustment.
     assert(!type->isReferenceType() && "union has reference member");
+    // TODO: handle path-aware TBAA for union.
+    TBAAPath = false;
   } else {
     // For structs, we GEP to the field that the record layout suggests.
     unsigned idx = CGM.getTypes().getCGRecordLayout(rec).getLLVMFieldNo(field);
@@ -2508,6 +2538,8 @@ LValue CodeGenFunction::EmitLValueForField(LValue base,
       if (cvr & Qualifiers::Volatile) load->setVolatile(true);
       load->setAlignment(alignment.getQuantity());
 
+      // Loading the reference will disable path-aware TBAA.
+      TBAAPath = false;
       if (CGM.shouldUseTBAA()) {
         llvm::MDNode *tbaa;
         if (mayAlias)
@@ -2541,6 +2573,16 @@ LValue CodeGenFunction::EmitLValueForField(LValue base,
 
   LValue LV = MakeAddrLValue(addr, type, alignment);
   LV.getQuals().addCVRQualifiers(cvr);
+  if (TBAAPath) {
+    const ASTRecordLayout &Layout =
+        getContext().getASTRecordLayout(field->getParent());
+    // Set the base type to be the base type of the base LValue and
+    // update offset to be relative to the base type.
+    LV.setTBAABaseType(base.getTBAABaseType());
+    LV.setTBAAOffset(base.getTBAAOffset() +
+                     Layout.getFieldOffset(field->getFieldIndex()) /
+                                           getContext().getCharWidth());
+  }
 
   // __weak attribute on a field is ignored.
   if (LV.getQuals().getObjCGCAttr() == Qualifiers::Weak)

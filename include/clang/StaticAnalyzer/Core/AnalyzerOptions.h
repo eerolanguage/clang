@@ -198,6 +198,9 @@ private:
   /// \sa mayInlineTemplateFunctions
   Optional<bool> InlineTemplateFunctions;
 
+  /// \sa mayInlineCXXContainerCtorsAndDtors
+  Optional<bool> InlineCXXContainerCtorsAndDtors;
+
   /// \sa mayInlineObjCMethod
   Optional<bool> ObjCInliningMode;
 
@@ -216,6 +219,9 @@ private:
 
   /// \sa shouldSuppressInlinedDefensiveChecks
   Optional<bool> SuppressInlinedDefensiveChecks;
+
+  /// \sa shouldSuppressFromCXXStandardLibrary
+  Optional<bool> SuppressFromCXXStandardLibrary;
 
   /// \sa getGraphTrimInterval
   Optional<unsigned> GraphTrimInterval;
@@ -278,6 +284,13 @@ public:
   /// accepts the values "true" and "false".
   bool mayInlineTemplateFunctions();
 
+  /// Returns whether or not constructors and destructors of C++ container
+  /// objects may be considered for inlining.
+  ///
+  /// This is controlled by the 'c++-container-inlining' config option, which
+  /// accepts the values "true" and "false".
+  bool mayInlineCXXContainerCtorsAndDtors();
+
   /// Returns whether or not paths that go through null returns should be
   /// suppressed.
   ///
@@ -305,6 +318,13 @@ public:
   /// This is controlled by the 'suppress-inlined-defensive-checks' config
   /// option, which accepts the values "true" and "false".
   bool shouldSuppressInlinedDefensiveChecks();
+
+  /// Returns whether or not diagnostics reported within the C++ standard
+  /// library should be suppressed.
+  ///
+  /// This is controlled by the 'suppress-c++-stdlib' config option,
+  /// which accepts the values "true" and "false".
+  bool shouldSuppressFromCXXStandardLibrary();
 
   /// Returns whether irrelevant parts of a bug report path should be pruned
   /// out of the final output.

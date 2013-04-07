@@ -1122,6 +1122,30 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
   }
 }
 
+/// Get the (LLVM) name of the R600 gpu we are targeting.
+static std::string getR600TargetGPU(const ArgList &Args) {
+  if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
+    std::string GPUName = A->getValue();
+    return llvm::StringSwitch<const char *>(GPUName)
+      .Cases("rv610", "rv620", "rv630", "r600")
+      .Cases("rv635", "rs780", "rs880", "r600")
+      .Case("rv740", "rv770")
+      .Case("palm", "cedar")
+      .Cases("sumo", "sumo2", "redwood")
+      .Case("hemlock", "cypress")
+      .Case("aruba", "cayman")
+      .Default(GPUName.c_str());
+  }
+  return "";
+}
+
+void Clang::AddR600TargetArgs(const ArgList &Args,
+                              ArgStringList &CmdArgs) const {
+  std::string TargetGPUName = getR600TargetGPU(Args);
+  CmdArgs.push_back("-target-cpu");
+  CmdArgs.push_back(Args.MakeArgString(TargetGPUName.c_str()));
+}
+
 void Clang::AddSparcTargetArgs(const ArgList &Args,
                              ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
@@ -1719,6 +1743,24 @@ static bool shouldUseFramePointer(const ArgList &Args,
   return true;
 }
 
+static bool shouldUseLeafFramePointer(const ArgList &Args,
+                                      const llvm::Triple &Triple) {
+  if (Arg *A = Args.getLastArg(options::OPT_mno_omit_leaf_frame_pointer,
+                               options::OPT_momit_leaf_frame_pointer))
+    return A->getOption().matches(options::OPT_mno_omit_leaf_frame_pointer);
+
+  // Don't use a leaf frame pointer on linux x86 and x86_64 if optimizing.
+  if ((Triple.getArch() == llvm::Triple::x86_64 ||
+       Triple.getArch() == llvm::Triple::x86) &&
+      Triple.getOS() == llvm::Triple::Linux) {
+    if (Arg *A = Args.getLastArg(options::OPT_O_Group))
+      if (!A->getOption().matches(options::OPT_O0))
+        return false;
+  }
+
+  return true;
+}
+
 /// If the PWD environment variable is set, add a CC1 option to specify the
 /// debug compilation directory.
 static void addDebugCompDirArg(const ArgList &Args, ArgStringList &CmdArgs) {
@@ -2068,6 +2110,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_strict_aliasing,
                     getToolChain().IsStrictAliasingDefault()))
     CmdArgs.push_back("-relaxed-aliasing");
+  if (Args.hasArg(options::OPT_fstruct_path_tbaa))
+    CmdArgs.push_back("-struct-path-tbaa");
   if (Args.hasFlag(options::OPT_fstrict_enums, options::OPT_fno_strict_enums,
                    false))
     CmdArgs.push_back("-fstrict-enums");
@@ -2075,6 +2119,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_optimize_sibling_calls))
     CmdArgs.push_back("-mdisable-tail-calls");
 
+  // Handle segmented stacks.
+  if (Args.hasArg(options::OPT_fsplit_stack))
+    CmdArgs.push_back("-split-stacks");
+  
   // Handle various floating point optimization flags, mapping them to the
   // appropriate LLVM code generation flags. The pattern for all of these is to
   // default off the codegen optimizations, and if any flag enables them and no
@@ -2274,6 +2322,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     AddPPCTargetArgs(Args, CmdArgs);
     break;
 
+  case llvm::Triple::r600:
+    AddR600TargetArgs(Args, CmdArgs);
+    break;
+
   case llvm::Triple::sparc:
     AddSparcTargetArgs(Args, CmdArgs);
     break;
@@ -2296,10 +2348,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(A->getValue());
   }
 
-  // -mno-omit-leaf-frame-pointer is the default on Darwin.
-  if (Args.hasFlag(options::OPT_momit_leaf_frame_pointer,
-                   options::OPT_mno_omit_leaf_frame_pointer,
-                   !getToolChain().getTriple().isOSDarwin()))
+  if (!shouldUseLeafFramePointer(Args, getToolChain().getTriple()))
     CmdArgs.push_back("-momit-leaf-frame-pointer");
 
   // Explicitly error on some things we know we don't support and can't just

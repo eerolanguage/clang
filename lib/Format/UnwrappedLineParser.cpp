@@ -822,12 +822,15 @@ void UnwrappedLineParser::readToken() {
     while (!Line->InPPDirective && FormatTok.Tok.is(tok::hash) &&
            ((FormatTok.NewlinesBefore > 0 && FormatTok.HasUnescapedNewline) ||
             FormatTok.IsFirst)) {
-      flushComments(FormatTok.NewlinesBefore > 0);
       // If there is an unfinished unwrapped line, we flush the preprocessor
       // directives only after that unwrapped line was finished later.
       bool SwitchToPreprocessorLines =
           !Line->Tokens.empty() && CurrentLines == &Lines;
       ScopedLineState BlockState(*this, SwitchToPreprocessorLines);
+      // Comments stored before the preprocessor directive need to be output
+      // before the preprocessor directive, at the same level as the
+      // preprocessor directive, as we consider them to apply to the directive.
+      flushComments(FormatTok.NewlinesBefore > 0);
       parsePPDirective();
     }
     if (!FormatTok.Tok.is(tok::comment))

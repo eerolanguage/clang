@@ -127,7 +127,6 @@ CheckPropertyAgainstProtocol(Sema &S, ObjCPropertyDecl *Prop,
   for (unsigned I = 0, N = R.size(); I != N; ++I) {
     if (ObjCPropertyDecl *ProtoProp = dyn_cast<ObjCPropertyDecl>(R[I])) {
       S.DiagnosePropertyMismatch(Prop, ProtoProp, Proto->getIdentifier());
-      S.mergeDeclAttributes(Prop, ProtoProp, Sema::AMK_Override);
       return;
     }
   }
@@ -210,7 +209,6 @@ Decl *Sema::ActOnProperty(Scope *S, SourceLocation AtLoc,
       for (unsigned I = 0, N = R.size(); I != N; ++I) {
         if (ObjCPropertyDecl *SuperProp = dyn_cast<ObjCPropertyDecl>(R[I])) {
           DiagnosePropertyMismatch(Res, SuperProp, Super->getIdentifier());
-          mergeDeclAttributes(Res, SuperProp, AMK_Override);
           FoundInSuper = true;
           break;
         }
@@ -1143,6 +1141,7 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
       MarkDeclRefReferenced(SelfExpr);
       Expr *IvarRefExpr =
         new (Context) ObjCIvarRefExpr(Ivar, Ivar->getType(), PropertyDiagLoc,
+                                      Ivar->getLocation(),
                                       SelfExpr, true, true);
       ExprResult Res = 
         PerformCopyInitialization(InitializedEntity::InitializeResult(
@@ -1178,6 +1177,7 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
       MarkDeclRefReferenced(SelfExpr);
       Expr *lhs =
         new (Context) ObjCIvarRefExpr(Ivar, Ivar->getType(), PropertyDiagLoc,
+                                      Ivar->getLocation(),
                                       SelfExpr, true, true);
       ObjCMethodDecl::param_iterator P = setterMethod->param_begin();
       ParmVarDecl *Param = (*P);
@@ -1941,6 +1941,9 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
     if (property->hasAttr<NSReturnsNotRetainedAttr>())
       GetterMethod->addAttr(
         ::new (Context) NSReturnsNotRetainedAttr(Loc, Context));
+
+    if (getLangOpts().ObjCAutoRefCount)
+      CheckARCMethodDecl(GetterMethod);
   } else
     // A user declared getter will be synthesize when @synthesize of
     // the property with the same name is seen in the @implementation
@@ -1978,7 +1981,6 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
                                     property->getType().getUnqualifiedType(),
                                                   /*TInfo=*/0,
                                                   SC_None,
-                                                  SC_None,
                                                   0);
       SetterMethod->setMethodParams(Context, Argument,
                                     ArrayRef<SourceLocation>());
@@ -1990,6 +1992,11 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
       // and the real context should be the same.
       if (lexicalDC)
         SetterMethod->setLexicalDeclContext(lexicalDC);
+
+      // It's possible for the user to have set a very odd custom
+      // setter selector that causes it to have a method family.
+      if (getLangOpts().ObjCAutoRefCount)
+        CheckARCMethodDecl(SetterMethod);
     } else
       // A user declared setter will be synthesize when @synthesize of
       // the property with the same name is seen in the @implementation

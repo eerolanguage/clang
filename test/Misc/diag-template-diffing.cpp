@@ -903,6 +903,105 @@ namespace ValueDecl {
   }
 }
 
+namespace DependentDefault {
+  template <typename> struct Trait {
+    enum { V = 40 };
+    typedef int Ty;
+    static int I;
+  };
+  int other;
+
+  template <typename T, int = Trait<T>::V > struct A {};
+  template <typename T, typename = Trait<T>::Ty > struct B {};
+  template <typename T, int& = Trait<T>::I > struct C {};
+
+  void test() {
+
+    A<int> a1;
+    A<char> a2;
+    A<int, 10> a3;
+    a1 = a2;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'A<char, [...]>' to 'A<int, [...]>'
+    a3 = a1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'A<[...], (default) 40>' to 'A<[...], 10>'
+    a2 = a3;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'A<int, 10>' to 'A<char, 40>'
+
+    B<int> b1;
+    B<char> b2;
+    B<int, char> b3;
+    b1 = b2;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'B<char, (default) Trait<T>::Ty>' to 'B<int, int>'
+    b3 = b1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'B<[...], (default) Trait<T>::Ty>' to 'B<[...], char>'
+    b2 = b3;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'B<int, char>' to 'B<char, int>'
+
+    C<int> c1;
+    C<char> c2;
+    C<int, other> c3;
+    c1 = c2;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'C<char, (default) I>' to 'C<int, I>'
+    c3 = c1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'C<[...], (default) I>' to 'C<[...], other>'
+    c2 = c3;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'C<int, other>' to 'C<char, I>'
+  }
+}
+
+namespace VariadicDefault {
+  int i1, i2, i3;
+  template <int = 5, int...> struct A {};
+  template <int& = i1, int& ...> struct B {};
+  template <typename = void, typename...> struct C {};
+
+  void test() {
+    A<> a1;
+    A<5, 6, 7> a2;
+    A<1, 2> a3;
+    a2 = a1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'A<[...], (no argument), (no argument)>' to 'A<[...], 6, 7>'
+    a3 = a1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'A<(default) 5, (no argument)>' to 'A<1, 2>'
+
+    B<> b1;
+    B<i1, i2, i3> b2;
+    B<i2, i3> b3;
+    b2 = b1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'B<[...], (no argument), (no argument)>' to 'B<[...], i2, i3>'
+    b3 = b1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'B<(default) i1, (no argument)>' to 'B<i2, i3>'
+
+    B<i1, i2, i3> b4 = b1;
+    // CHECK-ELIDE-NOTREE: no viable conversion from 'B<[...], (no argument), (no argument)>' to 'B<[...], i2, i3>'
+    B<i2, i3> b5 = b1;
+    // CHECK-ELIDE-NOTREE: no viable conversion from 'B<(default) i1, (no argument)>' to 'B<i2, i3>'
+
+    C<> c1;
+    C<void, void> c2;
+    C<char, char> c3;
+    c2 = c1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'C<[...], (no argument)>' to 'C<[...], void>'
+    c3 = c1;
+    // CHECK-ELIDE-NOTREE: no viable overloaded '='
+    // CHECK-ELIDE-NOTREE: no known conversion from 'C<(default) void, (no argument)>' to 'C<char, char>'
+  }
+}
+
 // CHECK-ELIDE-NOTREE: {{[0-9]*}} errors generated.
 // CHECK-NOELIDE-NOTREE: {{[0-9]*}} errors generated.
 // CHECK-ELIDE-TREE: {{[0-9]*}} errors generated.

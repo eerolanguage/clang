@@ -171,18 +171,28 @@ ExprEngine::createTemporaryRegionIfNeeded(ProgramStateRef State,
                                           const Expr *Ex,
                                           const Expr *Result) {
   SVal V = State->getSVal(Ex, LC);
-  if (!Result && !V.getAs<NonLoc>())
-    return State;
+  if (!Result) {
+    // If we don't have an explicit result expression, we're in "if needed"
+    // mode. Only create a region if the current value is a NonLoc.
+    if (!V.getAs<NonLoc>())
+      return State;
+    Result = Ex;
+  } else {
+    // We need to create a region no matter what. For sanity, make sure we don't
+    // try to stuff a Loc into a non-pointer temporary region.
+    assert(!V.getAs<Loc>() || Loc::isLocType(Result->getType()));
+  }
 
   ProgramStateManager &StateMgr = State->getStateManager();
   MemRegionManager &MRMgr = StateMgr.getRegionManager();
   StoreManager &StoreMgr = StateMgr.getStoreManager();
 
   // We need to be careful about treating a derived type's value as
-  // bindings for a base type. Start by stripping and recording base casts.
+  // bindings for a base type. Unless we're creating a temporary pointer region,
+  // start by stripping and recording base casts.
   SmallVector<const CastExpr *, 4> Casts;
   const Expr *Inner = Ex->IgnoreParens();
-  if (V.getAs<NonLoc>()) {
+  if (!Loc::isLocType(Result->getType())) {
     while (const CastExpr *CE = dyn_cast<CastExpr>(Inner)) {
       if (CE->getCastKind() == CK_DerivedToBase ||
           CE->getCastKind() == CK_UncheckedDerivedToBase)
@@ -195,8 +205,13 @@ ExprEngine::createTemporaryRegionIfNeeded(ProgramStateRef State,
   }
 
   // Create a temporary object region for the inner expression (which may have
-  // a more derived type) and bind the NonLoc value into it.
-  SVal Reg = loc::MemRegionVal(MRMgr.getCXXTempObjectRegion(Inner, LC));
+  // a more derived type) and bind the value into it.
+  const TypedValueRegion *TR = MRMgr.getCXXTempObjectRegion(Inner, LC);
+  SVal Reg = loc::MemRegionVal(TR);
+
+  if (V.isUnknown())
+    V = getSValBuilder().conjureSymbolVal(Result, LC, TR->getValueType(),
+                                          currBldrCtx->blockCount());
   State = State->bindLoc(Reg, V);
 
   // Re-apply the casts (from innermost to outermost) for type sanity.
@@ -206,7 +221,7 @@ ExprEngine::createTemporaryRegionIfNeeded(ProgramStateRef State,
     Reg = StoreMgr.evalDerivedToBase(Reg, *I);
   }
 
-  State = State->BindExpr(Result ? Result : Ex, LC, Reg);
+  State = State->BindExpr(Result, LC, Reg);
   return State;
 }
 
@@ -423,8 +438,8 @@ void ExprEngine::ProcessInitializer(const CFGInitializer Init,
   ProgramStateRef State = Pred->getState();
   SVal thisVal = State->getSVal(svalBuilder.getCXXThis(decl, stackFrame));
 
-  PostInitializer PP(BMI, stackFrame);
   ExplodedNodeSet Tmp(Pred);
+  SVal FieldLoc;
 
   // Evaluate the initializer, if necessary
   if (BMI->isAnyMemberInitializer()) {
@@ -432,15 +447,43 @@ void ExprEngine::ProcessInitializer(const CFGInitializer Init,
     // but non-objects must be copied in from the initializer.
     const Expr *Init = BMI->getInit()->IgnoreImplicit();
     if (!isa<CXXConstructExpr>(Init)) {
-      SVal FieldLoc;
-      if (BMI->isIndirectMemberInitializer())
+      const ValueDecl *Field;
+      if (BMI->isIndirectMemberInitializer()) {
+        Field = BMI->getIndirectMember();
         FieldLoc = State->getLValue(BMI->getIndirectMember(), thisVal);
-      else
+      } else {
+        Field = BMI->getMember();
         FieldLoc = State->getLValue(BMI->getMember(), thisVal);
+      }
 
-      SVal InitVal = State->getSVal(BMI->getInit(), stackFrame);
+      SVal InitVal;
+      if (BMI->getNumArrayIndices() > 0) {
+        // Handle arrays of trivial type. We can represent this with a
+        // primitive load/copy from the base array region.
+        const ArraySubscriptExpr *ASE;
+        while ((ASE = dyn_cast<ArraySubscriptExpr>(Init)))
+          Init = ASE->getBase()->IgnoreImplicit();
 
+        SVal LValue = State->getSVal(Init, stackFrame);
+        if (Optional<Loc> LValueLoc = LValue.getAs<Loc>())
+          InitVal = State->getSVal(*LValueLoc);
+
+        // If we fail to get the value for some reason, use a symbolic value.
+        if (InitVal.isUnknownOrUndef()) {
+          SValBuilder &SVB = getSValBuilder();
+          InitVal = SVB.conjureSymbolVal(BMI->getInit(), stackFrame,
+                                         Field->getType(),
+                                         currBldrCtx->blockCount());
+        }
+      } else {
+        InitVal = State->getSVal(BMI->getInit(), stackFrame);
+      }
+
+      assert(Tmp.size() == 1 && "have not generated any new nodes yet");
+      assert(*Tmp.begin() == Pred && "have not generated any new nodes yet");
       Tmp.clear();
+      
+      PostInitializer PP(BMI, FieldLoc.getAsRegion(), stackFrame);
       evalBind(Tmp, Init, Pred, FieldLoc, InitVal, /*isInit=*/true, &PP);
     }
   } else {
@@ -450,6 +493,7 @@ void ExprEngine::ProcessInitializer(const CFGInitializer Init,
 
   // Construct PostInitializer nodes whether the state changed or not,
   // so that the diagnostics don't get confused.
+  PostInitializer PP(BMI, FieldLoc.getAsRegion(), stackFrame);
   ExplodedNodeSet Dst;
   NodeBuilder Bldr(Tmp, Dst, *currBldrCtx);
   for (ExplodedNodeSet::iterator I = Tmp.begin(), E = Tmp.end(); I != E; ++I) {
@@ -488,18 +532,20 @@ void ExprEngine::ProcessImplicitDtor(const CFGImplicitDtor D,
 void ExprEngine::ProcessAutomaticObjDtor(const CFGAutomaticObjDtor Dtor,
                                          ExplodedNode *Pred,
                                          ExplodedNodeSet &Dst) {
-  ProgramStateRef state = Pred->getState();
   const VarDecl *varDecl = Dtor.getVarDecl();
-
   QualType varType = varDecl->getType();
 
-  if (const ReferenceType *refType = varType->getAs<ReferenceType>())
+  ProgramStateRef state = Pred->getState();
+  SVal dest = state->getLValue(varDecl, Pred->getLocationContext());
+  const MemRegion *Region = dest.castAs<loc::MemRegionVal>().getRegion();
+
+  if (const ReferenceType *refType = varType->getAs<ReferenceType>()) {
     varType = refType->getPointeeType();
+    Region = state->getSVal(Region).getAsRegion();
+  }
 
-  Loc dest = state->getLValue(varDecl, Pred->getLocationContext());
-
-  VisitCXXDestructor(varType, dest.castAs<loc::MemRegionVal>().getRegion(),
-                     Dtor.getTriggerStmt(), /*IsBase=*/ false, Pred, Dst);
+  VisitCXXDestructor(varType, Region, Dtor.getTriggerStmt(), /*IsBase=*/ false,
+                     Pred, Dst);
 }
 
 void ExprEngine::ProcessBaseDtor(const CFGBaseDtor D,

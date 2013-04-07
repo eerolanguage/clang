@@ -1604,7 +1604,8 @@ void ASTReader::installImportedMacro(IdentifierInfo *II, MacroDirective *MD,
     MacroDirective::DefInfo PrevDef = Prev->getDefinition();
     MacroInfo *PrevMI = PrevDef.getMacroInfo();
     MacroInfo *NewMI = DefMD->getInfo();
-    if (NewMI != PrevMI && !PrevMI->isIdenticalTo(*NewMI, PP)) {
+    if (NewMI != PrevMI && !PrevMI->isIdenticalTo(*NewMI, PP,
+                                                  /*Syntactically=*/true)) {
       // Before marking the macros as ambiguous, check if this is a case where
       // the system macro uses a not identical definition compared to a macro
       // from the clang headers. For example:
@@ -1994,8 +1995,14 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
       Error("error at end of module block in AST file");
       return true;
     case llvm::BitstreamEntry::EndBlock: {
+      // Outside of C++, we do not store a lookup map for the translation unit.
+      // Instead, mark it as needing a lookup map to be built if this module
+      // contains any declarations lexically within it (which it always does!).
+      // This usually has no cost, since we very rarely need the lookup map for
+      // the translation unit outside C++.
       DeclContext *DC = Context.getTranslationUnitDecl();
-      if (!DC->hasExternalVisibleStorage() && DC->hasExternalLexicalStorage())
+      if (DC->hasExternalLexicalStorage() &&
+          !getContext().getLangOpts().CPlusPlus)
         DC->setMustBuildLookupTable();
       
       return false;

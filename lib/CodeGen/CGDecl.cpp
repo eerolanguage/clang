@@ -109,7 +109,7 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
 /// EmitVarDecl - This method handles emission of any variable declaration
 /// inside a function, including static vars etc.
 void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
-  switch (D.getStorageClassAsWritten()) {
+  switch (D.getStorageClass()) {
   case SC_None:
   case SC_Auto:
   case SC_Register:
@@ -786,6 +786,9 @@ static bool shouldUseMemSetPlusStoresToInitialize(llvm::Constant *Init,
 /// Should we use the LLVM lifetime intrinsics for the given local variable?
 static bool shouldUseLifetimeMarkers(CodeGenFunction &CGF, const VarDecl &D,
                                      unsigned Size) {
+  // Always emit lifetime markers in -fsanitize=use-after-scope mode.
+  if (CGF.getLangOpts().Sanitize.UseAfterScope)
+    return true;
   // For now, only in optimized builds.
   if (CGF.CGM.getCodeGenOpts().OptimizationLevel == 0)
     return false;

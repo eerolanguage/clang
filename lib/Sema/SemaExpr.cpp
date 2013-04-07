@@ -162,7 +162,7 @@ static bool hasAnyExplicitStorageClass(const FunctionDecl *D) {
   for (FunctionDecl::redecl_iterator I = D->redecls_begin(),
                                      E = D->redecls_end();
        I != E; ++I) {
-    if (I->getStorageClassAsWritten() != SC_None)
+    if (I->getStorageClass() != SC_None)
       return true;
   }
   return false;
@@ -214,17 +214,22 @@ static void diagnoseUseOfInternalDeclInInlineFunction(Sema &S,
                                : diag::warn_internal_in_extern_inline)
     << /*IsVar=*/!UsedFn << D;
 
-  // Suggest "static" on the inline function, if possible.
-  if (!hasAnyExplicitStorageClass(Current)) {
-    const FunctionDecl *FirstDecl = Current->getCanonicalDecl();
-    SourceLocation DeclBegin = FirstDecl->getSourceRange().getBegin();
-    S.Diag(DeclBegin, diag::note_convert_inline_to_static)
-      << Current << FixItHint::CreateInsertion(DeclBegin, "static ");
-  }
+  S.MaybeSuggestAddingStaticToDecl(Current);
 
   S.Diag(D->getCanonicalDecl()->getLocation(),
          diag::note_internal_decl_declared_here)
     << D;
+}
+
+void Sema::MaybeSuggestAddingStaticToDecl(const FunctionDecl *Cur) {
+  const FunctionDecl *First = Cur->getFirstDeclaration();
+
+  // Suggest "static" on the function, if possible.
+  if (!hasAnyExplicitStorageClass(First)) {
+    SourceLocation DeclBegin = First->getSourceRange().getBegin();
+    Diag(DeclBegin, diag::note_convert_inline_to_static)
+      << Cur << FixItHint::CreateInsertion(DeclBegin, "static ");
+  }
 }
 
 /// \brief Determine whether the use of this declaration is valid, and
@@ -451,7 +456,8 @@ static void CheckForNullPointerDereference(Sema &S, Expr *E) {
 }
 
 static void DiagnoseDirectIsaAccess(Sema &S, const ObjCIvarRefExpr *OIRE,
-                                    bool IsAssign) {
+                                    SourceLocation AssignLoc,
+                                    const Expr* RHS) {
   const ObjCIvarDecl *IV = OIRE->getDecl();
   if (!IV)
     return;
@@ -471,8 +477,35 @@ static void DiagnoseDirectIsaAccess(Sema &S, const ObjCIvarRefExpr *OIRE,
       ObjCIvarDecl *IV = IDecl->lookupInstanceVariable(Member, ClassDeclared);
       if (!ClassDeclared->getSuperClass()
           && (*ClassDeclared->ivar_begin()) == IV) {
-        S.Diag(OIRE->getLocation(), IsAssign ? diag::warn_objc_isa_assign
-                                             : diag::warn_objc_isa_use);
+        if (RHS) {
+          NamedDecl *ObjectSetClass =
+            S.LookupSingleName(S.TUScope,
+                               &S.Context.Idents.get("object_setClass"),
+                               SourceLocation(), S.LookupOrdinaryName);
+          if (ObjectSetClass) {
+            SourceLocation RHSLocEnd = S.PP.getLocForEndOfToken(RHS->getLocEnd());
+            S.Diag(OIRE->getExprLoc(), diag::warn_objc_isa_assign) <<
+            FixItHint::CreateInsertion(OIRE->getLocStart(), "object_setClass(") <<
+            FixItHint::CreateReplacement(SourceRange(OIRE->getOpLoc(),
+                                                     AssignLoc), ",") <<
+            FixItHint::CreateInsertion(RHSLocEnd, ")");
+          }
+          else
+            S.Diag(OIRE->getLocation(), diag::warn_objc_isa_assign);
+        } else {
+          NamedDecl *ObjectGetClass =
+            S.LookupSingleName(S.TUScope,
+                               &S.Context.Idents.get("object_getClass"),
+                               SourceLocation(), S.LookupOrdinaryName);
+          if (ObjectGetClass)
+            S.Diag(OIRE->getExprLoc(), diag::warn_objc_isa_use) <<
+            FixItHint::CreateInsertion(OIRE->getLocStart(), "object_getClass(") <<
+            FixItHint::CreateReplacement(
+                                         SourceRange(OIRE->getOpLoc(),
+                                                     OIRE->getLocEnd()), ")");
+          else
+            S.Diag(OIRE->getLocation(), diag::warn_objc_isa_use);
+        }
         S.Diag(IV->getLocation(), diag::note_ivar_decl);
       }
     }
@@ -533,7 +566,7 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
   }
   else if (const ObjCIvarRefExpr *OIRE =
             dyn_cast<ObjCIvarRefExpr>(E->IgnoreParenCasts()))
-    DiagnoseDirectIsaAccess(*this, OIRE, false);
+    DiagnoseDirectIsaAccess(*this, OIRE, SourceLocation(), /* Expr*/0);
   
   // C++ [conv.lval]p1:
   //   [...] If T is a non-class type, the type of the prvalue is the
@@ -2099,7 +2132,7 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
         Diag(Loc, diag::warn_direct_ivar_access) << IV->getDeclName();
 
       ObjCIvarRefExpr *Result = new (Context) ObjCIvarRefExpr(IV, IV->getType(),
-                                                              Loc,
+                                                              Loc, IV->getLocation(),
                                                               SelfExpr.take(),
                                                               true, true);
 
@@ -4916,7 +4949,7 @@ static bool checkCondition(Sema &S, Expr *Cond) {
   // C99 6.5.15p2
   if (CondTy->isScalarType()) return false;
 
-  // OpenCL: Sec 6.3.i says the condition is allowed to be a vector or scalar.
+  // OpenCL v1.1 s6.3.i says the condition is allowed to be a vector or scalar.
   if (S.getLangOpts().OpenCL && CondTy->isVectorType())
     return false;
 
@@ -5177,9 +5210,9 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   if (LHSTy->isVectorType() || RHSTy->isVectorType())
     return CheckVectorOperands(LHS, RHS, QuestionLoc, /*isCompAssign*/false);
 
-  // OpenCL: If the condition is a vector, and both operands are scalar,
+  // If the condition is a vector, and both operands are scalar,
   // attempt to implicity convert them to the vector type to act like the
-  // built in select.
+  // built in select. (OpenCL v1.1 s6.3.i)
   if (getLangOpts().OpenCL && CondTy->isVectorType())
     if (checkConditionalConvertScalarsToVectors(*this, LHS, RHS, CondTy))
       return QualType();
@@ -8676,7 +8709,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
   }
   else if (const ObjCIvarRefExpr *OIRE =
            dyn_cast<ObjCIvarRefExpr>(LHS.get()->IgnoreParenCasts()))
-    DiagnoseDirectIsaAccess(*this, OIRE, true);
+    DiagnoseDirectIsaAccess(*this, OIRE, OpLoc, RHS.get());
   
   if (CompResultTy.isNull())
     return Owned(new (Context) BinaryOperator(LHS.take(), RHS.take(), Opc,
@@ -10904,7 +10937,7 @@ static ExprResult captureInLambda(Sema &S, LambdaScopeInfo *LSI,
       = VarDecl::Create(S.Context, S.CurContext, Loc, Loc,
                         IterationVarName, SizeType,
                         S.Context.getTrivialTypeSourceInfo(SizeType, Loc),
-                        SC_None, SC_None);
+                        SC_None);
     IndexVariables.push_back(IterationVar);
     LSI->ArrayIndexVars.push_back(IterationVar);
     

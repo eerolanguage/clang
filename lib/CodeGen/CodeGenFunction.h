@@ -881,6 +881,9 @@ public:
     /// \brief Exit this cleanup scope, emitting any accumulated
     /// cleanups.
     ~LexicalScope() {
+      if (CGDebugInfo *DI = CGF.getDebugInfo())
+        DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
+
       // If we should perform a cleanup, force them now.  Note that
       // this ends the cleanup scope before rescoping any labels.
       if (PerformCleanup) ForceCleanup();
@@ -889,15 +892,9 @@ public:
     /// \brief Force the emission of cleanups now, instead of waiting
     /// until this object is destroyed.
     void ForceCleanup() {
-      RunCleanupsScope::ForceCleanup();
-      endLexicalScope();
-    }
-
-  private:
-    void endLexicalScope() {
       CGF.CurLexicalScope = ParentScope;
-      if (CGDebugInfo *DI = CGF.getDebugInfo())
-        DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
+      RunCleanupsScope::ForceCleanup();
+
       if (!Labels.empty())
         rescopeLabels();
     }
@@ -2214,7 +2211,9 @@ public:
   /// the LLVM value representation.
   llvm::Value *EmitLoadOfScalar(llvm::Value *Addr, bool Volatile,
                                 unsigned Alignment, QualType Ty,
-                                llvm::MDNode *TBAAInfo = 0);
+                                llvm::MDNode *TBAAInfo = 0,
+                                QualType TBAABaseTy = QualType(),
+                                uint64_t TBAAOffset = 0);
 
   /// EmitLoadOfScalar - Load a scalar value from an address, taking
   /// care to appropriately convert from the memory representation to
@@ -2227,7 +2226,9 @@ public:
   /// the LLVM value representation.
   void EmitStoreOfScalar(llvm::Value *Value, llvm::Value *Addr,
                          bool Volatile, unsigned Alignment, QualType Ty,
-                         llvm::MDNode *TBAAInfo = 0, bool isInit=false);
+                         llvm::MDNode *TBAAInfo = 0, bool isInit = false,
+                         QualType TBAABaseTy = QualType(),
+                         uint64_t TBAAOffset = 0);
 
   /// EmitStoreOfScalar - Store a scalar value to an address, taking
   /// care to appropriately convert from the memory representation to

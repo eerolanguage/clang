@@ -192,3 +192,20 @@ module config {
 module diag_pragma {
   header "diag_pragma.h"
 }
+
+module builtin {
+  header "builtin.h"
+  explicit module sub {
+    header "builtin_sub.h"
+  }
+}
+
+module linkage_merge {
+  explicit module foo {
+    header "linkage-merge-foo.h"
+  }
+  explicit module bar {
+    header "linkage-merge-bar.h"
+  }
+
+}

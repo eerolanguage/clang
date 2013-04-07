@@ -984,12 +984,8 @@ static void checkConfigMacro(Preprocessor &PP, StringRef ConfigMacro,
       if (FID.isInvalid())
         continue;
 
-      const llvm::MemoryBuffer *Buffer = SourceMgr.getBuffer(FID);
-      if (!Buffer)
-        continue;
-
       // We only care about the predefines buffer.
-      if (!StringRef(Buffer->getBufferIdentifier()).equals("<built-in>"))
+      if (FID != PP.getPredefinesFileID())
         continue;
 
       // This macro was defined on the command line, then #undef'd later.
@@ -1017,12 +1013,8 @@ static void checkConfigMacro(Preprocessor &PP, StringRef ConfigMacro,
     if (FID.isInvalid())
       continue;
 
-    const llvm::MemoryBuffer *Buffer = SourceMgr.getBuffer(FID);
-    if (!Buffer)
-      continue;
-
     // We only care about the predefines buffer.
-    if (!StringRef(Buffer->getBufferIdentifier()).equals("<built-in>"))
+    if (FID != PP.getPredefinesFileID())
       continue;
 
     PredefinedDef = Def;
@@ -1044,7 +1036,8 @@ static void checkConfigMacro(Preprocessor &PP, StringRef ConfigMacro,
   // If the current macro definition is the same as the predefined macro
   // definition, it's okay.
   if (LatestDef.getMacroInfo() == PredefinedDef.getMacroInfo() ||
-      LatestDef.getMacroInfo()->isIdenticalTo(*PredefinedDef.getMacroInfo(),PP))
+      LatestDef.getMacroInfo()->isIdenticalTo(*PredefinedDef.getMacroInfo(),PP,
+                                              /*Syntactically=*/true))
     return;
 
   // The macro definitions differ.

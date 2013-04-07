@@ -838,8 +838,8 @@ class TemplateDiff {
       if (TemplateTypeParmDecl *DefaultTTPD =
               dyn_cast<TemplateTypeParmDecl>(ParamND)) {
         QualType FromType, ToType;
-        GetType(FromIter, DefaultTTPD, FromType);
-        GetType(ToIter, DefaultTTPD, ToType);
+        FromType = GetType(FromIter, DefaultTTPD);
+        ToType = GetType(ToIter, DefaultTTPD);
         Tree.SetNode(FromType, ToType);
         Tree.SetDefault(FromIter.isEnd() && !FromType.isNull(),
                         ToIter.isEnd() && !ToType.isNull());
@@ -898,62 +898,25 @@ class TemplateDiff {
         else if (HasFromValueDecl)
           FromValueDecl = FromIter->getAsDecl();
         else
-          GetExpr(FromIter, DefaultNTTPD, FromExpr);
+          FromExpr = GetExpr(FromIter, DefaultNTTPD);
 
         if (HasToInt)
           ToInt = ToIter->getAsIntegral();
         else if (HasToValueDecl)
           ToValueDecl = ToIter->getAsDecl();
         else
-          GetExpr(ToIter, DefaultNTTPD, ToExpr);
+          ToExpr = GetExpr(ToIter, DefaultNTTPD);
 
         if (!HasFromInt && !HasToInt && !HasFromValueDecl && !HasToValueDecl) {
           Tree.SetNode(FromExpr, ToExpr);
           Tree.SetDefault(FromIter.isEnd() && FromExpr,
                           ToIter.isEnd() && ToExpr);
-          if ((FromExpr && FromExpr->getType()->isIntegerType()) ||
-              (ToExpr && ToExpr->getType()->isIntegerType())) {
-            HasFromInt = FromExpr;
-            HasToInt = ToExpr;
-            if (FromExpr) {
-              // Getting the integer value from the expression.
-              // Default, value-depenedent expressions require fetching
-              // from the desugared TemplateArgument
-              if (FromIter.isEnd() && FromExpr->isValueDependent())
-                switch (FromIter.getDesugar().getKind()) {
-                  case TemplateArgument::Integral:
-                    FromInt = FromIter.getDesugar().getAsIntegral();
-                    break;
-                  case TemplateArgument::Expression:
-                    FromExpr = FromIter.getDesugar().getAsExpr();
-                    FromInt = FromExpr->EvaluateKnownConstInt(Context);
-                    break;
-                  default:
-                    assert(0 && "Unexpected template argument kind");
-                }
-              else
-                FromInt = FromExpr->EvaluateKnownConstInt(Context);
-            }
-            if (ToExpr) {
-              // Getting the integer value from the expression.
-              // Default, value-depenedent expressions require fetching
-              // from the desugared TemplateArgument
-              if (ToIter.isEnd() && ToExpr->isValueDependent())
-                switch (ToIter.getDesugar().getKind()) {
-                  case TemplateArgument::Integral:
-                    ToInt = ToIter.getDesugar().getAsIntegral();
-                    break;
-                  case TemplateArgument::Expression:
-                    ToExpr = ToIter.getDesugar().getAsExpr();
-                    ToInt = ToExpr->EvaluateKnownConstInt(Context);
-                    break;
-                  default:
-                    assert(0 && "Unexpected template argument kind");
-                }
-              else
-                ToInt = ToExpr->EvaluateKnownConstInt(Context);
-            }
-            Tree.SetNode(FromInt, ToInt, HasFromInt, HasToInt);
+          if (DefaultNTTPD->getType()->isIntegralOrEnumerationType()) {
+            if (FromExpr)
+              FromInt = GetInt(FromIter, FromExpr);
+            if (ToExpr)
+              ToInt = GetInt(ToIter, ToExpr);
+            Tree.SetNode(FromInt, ToInt, FromExpr, ToExpr);
             Tree.SetSame(IsSameConvertedInt(ParamWidth, FromInt, ToInt));
             Tree.SetKind(DiffTree::Integer);
           } else {
@@ -962,11 +925,11 @@ class TemplateDiff {
           }
         } else if (HasFromInt || HasToInt) {
           if (!HasFromInt && FromExpr) {
-            FromInt = FromExpr->EvaluateKnownConstInt(Context);
+            FromInt = GetInt(FromIter, FromExpr);
             HasFromInt = true;
           }
           if (!HasToInt && ToExpr) {
-            ToInt = ToExpr->EvaluateKnownConstInt(Context);
+            ToInt = GetInt(ToIter, ToExpr);
             HasToInt = true;
           }
           Tree.SetNode(FromInt, ToInt, HasFromInt, HasToInt);
@@ -975,16 +938,13 @@ class TemplateDiff {
                           ToIter.isEnd() && HasToInt);
           Tree.SetKind(DiffTree::Integer);
         } else {
-          if (!HasFromValueDecl && FromExpr) {
-            DeclRefExpr *DRE = cast<DeclRefExpr>(FromExpr);
-            FromValueDecl = cast<ValueDecl>(DRE->getDecl());
-          }
-          if (!HasToValueDecl && ToExpr) {
-            DeclRefExpr *DRE = cast<DeclRefExpr>(ToExpr);
-            ToValueDecl = cast<ValueDecl>(DRE->getDecl());
-          }
+          if (!HasFromValueDecl && FromExpr)
+            FromValueDecl = GetValueDecl(FromIter, FromExpr);
+          if (!HasToValueDecl && ToExpr)
+            ToValueDecl = GetValueDecl(ToIter, ToExpr);
           Tree.SetNode(FromValueDecl, ToValueDecl);
-          Tree.SetSame(FromValueDecl->getCanonicalDecl() ==
+          Tree.SetSame(FromValueDecl && ToValueDecl &&
+                       FromValueDecl->getCanonicalDecl() ==
                        ToValueDecl->getCanonicalDecl());
           Tree.SetDefault(FromIter.isEnd() && FromValueDecl,
                           ToIter.isEnd() && ToValueDecl);
@@ -996,8 +956,8 @@ class TemplateDiff {
       if (TemplateTemplateParmDecl *DefaultTTPD =
               dyn_cast<TemplateTemplateParmDecl>(ParamND)) {
         TemplateDecl *FromDecl, *ToDecl;
-        GetTemplateDecl(FromIter, DefaultTTPD, FromDecl);
-        GetTemplateDecl(ToIter, DefaultTTPD, ToDecl);
+        FromDecl = GetTemplateDecl(FromIter, DefaultTTPD);
+        ToDecl = GetTemplateDecl(ToIter, DefaultTTPD);
         Tree.SetNode(FromDecl, ToDecl);
         Tree.SetSame(
             FromDecl && ToDecl &&
@@ -1072,22 +1032,21 @@ class TemplateDiff {
 
   /// GetType - Retrieves the template type arguments, including default
   /// arguments.
-  void GetType(const TSTiterator &Iter, TemplateTypeParmDecl *DefaultTTPD,
-               QualType &ArgType) {
-    ArgType = QualType();
+  QualType GetType(const TSTiterator &Iter, TemplateTypeParmDecl *DefaultTTPD) {
     bool isVariadic = DefaultTTPD->isParameterPack();
 
     if (!Iter.isEnd())
-      ArgType = Iter->getAsType();
-    else if (!isVariadic)
-      ArgType = DefaultTTPD->getDefaultArgument();
+      return Iter->getAsType();
+    if (!isVariadic)
+      return DefaultTTPD->getDefaultArgument();
+
+    return QualType();
   }
 
   /// GetExpr - Retrieves the template expression argument, including default
   /// arguments.
-  void GetExpr(const TSTiterator &Iter, NonTypeTemplateParmDecl *DefaultNTTPD,
-               Expr *&ArgExpr) {
-    ArgExpr = 0;
+  Expr *GetExpr(const TSTiterator &Iter, NonTypeTemplateParmDecl *DefaultNTTPD) {
+    Expr *ArgExpr = 0;
     bool isVariadic = DefaultNTTPD->isParameterPack();
 
     if (!Iter.isEnd())
@@ -1099,14 +1058,50 @@ class TemplateDiff {
       while (SubstNonTypeTemplateParmExpr *SNTTPE =
                  dyn_cast<SubstNonTypeTemplateParmExpr>(ArgExpr))
         ArgExpr = SNTTPE->getReplacement();
+
+    return ArgExpr;
+  }
+
+  /// GetInt - Retrieves the template integer argument, including evaluating
+  /// default arguments.
+  llvm::APInt GetInt(const TSTiterator &Iter, Expr *ArgExpr) {
+    // Default, value-depenedent expressions require fetching
+    // from the desugared TemplateArgument
+    if (Iter.isEnd() && ArgExpr->isValueDependent())
+      switch (Iter.getDesugar().getKind()) {
+        case TemplateArgument::Integral:
+          return Iter.getDesugar().getAsIntegral();
+        case TemplateArgument::Expression:
+          ArgExpr = Iter.getDesugar().getAsExpr();
+          return ArgExpr->EvaluateKnownConstInt(Context);
+        default:
+          assert(0 && "Unexpected template argument kind");
+      }
+    return ArgExpr->EvaluateKnownConstInt(Context);
+  }
+
+  /// GetValueDecl - Retrieves the template integer argument, including
+  /// default expression argument.
+  ValueDecl *GetValueDecl(const TSTiterator &Iter, Expr *ArgExpr) {
+    // Default, value-depenedent expressions require fetching
+    // from the desugared TemplateArgument
+    if (Iter.isEnd() && ArgExpr->isValueDependent())
+      switch (Iter.getDesugar().getKind()) {
+        case TemplateArgument::Declaration:
+          return Iter.getDesugar().getAsDecl();
+        case TemplateArgument::Expression:
+          ArgExpr = Iter.getDesugar().getAsExpr();
+          return cast<DeclRefExpr>(ArgExpr)->getDecl();
+        default:
+          assert(0 && "Unexpected template argument kind");
+      }
+    return cast<DeclRefExpr>(ArgExpr)->getDecl();
   }
 
   /// GetTemplateDecl - Retrieves the template template arguments, including
   /// default arguments.
-  void GetTemplateDecl(const TSTiterator &Iter,
-                       TemplateTemplateParmDecl *DefaultTTPD,
-                       TemplateDecl *&ArgDecl) {
-    ArgDecl = 0;
+  TemplateDecl *GetTemplateDecl(const TSTiterator &Iter,
+                                TemplateTemplateParmDecl *DefaultTTPD) {
     bool isVariadic = DefaultTTPD->isParameterPack();
 
     TemplateArgument TA = DefaultTTPD->getDefaultArgument().getArgument();
@@ -1115,9 +1110,11 @@ class TemplateDiff {
       DefaultTD = TA.getAsTemplate().getAsTemplateDecl();
 
     if (!Iter.isEnd())
-      ArgDecl = Iter->getAsTemplate().getAsTemplateDecl();
-    else if (!isVariadic)
-      ArgDecl = DefaultTD;
+      return Iter->getAsTemplate().getAsTemplateDecl();
+    if (!isVariadic)
+      return DefaultTD;
+
+    return 0;
   }
 
   /// IsSameConvertedInt - Returns true if both integers are equal when

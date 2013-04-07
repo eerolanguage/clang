@@ -723,6 +723,13 @@ bool CursorVisitor::VisitEnumConstantDecl(EnumConstantDecl *D) {
 }
 
 bool CursorVisitor::VisitDeclaratorDecl(DeclaratorDecl *DD) {
+  unsigned NumParamList = DD->getNumTemplateParameterLists();
+  for (unsigned i = 0; i < NumParamList; i++) {
+    TemplateParameterList* Params = DD->getTemplateParameterList(i);
+    if (VisitTemplateParameters(Params))
+      return true;
+  }
+
   if (TypeSourceInfo *TSInfo = DD->getTypeSourceInfo())
     if (Visit(TSInfo->getTypeLoc()))
       return true;
@@ -751,6 +758,13 @@ static int CompareCXXCtorInitializers(const void* Xp, const void *Yp) {
 }
 
 bool CursorVisitor::VisitFunctionDecl(FunctionDecl *ND) {
+  unsigned NumParamList = ND->getNumTemplateParameterLists();
+  for (unsigned i = 0; i < NumParamList; i++) {
+    TemplateParameterList* Params = ND->getTemplateParameterList(i);
+    if (VisitTemplateParameters(Params))
+      return true;
+  }
+
   if (TypeSourceInfo *TSInfo = ND->getTypeSourceInfo()) {
     // Visit the function declaration's syntactic components in the order
     // written. This requires a bit of work.
@@ -2927,6 +2941,9 @@ CXString clang_getTranslationUnitSpelling(CXTranslationUnit CTUnit) {
 }
 
 CXCursor clang_getTranslationUnitCursor(CXTranslationUnit TU) {
+  if (!TU)
+    return clang_getNullCursor();
+
   ASTUnit *CXXUnit = cxtu::getASTUnit(TU);
   return MakeCXCursor(CXXUnit->getASTContext().getTranslationUnitDecl(), TU);
 }
@@ -4914,6 +4931,9 @@ void clang_tokenize(CXTranslationUnit TU, CXSourceRange Range,
   if (NumTokens)
     *NumTokens = 0;
 
+  if (!TU)
+    return;
+
   ASTUnit *CXXUnit = cxtu::getASTUnit(TU);
   if (!CXXUnit || !Tokens || !NumTokens)
     return;
@@ -5610,7 +5630,7 @@ extern "C" {
 void clang_annotateTokens(CXTranslationUnit TU,
                           CXToken *Tokens, unsigned NumTokens,
                           CXCursor *Cursors) {
-  if (NumTokens == 0 || !Tokens || !Cursors) {
+  if (!TU || NumTokens == 0 || !Tokens || !Cursors) {
     LOG_FUNC_SECTION { *Log << "<null input>"; }
     return;
   }

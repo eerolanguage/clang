@@ -1114,7 +1114,6 @@ bool ObjCSubscriptOpBuilder::findAtIndexGetter(bool useAlternateMethod) {
                                                          : S.Context.getObjCIdType(),
                                                 /*TInfo=*/0,
                                                 SC_None,
-                                                SC_None,
                                                 0);
     AtIndexGetter->setMethodParams(S.Context, Argument, 
                                    ArrayRef<SourceLocation>());
@@ -1249,7 +1248,6 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useAlternateMethod) {
                                                 S.Context.getObjCIdType(),
                                                 /*TInfo=*/0,
                                                 SC_None,
-                                                SC_None,
                                                 0);
     Params.push_back(object);
     ParmVarDecl *key = ParmVarDecl::Create(S.Context, AtIndexSetter,
@@ -1259,7 +1257,6 @@ bool ObjCSubscriptOpBuilder::findAtIndexSetter(bool useAlternateMethod) {
                                                 arrayRef ? S.Context.UnsignedLongTy
                                                          : S.Context.getObjCIdType(),
                                                 /*TInfo=*/0,
-                                                SC_None,
                                                 SC_None,
                                                 0);
     Params.push_back(key);

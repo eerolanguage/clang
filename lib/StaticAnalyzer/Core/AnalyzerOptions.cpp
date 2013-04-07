@@ -74,7 +74,7 @@ AnalyzerOptions::mayInlineCXXMemberFunction(CXXInlineableMemberKind K) {
     static const char *ModeKey = "c++-inlining";
     
     StringRef ModeStr(Config.GetOrCreateValue(ModeKey,
-                                              "constructors").getValue());
+                                              "destructors").getValue());
 
     CXXInlineableMemberKind &MutableMode =
       const_cast<CXXInlineableMemberKind &>(CXXMemberInliningMode);
@@ -134,6 +134,13 @@ bool AnalyzerOptions::mayInlineTemplateFunctions() {
                           /*Default=*/true);
 }
 
+bool AnalyzerOptions::mayInlineCXXContainerCtorsAndDtors() {
+  return getBooleanOption(InlineCXXContainerCtorsAndDtors,
+                          "c++-container-inlining",
+                          /*Default=*/false);
+}
+
+
 bool AnalyzerOptions::mayInlineObjCMethod() {
   return getBooleanOption(ObjCInliningMode,
                           "objc-inlining",
@@ -156,6 +163,12 @@ bool AnalyzerOptions::shouldSuppressInlinedDefensiveChecks() {
   return getBooleanOption(SuppressInlinedDefensiveChecks,
                           "suppress-inlined-defensive-checks",
                           /* Default = */ true);
+}
+
+bool AnalyzerOptions::shouldSuppressFromCXXStandardLibrary() {
+  return getBooleanOption(SuppressFromCXXStandardLibrary,
+                          "suppress-c++-stdlib",
+                          /* Default = */ false);
 }
 
 int AnalyzerOptions::getOptionAsInteger(StringRef Name, int DefaultVal) {

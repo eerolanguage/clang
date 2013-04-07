@@ -25,6 +25,18 @@
 #include "clang/AST/ASTConsumer.h"
 using namespace clang;
 
+/// Skips attributes after an Objective-C @ directive. Emits a diagnostic.
+void Parser::MaybeSkipAttributes(tok::ObjCKeywordKind Kind) {
+  ParsedAttributes attrs(AttrFactory);
+  if (Tok.is(tok::kw___attribute)) {
+    if (Kind == tok::objc_interface || Kind == tok::objc_protocol)
+      Diag(Tok, diag::err_objc_postfix_attribute_hint)
+          << (Kind == tok::objc_protocol);
+    else
+      Diag(Tok, diag::err_objc_postfix_attribute);
+    ParseGNUAttributes(attrs);
+  }
+}
 
 /// ParseObjCAtDirectives - Handle parts of the external-declaration production:
 ///       external-declaration: [C99 6.9]
@@ -97,6 +109,7 @@ Parser::ParseObjCAtClassDeclaration(SourceLocation atLoc) {
 
 
   while (1) {
+    MaybeSkipAttributes(tok::objc_class);
     if (Tok.isNot(tok::identifier)) {
       Diag(Tok, diag::err_expected_ident);
       SkipUntil(tok::semi);
@@ -205,6 +218,8 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
     cutOffParsing();
     return 0;
   }
+
+  MaybeSkipAttributes(tok::objc_interface);
 
   if (Tok.isNot(tok::identifier)) {
     Diag(Tok, diag::err_expected_ident); // missing class or category name.
@@ -1840,6 +1855,8 @@ Parser::ParseObjCAtProtocolDeclaration(SourceLocation AtLoc,
     return DeclGroupPtrTy();
   }
 
+  MaybeSkipAttributes(tok::objc_protocol);
+
   if (Tok.isNot(tok::identifier)) {
     Diag(Tok, diag::err_expected_ident); // missing protocol name.
     return DeclGroupPtrTy();
@@ -1937,6 +1954,8 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
     cutOffParsing();
     return DeclGroupPtrTy();
   }
+
+  MaybeSkipAttributes(tok::objc_implementation);
 
   if (Tok.isNot(tok::identifier)) {
     Diag(Tok, diag::err_expected_ident); // missing class or category name.
