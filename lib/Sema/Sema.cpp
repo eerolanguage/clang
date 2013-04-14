@@ -751,9 +751,13 @@ void Sema::ActOnEndOfTranslationUnit() {
         if (DiagD->isReferenced()) {
           Diag(DiagD->getLocation(), diag::warn_unneeded_internal_decl)
                 << /*variable*/1 << DiagD->getDeclName();
-        } else {
+        } else if (getSourceManager().isFromMainFile(DiagD->getLocation())) {
+          // If the declaration is in a header which is included into multiple
+          // TUs, it will declare one variable per TU, and one of the other
+          // variables may be used. So, only warn if the declaration is in the
+          // main file.
           Diag(DiagD->getLocation(), diag::warn_unused_variable)
-                << DiagD->getDeclName();
+              << DiagD->getDeclName();
         }
       }
     }
@@ -1073,7 +1077,8 @@ void Sema::ActOnComment(SourceRange Comment) {
   if (!LangOpts.RetainCommentsFromSystemHeaders &&
       SourceMgr.isInSystemHeader(Comment.getBegin()))
     return;
-  RawComment RC(SourceMgr, Comment);
+  RawComment RC(SourceMgr, Comment, false,
+                LangOpts.CommentOpts.ParseAllComments);
   if (RC.isAlmostTrailingComment()) {
     SourceRange MagicMarkerRange(Comment.getBegin(),
                                  Comment.getBegin().getLocWithOffset(3));

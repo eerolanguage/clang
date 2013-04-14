@@ -885,6 +885,8 @@ bool Sema::CppLookupName(LookupResult &R, Scope *S) {
   //   }
   // }
   //
+  UnqualUsingDirectiveSet UDirs;
+  bool VisitedUsingDirectives = false;
   DeclContext *OutsideOfTemplateParamDC = 0;
   for (; S && !isNamespaceOrTranslationUnitScope(S); S = S->getParent()) {
     DeclContext *Ctx = static_cast<DeclContext*>(S->getEntity());
@@ -958,9 +960,28 @@ bool Sema::CppLookupName(LookupResult &R, Scope *S) {
         // If this is a file context, we need to perform unqualified name
         // lookup considering using directives.
         if (Ctx->isFileContext()) {
-          UnqualUsingDirectiveSet UDirs;
-          UDirs.visit(Ctx, Ctx);
-          UDirs.done();
+          // If we haven't handled using directives yet, do so now.
+          if (!VisitedUsingDirectives) {
+            // Add using directives from this context up to the top level.
+            for (DeclContext *UCtx = Ctx; UCtx; UCtx = UCtx->getParent()) {
+              if (UCtx->isTransparentContext())
+                continue;
+
+              UDirs.visit(UCtx, UCtx);
+            }
+
+            // Find the innermost file scope, so we can add using directives
+            // from local scopes.
+            Scope *InnermostFileScope = S;
+            while (InnermostFileScope &&
+                   !isNamespaceOrTranslationUnitScope(InnermostFileScope))
+              InnermostFileScope = InnermostFileScope->getParent();
+            UDirs.visitScopeChain(Initial, InnermostFileScope);
+
+            UDirs.done();
+
+            VisitedUsingDirectives = true;
+          }
 
           if (CppNamespaceLookup(*this, R, Context, Ctx, UDirs)) {
             R.resolveKind();
@@ -995,11 +1016,11 @@ bool Sema::CppLookupName(LookupResult &R, Scope *S) {
   //
   // FIXME: Cache this sorted list in Scope structure, and DeclContext, so we
   // don't build it for each lookup!
-
-  UnqualUsingDirectiveSet UDirs;
-  UDirs.visitScopeChain(Initial, S);
-  UDirs.done();
-
+  if (!VisitedUsingDirectives) {
+    UDirs.visitScopeChain(Initial, S);
+    UDirs.done();
+  }
+  
   // Lookup namespace scope, and global scope.
   // Unqualified name lookup in C++ requires looking into scopes
   // that aren't strictly lexical, and therefore we walk through the
@@ -2599,6 +2620,12 @@ Sema::LookupLiteralOperator(Scope *S, LookupResult &R,
     bool IsRaw = false;
     bool IsExactMatch = false;
 
+    // If the declaration we found is invalid, skip it.
+    if (D->isInvalidDecl()) {
+      F.erase();
+      continue;
+    }
+
     if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
       if (FD->getNumParams() == 1 &&
           FD->getParamDecl(0)->getType()->getAs<PointerType>())
@@ -3443,7 +3470,7 @@ class NamespaceSpecifierSet {
 }
 
 DeclContextList NamespaceSpecifierSet::BuildContextChain(DeclContext *Start) {
-  assert(Start && "Bulding a context chain from a null context");
+  assert(Start && "Building a context chain from a null context");
   DeclContextList Chain;
   for (DeclContext *DC = Start->getPrimaryContext(); DC != NULL;
        DC = DC->getLookupParent()) {

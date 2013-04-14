@@ -242,9 +242,18 @@ llvm::MDNode *CodeGenModule::getTBAAStructTagInfo(QualType BaseTy,
   return TBAA->getTBAAStructTagInfo(BaseTy, AccessN, O);
 }
 
+/// Decorate the instruction with a TBAA tag. For scalar TBAA, the tag
+/// is the same as the type. For struct-path aware TBAA, the tag
+/// is different from the type: base type, access type and offset.
+/// When ConvertTypeToTag is true, we create a tag based on the scalar type.
 void CodeGenModule::DecorateInstruction(llvm::Instruction *Inst,
-                                        llvm::MDNode *TBAAInfo) {
-  Inst->setMetadata(llvm::LLVMContext::MD_tbaa, TBAAInfo);
+                                        llvm::MDNode *TBAAInfo,
+                                        bool ConvertTypeToTag) {
+  if (ConvertTypeToTag && TBAA && CodeGenOpts.StructPathTBAA)
+    Inst->setMetadata(llvm::LLVMContext::MD_tbaa,
+                      TBAA->getTBAAScalarTagInfo(TBAAInfo));
+  else
+    Inst->setMetadata(llvm::LLVMContext::MD_tbaa, TBAAInfo);
 }
 
 bool CodeGenModule::isTargetDarwin() const {
@@ -324,7 +333,7 @@ static llvm::GlobalVariable::ThreadLocalMode GetLLVMTLSModel(
 
 void CodeGenModule::setTLSMode(llvm::GlobalVariable *GV,
                                const VarDecl &D) const {
-  assert(D.isThreadSpecified() && "setting TLS mode on non-TLS var!");
+  assert(D.getTLSKind() && "setting TLS mode on non-TLS var!");
 
   llvm::GlobalVariable::ThreadLocalMode TLM;
   TLM = GetLLVMTLSModel(CodeGenOpts.getDefaultTLSModel());
@@ -1476,7 +1485,7 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
         GV->setVisibility(GetLLVMVisibility(LV.getVisibility()));
     }
 
-    if (D->isThreadSpecified())
+    if (D->getTLSKind())
       setTLSMode(GV, *D);
   }
 
@@ -1739,8 +1748,6 @@ void CodeGenModule::MaybeHandleStaticInExternC(const SomeDecl *D,
   // in extern "C" regions, none of them gets that name.
   if (!R.second)
     R.first->second = 0;
-  else
-    StaticExternCIdents.push_back(D->getIdentifier());
 }
 
 void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D) {
@@ -1908,7 +1915,7 @@ CodeGenModule::GetLLVMLinkageVarDefinition(const VarDecl *D,
            ((!CodeGenOpts.NoCommon && !D->getAttr<NoCommonAttr>()) ||
              D->getAttr<CommonAttr>()) &&
            !D->hasExternalStorage() && !D->getInit() &&
-           !D->getAttr<SectionAttr>() && !D->isThreadSpecified() &&
+           !D->getAttr<SectionAttr>() && !D->getTLSKind() &&
            !D->getAttr<WeakImportAttr>()) {
     // Thread local vars aren't considered common linkage.
     return llvm::GlobalVariable::CommonLinkage;
@@ -2949,9 +2956,11 @@ static void EmitGlobalDeclMetadata(CodeGenModule &CGM,
 /// to such functions with an unmangled name from inline assembly within the
 /// same translation unit.
 void CodeGenModule::EmitStaticExternCAliases() {
-  for (unsigned I = 0, N = StaticExternCIdents.size(); I != N; ++I) {
-    IdentifierInfo *Name = StaticExternCIdents[I];
-    llvm::GlobalValue *Val = StaticExternCValues[Name];
+  for (StaticExternCMap::iterator I = StaticExternCValues.begin(),
+                                  E = StaticExternCValues.end();
+       I != E; ++I) {
+    IdentifierInfo *Name = I->first;
+    llvm::GlobalValue *Val = I->second;
     if (Val && !getModule().getNamedValue(Name->getName()))
       AddUsedGlobal(new llvm::GlobalAlias(Val->getType(), Val->getLinkage(),
                                           Name->getName(), Val, &getModule()));

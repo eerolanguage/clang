@@ -15,6 +15,9 @@
        Many1 discussions about text
        Many2 discussions about text
      @/textblock
+     @link //un_ref/c/func/function_name link text goes here @/link
+     @see  //un_ref/doc/uid/XX0000011 I/O Kit Fundamentals
+     @seealso //k_ref/doc/uid/XX30000905-CH204 Programming
  */
 @interface IOCommandGate
 @end
@@ -32,3 +35,39 @@
 // CHECK-NEXT:       (CXComment_VerbatimBlockLine Text=[       Many2 discussions about text]))
 // CHECK-NEXT:       (CXComment_Paragraph IsWhitespace
 
+// CHECK:       (CXComment_VerbatimBlockCommand CommandName=[link]
+// CHECK-NEXT:     (CXComment_VerbatimBlockLine Text=[ //un_ref/c/func/function_name link text goes here ]))
+// CHECK-NEXT:     (CXComment_Paragraph IsWhitespace
+// CHECK-NEXT:     (CXComment_Text Text=[     ] IsWhitespace))
+// CHECK:       (CXComment_BlockCommand CommandName=[see]
+// CHECK-NEXT:     (CXComment_Paragraph
+// CHECK-NEXT:     (CXComment_Text Text=[  //un_ref/doc/uid/XX0000011 I/O Kit Fundamentals] HasTrailingNewline)
+// CHECK-NEXT:     (CXComment_Text Text=[     ] IsWhitespace)))
+// CHECK:       (CXComment_BlockCommand CommandName=[seealso]
+// CHECK-NEXT:     (CXComment_Paragraph
+// CHECK-NEXT:     (CXComment_Text Text=[ //k_ref/doc/uid/XX30000905-CH204 Programming] HasTrailingNewline)
+
+// rdar://12379053
+/*!
+\arg \c AlignLeft left alignment.
+\li \c AlignRight right alignment.
+
+  No other types of alignment are supported.
+*/
+struct S {
+  int AlignLeft;
+  int AlignRight;
+};
+
+// CHECK:       (CXComment_BlockCommand CommandName=[arg]
+// CHECK-NEXT:    (CXComment_Paragraph
+// CHECK-NEXT:    (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:    (CXComment_InlineCommand CommandName=[c] RenderMonospaced Arg[0]=AlignLeft)
+// CHECK-NEXT:    (CXComment_Text Text=[ left alignment.] HasTrailingNewline)))
+// CHECK:       (CXComment_BlockCommand CommandName=[li]
+// CHECK-NEXT:    (CXComment_Paragraph
+// CHECK-NEXT:    (CXComment_Text Text=[ ] IsWhitespace)
+// CHECK-NEXT:    (CXComment_InlineCommand CommandName=[c] RenderMonospaced Arg[0]=AlignRight)
+// CHECK-NEXT:    (CXComment_Text Text=[ right alignment.])))
+// CHECK:       (CXComment_Paragraph
+// CHECK-NEXT:    (CXComment_Text Text=[  No other types of alignment are supported.]))

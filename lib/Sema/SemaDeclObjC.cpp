@@ -745,7 +745,10 @@ Sema::FindProtocolDeclaration(bool WarnOnDeclarations,
         << ProtocolId[i].first;
       continue;
     }
-
+    // If this is a forward protocol declaration, get its definition.
+    if (!PDecl->isThisDeclarationADefinition() && PDecl->getDefinition())
+      PDecl = PDecl->getDefinition();
+    
     (void)DiagnoseUseOfDecl(PDecl, ProtocolId[i].second);
 
     // If this is a forward declaration and we are supposed to warn in this
@@ -3201,12 +3204,14 @@ Decl *Sema::ActOnObjCExceptionDecl(Scope *S, Declarator &D) {
   if (DS.getStorageClassSpec() == DeclSpec::SCS_register) {
     Diag(DS.getStorageClassSpecLoc(), diag::warn_register_objc_catch_parm)
       << FixItHint::CreateRemoval(SourceRange(DS.getStorageClassSpecLoc()));
-  } else if (DS.getStorageClassSpec() != DeclSpec::SCS_unspecified) {
+  } else if (DeclSpec::SCS SCS = DS.getStorageClassSpec()) {
     Diag(DS.getStorageClassSpecLoc(), diag::err_storage_spec_on_catch_parm)
-      << DS.getStorageClassSpec();
-  }  
-  if (D.getDeclSpec().isThreadSpecified())
-    Diag(D.getDeclSpec().getThreadSpecLoc(), diag::err_invalid_thread);
+      << DeclSpec::getSpecifierName(SCS);
+  }
+  if (DeclSpec::TSCS TSCS = D.getDeclSpec().getThreadStorageClassSpec())
+    Diag(D.getDeclSpec().getThreadStorageClassSpecLoc(),
+         diag::err_invalid_thread)
+     << DeclSpec::getSpecifierName(TSCS);
   D.getMutableDeclSpec().ClearStorageClassSpecs();
 
   DiagnoseFunctionSpecifiers(D.getDeclSpec());

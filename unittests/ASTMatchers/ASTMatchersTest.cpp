@@ -337,14 +337,22 @@ TEST(DeclarationMatcher, hasDeclContext) {
       "    class D {};"
       "  }"
       "}",
-      recordDecl(hasDeclContext(namedDecl(hasName("M"))))));
+      recordDecl(hasDeclContext(namespaceDecl(hasName("M"))))));
   EXPECT_TRUE(notMatches(
       "namespace N {"
       "  namespace M {"
       "    class D {};"
       "  }"
       "}",
-      recordDecl(hasDeclContext(namedDecl(hasName("N"))))));
+      recordDecl(hasDeclContext(namespaceDecl(hasName("N"))))));
+
+  EXPECT_TRUE(matches("namespace {"
+                      "  namespace M {"
+                      "    class D {};"
+                      "  }"
+                      "}",
+                      recordDecl(hasDeclContext(namespaceDecl(
+                          hasName("M"), hasDeclContext(namespaceDecl()))))));
 }
 
 TEST(ClassTemplate, DoesNotMatchClass) {
@@ -1490,6 +1498,27 @@ TEST(Matcher, MatchesAccessSpecDecls) {
       notMatches("class C { public: int i; };", accessSpecDecl(isPrivate())));
 
   EXPECT_TRUE(notMatches("class C { int i; };", accessSpecDecl()));
+}
+
+TEST(Matcher, MatchesVirtualMethod) {
+  EXPECT_TRUE(matches("class X { virtual int f(); };",
+      methodDecl(isVirtual(), hasName("::X::f"))));
+  EXPECT_TRUE(notMatches("class X { int f(); };",
+      methodDecl(isVirtual())));
+}
+
+TEST(Matcher, MatchesOverridingMethod) {
+  EXPECT_TRUE(matches("class X { virtual int f(); }; "
+                      "class Y : public X { int f(); };",
+       methodDecl(isOverride(), hasName("::Y::f"))));
+  EXPECT_TRUE(notMatches("class X { virtual int f(); }; "
+                        "class Y : public X { int f(); };",
+       methodDecl(isOverride(), hasName("::X::f"))));
+  EXPECT_TRUE(notMatches("class X { int f(); }; "
+                         "class Y : public X { int f(); };",
+       methodDecl(isOverride())));
+  EXPECT_TRUE(notMatches("class X { int f(); int f(int); }; ",
+       methodDecl(isOverride())));
 }
 
 TEST(Matcher, ConstructorCall) {

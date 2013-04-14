@@ -75,7 +75,7 @@ public:
         CanBreakBefore(false), MustBreakBefore(false),
         ClosesTemplateDeclaration(false), MatchingParen(NULL),
         ParameterCount(0), BindingStrength(0), SplitPenalty(0),
-        LongestObjCSelectorName(0), Parent(NULL), FakeLParens(0),
+        LongestObjCSelectorName(0), Parent(NULL),
         FakeRParens(0), LastInChainOfCalls(false),
         PartOfMultiVariableDeclStmt(false) {}
 
@@ -121,6 +121,15 @@ public:
             Children[0].isObjCAtKeyword(tok::objc_private));
   }
 
+  /// \brief Returns whether \p Tok is ([{ or a template opening <.
+  bool opensScope() const;
+  /// \brief Returns whether \p Tok is )]} or a template opening >.
+  bool closesScope() const;
+
+  bool isUnaryOperator() const;
+  bool isBinaryOperator() const;
+  bool isTrailingComment() const;
+
   FormatToken FormatTok;
 
   TokenType Type;
@@ -158,8 +167,12 @@ public:
   std::vector<AnnotatedToken> Children;
   AnnotatedToken *Parent;
 
-  /// \brief Insert this many fake ( before this token for correct indentation.
-  unsigned FakeLParens;
+  /// \brief Stores the number of required fake parentheses and the
+  /// corresponding operator precedence.
+  ///
+  /// If multiple fake parentheses start at a token, this vector stores them in
+  /// reverse order, i.e. inner fake parenthesis first.
+  SmallVector<prec::Level, 4>  FakeLParens;
   /// \brief Insert this many fake ) after this token for correct indentation.
   unsigned FakeRParens;
 
@@ -171,12 +184,11 @@ public:
   /// Only set if \c Type == \c TT_StartOfName.
   bool PartOfMultiVariableDeclStmt;
 
-  const AnnotatedToken *getPreviousNoneComment() const {
-    AnnotatedToken *Tok = Parent;
-    while (Tok != NULL && Tok->is(tok::comment))
-      Tok = Tok->Parent;
-    return Tok;
-  }
+  /// \brief Returns the previous token ignoring comments.
+  AnnotatedToken *getPreviousNoneComment() const;
+
+  /// \brief Returns the next token ignoring comments.
+  const AnnotatedToken *getNextNoneComment() const;
 };
 
 class AnnotatedLine {
@@ -247,6 +259,8 @@ private:
                            const AnnotatedToken &Tok);
 
   bool canBreakBefore(const AnnotatedLine &Line, const AnnotatedToken &Right);
+
+  void printDebugInfo(const AnnotatedLine &Line);
 
   const FormatStyle &Style;
   SourceManager &SourceMgr;

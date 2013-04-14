@@ -76,10 +76,23 @@ StmtResult Sema::ActOnDeclStmt(DeclGroupPtrTy dg, SourceLocation StartLoc,
 
 void Sema::ActOnForEachDeclStmt(DeclGroupPtrTy dg) {
   DeclGroupRef DG = dg.getAsVal<DeclGroupRef>();
+  
+  // If we don't have a declaration, or we have an invalid declaration,
+  // just return.
+  if (DG.isNull() || !DG.isSingleDecl())
+    return;
 
-  // If we have an invalid decl, just return.
-  if (DG.isNull() || !DG.isSingleDecl()) return;
-  VarDecl *var = cast<VarDecl>(DG.getSingleDecl());
+  Decl *decl = DG.getSingleDecl();
+  if (!decl || decl->isInvalidDecl())
+    return;
+
+  // Only variable declarations are permitted.
+  VarDecl *var = dyn_cast<VarDecl>(decl);
+  if (!var) {
+    Diag(decl->getLocation(), diag::err_non_variable_decl_in_for);
+    decl->setInvalidDecl();
+    return;
+  }
 
   // suppress any potential 'unused variable' warning.
   var->setUsed();
@@ -1463,9 +1476,10 @@ Sema::ActOnForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
         VarDecl *VD = dyn_cast<VarDecl>(*DI);
         if (VD && VD->isLocalVarDecl() && !VD->hasLocalStorage())
           VD = 0;
-        if (VD == 0)
-          Diag((*DI)->getLocation(), diag::err_non_variable_decl_in_for);
-        // FIXME: mark decl erroneous!
+        if (VD == 0) {
+          Diag((*DI)->getLocation(), diag::err_non_local_variable_decl_in_for);
+          (*DI)->setInvalidDecl();
+        }
       }
     }
   }
@@ -1599,14 +1613,44 @@ Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
         return StmtError(Diag((*DS->decl_begin())->getLocation(),
                          diag::err_toomany_element_decls));
 
-      VarDecl *D = cast<VarDecl>(DS->getSingleDecl());
+      VarDecl *D = dyn_cast<VarDecl>(DS->getSingleDecl());
+      if (!D || D->isInvalidDecl())
+        return StmtError();
+      
       FirstType = D->getType();
       // C99 6.8.5p3: The declaration part of a 'for' statement shall only
       // declare identifiers for objects having storage class 'auto' or
       // 'register'.
       if (!D->hasLocalStorage())
         return StmtError(Diag(D->getLocation(),
-                              diag::err_non_variable_decl_in_for));
+                              diag::err_non_local_variable_decl_in_for));
+
+      // If the type contained 'auto', deduce the 'auto' to 'id'.
+      if (FirstType->getContainedAutoType()) {
+        TypeSourceInfo *DeducedType = 0;
+        OpaqueValueExpr OpaqueId(D->getLocation(), Context.getObjCIdType(),
+                                 VK_RValue);
+        Expr *DeducedInit = &OpaqueId;
+        if (DeduceAutoType(D->getTypeSourceInfo(), DeducedInit, DeducedType)
+              == DAR_Failed) {
+          DiagnoseAutoDeductionFailure(D, DeducedInit);
+        }
+        if (!DeducedType) {
+          D->setInvalidDecl();
+          return StmtError();
+        }
+
+        D->setTypeSourceInfo(DeducedType);
+        D->setType(DeducedType->getType());
+        FirstType = DeducedType->getType();
+
+        if (ActiveTemplateInstantiations.empty()) {
+          SourceLocation Loc = DeducedType->getTypeLoc().getBeginLoc();
+          Diag(Loc, diag::warn_auto_var_is_id)
+            << D->getDeclName();
+        }
+      }
+
     } else {
       Expr *FirstE = cast<Expr>(First);
       if (!FirstE->isTypeDependent() && !FirstE->isLValue())

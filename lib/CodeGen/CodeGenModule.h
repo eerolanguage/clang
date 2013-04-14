@@ -307,10 +307,9 @@ class CodeGenModule : public CodeGenTypeCache {
 
   /// Map used to track internal linkage functions declared within
   /// extern "C" regions.
-  typedef llvm::DenseMap<IdentifierInfo *,
-                         llvm::GlobalValue *> StaticExternCMap;
+  typedef llvm::MapVector<IdentifierInfo *,
+                          llvm::GlobalValue *> StaticExternCMap;
   StaticExternCMap StaticExternCValues;
-  std::vector<IdentifierInfo*> StaticExternCIdents;
 
   /// CXXGlobalInits - Global variables with initializers that need to run
   /// before main.
@@ -519,8 +518,13 @@ public:
   bool isPaddedAtomicType(QualType type);
   bool isPaddedAtomicType(const AtomicType *type);
 
-  static void DecorateInstruction(llvm::Instruction *Inst,
-                                  llvm::MDNode *TBAAInfo);
+  /// Decorate the instruction with a TBAA tag. For scalar TBAA, the tag
+  /// is the same as the type. For struct-path aware TBAA, the tag
+  /// is different from the type: base type, access type and offset.
+  /// When ConvertTypeToTag is true, we create a tag based on the scalar type.
+  void DecorateInstruction(llvm::Instruction *Inst,
+                           llvm::MDNode *TBAAInfo,
+                           bool ConvertTypeToTag = true);
 
   /// getSize - Emit the given number of characters as a value of type size_t.
   llvm::ConstantInt *getSize(CharUnits numChars);

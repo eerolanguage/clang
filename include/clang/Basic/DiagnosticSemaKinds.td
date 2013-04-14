@@ -304,9 +304,9 @@ def warn_exit_time_destructor : Warning<
   InGroup<ExitTimeDestructors>, DefaultIgnore;
 
 def err_invalid_thread : Error<
-  "'__thread' is only allowed on variable declarations">;
+  "'%0' is only allowed on variable declarations">;
 def err_thread_non_global : Error<
-  "'__thread' variables must have global storage">;
+  "'%0' variables must have global storage">;
 def err_thread_unsupported : Error<
   "thread-local storage is unsupported for the current target">;
 
@@ -2378,6 +2378,11 @@ def note_ovl_candidate_failed_overload_resolution : Note<
     "function %0">;
 def note_ovl_candidate_non_deduced_mismatch : Note<
     "candidate template ignored: could not match %diff{$ against $|types}0,1">;
+// This note is needed because the above note would sometimes print two
+// different types with the same name.  Remove this note when the above note
+// can handle that case properly.
+def note_ovl_candidate_non_deduced_mismatch_qualified : Note<
+    "candidate template ignored: could not match %q0 against %q1">;
     
 // Note that we don't treat templates differently for this diagnostic.
 def note_ovl_candidate_arity : Note<"candidate "
@@ -3372,6 +3377,9 @@ def err_non_thread_thread : Error<
   "non-thread-local declaration of %0 follows thread-local declaration">;
 def err_thread_non_thread : Error<
   "thread-local declaration of %0 follows non-thread-local declaration">;
+def err_thread_thread_different_kind : Error<
+  "thread-local declaration of %0 with %select{static|dynamic}1 initialization "
+  "follows declaration with %select{dynamic|static}1 initialization">;
 def err_redefinition_different_type : Error<
   "redefinition of %0 with a different type%diff{: $ vs $|}1,2">;
 def err_redefinition_different_kind : Error<
@@ -4476,8 +4484,7 @@ def err_catch_param_not_objc_type : Error<
 def err_illegal_qualifiers_on_catch_parm : Error<
   "illegal qualifiers on @catch parameter">;
 def err_storage_spec_on_catch_parm : Error<
-  "@catch parameter cannot have storage specifier %select{|'typedef'|'extern'|"
-  "'static'|'auto'|'register'|'__private_extern__'|'mutable'}0">;
+  "@catch parameter cannot have storage specifier '%0'">;
 def warn_register_objc_catch_parm : Warning<
   "'register' storage specifier on @catch parameter will be ignored">;
 def err_qualified_objc_catch_parm : Error<
@@ -6041,8 +6048,10 @@ def ext_mixed_decls_code : Extension<
   "ISO C90 forbids mixing declarations and code">,
   InGroup<DiagGroup<"declaration-after-statement">>;
   
-def err_non_variable_decl_in_for : Error<
+def err_non_local_variable_decl_in_for : Error<
   "declaration of non-local variable in 'for' loop">;
+def err_non_variable_decl_in_for : Error<
+  "non-variable declaration in 'for' loop">;
 def err_toomany_element_decls : Error<
   "only one element declaration is allowed">;
 def err_selector_element_not_lvalue : Error<
