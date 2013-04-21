@@ -255,6 +255,13 @@ void ASTStmtWriter::VisitMSAsmStmt(MSAsmStmt *S) {
   Code = serialization::STMT_MSASM;
 }
 
+void ASTStmtWriter::VisitCapturedStmt(CapturedStmt *S) {
+  VisitStmt(S);
+  Code = serialization::STMT_CAPTURED;
+
+  llvm_unreachable("not implemented yet");
+}
+
 void ASTStmtWriter::VisitExpr(Expr *E) {
   VisitStmt(E);
   Writer.AddTypeRef(E->getType(), Record);
@@ -1216,6 +1223,13 @@ void ASTStmtWriter::VisitCXXDefaultArgExpr(CXXDefaultArgExpr *E) {
   Code = serialization::EXPR_CXX_DEFAULT_ARG;
 }
 
+void ASTStmtWriter::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *E) {
+  VisitExpr(E);
+  Writer.AddDeclRef(E->getField(), Record);
+  Writer.AddSourceLocation(E->getExprLoc(), Record);
+  Code = serialization::EXPR_CXX_DEFAULT_INIT;
+}
+
 void ASTStmtWriter::VisitCXXBindTemporaryExpr(CXXBindTemporaryExpr *E) {
   VisitExpr(E);
   Writer.AddCXXTemporary(E->getTemporary(), Record);
@@ -1534,6 +1548,16 @@ void ASTStmtWriter::VisitAsTypeExpr(AsTypeExpr *E) {
 //===----------------------------------------------------------------------===//
 // Microsoft Expressions and Statements.
 //===----------------------------------------------------------------------===//
+void ASTStmtWriter::VisitMSPropertyRefExpr(MSPropertyRefExpr *E) {
+  VisitExpr(E);
+  Record.push_back(E->isArrow());
+  Writer.AddStmt(E->getBaseExpr());
+  Writer.AddNestedNameSpecifierLoc(E->getQualifierLoc(), Record);
+  Writer.AddSourceLocation(E->getMemberLoc(), Record);
+  Writer.AddDeclRef(E->getPropertyDecl(), Record);
+  Code = serialization::EXPR_CXX_PROPERTY_REF_EXPR;
+}
+
 void ASTStmtWriter::VisitCXXUuidofExpr(CXXUuidofExpr *E) {
   VisitExpr(E);
   Writer.AddSourceRange(E->getSourceRange(), Record);

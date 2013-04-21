@@ -746,6 +746,7 @@ void Sema::CheckCXXThisCapture(SourceLocation Loc, bool Explicit) {
       if (CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_LambdaByref ||
           CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_LambdaByval ||
           CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_Block ||
+          CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_CapturedRegion ||
           Explicit) {
         // This closure can capture 'this'; continue looking upwards.
         NumClosures++;
@@ -778,7 +779,19 @@ void Sema::CheckCXXThisCapture(SourceLocation Loc, bool Explicit) {
       Field->setAccess(AS_private);
       Lambda->addDecl(Field);
       ThisExpr = new (Context) CXXThisExpr(Loc, ThisTy, /*isImplicit=*/true);
+    } else if (CapturedRegionScopeInfo *RSI =
+                   dyn_cast<CapturedRegionScopeInfo>(FunctionScopes[idx])) {
+      RecordDecl *RD = RSI->TheRecordDecl;
+      FieldDecl *Field
+        = FieldDecl::Create(Context, RD, Loc, Loc, 0, ThisTy,
+                            Context.getTrivialTypeSourceInfo(ThisTy, Loc),
+                            0, false, ICIS_NoInit);
+      Field->setImplicit(true);
+      Field->setAccess(AS_private);
+      RD->addDecl(Field);
+      ThisExpr = new (Context) CXXThisExpr(Loc, ThisTy, /*isImplicit*/true);
     }
+
     bool isNested = NumClosures > 1;
     CSI->addThisCapture(isNested, Loc, ThisTy, ThisExpr);
   }
@@ -1170,6 +1183,11 @@ Sema::BuildCXXNew(SourceRange Range, bool UseGlobal,
 
   QualType ResultType = Context.getPointerType(AllocType);
     
+  if (ArraySize && ArraySize->getType()->isNonOverloadPlaceholderType()) {
+    ExprResult result = CheckPlaceholderExpr(ArraySize);
+    if (result.isInvalid()) return ExprError();
+    ArraySize = result.take();
+  }
   // C++98 5.3.4p6: "The expression in a direct-new-declarator shall have
   //   integral or enumeration type with a non-negative value."
   // C++11 [expr.new]p6: The expression [...] shall be of integral or unscoped

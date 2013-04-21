@@ -373,7 +373,9 @@ bool TargetInfo::validateOutputConstraint(ConstraintInfo &Info) const {
     Name++;
   }
 
-  return true;
+  // If a constraint allows neither memory nor register operands it contains
+  // only modifiers. Reject it.
+  return Info.allowsMemory() || Info.allowsRegister();
 }
 
 bool TargetInfo::resolveSymbolicName(const char *&Name,

@@ -32,7 +32,7 @@
  * compatible, thus CINDEX_VERSION_MAJOR is expected to remain stable.
  */
 #define CINDEX_VERSION_MAJOR 0
-#define CINDEX_VERSION_MINOR 17
+#define CINDEX_VERSION_MINOR 18
 
 #define CINDEX_VERSION_ENCODE(major, minor) ( \
       ((major) * 10000)                       \
@@ -3358,6 +3358,61 @@ CINDEX_LINKAGE int clang_Cursor_isDynamicCall(CXCursor C);
  * receiver.
  */
 CINDEX_LINKAGE CXType clang_Cursor_getReceiverType(CXCursor C);
+
+/**
+ * \brief Property attributes for a \c CXCursor_ObjCPropertyDecl.
+ */
+typedef enum {
+  CXObjCPropertyAttr_noattr    = 0x00,
+  CXObjCPropertyAttr_readonly  = 0x01,
+  CXObjCPropertyAttr_getter    = 0x02,
+  CXObjCPropertyAttr_assign    = 0x04,
+  CXObjCPropertyAttr_readwrite = 0x08,
+  CXObjCPropertyAttr_retain    = 0x10,
+  CXObjCPropertyAttr_copy      = 0x20,
+  CXObjCPropertyAttr_nonatomic = 0x40,
+  CXObjCPropertyAttr_setter    = 0x80,
+  CXObjCPropertyAttr_atomic    = 0x100,
+  CXObjCPropertyAttr_weak      = 0x200,
+  CXObjCPropertyAttr_strong    = 0x400,
+  CXObjCPropertyAttr_unsafe_unretained = 0x800
+} CXObjCPropertyAttrKind;
+
+/**
+ * \brief Given a cursor that represents a property declaration, return the
+ * associated property attributes. The bits are formed from
+ * \c CXObjCPropertyAttrKind.
+ *
+ * \param reserved Reserved for future use, pass 0.
+ */
+CINDEX_LINKAGE unsigned clang_Cursor_getObjCPropertyAttributes(CXCursor C,
+                                                             unsigned reserved);
+
+/**
+ * \brief 'Qualifiers' written next to the return and parameter types in
+ * ObjC method declarations.
+ */
+typedef enum {
+  CXObjCDeclQualifier_None = 0x0,
+  CXObjCDeclQualifier_In = 0x1,
+  CXObjCDeclQualifier_Inout = 0x2,
+  CXObjCDeclQualifier_Out = 0x4,
+  CXObjCDeclQualifier_Bycopy = 0x8,
+  CXObjCDeclQualifier_Byref = 0x10,
+  CXObjCDeclQualifier_Oneway = 0x20
+} CXObjCDeclQualifierKind;
+
+/**
+ * \brief Given a cursor that represents an ObjC method or parameter
+ * declaration, return the associated ObjC qualifiers for the return type or the
+ * parameter respectively. The bits are formed from CXObjCDeclQualifierKind.
+ */
+CINDEX_LINKAGE unsigned clang_Cursor_getObjCDeclQualifiers(CXCursor C);
+
+/**
+ * \brief Returns non-zero if the given cursor is a variadic function or method.
+ */
+CINDEX_LINKAGE unsigned clang_Cursor_isVariadic(CXCursor C);
 
 /**
  * \brief Given a cursor that represents a declaration, return the associated

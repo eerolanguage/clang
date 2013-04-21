@@ -28,6 +28,17 @@ class MicrosoftCXXABI : public CGCXXABI {
 public:
   MicrosoftCXXABI(CodeGenModule &CGM) : CGCXXABI(CGM) {}
 
+  bool isReturnTypeIndirect(const CXXRecordDecl *RD) const {
+    // Structures that are not C++03 PODs are always indirect.
+    return !RD->isPOD();
+  }
+
+  RecordArgABI getRecordArgABI(const CXXRecordDecl *RD) const {
+    if (RD->hasNonTrivialCopyConstructor())
+      return RAA_DirectInMemory;
+    return RAA_Default;
+  }
+
   StringRef GetPureVirtualCallName() { return "_purecall"; }
   // No known support for deleted functions in MSVC yet, so this choice is
   // arbitrary.
@@ -391,6 +402,9 @@ void MicrosoftCXXABI::EmitGuardedInit(CodeGenFunction &CGF, const VarDecl &D,
   // FIXME: this code was only tested for global initialization.
   // Not sure whether we want thread-safe static local variables as VS
   // doesn't make them thread-safe.
+
+  if (D.getTLSKind())
+    CGM.ErrorUnsupported(&D, "dynamic TLS initialization");
 
   // Emit the initializer and add a global destructor if appropriate.
   CGF.EmitCXXGlobalVarDeclInit(D, DeclPtr, PerformInit);

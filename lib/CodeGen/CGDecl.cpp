@@ -45,6 +45,7 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::CXXDestructor:
   case Decl::CXXConversion:
   case Decl::Field:
+  case Decl::MSProperty:
   case Decl::IndirectField:
   case Decl::ObjCIvar:
   case Decl::ObjCAtDefsField:
@@ -69,6 +70,7 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::Friend:
   case Decl::FriendTemplate:
   case Decl::Block:
+  case Decl::Captured:
   case Decl::ClassScopeFunctionSpecialization:
     llvm_unreachable("Declaration should not be in declstmts!");
   case Decl::Function:  // void X();
@@ -898,7 +900,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       CharUnits allocaAlignment = alignment;
       if (isByRef)
         allocaAlignment = std::max(allocaAlignment,
-            getContext().toCharUnitsFromBits(Target.getPointerAlign(0)));
+            getContext().toCharUnitsFromBits(getTarget().getPointerAlign(0)));
       Alloc->setAlignment(allocaAlignment.getQuantity());
       DeclPtr = Alloc;
 

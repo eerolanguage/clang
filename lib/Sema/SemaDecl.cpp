@@ -1224,7 +1224,10 @@ bool Sema::ShouldWarnIfUnusedFileScopedDecl(const DeclaratorDecl *D) const {
         return false;
     } else {
       // 'static inline' functions are used in headers; don't warn.
-      if (FD->getStorageClass() == SC_Static &&
+      // Make sure we get the storage class from the canonical declaration,
+      // since otherwise we will get spurious warnings on specialized
+      // static template functions.
+      if (FD->getCanonicalDecl()->getStorageClass() == SC_Static &&
           FD->isInlineSpecified())
         return false;
     }
@@ -1618,20 +1621,7 @@ static void filterNonConflictingPreviousDecls(ASTContext &context,
     if (!old->isHidden())
       continue;
 
-    // If either has no-external linkage, ignore the old declaration.
-    // If this declaration would have external linkage if it were the first
-    // declaration of this name, then it may in fact be a redeclaration of
-    // some hidden declaration, so include those too. We don't need to worry
-    // about some previous visible declaration giving this declaration external
-    // linkage, because in that case, we'll mark this declaration as a redecl
-    // of the visible decl, and that decl will already be a redecl of the
-    // hidden declaration if that's appropriate.
-    //
-    // Don't cache this linkage computation, because it's not yet correct: we
-    // may later give this declaration a previous declaration which changes
-    // its linkage.
-    if (old->getLinkage() != ExternalLinkage ||
-        !decl->hasExternalLinkageUncached())
+    if (old->getLinkage() != ExternalLinkage)
       filter.erase();
   }
 
@@ -2702,21 +2692,31 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S) {
     // Fall through to diagnose conflicting types.
   }
 
-  // A function that has already been declared has been redeclared or defined
-  // with a different type- show appropriate diagnostic
-  if (unsigned BuiltinID = Old->getBuiltinID()) {
-    // The user has declared a builtin function with an incompatible
-    // signature.
+  // A function that has already been declared has been redeclared or
+  // defined with a different type; show an appropriate diagnostic.
+
+  // If the previous declaration was an implicitly-generated builtin
+  // declaration, then at the very least we should use a specialized note.
+  unsigned BuiltinID;
+  if (Old->isImplicit() && (BuiltinID = Old->getBuiltinID())) {
+    // If it's actually a library-defined builtin function like 'malloc'
+    // or 'printf', just warn about the incompatible redeclaration.
     if (Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID)) {
-      // The function the user is redeclaring is a library-defined
-      // function like 'malloc' or 'printf'. Warn about the
-      // redeclaration, then pretend that we don't know about this
-      // library built-in.
       Diag(New->getLocation(), diag::warn_redecl_library_builtin) << New;
       Diag(Old->getLocation(), diag::note_previous_builtin_declaration)
         << Old << Old->getType();
-      New->getIdentifier()->setBuiltinID(Builtin::NotBuiltin);
-      Old->setInvalidDecl();
+
+      // If this is a global redeclaration, just forget hereafter
+      // about the "builtin-ness" of the function.
+      //
+      // Doing this for local extern declarations is problematic.  If
+      // the builtin declaration remains visible, a second invalid
+      // local declaration will produce a hard error; if it doesn't
+      // remain visible, a single bogus local redeclaration (which is
+      // actually only a warning) could break all the downstream code.
+      if (!New->getDeclContext()->isFunctionOrMethod())
+        New->getIdentifier()->setBuiltinID(Builtin::NotBuiltin);
+
       return false;
     }
 
@@ -2875,6 +2875,9 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous,
          diag::note_previous_definition);
     return New->setInvalidDecl();
   }
+
+  if (!shouldLinkPossiblyHiddenDecl(Old, New))
+    return;
 
   // C++ [class.mem]p1:
   //   A member shall not be declared twice in the member-specification [...]
@@ -4691,8 +4694,7 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
          "Parser allowed 'typedef' as storage class VarDecl.");
   VarDecl::StorageClass SC = StorageClassSpecToVarDeclStorageClass(SCSpec);
 
-  if (getLangOpts().OpenCL && !getOpenCLOptions().cl_khr_fp16)
-  {
+  if (getLangOpts().OpenCL && !getOpenCLOptions().cl_khr_fp16) {
     // OpenCL v1.2 s6.1.1.1: reject declaring variables of the half and
     // half array type (unless the cl_khr_fp16 extension is enabled).
     if (Context.getBaseElementType(R)->isHalfType()) {
@@ -4708,6 +4710,16 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     D.setInvalidType();
     SC = SC_None;
   }
+
+  // C++11 [dcl.stc]p4:
+  //   When thread_local is applied to a variable of block scope the
+  //   storage-class-specifier static is implied if it does not appear
+  //   explicitly.
+  // Core issue: 'static' is not implied if the variable is declared 'extern'.
+  if (SCSpec == DeclSpec::SCS_unspecified &&
+      D.getDeclSpec().getThreadStorageClassSpec() ==
+          DeclSpec::TSCS_thread_local && DC->isFunctionOrMethod())
+    SC = SC_Static;
 
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   if (!II) {
@@ -6725,8 +6737,11 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
     // there's no more work to do here; we'll just add the new
     // function to the scope.
     if (!AllowOverloadingOfFunction(Previous, Context)) {
-      Redeclaration = true;
-      OldDecl = Previous.getFoundDecl();
+      NamedDecl *Candidate = Previous.getFoundDecl();
+      if (shouldLinkPossiblyHiddenDecl(Candidate, NewFD)) {
+        Redeclaration = true;
+        OldDecl = Candidate;
+      }
     } else {
       switch (CheckOverload(S, NewFD, Previous, OldDecl,
                             /*NewIsUsingDecl*/ false)) {
@@ -6768,9 +6783,12 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   //
   // This needs to be delayed until we know whether this is an out-of-line
   // definition of a static member function.
+  //
+  // This rule is not present in C++1y, so we produce a backwards
+  // compatibility warning whenever it happens in C++11.
   CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(NewFD);
-  if (MD && MD->isConstexpr() && !MD->isStatic() &&
-      !isa<CXXConstructorDecl>(MD) &&
+  if (!getLangOpts().CPlusPlus1y && MD && MD->isConstexpr() &&
+      !MD->isStatic() && !isa<CXXConstructorDecl>(MD) &&
       (MD->getTypeQualifiers() & Qualifiers::Const) == 0) {
     CXXMethodDecl *OldMD = dyn_cast_or_null<CXXMethodDecl>(OldDecl);
     if (FunctionTemplateDecl *OldTD =
@@ -6785,6 +6803,18 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
                                       ArrayRef<QualType>(FPT->arg_type_begin(),
                                                          FPT->getNumArgs()),
                                           EPI));
+
+      // Warn that we did this, if we're not performing template instantiation.
+      // In that case, we'll have warned already when the template was defined.
+      if (ActiveTemplateInstantiations.empty()) {
+        SourceLocation AddConstLoc;
+        if (FunctionTypeLoc FTL = MD->getTypeSourceInfo()->getTypeLoc()
+                .IgnoreParens().getAs<FunctionTypeLoc>())
+          AddConstLoc = PP.getLocForEndOfToken(FTL.getRParenLoc());
+
+        Diag(MD->getLocation(), diag::warn_cxx1y_compat_constexpr_not_const)
+          << FixItHint::CreateInsertion(AddConstLoc, " const");
+      }
     }
   }
 
@@ -7677,6 +7707,19 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     // C99 6.7.8p4. All file scoped initializers need to be constant.
     if (!getLangOpts().CPlusPlus && !VDecl->isInvalidDecl())
       CheckForConstantInitializer(Init, DclT);
+    else if (VDecl->getTLSKind() == VarDecl::TLS_Static &&
+             !VDecl->isInvalidDecl() && !DclT->isDependentType() &&
+             !Init->isValueDependent() && !VDecl->isConstexpr() &&
+             !Init->isConstantInitializer(
+                 Context, VDecl->getType()->isReferenceType())) {
+      // GNU C++98 edits for __thread, [basic.start.init]p4:
+      //   An object of thread storage duration shall not require dynamic
+      //   initialization.
+      // FIXME: Need strict checking here.
+      Diag(VDecl->getLocation(), diag::err_thread_dynamic_init);
+      if (getLangOpts().CPlusPlus11)
+        Diag(VDecl->getLocation(), diag::note_use_thread_local);
+    }
   }
 
   // We will represent direct-initialization similarly to copy-initialization:
@@ -8020,6 +8063,16 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
 
     if (!prev)
       Diag(var->getLocation(), diag::warn_missing_variable_declarations) << var;
+  }
+
+  if (var->getTLSKind() == VarDecl::TLS_Static &&
+      var->getType().isDestructedType()) {
+    // GNU C++98 edits for __thread, [basic.start.term]p3:
+    //   The type of an object with thread storage duration shall not
+    //   have a non-trivial destructor.
+    Diag(var->getLocation(), diag::err_thread_nontrivial_dtor);
+    if (getLangOpts().CPlusPlus11)
+      Diag(var->getLocation(), diag::note_use_thread_local);
   }
 
   // All the following checks are C++ only.

@@ -866,10 +866,6 @@ bool NamedDecl::isLinkageValid() const {
     Linkage(CachedLinkage);
 }
 
-bool NamedDecl::hasExternalLinkageUncached() const {
-  return getLVForDecl(this, LVForExplicitValue).getLinkage() == ExternalLinkage;
-}
-
 Linkage NamedDecl::getLinkage() const {
   if (HasCachedLinkage)
     return Linkage(CachedLinkage);
@@ -1297,7 +1293,7 @@ bool NamedDecl::isCXXInstanceMember() const {
   if (isa<UsingShadowDecl>(D))
     D = cast<UsingShadowDecl>(D)->getTargetDecl();
 
-  if (isa<FieldDecl>(D) || isa<IndirectFieldDecl>(D))
+  if (isa<FieldDecl>(D) || isa<IndirectFieldDecl>(D) || isa<MSPropertyDecl>(D))
     return true;
   if (isa<CXXMethodDecl>(D))
     return cast<CXXMethodDecl>(D)->isInstance();
@@ -1895,6 +1891,11 @@ SourceRange ParmVarDecl::getSourceRange() const {
     if (ArgRange.isValid())
       return SourceRange(getOuterLocStart(), ArgRange.getEnd());
   }
+
+  // DeclaratorDecl considers the range of postfix types as overlapping with the
+  // declaration name, but this is not the case with parameters in ObjC methods.
+  if (isa<ObjCMethodDecl>(getDeclContext()))
+    return SourceRange(DeclaratorDecl::getLocStart(), getLocation());
 
   return DeclaratorDecl::getSourceRange();
 }
@@ -3228,6 +3229,18 @@ BlockDecl *BlockDecl::Create(ASTContext &C, DeclContext *DC, SourceLocation L) {
 BlockDecl *BlockDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   void *Mem = AllocateDeserializedDecl(C, ID, sizeof(BlockDecl));
   return new (Mem) BlockDecl(0, SourceLocation());
+}
+
+MSPropertyDecl *MSPropertyDecl::CreateDeserialized(ASTContext &C,
+                                                   unsigned ID) {
+  void *Mem = AllocateDeserializedDecl(C, ID, sizeof(MSPropertyDecl));
+  return new (Mem) MSPropertyDecl(0, SourceLocation(), DeclarationName(),
+                                  QualType(), 0, SourceLocation(),
+                                  0, 0);
+}
+
+CapturedDecl *CapturedDecl::Create(ASTContext &C, DeclContext *DC) {
+  return new (C) CapturedDecl(DC);
 }
 
 EnumConstantDecl *EnumConstantDecl::Create(ASTContext &C, EnumDecl *CD,

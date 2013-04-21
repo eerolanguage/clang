@@ -15,6 +15,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Parse/Parser.h"
+#include "clang/Sema/Scope.h"
 using namespace clang;
 
 /// \brief Handle the annotation token produced for #pragma unused(...)
@@ -122,6 +123,33 @@ void Parser::HandlePragmaFPContract() {
   ConsumeToken(); // The annotation token.
 }
 
+StmtResult Parser::HandlePragmaCaptured()
+{
+  assert(Tok.is(tok::annot_pragma_captured));
+  ConsumeToken();
+
+  if (Tok.isNot(tok::l_brace)) {
+    PP.Diag(Tok, diag::err_expected_lbrace);
+    return StmtError();
+  }
+
+  SourceLocation Loc = Tok.getLocation();
+
+  ParseScope CapturedRegionScope(this, Scope::FnScope | Scope::DeclScope);
+  Actions.ActOnCapturedRegionStart(Loc, getCurScope(),
+                                   sema::CapturedRegionScopeInfo::CR_Default);
+
+  StmtResult R = ParseCompoundStatement();
+  CapturedRegionScope.Exit();
+
+  if (R.isInvalid()) {
+    Actions.ActOnCapturedRegionError();
+    return StmtError();
+  }
+
+  return Actions.ActOnCapturedRegionEnd(R.get());
+}
+
 namespace {
   typedef llvm::PointerIntPair<IdentifierInfo *, 1, bool> OpenCLExtData;
 }
@@ -150,6 +178,8 @@ void Parser::HandlePragmaOpenCLExtension() {
     return;
   }
 }
+
+
 
 // #pragma GCC visibility comes in two variants:
 //   'push' '(' [visibility] ')'

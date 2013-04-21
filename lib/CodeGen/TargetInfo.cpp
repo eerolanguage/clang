@@ -14,6 +14,7 @@
 
 #include "TargetInfo.h"
 #include "ABIInfo.h"
+#include "CGCXXABI.h"
 #include "CodeGenFunction.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/Frontend/CodeGenOptions.h"
@@ -43,6 +44,37 @@ static bool isAggregateTypeForABI(QualType T) {
 
 ABIInfo::~ABIInfo() {}
 
+static bool isRecordReturnIndirect(const RecordType *RT, CodeGen::CodeGenTypes &CGT) {
+  const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(RT->getDecl());
+  if (!RD)
+    return false;
+  return CGT.CGM.getCXXABI().isReturnTypeIndirect(RD);
+}
+
+
+static bool isRecordReturnIndirect(QualType T, CodeGen::CodeGenTypes &CGT) {
+  const RecordType *RT = T->getAs<RecordType>();
+  if (!RT)
+    return false;
+  return isRecordReturnIndirect(RT, CGT);
+}
+
+static CGCXXABI::RecordArgABI getRecordArgABI(const RecordType *RT,
+                                              CodeGen::CodeGenTypes &CGT) {
+  const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(RT->getDecl());
+  if (!RD)
+    return CGCXXABI::RAA_Default;
+  return CGT.CGM.getCXXABI().getRecordArgABI(RD);
+}
+
+static CGCXXABI::RecordArgABI getRecordArgABI(QualType T,
+                                              CodeGen::CodeGenTypes &CGT) {
+  const RecordType *RT = T->getAs<RecordType>();
+  if (!RT)
+    return CGCXXABI::RAA_Default;
+  return getRecordArgABI(RT, CGT);
+}
+
 ASTContext &ABIInfo::getContext() const {
   return CGT.getContext();
 }
@@ -55,6 +87,9 @@ const llvm::DataLayout &ABIInfo::getDataLayout() const {
   return CGT.getDataLayout();
 }
 
+const TargetInfo &ABIInfo::getTarget() const {
+  return CGT.getTarget();
+}
 
 void ABIArgInfo::dump() const {
   raw_ostream &OS = llvm::errs();
@@ -165,27 +200,6 @@ static bool isEmptyRecord(ASTContext &Context, QualType T, bool AllowArrays) {
     if (!isEmptyField(Context, *i, AllowArrays))
       return false;
   return true;
-}
-
-/// hasNonTrivialDestructorOrCopyConstructor - Determine if a type has either
-/// a non-trivial destructor or a non-trivial copy constructor.
-static bool hasNonTrivialDestructorOrCopyConstructor(const RecordType *RT) {
-  const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(RT->getDecl());
-  if (!RD)
-    return false;
-
-  return !RD->hasTrivialDestructor() || RD->hasNonTrivialCopyConstructor();
-}
-
-/// isRecordWithNonTrivialDestructorOrCopyConstructor - Determine if a type is
-/// a record type with either a non-trivial destructor or a non-trivial copy
-/// constructor.
-static bool isRecordWithNonTrivialDestructorOrCopyConstructor(QualType T) {
-  const RecordType *RT = T->getAs<RecordType>();
-  if (!RT)
-    return false;
-
-  return hasNonTrivialDestructorOrCopyConstructor(RT);
 }
 
 /// isSingleElementStruct - Determine if a structure is a "single
@@ -367,7 +381,7 @@ ABIArgInfo DefaultABIInfo::classifyArgumentType(QualType Ty) const {
   if (isAggregateTypeForABI(Ty)) {
     // Records with non trivial destructors/constructors should not be passed
     // by value.
-    if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
+    if (isRecordReturnIndirect(Ty, CGT))
       return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
     return ABIArgInfo::getIndirect(0);
@@ -437,11 +451,8 @@ llvm::Value *PNaClABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
 /// \brief Classify argument of given type \p Ty.
 ABIArgInfo PNaClABIInfo::classifyArgumentType(QualType Ty) const {
   if (isAggregateTypeForABI(Ty)) {
-    // In the PNaCl ABI we always pass records/structures on the stack. The
-    // byval attribute can be used if the record doesn't have non-trivial
-    // constructors/destructors.
-    if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
-      return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+    if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, CGT))
+      return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
     return ABIArgInfo::getIndirect(0);
   } else if (const EnumType *EnumTy = Ty->getAs<EnumType>()) {
     // Treat an enum type as its underlying type.
@@ -502,7 +513,7 @@ class X86_32ABIInfo : public ABIInfo {
 
   bool IsDarwinVectorABI;
   bool IsSmallStructInRegABI;
-  bool IsWin32FloatStructABI;
+  bool IsWin32StructABI;
   unsigned DefaultNumRegisterParameters;
 
   static bool isRegisterSize(unsigned Size) {
@@ -537,7 +548,7 @@ public:
   X86_32ABIInfo(CodeGen::CodeGenTypes &CGT, bool d, bool p, bool w,
                 unsigned r)
     : ABIInfo(CGT), IsDarwinVectorABI(d), IsSmallStructInRegABI(p),
-      IsWin32FloatStructABI(w), DefaultNumRegisterParameters(r) {}
+      IsWin32StructABI(w), DefaultNumRegisterParameters(r) {}
 };
 
 class X86_32TargetCodeGenInfo : public TargetCodeGenInfo {
@@ -551,8 +562,7 @@ public:
 
   int getDwarfEHStackPointer(CodeGen::CodeGenModule &CGM) const {
     // Darwin uses different dwarf register numbers for EH.
-    if (CGM.isTargetDarwin()) return 5;
-
+    if (CGM.getTarget().getTriple().isOSDarwin()) return 5;
     return 4;
   }
 
@@ -664,9 +674,7 @@ ABIArgInfo X86_32ABIInfo::classifyReturnType(QualType RetTy,
 
   if (isAggregateTypeForABI(RetTy)) {
     if (const RecordType *RT = RetTy->getAs<RecordType>()) {
-      // Structures with either a non-trivial destructor or a non-trivial
-      // copy constructor are always indirect.
-      if (hasNonTrivialDestructorOrCopyConstructor(RT))
+      if (isRecordReturnIndirect(RT, CGT))
         return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
       // Structures with flexible arrays are always indirect.
@@ -690,7 +698,7 @@ ABIArgInfo X86_32ABIInfo::classifyReturnType(QualType RetTy,
       // We apply a similar transformation for pointer types to improve the
       // quality of the generated IR.
       if (const Type *SeltTy = isSingleElementStruct(RetTy, getContext()))
-        if ((!IsWin32FloatStructABI && SeltTy->isRealFloatingType())
+        if ((!IsWin32StructABI && SeltTy->isRealFloatingType())
             || SeltTy->hasPointerRepresentation())
           return ABIArgInfo::getDirect(CGT.ConvertType(QualType(SeltTy, 0)));
 
@@ -847,13 +855,14 @@ ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
                                                bool IsFastCall) const {
   // FIXME: Set alignment on indirect arguments.
   if (isAggregateTypeForABI(Ty)) {
-    // Structures with flexible arrays are always indirect.
     if (const RecordType *RT = Ty->getAs<RecordType>()) {
-      // Structures with either a non-trivial destructor or a non-trivial
-      // copy constructor are always indirect.
-      if (hasNonTrivialDestructorOrCopyConstructor(RT))
-        return getIndirectResult(Ty, false, FreeRegs);
+      if (IsWin32StructABI)
+        return getIndirectResult(Ty, true, FreeRegs);
 
+      if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(RT, CGT))
+        return getIndirectResult(Ty, RAA == CGCXXABI::RAA_DirectInMemory, FreeRegs);
+
+      // Structures with flexible arrays are always indirect.
       if (RT->getDecl()->hasFlexibleArrayMember())
         return getIndirectResult(Ty, true, FreeRegs);
     }
@@ -1020,7 +1029,7 @@ bool X86_32TargetCodeGenInfo::initDwarfEHRegSizeTable(
   // 8 is %eip.
   AssignToArrayRange(Builder, Address, Four8, 0, 8);
 
-  if (CGF.CGM.isTargetDarwin()) {
+  if (CGF.CGM.getTarget().getTriple().isOSDarwin()) {
     // 12-16 are st(0..4).  Not sure why we stop at 4.
     // These have size 16, which is sizeof(long double) on
     // platforms with 8-byte alignment for that type.
@@ -1145,7 +1154,7 @@ class X86_64ABIInfo : public ABIInfo {
   /// required strict binary compatibility with older versions of GCC
   /// may need to exempt themselves.
   bool honorsRevision0_98() const {
-    return !getContext().getTargetInfo().getTriple().isOSDarwin();
+    return !getTarget().getTriple().isOSDarwin();
   }
 
   bool HasAVX;
@@ -1180,7 +1189,7 @@ public:
 /// WinX86_64ABIInfo - The Windows X86_64 ABI information.
 class WinX86_64ABIInfo : public ABIInfo {
 
-  ABIArgInfo classify(QualType Ty) const;
+  ABIArgInfo classify(QualType Ty, bool IsReturnType) const;
 
 public:
   WinX86_64ABIInfo(CodeGen::CodeGenTypes &CGT) : ABIInfo(CGT) {}
@@ -1369,8 +1378,7 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
       Current = Integer;
     } else if ((k == BuiltinType::Float || k == BuiltinType::Double) ||
                (k == BuiltinType::LongDouble &&
-                getContext().getTargetInfo().getTriple().getOS() ==
-                llvm::Triple::NaCl)) {
+                getTarget().getTriple().getOS() == llvm::Triple::NaCl)) {
       Current = SSE;
     } else if (k == BuiltinType::LongDouble) {
       Lo = X87;
@@ -1458,8 +1466,7 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
       Current = SSE;
     else if (ET == getContext().DoubleTy ||
              (ET == getContext().LongDoubleTy &&
-              getContext().getTargetInfo().getTriple().getOS() ==
-              llvm::Triple::NaCl))
+              getTarget().getTriple().getOS() == llvm::Triple::NaCl))
       Lo = Hi = SSE;
     else if (ET == getContext().LongDoubleTy)
       Current = ComplexX87;
@@ -1528,7 +1535,7 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
     // AMD64-ABI 3.2.3p2: Rule 2. If a C++ object has either a non-trivial
     // copy constructor or a non-trivial destructor, it is passed by invisible
     // reference.
-    if (hasNonTrivialDestructorOrCopyConstructor(RT))
+    if (getRecordArgABI(RT, CGT))
       return;
 
     const RecordDecl *RD = RT->getDecl();
@@ -1678,8 +1685,8 @@ ABIArgInfo X86_64ABIInfo::getIndirectResult(QualType Ty,
             ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
   }
 
-  if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
-    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+  if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, CGT))
+    return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
 
   // Compute the byval alignment. We specify the alignment of the byval in all
   // cases so that the mid-level optimizer knows the alignment of the byval.
@@ -2167,7 +2174,7 @@ ABIArgInfo X86_64ABIInfo::classifyArgumentType(
     // COMPLEX_X87, it is passed in memory.
   case X87:
   case ComplexX87:
-    if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
+    if (getRecordArgABI(Ty, CGT) == CGCXXABI::RAA_Indirect)
       ++neededInt;
     return getIndirectResult(Ty, freeIntRegs);
 
@@ -2498,7 +2505,7 @@ llvm::Value *X86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   return ResAddr;
 }
 
-ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty) const {
+ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, bool IsReturnType) const {
 
   if (Ty->isVoidType())
     return ABIArgInfo::getIgnore();
@@ -2509,14 +2516,19 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty) const {
   uint64_t Size = getContext().getTypeSize(Ty);
 
   if (const RecordType *RT = Ty->getAs<RecordType>()) {
-    if (hasNonTrivialDestructorOrCopyConstructor(RT) ||
-        RT->getDecl()->hasFlexibleArrayMember())
+    if (IsReturnType) {
+      if (isRecordReturnIndirect(RT, CGT))
+        return ABIArgInfo::getIndirect(0, false);
+    } else {
+      if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(RT, CGT))
+        return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
+    }
+
+    if (RT->getDecl()->hasFlexibleArrayMember())
       return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
     // FIXME: mingw-w64-gcc emits 128-bit struct as i128
-    if (Size == 128 &&
-        getContext().getTargetInfo().getTriple().getOS()
-          == llvm::Triple::MinGW32)
+    if (Size == 128 && getTarget().getTriple().getOS() == llvm::Triple::MinGW32)
       return ABIArgInfo::getDirect(llvm::IntegerType::get(getVMContext(),
                                                           Size));
 
@@ -2539,11 +2551,11 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty) const {
 void WinX86_64ABIInfo::computeInfo(CGFunctionInfo &FI) const {
 
   QualType RetTy = FI.getReturnType();
-  FI.getReturnInfo() = classify(RetTy);
+  FI.getReturnInfo() = classify(RetTy, true);
 
   for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
        it != ie; ++it)
-    it->info = classify(it->type);
+    it->info = classify(it->type, false);
 }
 
 llvm::Value *WinX86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
@@ -2770,10 +2782,8 @@ PPC64_SVR4_ABIInfo::classifyArgumentType(QualType Ty) const {
     return ABIArgInfo::getDirect();
 
   if (isAggregateTypeForABI(Ty)) {
-    // Records with non trivial destructors/constructors should not be passed
-    // by value.
-    if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
-      return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+    if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, CGT))
+      return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
 
     return ABIArgInfo::getIndirect(0);
   }
@@ -2946,8 +2956,7 @@ public:
   }
 
   bool isEABI() const {
-    StringRef Env =
-      getContext().getTargetInfo().getTriple().getEnvironmentName();
+    StringRef Env = getTarget().getTriple().getEnvironmentName();
     return (Env == "gnueabi" || Env == "eabi" ||
             Env == "android" || Env == "androideabi");
   }
@@ -3046,7 +3055,7 @@ void ARMABIInfo::computeInfo(CGFunctionInfo &FI) const {
 /// Return the default calling convention that LLVM will use.
 llvm::CallingConv::ID ARMABIInfo::getLLVMDefaultCC() const {
   // The default calling convention that LLVM will infer.
-  if (getContext().getTargetInfo().getTriple().getEnvironmentName()=="gnueabihf")
+  if (getTarget().getTriple().getEnvironmentName()=="gnueabihf")
     return llvm::CallingConv::ARM_AAPCS_VFP;
   else if (isEABI())
     return llvm::CallingConv::ARM_AAPCS;
@@ -3238,10 +3247,8 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty, int *VFPRegs,
   if (isEmptyRecord(getContext(), Ty, true))
     return ABIArgInfo::getIgnore();
 
-  // Structures with either a non-trivial destructor or a non-trivial
-  // copy constructor are always indirect.
-  if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
-    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+  if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, CGT))
+    return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
 
   if (getABIKind() == ARMABIInfo::AAPCS_VFP) {
     // Homogeneous Aggregates need to be expanded when we can fit the aggregate
@@ -3404,7 +3411,7 @@ ABIArgInfo ARMABIInfo::classifyReturnType(QualType RetTy) const {
 
   // Structures with either a non-trivial destructor or a non-trivial
   // copy constructor are always indirect.
-  if (isRecordWithNonTrivialDestructorOrCopyConstructor(RetTy))
+  if (isRecordReturnIndirect(RetTy, CGT))
     return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
   // Are we following APCS?
@@ -3728,12 +3735,10 @@ ABIArgInfo AArch64ABIInfo::classifyGenericType(QualType Ty,
     return tryUseRegs(Ty, FreeIntRegs, RegsNeeded, /*IsInt=*/ true);
   }
 
-  // Structures with either a non-trivial destructor or a non-trivial
-  // copy constructor are always indirect.
-  if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty)) {
-    if (FreeIntRegs > 0)
+  if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, CGT)) {
+    if (FreeIntRegs > 0 && RAA == CGCXXABI::RAA_Indirect)
       --FreeIntRegs;
-    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+    return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
   }
 
   if (isEmptyRecord(getContext(), Ty, true)) {
@@ -4418,11 +4423,9 @@ MipsABIInfo::classifyArgumentType(QualType Ty, uint64_t &Offset) const {
     if (TySize == 0)
       return ABIArgInfo::getIgnore();
 
-    // Records with non trivial destructors/constructors should not be passed
-    // by value.
-    if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty)) {
+    if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, CGT)) {
       Offset = OrigOffset + MinABIStackAlignInBytes;
-      return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+      return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
     }
 
     // If we have reached here, aggregates are passed directly by coercing to
@@ -4492,6 +4495,9 @@ ABIArgInfo MipsABIInfo::classifyReturnType(QualType RetTy) const {
     return ABIArgInfo::getIgnore();
 
   if (isAggregateTypeForABI(RetTy) || RetTy->isVectorType()) {
+    if (isRecordReturnIndirect(RetTy, CGT))
+      return ABIArgInfo::getIndirect(0);
+
     if (Size <= 128) {
       if (RetTy->isAnyComplexType())
         return ABIArgInfo::getDirect();
@@ -4500,7 +4506,7 @@ ABIArgInfo MipsABIInfo::classifyReturnType(QualType RetTy) const {
       if (IsO32 && RetTy->isVectorType() && !RetTy->hasFloatingRepresentation())
         return ABIArgInfo::getDirect(returnAggregateInRegs(RetTy, Size));
 
-      if (!IsO32 && !isRecordWithNonTrivialDestructorOrCopyConstructor(RetTy))
+      if (!IsO32)
         return ABIArgInfo::getDirect(returnAggregateInRegs(RetTy, Size));
     }
 
@@ -4538,7 +4544,7 @@ llvm::Value* MipsABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   int64_t TypeAlign = getContext().getTypeAlign(Ty) / 8;
   llvm::Type *PTy = llvm::PointerType::getUnqual(CGF.ConvertType(Ty));
   llvm::Value *AddrTyped;
-  unsigned PtrWidth = getContext().getTargetInfo().getPointerWidth(0);
+  unsigned PtrWidth = getTarget().getPointerWidth(0);
   llvm::IntegerType *IntTy = (PtrWidth == 32) ? CGF.Int32Ty : CGF.Int64Ty;
 
   if (TypeAlign > MinABIStackAlignInBytes) {
@@ -4710,10 +4716,8 @@ ABIArgInfo HexagonABIInfo::classifyArgumentType(QualType Ty) const {
   if (isEmptyRecord(getContext(), Ty, true))
     return ABIArgInfo::getIgnore();
 
-  // Structures with either a non-trivial destructor or a non-trivial
-  // copy constructor are always indirect.
-  if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
-    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+  if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, CGT))
+    return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
 
   uint64_t Size = getContext().getTypeSize(Ty);
   if (Size > 64)
@@ -4748,7 +4752,7 @@ ABIArgInfo HexagonABIInfo::classifyReturnType(QualType RetTy) const {
 
   // Structures with either a non-trivial destructor or a non-trivial
   // copy constructor are always indirect.
-  if (isRecordWithNonTrivialDestructorOrCopyConstructor(RetTy))
+  if (isRecordReturnIndirect(RetTy, CGT))
     return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
   if (isEmptyRecord(getContext(), RetTy, true))
@@ -4799,7 +4803,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   if (TheTargetCodeGenInfo)
     return *TheTargetCodeGenInfo;
 
-  const llvm::Triple &Triple = getContext().getTargetInfo().getTriple();
+  const llvm::Triple &Triple = getTarget().getTriple();
   switch (Triple.getArch()) {
   default:
     return *(TheTargetCodeGenInfo = new DefaultTargetCodeGenInfo(Types));
@@ -4821,10 +4825,11 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   case llvm::Triple::thumb:
     {
       ARMABIInfo::ABIKind Kind = ARMABIInfo::AAPCS;
-      if (strcmp(getContext().getTargetInfo().getABI(), "apcs-gnu") == 0)
+      if (strcmp(getTarget().getABI(), "apcs-gnu") == 0)
         Kind = ARMABIInfo::APCS;
       else if (CodeGenOpts.FloatABI == "hard" ||
-               (CodeGenOpts.FloatABI != "soft" && Triple.getEnvironment()==llvm::Triple::GNUEABIHF))
+               (CodeGenOpts.FloatABI != "soft" &&
+                Triple.getEnvironment() == llvm::Triple::GNUEABIHF))
         Kind = ARMABIInfo::AAPCS_VFP;
 
       switch (Triple.getOS()) {
@@ -4889,7 +4894,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   }
 
   case llvm::Triple::x86_64: {
-    bool HasAVX = strcmp(getContext().getTargetInfo().getABI(), "avx") == 0;
+    bool HasAVX = strcmp(getTarget().getABI(), "avx") == 0;
 
     switch (Triple.getOS()) {
     case llvm::Triple::Win32:
@@ -4897,7 +4902,8 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
     case llvm::Triple::Cygwin:
       return *(TheTargetCodeGenInfo = new WinX86_64TargetCodeGenInfo(Types));
     case llvm::Triple::NaCl:
-      return *(TheTargetCodeGenInfo = new NaClX86_64TargetCodeGenInfo(Types, HasAVX));
+      return *(TheTargetCodeGenInfo = new NaClX86_64TargetCodeGenInfo(Types,
+                                                                      HasAVX));
     default:
       return *(TheTargetCodeGenInfo = new X86_64TargetCodeGenInfo(Types,
                                                                   HasAVX));

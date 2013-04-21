@@ -555,35 +555,39 @@ void StackLocalsSpaceRegion::dumpToStream(raw_ostream &os) const {
 }
 
 bool MemRegion::canPrintPretty() const {
+  return canPrintPrettyAsExpr();
+}
+
+bool MemRegion::canPrintPrettyAsExpr() const {
   return false;
 }
 
 void MemRegion::printPretty(raw_ostream &os) const {
   assert(canPrintPretty() && "This region cannot be printed pretty.");
   os << "'";
-  printPrettyNoQuotes(os);
+  printPrettyAsExpr(os);
   os << "'";
   return;
 }
 
-void MemRegion::printPrettyNoQuotes(raw_ostream &os) const {
-  assert(canPrintPretty() && "This region cannot be printed pretty.");
+void MemRegion::printPrettyAsExpr(raw_ostream &os) const {
+  llvm_unreachable("This region cannot be printed pretty.");
   return;
 }
 
-bool VarRegion::canPrintPretty() const {
+bool VarRegion::canPrintPrettyAsExpr() const {
   return true;
 }
 
-void VarRegion::printPrettyNoQuotes(raw_ostream &os) const {
+void VarRegion::printPrettyAsExpr(raw_ostream &os) const {
   os << getDecl()->getName();
 }
 
-bool ObjCIvarRegion::canPrintPretty() const {
+bool ObjCIvarRegion::canPrintPrettyAsExpr() const {
   return true;
 }
 
-void ObjCIvarRegion::printPrettyNoQuotes(raw_ostream &os) const {
+void ObjCIvarRegion::printPrettyAsExpr(raw_ostream &os) const {
   os << getDecl()->getName();
 }
 
@@ -591,24 +595,33 @@ bool FieldRegion::canPrintPretty() const {
   return true;
 }
 
-void FieldRegion::printPrettyNoQuotes(raw_ostream &os) const {
-  if (superRegion->canPrintPretty()) {
-    superRegion->printPrettyNoQuotes(os);
-    os << "." << getDecl()->getName();
-  } else {
-    os << "field " << "\'" << getDecl()->getName() << "'";
-  }
+bool FieldRegion::canPrintPrettyAsExpr() const {
+  return superRegion->canPrintPrettyAsExpr();
+}
+
+void FieldRegion::printPrettyAsExpr(raw_ostream &os) const {
+  assert(canPrintPrettyAsExpr());
+  superRegion->printPrettyAsExpr(os);
+  os << "." << getDecl()->getName();
 }
 
 void FieldRegion::printPretty(raw_ostream &os) const {
-  if (superRegion->canPrintPretty()) {
+  if (canPrintPrettyAsExpr()) {
     os << "\'";
-    printPrettyNoQuotes(os);
+    printPrettyAsExpr(os);
     os << "'";
   } else {
-    printPrettyNoQuotes(os);
+    os << "field " << "\'" << getDecl()->getName() << "'";
   }
   return;
+}
+
+bool CXXBaseObjectRegion::canPrintPrettyAsExpr() const {
+  return superRegion->canPrintPrettyAsExpr();
+}
+
+void CXXBaseObjectRegion::printPrettyAsExpr(raw_ostream &os) const {
+  superRegion->printPrettyAsExpr(os);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1065,6 +1078,17 @@ const MemRegion *MemRegion::StripCasts(bool StripBaseCasts) const {
       return R;
     }
   }
+}
+
+const SymbolicRegion *MemRegion::getSymbolicBase() const {
+  const SubRegion *SubR = dyn_cast<SubRegion>(this);
+
+  while (SubR) {
+    if (const SymbolicRegion *SymR = dyn_cast<SymbolicRegion>(SubR))
+      return SymR;
+    SubR = dyn_cast<SubRegion>(SubR->getSuperRegion());
+  }
+  return 0;
 }
 
 // FIXME: Merge with the implementation of the same method in Store.cpp

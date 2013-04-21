@@ -911,7 +911,7 @@ static StringRef getMipsFloatABI(const Driver &D, const ArgList &Args) {
       FloatABI = "hard";
     else {
       FloatABI = A->getValue();
-      if (FloatABI != "soft" && FloatABI != "single" && FloatABI != "hard") {
+      if (FloatABI != "soft" && FloatABI != "hard") {
         D.Diag(diag::err_drv_invalid_mfloat_abi) << A->getAsString(Args);
         FloatABI = "hard";
       }
@@ -944,7 +944,7 @@ static void AddTargetFeature(const ArgList &Args,
 }
 
 void Clang::AddMIPSTargetArgs(const ArgList &Args,
-                             ArgStringList &CmdArgs) const {
+                              ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
   StringRef CPUName;
   StringRef ABIName;
@@ -977,12 +977,6 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
       CmdArgs.push_back("-mips16-hard-float");
     }
   }
-  else if (FloatABI == "single") {
-    // Restrict the use of hardware floating-point
-    // instructions to 32-bit operations.
-    CmdArgs.push_back("-target-feature");
-    CmdArgs.push_back("+single-float");
-  }
   else {
     // Floating point operations and argument passing are hard.
     assert(FloatABI == "hard" && "Invalid float abi!");
@@ -991,8 +985,14 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
   }
 
   AddTargetFeature(Args, CmdArgs,
+                   options::OPT_msingle_float, options::OPT_mdouble_float,
+                   "single-float");
+  AddTargetFeature(Args, CmdArgs,
                    options::OPT_mips16, options::OPT_mno_mips16,
                    "mips16");
+  AddTargetFeature(Args, CmdArgs,
+                   options::OPT_mmicromips, options::OPT_mno_micromips,
+                   "micromips");
   AddTargetFeature(Args, CmdArgs,
                    options::OPT_mdsp, options::OPT_mno_dsp,
                    "dsp");
@@ -1451,6 +1451,18 @@ static void addExceptionArgs(const ArgList &Args, types::ID InputType,
 
   if (ShouldUseExceptionTables)
     CmdArgs.push_back("-fexceptions");
+}
+
+static bool ShouldDisableAutolink(const ArgList &Args,
+                             const ToolChain &TC) {
+  bool Default = true;
+  if (TC.getTriple().isOSDarwin()) {
+    // The native darwin assembler doesn't support the linker_option directives,
+    // so we disable them if we think the .s file will be passed to it.
+    Default = TC.useIntegratedAs();
+  }
+  return !Args.hasFlag(options::OPT_fautolink, options::OPT_fno_autolink,
+                       Default);
 }
 
 static bool ShouldDisableCFI(const ArgList &Args,
@@ -2596,6 +2608,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (ShouldDisableDwarfDirectory(Args, getToolChain()))
     CmdArgs.push_back("-fno-dwarf-directory-asm");
 
+  if (ShouldDisableAutolink(Args, getToolChain()))
+    CmdArgs.push_back("-fno-autolink");
+
   // Add in -fdebug-compilation-dir if necessary.
   addDebugCompDirArg(Args, CmdArgs);
 
@@ -2890,16 +2905,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_fmodules_ignore_macro);
   Args.AddLastArg(CmdArgs, options::OPT_fmodules_prune_interval);
   Args.AddLastArg(CmdArgs, options::OPT_fmodules_prune_after);
-
-  // -fmodules-autolink (on by default when modules is enabled) automatically
-  // links against libraries for imported modules.  This requires the
-  // integrated assembler.
-  if (HaveModules && getToolChain().useIntegratedAs() &&
-      Args.hasFlag(options::OPT_fmodules_autolink,
-                   options::OPT_fno_modules_autolink,
-                   true)) {
-    CmdArgs.push_back("-fmodules-autolink");
-  }
 
   // -faccess-control is default.
   if (Args.hasFlag(options::OPT_fno_access_control,
@@ -3197,9 +3202,42 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Color diagnostics are the default, unless the terminal doesn't support
   // them.
-  if (Args.hasFlag(options::OPT_fcolor_diagnostics,
-                   options::OPT_fno_color_diagnostics,
-                   llvm::sys::Process::StandardErrHasColors()))
+  // Support both clang's -f[no-]color-diagnostics and gcc's
+  // -f[no-]diagnostics-colors[=never|always|auto].
+  enum { Colors_On, Colors_Off, Colors_Auto } ShowColors = Colors_Auto;
+  for (ArgList::const_iterator it = Args.begin(), ie = Args.end();
+       it != ie; ++it) {
+    const Option &O = (*it)->getOption();
+    if (!O.matches(options::OPT_fcolor_diagnostics) &&
+        !O.matches(options::OPT_fdiagnostics_color) &&
+        !O.matches(options::OPT_fno_color_diagnostics) &&
+        !O.matches(options::OPT_fno_diagnostics_color) &&
+        !O.matches(options::OPT_fdiagnostics_color_EQ))
+      continue;
+
+    (*it)->claim();
+    if (O.matches(options::OPT_fcolor_diagnostics) ||
+        O.matches(options::OPT_fdiagnostics_color)) {
+      ShowColors = Colors_On;
+    } else if (O.matches(options::OPT_fno_color_diagnostics) ||
+               O.matches(options::OPT_fno_diagnostics_color)) {
+      ShowColors = Colors_Off;
+    } else {
+      assert(O.matches(options::OPT_fdiagnostics_color_EQ));
+      StringRef value((*it)->getValue());
+      if (value == "always")
+        ShowColors = Colors_On;
+      else if (value == "never")
+        ShowColors = Colors_Off;
+      else if (value == "auto")
+        ShowColors = Colors_Auto;
+      else
+        getToolChain().getDriver().Diag(diag::err_drv_clang_unsupported)
+          << ("-fdiagnostics-color=" + value).str();
+    }
+  }
+  if (ShowColors == Colors_On ||
+      (ShowColors == Colors_Auto && llvm::sys::Process::StandardErrHasColors()))
     CmdArgs.push_back("-fcolor-diagnostics");
 
   if (!Args.hasFlag(options::OPT_fshow_source_location,
@@ -3232,7 +3270,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasFlag(options::OPT_fslp_vectorize,
                    options::OPT_fno_slp_vectorize, false)) {
     CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-vectorize");
+    CmdArgs.push_back("-vectorize-slp");
+  }
+
+  // -fno-slp-vectorize-aggressive is default.
+  if (Args.hasFlag(options::OPT_fslp_vectorize_aggressive,
+                   options::OPT_fno_slp_vectorize_aggressive, false)) {
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-vectorize-slp-aggressive");
   }
 
   if (Arg *A = Args.getLastArg(options::OPT_fshow_overloads_EQ))

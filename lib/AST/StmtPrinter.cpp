@@ -450,6 +450,10 @@ void StmtPrinter::VisitMSAsmStmt(MSAsmStmt *Node) {
     Indent() << "}\n";
 }
 
+void StmtPrinter::VisitCapturedStmt(CapturedStmt *Node) {
+  PrintStmt(Node->getCapturedDecl()->getBody());
+}
+
 void StmtPrinter::VisitObjCAtTryStmt(ObjCAtTryStmt *Node) {
   Indent() << "@try";
   if (CompoundStmt *TS = dyn_cast<CompoundStmt>(Node->getTryBody())) {
@@ -1238,6 +1242,18 @@ void StmtPrinter::VisitCXXUuidofExpr(CXXUuidofExpr *Node) {
   OS << ")";
 }
 
+void StmtPrinter::VisitMSPropertyRefExpr(MSPropertyRefExpr *Node) {
+  PrintExpr(Node->getBaseExpr());
+  if (Node->isArrow())
+    OS << "->";
+  else
+    OS << ".";
+  if (NestedNameSpecifier *Qualifier =
+      Node->getQualifierLoc().getNestedNameSpecifier())
+    Qualifier->print(OS, Policy);
+  OS << Node->getPropertyDecl()->getDeclName();
+}
+
 void StmtPrinter::VisitUserDefinedLiteral(UserDefinedLiteral *Node) {
   switch (Node->getLiteralOperatorKind()) {
   case UserDefinedLiteral::LOK_Raw:
@@ -1298,7 +1314,11 @@ void StmtPrinter::VisitCXXThrowExpr(CXXThrowExpr *Node) {
 }
 
 void StmtPrinter::VisitCXXDefaultArgExpr(CXXDefaultArgExpr *Node) {
-  // Nothing to print: we picked up the default argument
+  // Nothing to print: we picked up the default argument.
+}
+
+void StmtPrinter::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *Node) {
+  // Nothing to print: we picked up the default initializer.
 }
 
 void StmtPrinter::VisitCXXFunctionalCastExpr(CXXFunctionalCastExpr *Node) {

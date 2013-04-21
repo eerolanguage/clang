@@ -219,10 +219,6 @@ public:
     return getLinkage() == ExternalLinkage;
   }
 
-  /// \brief True if this decl has external linkage. Don't cache the linkage,
-  /// because we are not finished setting up the redecl chain for the decl.
-  bool hasExternalLinkageUncached() const;
-
   /// \brief Determines the visibility of this entity.
   Visibility getVisibility() const {
     return getLinkageAndVisibility().getVisibility();
@@ -2401,7 +2397,7 @@ protected:
   bool IsScopedUsingClassTag : 1;
 
   /// IsFixed - True if this is an enumeration with fixed underlying type. Only
-  /// possible in C++11 or Microsoft extensions mode.
+  /// possible in C++11, Microsoft extensions, or Objective C mode.
   bool IsFixed : 1;
 
   /// \brief Indicates whether it is possible for declarations of this kind
@@ -2787,18 +2783,18 @@ public:
     NumNegativeBits = Num;
   }
 
-  /// \brief Returns true if this is a C++0x scoped enumeration.
+  /// \brief Returns true if this is a C++11 scoped enumeration.
   bool isScoped() const {
     return IsScoped;
   }
 
-  /// \brief Returns true if this is a C++0x scoped enumeration.
+  /// \brief Returns true if this is a C++11 scoped enumeration.
   bool isScopedUsingClassTag() const {
     return IsScopedUsingClassTag;
   }
 
-  /// \brief Returns true if this is a C++0x enumeration with fixed underlying
-  /// type.
+  /// \brief Returns true if this is an Objective-C, C++11, or
+  /// Microsoft-style enumeration with a fixed underlying type.
   bool isFixed() const {
     return IsFixed;
   }
@@ -3166,6 +3162,32 @@ public:
   }
   static BlockDecl *castFromDeclContext(const DeclContext *DC) {
     return static_cast<BlockDecl *>(const_cast<DeclContext*>(DC));
+  }
+};
+
+/// \brief This represents the body of a CapturedStmt, and serves as its
+/// DeclContext.
+class CapturedDecl : public Decl, public DeclContext {
+private:
+  Stmt *Body;
+
+  explicit CapturedDecl(DeclContext *DC)
+    : Decl(Captured, DC, SourceLocation()), DeclContext(Captured) { }
+
+public:
+  static CapturedDecl *Create(ASTContext &C, DeclContext *DC);
+
+  Stmt *getBody() const { return Body; }
+  void setBody(Stmt *B) { Body = B; }
+
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classofKind(Kind K) { return K == Captured; }
+  static DeclContext *castToDeclContext(const CapturedDecl *D) {
+    return static_cast<DeclContext *>(const_cast<CapturedDecl *>(D));
+  }
+  static CapturedDecl *castFromDeclContext(const DeclContext *DC) {
+    return static_cast<CapturedDecl *>(const_cast<DeclContext *>(DC));
   }
 };
 

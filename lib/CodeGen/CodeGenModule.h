@@ -67,7 +67,6 @@ namespace clang {
   class VarDecl;
   class LangOptions;
   class CodeGenOptions;
-  class TargetOptions;
   class DiagnosticsEngine;
   class AnnotateAttr;
   class CXXDestructorDecl;
@@ -233,15 +232,22 @@ class CodeGenModule : public CodeGenTypeCache {
   ASTContext &Context;
   const LangOptions &LangOpts;
   const CodeGenOptions &CodeGenOpts;
-  const TargetOptions &TargetOpts;
   llvm::Module &TheModule;
-  const llvm::DataLayout &TheDataLayout;
-  mutable const TargetCodeGenInfo *TheTargetCodeGenInfo;
   DiagnosticsEngine &Diags;
+  const llvm::DataLayout &TheDataLayout;
+  const TargetInfo &Target;
   CGCXXABI &ABI;
-  CodeGenTypes Types;
-  CodeGenTBAA *TBAA;
+  llvm::LLVMContext &VMContext;
 
+  CodeGenTBAA *TBAA;
+  
+  mutable const TargetCodeGenInfo *TheTargetCodeGenInfo;
+  
+  // This should not be moved earlier, since its initialization depends on some
+  // of the previous reference members being already initialized and also checks
+  // if TheTargetCodeGenInfo is NULL
+  CodeGenTypes Types;
+ 
   /// VTables - Holds information about C++ vtables.
   CodeGenVTables VTables;
   friend class CodeGenVTables;
@@ -255,8 +261,8 @@ class CodeGenModule : public CodeGenTypeCache {
   RREntrypoints *RRData;
 
   // WeakRefReferences - A set of references that have only been seen via
-  // a weakref so far. This is used to remove the weak of the reference if we ever
-  // see a direct reference or a definition.
+  // a weakref so far. This is used to remove the weak of the reference if we
+  // ever see a direct reference or a definition.
   llvm::SmallPtrSet<llvm::GlobalValue*, 10> WeakRefReferences;
 
   /// DeferredDecls - This contains all the decls which have definitions but
@@ -311,6 +317,14 @@ class CodeGenModule : public CodeGenTypeCache {
                           llvm::GlobalValue *> StaticExternCMap;
   StaticExternCMap StaticExternCValues;
 
+  /// \brief thread_local variables defined or used in this TU.
+  std::vector<std::pair<const VarDecl *, llvm::GlobalVariable *> >
+    CXXThreadLocals;
+
+  /// \brief thread_local variables with initializers that need to run
+  /// before any thread_local variable in this TU is odr-used.
+  std::vector<llvm::Constant*> CXXThreadLocalInits;
+
   /// CXXGlobalInits - Global variables with initializers that need to run
   /// before main.
   std::vector<llvm::Constant*> CXXGlobalInits;
@@ -346,11 +360,11 @@ class CodeGenModule : public CodeGenTypeCache {
 
   /// CFConstantStringClassRef - Cached reference to the class for constant
   /// strings. This value has type int * but is actually an Obj-C class pointer.
-  llvm::Constant *CFConstantStringClassRef;
+  llvm::WeakVH CFConstantStringClassRef;
 
   /// ConstantStringClassRef - Cached reference to the class for constant
   /// strings. This value has type int * but is actually an Obj-C class pointer.
-  llvm::Constant *ConstantStringClassRef;
+  llvm::WeakVH ConstantStringClassRef;
 
   /// \brief The LLVM type corresponding to NSConstantString.
   llvm::StructType *NSConstantStringType;
@@ -369,7 +383,6 @@ class CodeGenModule : public CodeGenTypeCache {
 
   bool isTriviallyRecursive(const FunctionDecl *F);
   bool shouldEmitFunction(const FunctionDecl *F);
-  llvm::LLVMContext &VMContext;
 
   /// @name Cache for Blocks Runtime Globals
   /// @{
@@ -402,8 +415,8 @@ class CodeGenModule : public CodeGenTypeCache {
   /// @}
 public:
   CodeGenModule(ASTContext &C, const CodeGenOptions &CodeGenOpts,
-                const TargetOptions &TargetOpts, llvm::Module &M,
-                const llvm::DataLayout &TD, DiagnosticsEngine &Diags);
+                llvm::Module &M, const llvm::DataLayout &TD,
+                DiagnosticsEngine &Diags);
 
   ~CodeGenModule();
 
@@ -432,9 +445,6 @@ public:
     assert(CUDARuntime != 0);
     return *CUDARuntime;
   }
-
-  /// getCXXABI() - Return a reference to the configured C++ ABI.
-  CGCXXABI &getCXXABI() { return ABI; }
 
   ARCEntrypoints &getARCEntrypoints() const {
     assert(getLangOpts().ObjCAutoRefCount && ARCData != 0);
@@ -489,20 +499,23 @@ public:
   }
 
   ASTContext &getContext() const { return Context; }
-  const CodeGenOptions &getCodeGenOpts() const { return CodeGenOpts; }
   const LangOptions &getLangOpts() const { return LangOpts; }
+  const CodeGenOptions &getCodeGenOpts() const { return CodeGenOpts; }
   llvm::Module &getModule() const { return TheModule; }
-  CodeGenTypes &getTypes() { return Types; }
-  CodeGenVTables &getVTables() { return VTables; }
-  VTableContext &getVTableContext() { return VTables.getVTableContext(); }
   DiagnosticsEngine &getDiags() const { return Diags; }
   const llvm::DataLayout &getDataLayout() const { return TheDataLayout; }
-  const TargetInfo &getTarget() const { return Context.getTargetInfo(); }
+  const TargetInfo &getTarget() const { return Target; }
+  CGCXXABI &getCXXABI() { return ABI; }
   llvm::LLVMContext &getLLVMContext() { return VMContext; }
-  const TargetCodeGenInfo &getTargetCodeGenInfo();
-  bool isTargetDarwin() const;
-
+  
   bool shouldUseTBAA() const { return TBAA != 0; }
+
+  const TargetCodeGenInfo &getTargetCodeGenInfo(); 
+  
+  CodeGenTypes &getTypes() { return Types; }
+ 
+  CodeGenVTables &getVTables() { return VTables; }
+  VTableContext &getVTableContext() { return VTables.getVTableContext(); }
 
   llvm::MDNode *getTBAAInfo(QualType QTy);
   llvm::MDNode *getTBAAInfoForVTablePtr();
@@ -574,8 +587,8 @@ public:
       return GetAddrOfGlobalVar(cast<VarDecl>(GD.getDecl()));
   }
 
-  /// CreateOrReplaceCXXRuntimeVariable - Will return a global variable of the given
-  /// type. If a variable with a different type already exists then a new 
+  /// CreateOrReplaceCXXRuntimeVariable - Will return a global variable of the
+  /// given type. If a variable with a different type already exists then a new 
   /// variable with the right type will be created and all uses of the old
   /// variable will be replaced with a bitcast to the new variable.
   llvm::GlobalVariable *
@@ -1020,6 +1033,9 @@ private:
   /// EmitCXXDestructor - Emit a single destructor with the given type from
   /// a C++ destructor Decl.
   void EmitCXXDestructor(const CXXDestructorDecl *D, CXXDtorType Type);
+
+  /// \brief Emit the function that initializes C++ thread_local variables.
+  void EmitCXXThreadLocalInitFunc();
 
   /// EmitCXXGlobalInitFunc - Emit the function that initializes C++ globals.
   void EmitCXXGlobalInitFunc();

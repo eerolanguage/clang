@@ -4458,6 +4458,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::TemplateTypeParm:
   case Decl::EnumConstant:
   case Decl::Field:
+  case Decl::MSProperty:
   case Decl::IndirectField:
   case Decl::ObjCIvar:
   case Decl::ObjCAtDefsField:
@@ -4473,6 +4474,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::FileScopeAsm:
   case Decl::StaticAssert:
   case Decl::Block:
+  case Decl::Captured:
   case Decl::Label:  // FIXME: Is this right??
   case Decl::ClassScopeFunctionSpecialization:
   case Decl::Import:
@@ -5915,6 +5917,72 @@ CXFile clang_getIncludedFile(CXCursor cursor) {
   
   const InclusionDirective *ID = getCursorInclusionDirective(cursor);
   return const_cast<FileEntry *>(ID->getFile());
+}
+
+unsigned clang_Cursor_getObjCPropertyAttributes(CXCursor C, unsigned reserved) {
+  if (C.kind != CXCursor_ObjCPropertyDecl)
+    return CXObjCPropertyAttr_noattr;
+
+  unsigned Result = CXObjCPropertyAttr_noattr;
+  const ObjCPropertyDecl *PD = dyn_cast<ObjCPropertyDecl>(getCursorDecl(C));
+  ObjCPropertyDecl::PropertyAttributeKind Attr =
+      PD->getPropertyAttributesAsWritten();
+
+#define SET_CXOBJCPROP_ATTR(A) \
+  if (Attr & ObjCPropertyDecl::OBJC_PR_##A) \
+    Result |= CXObjCPropertyAttr_##A
+  SET_CXOBJCPROP_ATTR(readonly);
+  SET_CXOBJCPROP_ATTR(getter);
+  SET_CXOBJCPROP_ATTR(assign);
+  SET_CXOBJCPROP_ATTR(readwrite);
+  SET_CXOBJCPROP_ATTR(retain);
+  SET_CXOBJCPROP_ATTR(copy);
+  SET_CXOBJCPROP_ATTR(nonatomic);
+  SET_CXOBJCPROP_ATTR(setter);
+  SET_CXOBJCPROP_ATTR(atomic);
+  SET_CXOBJCPROP_ATTR(weak);
+  SET_CXOBJCPROP_ATTR(strong);
+  SET_CXOBJCPROP_ATTR(unsafe_unretained);
+#undef SET_CXOBJCPROP_ATTR
+
+  return Result;
+}
+
+unsigned clang_Cursor_getObjCDeclQualifiers(CXCursor C) {
+  if (!clang_isDeclaration(C.kind))
+    return CXObjCDeclQualifier_None;
+
+  Decl::ObjCDeclQualifier QT = Decl::OBJC_TQ_None;
+  const Decl *D = getCursorDecl(C);
+  if (const ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(D))
+    QT = MD->getObjCDeclQualifier();
+  else if (const ParmVarDecl *PD = dyn_cast<ParmVarDecl>(D))
+    QT = PD->getObjCDeclQualifier();
+  if (QT == Decl::OBJC_TQ_None)
+    return CXObjCDeclQualifier_None;
+
+  unsigned Result = CXObjCDeclQualifier_None;
+  if (QT & Decl::OBJC_TQ_In) Result |= CXObjCDeclQualifier_In;
+  if (QT & Decl::OBJC_TQ_Inout) Result |= CXObjCDeclQualifier_Inout;
+  if (QT & Decl::OBJC_TQ_Out) Result |= CXObjCDeclQualifier_Out;
+  if (QT & Decl::OBJC_TQ_Bycopy) Result |= CXObjCDeclQualifier_Bycopy;
+  if (QT & Decl::OBJC_TQ_Byref) Result |= CXObjCDeclQualifier_Byref;
+  if (QT & Decl::OBJC_TQ_Oneway) Result |= CXObjCDeclQualifier_Oneway;
+
+  return Result;
+}
+
+unsigned clang_Cursor_isVariadic(CXCursor C) {
+  if (!clang_isDeclaration(C.kind))
+    return 0;
+
+  const Decl *D = getCursorDecl(C);
+  if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
+    return FD->isVariadic();
+  if (const ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(D))
+    return MD->isVariadic();
+
+  return 0;
 }
 
 CXSourceRange clang_Cursor_getCommentRange(CXCursor C) {

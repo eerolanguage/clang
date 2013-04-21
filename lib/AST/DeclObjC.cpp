@@ -959,35 +959,6 @@ static void collectOverriddenMethodsSlow(const ObjCMethodDecl *Method,
   }
 }
 
-/// \brief Faster collection that is enabled when ObjCMethodDecl::isOverriding()
-/// returns false.
-/// You'd think that in that case there are no overrides but categories can
-/// "introduce" new overridden methods that are missed by Sema because the
-/// overrides lookup that it does for methods, inside implementations, will
-/// stop at the interface level (if there is a method there) and not look
-/// further in super classes.
-/// Methods in an implementation can overide methods in super class's category
-/// but not in current class's category. But, such methods
-static void collectOverriddenMethodsFast(ASTContext &Ctx,
-                                         const ObjCMethodDecl *Method,
-                             SmallVectorImpl<const ObjCMethodDecl *> &Methods) {
-  assert(!Method->isOverriding());
-
-  const ObjCContainerDecl *
-    ContD = cast<ObjCContainerDecl>(Method->getDeclContext());
-  if (isa<ObjCInterfaceDecl>(ContD) || isa<ObjCProtocolDecl>(ContD))
-    return;
-  const ObjCInterfaceDecl *Class = Method->getClassInterface();
-  if (!Class)
-    return;
-
-  SmallVector<const ObjCCategoryDecl *, 32> Cats;
-  Ctx.getBaseObjCCategoriesAfterInterface(Class, Cats);
-  for (SmallVectorImpl<const ObjCCategoryDecl *>::iterator
-         I = Cats.begin(), E = Cats.end(); I != E; ++I)
-    CollectOverriddenMethodsRecurse(*I, Method, Methods, true);
-}
-
 void ObjCMethodDecl::getOverriddenMethods(
                     SmallVectorImpl<const ObjCMethodDecl *> &Overridden) const {
   const ObjCMethodDecl *Method = this;
@@ -997,9 +968,7 @@ void ObjCMethodDecl::getOverriddenMethods(
                    getMethod(Method->getSelector(), Method->isInstanceMethod());
   }
 
-  if (!Method->isOverriding()) {
-    collectOverriddenMethodsFast(getASTContext(), Method, Overridden);
-  } else {
+  if (Method->isOverriding()) {
     collectOverriddenMethodsSlow(Method, Overridden);
     assert(!Overridden.empty() &&
            "ObjCMethodDecl's overriding bit is not as expected");

@@ -137,9 +137,12 @@ public:
                                   StringRef RelativePath,
                                   const Module *Imported);
   virtual void Ident(SourceLocation Loc, const std::string &str);
+  virtual void PragmaCaptured(SourceLocation Loc, StringRef Str);
   virtual void PragmaComment(SourceLocation Loc, const IdentifierInfo *Kind,
                              const std::string &Str);
-  virtual void PragmaMessage(SourceLocation Loc, StringRef Str);
+  virtual void PragmaMessage(SourceLocation Loc, StringRef Namespace,
+                             PragmaMessageKind Kind, StringRef Str);
+  virtual void PragmaDebug(SourceLocation Loc, StringRef DebugType);
   virtual void PragmaDiagnosticPush(SourceLocation Loc,
                                     StringRef Namespace);
   virtual void PragmaDiagnosticPop(SourceLocation Loc,
@@ -267,11 +270,12 @@ void PrintPPOutputPPCallbacks::FileChanged(SourceLocation Loc,
     if (IncludeLoc.isValid())
       MoveToLine(IncludeLoc);
   } else if (Reason == PPCallbacks::SystemHeaderPragma) {
-    MoveToLine(NewLine);
-
-    // TODO GCC emits the # directive for this directive on the line AFTER the
-    // directive and emits a bunch of spaces that aren't needed.  Emulate this
-    // strange behavior.
+    // GCC emits the # directive for this directive on the line AFTER the
+    // directive and emits a bunch of spaces that aren't needed. This is because
+    // otherwise we will emit a line marker for THIS line, which requires an
+    // extra blank line after the directive to avoid making all following lines
+    // off by one. We can do better by simply incrementing NewLine here.
+    NewLine += 1;
   }
   
   CurLine = NewLine;
@@ -344,6 +348,15 @@ void PrintPPOutputPPCallbacks::Ident(SourceLocation Loc, const std::string &S) {
   EmittedTokensOnThisLine = true;
 }
 
+void PrintPPOutputPPCallbacks::PragmaCaptured(SourceLocation Loc,
+                                              StringRef Str) {
+  startNewLineIfNeeded();
+  MoveToLine(Loc);
+  OS << "#pragma captured";
+
+  setEmittedDirectiveOnThisLine();
+}
+
 /// MacroDefined - This hook is called whenever a macro definition is seen.
 void PrintPPOutputPPCallbacks::MacroDefined(const Token &MacroNameTok,
                                             const MacroDirective *MD) {
@@ -396,12 +409,25 @@ void PrintPPOutputPPCallbacks::PragmaComment(SourceLocation Loc,
 }
 
 void PrintPPOutputPPCallbacks::PragmaMessage(SourceLocation Loc,
+                                             StringRef Namespace,
+                                             PragmaMessageKind Kind,
                                              StringRef Str) {
   startNewLineIfNeeded();
   MoveToLine(Loc);
-  OS << "#pragma message(";
-
-  OS << '"';
+  OS << "#pragma ";
+  if (!Namespace.empty())
+    OS << Namespace << ' ';
+  switch (Kind) {
+    case PMK_Message:
+      OS << "message(\"";
+      break;
+    case PMK_Warning:
+      OS << "warning \"";
+      break;
+    case PMK_Error:
+      OS << "error \"";
+      break;
+  }
 
   for (unsigned i = 0, e = Str.size(); i != e; ++i) {
     unsigned char Char = Str[i];
@@ -414,8 +440,19 @@ void PrintPPOutputPPCallbacks::PragmaMessage(SourceLocation Loc,
          << (char)('0'+ ((Char >> 0) & 7));
   }
   OS << '"';
+  if (Kind == PMK_Message)
+    OS << ')';
+  setEmittedDirectiveOnThisLine();
+}
 
-  OS << ')';
+void PrintPPOutputPPCallbacks::PragmaDebug(SourceLocation Loc,
+                                           StringRef DebugType) {
+  startNewLineIfNeeded();
+  MoveToLine(Loc);
+
+  OS << "#pragma clang __debug ";
+  OS << DebugType;
+
   setEmittedDirectiveOnThisLine();
 }
 

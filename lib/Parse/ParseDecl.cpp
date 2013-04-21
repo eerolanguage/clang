@@ -395,17 +395,119 @@ void Parser::ParseComplexMicrosoftDeclSpec(IdentifierInfo *Ident,
     // The property declspec is more complex in that it can take one or two
     // assignment expressions as a parameter, but the lhs of the assignment
     // must be named get or put.
-    //
-    // For right now, we will just skip to the closing right paren of the
-    // property expression.
-    //
-    // FIXME: we should deal with __declspec(property) at some point because it
-    // is used in the platform SDK headers for the Parallel Patterns Library
-    // and ATL.
-    BalancedDelimiterTracker T(*this, tok::l_paren);
-    if (T.expectAndConsume(diag::err_expected_lparen_after,
-                           Ident->getNameStart(), tok::r_paren))
+    if (Tok.isNot(tok::l_paren)) {
+      Diag(Tok.getLocation(), diag::err_expected_lparen_after)
+        << Ident->getNameStart();
       return;
+    }
+    BalancedDelimiterTracker T(*this, tok::l_paren);
+    T.expectAndConsume(diag::err_expected_lparen_after,
+                       Ident->getNameStart(), tok::r_paren);
+
+    enum AccessorKind {
+      AK_Invalid = -1,
+      AK_Put = 0, AK_Get = 1 // indices into AccessorNames
+    };
+    IdentifierInfo *AccessorNames[] = { 0, 0 };
+    bool HasInvalidAccessor = false;
+
+    // Parse the accessor specifications.
+    while (true) {
+      // Stop if this doesn't look like an accessor spec.
+      if (!Tok.is(tok::identifier)) {
+        // If the user wrote a completely empty list, use a special diagnostic.
+        if (Tok.is(tok::r_paren) && !HasInvalidAccessor &&
+            AccessorNames[AK_Put] == 0 && AccessorNames[AK_Get] == 0) {
+          Diag(Loc, diag::err_ms_property_no_getter_or_putter);
+          break;
+        }
+
+        Diag(Tok.getLocation(), diag::err_ms_property_unknown_accessor);
+        break;
+      }
+
+      AccessorKind Kind;
+      SourceLocation KindLoc = Tok.getLocation();
+      StringRef KindStr = Tok.getIdentifierInfo()->getName();
+      if (KindStr == "get") {
+        Kind = AK_Get;
+      } else if (KindStr == "put") {
+        Kind = AK_Put;
+
+      // Recover from the common mistake of using 'set' instead of 'put'.
+      } else if (KindStr == "set") {
+        Diag(KindLoc, diag::err_ms_property_has_set_accessor)
+          << FixItHint::CreateReplacement(KindLoc, "put");
+        Kind = AK_Put;
+
+      // Handle the mistake of forgetting the accessor kind by skipping
+      // this accessor.
+      } else if (NextToken().is(tok::comma) || NextToken().is(tok::r_paren)) {
+        Diag(KindLoc, diag::err_ms_property_missing_accessor_kind);
+        ConsumeToken();
+        HasInvalidAccessor = true;
+        goto next_property_accessor;
+
+      // Otherwise, complain about the unknown accessor kind.
+      } else {
+        Diag(KindLoc, diag::err_ms_property_unknown_accessor);
+        HasInvalidAccessor = true;
+        Kind = AK_Invalid;
+
+        // Try to keep parsing unless it doesn't look like an accessor spec.
+        if (!NextToken().is(tok::equal)) break;
+      }
+
+      // Consume the identifier.
+      ConsumeToken();
+
+      // Consume the '='.
+      if (Tok.is(tok::equal)) {
+        ConsumeToken();
+      } else {
+        Diag(Tok.getLocation(), diag::err_ms_property_expected_equal)
+          << KindStr;
+        break;
+      }
+
+      // Expect the method name.
+      if (!Tok.is(tok::identifier)) {
+        Diag(Tok.getLocation(), diag::err_ms_property_expected_accessor_name);
+        break;
+      }
+
+      if (Kind == AK_Invalid) {
+        // Just drop invalid accessors.
+      } else if (AccessorNames[Kind] != NULL) {
+        // Complain about the repeated accessor, ignore it, and keep parsing.
+        Diag(KindLoc, diag::err_ms_property_duplicate_accessor) << KindStr;
+      } else {
+        AccessorNames[Kind] = Tok.getIdentifierInfo();
+      }
+      ConsumeToken();
+
+    next_property_accessor:
+      // Keep processing accessors until we run out.
+      if (Tok.is(tok::comma)) {
+        ConsumeAnyToken();
+        continue;
+
+      // If we run into the ')', stop without consuming it.
+      } else if (Tok.is(tok::r_paren)) {
+        break;
+      } else {
+        Diag(Tok.getLocation(), diag::err_ms_property_expected_comma_or_rparen);
+        break;
+      }
+    }
+
+    // Only add the property attribute if it was well-formed.
+    if (!HasInvalidAccessor) {
+      Attrs.addNewPropertyAttr(Ident, Loc, 0, SourceLocation(), 0,
+                               SourceLocation(),
+                               AccessorNames[AK_Get], AccessorNames[AK_Put],
+                               AttributeList::AS_Declspec);
+    }
     T.skipToEnd();
   } else {
     // We don't recognize this as a valid declspec, but instead of creating the
@@ -1493,35 +1595,42 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
     MaybeParseGNUAttributes(D, &LateParsedAttrs);
 
   // Check to see if we have a function *definition* which must have a body.
-  if (AllowFunctionDefinitions && D.isFunctionDeclarator() &&
+  if (D.isFunctionDeclarator() &&
       // Look at the next token to make sure that this isn't a function
       // declaration.  We have to check this because __attribute__ might be the
       // start of a function definition in GCC-extended K&R C.
       !isDeclarationAfterDeclarator()) {
 
-    if (isStartOfFunctionDefinition(D)) {
-      if (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) {
-        Diag(Tok, diag::err_function_declared_typedef);
+    if (AllowFunctionDefinitions) {
+      if (isStartOfFunctionDefinition(D)) {
+        if (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) {
+          Diag(Tok, diag::err_function_declared_typedef);
 
-        // Recover by treating the 'typedef' as spurious.
-        DS.ClearStorageClassSpecs();
+          // Recover by treating the 'typedef' as spurious.
+          DS.ClearStorageClassSpecs();
+        }
+
+        Decl *TheDecl =
+          ParseFunctionDefinition(D, ParsedTemplateInfo(), &LateParsedAttrs);
+        return Actions.ConvertDeclToDeclGroup(TheDecl);
       }
 
-      Decl *TheDecl =
-        ParseFunctionDefinition(D, ParsedTemplateInfo(), &LateParsedAttrs);
-      return Actions.ConvertDeclToDeclGroup(TheDecl);
-    }
-
-    if (isDeclarationSpecifier()) {
-      // If there is an invalid declaration specifier right after the function
-      // prototype, then we must be in a missing semicolon case where this isn't
-      // actually a body.  Just fall through into the code that handles it as a
-      // prototype, and let the top-level code handle the erroneous declspec
-      // where it would otherwise expect a comma or semicolon.
+      if (isDeclarationSpecifier()) {
+        // If there is an invalid declaration specifier right after the function
+        // prototype, then we must be in a missing semicolon case where this isn't
+        // actually a body.  Just fall through into the code that handles it as a
+        // prototype, and let the top-level code handle the erroneous declspec
+        // where it would otherwise expect a comma or semicolon.
+      } else {
+        Diag(Tok, diag::err_expected_fn_body);
+        SkipUntil(tok::semi);
+        return DeclGroupPtrTy();
+      }
     } else {
-      Diag(Tok, diag::err_expected_fn_body);
-      SkipUntil(tok::semi);
-      return DeclGroupPtrTy();
+      if (Tok.is(tok::l_brace)) {
+        Diag(Tok, diag::err_function_definition_not_allowed);
+        SkipUntil(tok::r_brace, true, true);
+      }
     }
   }
 
@@ -3204,6 +3313,16 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
     if (Tok.is(tok::kw__Static_assert)) {
       SourceLocation DeclEnd;
       ParseStaticAssertDeclaration(DeclEnd);
+      continue;
+    }
+
+    if (Tok.is(tok::annot_pragma_pack)) {
+      HandlePragmaPack();
+      continue;
+    }
+
+    if (Tok.is(tok::annot_pragma_align)) {
+      HandlePragmaAlign();
       continue;
     }
 
@@ -5019,7 +5138,8 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       Sema::CXXThisScopeRAII ThisScope(Actions,
                                dyn_cast<CXXRecordDecl>(Actions.CurContext),
                                DS.getTypeQualifiers() |
-                               (D.getDeclSpec().isConstexprSpecified()
+                               (D.getDeclSpec().isConstexprSpecified() &&
+                                !getLangOpts().CPlusPlus1y
                                   ? Qualifiers::Const : 0),
                                IsCXX11MemberFunction);
 

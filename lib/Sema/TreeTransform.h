@@ -1980,6 +1980,17 @@ public:
                                                      Param));
   }
 
+  /// \brief Build a new C++11 default-initialization expression.
+  ///
+  /// By default, builds a new default field initialization expression, which
+  /// does not require any semantic analysis. Subclasses may override this
+  /// routine to provide different behavior.
+  ExprResult RebuildCXXDefaultInitExpr(SourceLocation Loc,
+                                       FieldDecl *Field) {
+    return getSema().Owned(CXXDefaultInitExpr::Create(getSema().Context, Loc,
+                                                      Field));
+  }
+
   /// \brief Build a new C++ zero-initialization expression.
   ///
   /// By default, performs semantic analysis to build the new expression.
@@ -6029,6 +6040,32 @@ TreeTransform<Derived>::TransformMSDependentExistsStmt(
 }
 
 template<typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformMSPropertyRefExpr(MSPropertyRefExpr *E) {
+  NestedNameSpecifierLoc QualifierLoc;
+  if (E->getQualifierLoc()) {
+    QualifierLoc
+    = getDerived().TransformNestedNameSpecifierLoc(E->getQualifierLoc());
+    if (!QualifierLoc)
+      return ExprError();
+  }
+
+  MSPropertyDecl *PD = cast_or_null<MSPropertyDecl>(
+    getDerived().TransformDecl(E->getMemberLoc(), E->getPropertyDecl()));
+  if (!PD)
+    return ExprError();
+
+  ExprResult Base = getDerived().TransformExpr(E->getBaseExpr());
+  if (Base.isInvalid())
+    return ExprError();
+
+  return new (SemaRef.getASTContext())
+      MSPropertyRefExpr(Base.get(), PD, E->isArrow(),
+                        SemaRef.getASTContext().PseudoObjectTy, VK_LValue,
+                        QualifierLoc, E->getMemberLoc());
+}
+
+template<typename Derived>
 StmtResult
 TreeTransform<Derived>::TransformSEHTryStmt(SEHTryStmt *S) {
   StmtResult TryBlock; //  = getDerived().TransformCompoundStmt(S->getTryBlock());
@@ -7232,6 +7269,21 @@ TreeTransform<Derived>::TransformCXXDefaultArgExpr(CXXDefaultArgExpr *E) {
     return SemaRef.Owned(E);
 
   return getDerived().RebuildCXXDefaultArgExpr(E->getUsedLocation(), Param);
+}
+
+template<typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformCXXDefaultInitExpr(CXXDefaultInitExpr *E) {
+  FieldDecl *Field
+    = cast_or_null<FieldDecl>(getDerived().TransformDecl(E->getLocStart(),
+                                                         E->getField()));
+  if (!Field)
+    return ExprError();
+
+  if (!getDerived().AlwaysRebuild() && Field == E->getField())
+    return SemaRef.Owned(E);
+
+  return getDerived().RebuildCXXDefaultInitExpr(E->getExprLoc(), Field);
 }
 
 template<typename Derived>
@@ -9349,6 +9401,12 @@ TreeTransform<Derived>::RebuildCXXPseudoDestructorExpr(Expr *Base,
                                             /*FIXME: FirstQualifier*/ 0,
                                             NameInfo,
                                             /*TemplateArgs*/ 0);
+}
+
+template<typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformCapturedStmt(CapturedStmt *S) {
+  llvm_unreachable("not implement yet");
 }
 
 } // end namespace clang

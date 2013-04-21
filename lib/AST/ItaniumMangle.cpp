@@ -141,6 +141,8 @@ public:
                      raw_ostream &);
 
   void mangleItaniumGuardVariable(const VarDecl *D, raw_ostream &);
+  void mangleItaniumThreadLocalInit(const VarDecl *D, raw_ostream &);
+  void mangleItaniumThreadLocalWrapper(const VarDecl *D, raw_ostream &);
 
   void mangleInitDiscriminator() {
     Discriminator = 0;
@@ -2394,6 +2396,7 @@ recurse:
   case Expr::ImplicitValueInitExprClass:
   case Expr::ParenListExprClass:
   case Expr::LambdaExprClass:
+  case Expr::MSPropertyRefExprClass:
     llvm_unreachable("unexpected statement kind");
 
   // FIXME: invent manglings for all these.
@@ -2468,6 +2471,10 @@ recurse:
 
   case Expr::CXXDefaultArgExprClass:
     mangleExpression(cast<CXXDefaultArgExpr>(E)->getExpr(), Arity);
+    break;
+
+  case Expr::CXXDefaultInitExprClass:
+    mangleExpression(cast<CXXDefaultInitExpr>(E)->getExpr(), Arity);
     break;
 
   case Expr::SubstNonTypeTemplateParmExprClass:
@@ -3527,6 +3534,22 @@ void ItaniumMangleContext::mangleItaniumGuardVariable(const VarDecl *D,
   //                                            # initialization
   CXXNameMangler Mangler(*this, Out);
   Mangler.getStream() << "_ZGV";
+  Mangler.mangleName(D);
+}
+
+void ItaniumMangleContext::mangleItaniumThreadLocalInit(const VarDecl *D,
+                                                        raw_ostream &Out) {
+  //  <special-name> ::= TH <object name>
+  CXXNameMangler Mangler(*this, Out);
+  Mangler.getStream() << "_ZTH";
+  Mangler.mangleName(D);
+}
+
+void ItaniumMangleContext::mangleItaniumThreadLocalWrapper(const VarDecl *D,
+                                                           raw_ostream &Out) {
+  //  <special-name> ::= TW <object name>
+  CXXNameMangler Mangler(*this, Out);
+  Mangler.getStream() << "_ZTW";
   Mangler.mangleName(D);
 }
 

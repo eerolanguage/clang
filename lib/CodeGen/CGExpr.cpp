@@ -184,12 +184,16 @@ CreateReferenceTemporary(CodeGenFunction &CGF, QualType Type,
       llvm::Type *RefTempTy = CGF.ConvertTypeForMem(Type);
   
       // Create the reference temporary.
-      llvm::GlobalValue *RefTemp =
+      llvm::GlobalVariable *RefTemp =
         new llvm::GlobalVariable(CGF.CGM.getModule(), 
                                  RefTempTy, /*isConstant=*/false,
                                  llvm::GlobalValue::InternalLinkage,
                                  llvm::Constant::getNullValue(RefTempTy),
                                  Name.str());
+      // If we're binding to a thread_local variable, the temporary is also
+      // thread local.
+      if (VD->getTLSKind())
+        CGF.CGM.setTLSMode(RefTemp, *VD);
       return RefTemp;
     }
   }
@@ -434,12 +438,15 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
           CGM.GetAddrOfCXXDestructor(ReferenceTemporaryDtor, Dtor_Complete);
         CleanupArg = cast<llvm::Constant>(ReferenceTemporary);
       }
-      CGM.getCXXABI().registerGlobalDtor(*this, CleanupFn, CleanupArg);
+      CGM.getCXXABI().registerGlobalDtor(*this, *VD, CleanupFn, CleanupArg);
     } else if (ReferenceInitializerList) {
+      // FIXME: This is wrong. We need to register a global destructor to clean
+      // up the initializer_list object, rather than adding it as a local
+      // cleanup.
       EmitStdInitializerListCleanup(ReferenceTemporary,
                                     ReferenceInitializerList);
     } else {
-      assert(!ObjCARCReferenceLifetimeType.isNull());
+      assert(!ObjCARCReferenceLifetimeType.isNull() && !VD->getTLSKind());
       // Note: We intentionally do not register a global "destructor" to
       // release the object.
     }
@@ -896,6 +903,10 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
     return EmitNullInitializationLValue(cast<CXXScalarValueInitExpr>(E));
   case Expr::CXXDefaultArgExprClass:
     return EmitLValue(cast<CXXDefaultArgExpr>(E)->getExpr());
+  case Expr::CXXDefaultInitExprClass: {
+    CXXDefaultInitExprScope Scope(*this);
+    return EmitLValue(cast<CXXDefaultInitExpr>(E)->getExpr());
+  }
   case Expr::CXXTypeidExprClass:
     return EmitCXXTypeidLValue(cast<CXXTypeidExpr>(E));
 
@@ -1817,8 +1828,12 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
 
   if (const VarDecl *VD = dyn_cast<VarDecl>(ND)) {
     // Check if this is a global variable.
-    if (VD->hasLinkage() || VD->isStaticDataMember())
+    if (VD->hasLinkage() || VD->isStaticDataMember()) {
+      // If it's thread_local, emit a call to its wrapper function instead.
+      if (VD->getTLSKind() == VarDecl::TLS_Dynamic)
+        return CGM.getCXXABI().EmitThreadLocalDeclRefExpr(*this, E);
       return EmitGlobalVarDeclLValue(*this, E, VD);
+    }
 
     bool isBlockVariable = VD->hasAttr<BlocksAttr>();
 

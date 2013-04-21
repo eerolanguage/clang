@@ -41,7 +41,7 @@ bool bugreporter::isDeclRefExprToReference(const Expr *E) {
 }
 
 const Expr *bugreporter::getDerefExpr(const Stmt *S) {
-  // Pattern match for a few useful cases (do something smarter later):
+  // Pattern match for a few useful cases:
   //   a[0], p->f, *p
   const Expr *E = dyn_cast<Expr>(S);
   if (!E)
@@ -61,6 +61,10 @@ const Expr *bugreporter::getDerefExpr(const Stmt *S) {
     else if (const MemberExpr *ME = dyn_cast<MemberExpr>(E)) {
       if (ME->isArrow() || isDeclRefExprToReference(ME->getBase())) {
         return ME->getBase()->IgnoreParenCasts();
+      } else {
+        // If we have a member expr with a dot, the base must have been
+        // dereferenced.
+        return getDerefExpr(ME->getBase());
       }
     }
     else if (const ObjCIvarRefExpr *IvarRef = dyn_cast<ObjCIvarRefExpr>(E)) {
@@ -68,6 +72,9 @@ const Expr *bugreporter::getDerefExpr(const Stmt *S) {
     }
     else if (const ArraySubscriptExpr *AE = dyn_cast<ArraySubscriptExpr>(E)) {
       return AE->getBase();
+    }
+    else if (isDeclRefExprToReference(E)) {
+      return E;
     }
     break;
   }
@@ -526,7 +533,7 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
                                      "Initializing to ";
     } else if (isa<BlockExpr>(S)) {
       action = R->canPrintPretty() ? "captured by block as " :
-                                     "Capturing by block as ";
+                                     "Captured by block as ";
       if (VR) {
         // See if we can get the BlockVarRegion.
         ProgramStateRef State = StoreSite->getState();
@@ -580,7 +587,7 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
           }
         }
         else {
-          os << (R->canPrintPretty() ? "initialized" : "Initializing")
+          os << (R->canPrintPretty() ? "initialized" : "Initialized")
              << " here";
         }
       }
@@ -626,19 +633,33 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
           }
         }
       }
+      if (!b) {
+        if (R->canPrintPretty())
+          os << "Null pointer value stored";
+        else
+          os << "Storing null pointer value";
+      }
 
-      if (!b)
-        os << "Null pointer value stored";
-    }
-    else if (V.isUndef()) {
-      os << "Uninitialized value stored";
+    } else if (V.isUndef()) {
+      if (R->canPrintPretty())
+        os << "Uninitialized value stored";
+      else
+        os << "Storing uninitialized value";
+
     } else if (Optional<nonloc::ConcreteInt> CV =
                    V.getAs<nonloc::ConcreteInt>()) {
-      os << "The value " << CV->getValue() << " is assigned";
-    }
-    else
-      os << "Value assigned";
+      if (R->canPrintPretty())
+        os << "The value " << CV->getValue() << " is assigned";
+      else
+        os << "Assigning " << CV->getValue();
 
+    } else {
+      if (R->canPrintPretty())
+        os << "Value assigned";
+      else
+        os << "Assigning value";
+    }
+    
     if (R->canPrintPretty()) {
       os << " to ";
       R->printPretty(os);
@@ -685,6 +706,14 @@ TrackConstraintBRVisitor::VisitNode(const ExplodedNode *N,
   if (IsSatisfied)
     return NULL;
 
+  // Start tracking after we see the first state in which the value is
+  // constrained.
+  if (!IsTrackingTurnedOn)
+    if (!isUnderconstrained(N))
+      IsTrackingTurnedOn = true;
+  if (!IsTrackingTurnedOn)
+    return 0;
+
   // Check if in the previous state it was feasible for this constraint
   // to *not* be true.
   if (isUnderconstrained(PrevN)) {
@@ -694,8 +723,7 @@ TrackConstraintBRVisitor::VisitNode(const ExplodedNode *N,
     // As a sanity check, make sure that the negation of the constraint
     // was infeasible in the current state.  If it is feasible, we somehow
     // missed the transition point.
-    if (isUnderconstrained(N))
-      return NULL;
+    assert(!isUnderconstrained(N));
 
     // We found the transition point for the constraint.  We now need to
     // pretty-print the constraint. (work-in-progress)
@@ -936,7 +964,7 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
       report.addVisitor(new UndefOrNullArgVisitor(R));
 
       // If the contents are symbolic, find out when they became null.
-      if (V.getAsLocSymbol()) {
+      if (V.getAsLocSymbol(/*IncludeBaseRegions*/ true)) {
         BugReporterVisitor *ConstraintTracker =
           new TrackConstraintBRVisitor(V.castAs<DefinedSVal>(), false);
         report.addVisitor(ConstraintTracker);
@@ -976,7 +1004,13 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
   if (Optional<loc::MemRegionVal> L = V.getAs<loc::MemRegionVal>()) {
     // At this point we are dealing with the region's LValue.
     // However, if the rvalue is a symbolic region, we should track it as well.
-    SVal RVal = state->getSVal(L->getRegion());
+    // Try to use the correct type when looking up the value.
+    SVal RVal;
+    if (const Expr *E = dyn_cast<Expr>(S))
+      RVal = state->getRawSVal(L.getValue(), E->getType());
+    else
+      RVal = state->getSVal(L->getRegion());
+
     const MemRegion *RegionRVal = RVal.getAsRegion();
     report.addVisitor(new UndefOrNullArgVisitor(L->getRegion()));
 
@@ -1012,9 +1046,21 @@ PathDiagnosticPiece *NilReceiverBRVisitor::VisitNode(const ExplodedNode *N,
   if (!P)
     return 0;
 
-  const Expr *Receiver = getNilReceiver(P->getStmt(), N);
+  const Stmt *S = P->getStmt();
+  const Expr *Receiver = getNilReceiver(S, N);
   if (!Receiver)
     return 0;
+
+  llvm::SmallString<256> Buf;
+  llvm::raw_svector_ostream OS(Buf);
+
+  if (const ObjCMessageExpr *ME = dyn_cast<ObjCMessageExpr>(S)) {
+    OS << "'" << ME->getSelector().getAsString() << "' not called";
+  }
+  else {
+    OS << "No method is called";
+  }
+  OS << " because the receiver is nil";
 
   // The receiver was nil, and hence the method was skipped.
   // Register a BugReporterVisitor to issue a message telling us how
@@ -1024,8 +1070,7 @@ PathDiagnosticPiece *NilReceiverBRVisitor::VisitNode(const ExplodedNode *N,
   // Issue a message saying that the method was skipped.
   PathDiagnosticLocation L(Receiver, BRC.getSourceManager(),
                                      N->getLocationContext());
-  return new PathDiagnosticEventPiece(L, "No method is called "
-      "because the receiver is nil");
+  return new PathDiagnosticEventPiece(L, OS.str());
 }
 
 // Registers every VarDecl inside a Stmt with a last store visitor.

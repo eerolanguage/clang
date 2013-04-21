@@ -31,8 +31,7 @@ using namespace clang;
 using namespace CodeGen;
 
 CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
-  : CodeGenTypeCache(cgm), CGM(cgm),
-    Target(CGM.getContext().getTargetInfo()),
+  : CodeGenTypeCache(cgm), CGM(cgm), Target(cgm.getTarget()),
     Builder(cgm.getModule().getContext()),
     SanitizePerformTypeCheck(CGM.getSanOpts().Null |
                              CGM.getSanOpts().Alignment |
@@ -46,6 +45,7 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
     DidCallStackSave(false),
     IndirectBranch(0), SwitchInsn(0), CaseRangeBlock(0), UnreachableBlock(0),
     CXXABIThisDecl(0), CXXABIThisValue(0), CXXThisValue(0),
+    CXXDefaultInitExprThis(0),
     CXXStructorImplicitParamDecl(0), CXXStructorImplicitParamValue(0),
     OutermostConditional(0), CurLexicalScope(0), TerminateLandingPad(0),
     TerminateHandler(0), TrapBB(0) {
@@ -279,8 +279,8 @@ void CodeGenFunction::EmitFunctionInstrumentation(const char *Fn) {
 void CodeGenFunction::EmitMCountInstrumentation() {
   llvm::FunctionType *FTy = llvm::FunctionType::get(VoidTy, false);
 
-  llvm::Constant *MCountFn = CGM.CreateRuntimeFunction(FTy,
-                                                       Target.getMCountName());
+  llvm::Constant *MCountFn =
+    CGM.CreateRuntimeFunction(FTy, getTarget().getMCountName());
   EmitNounwindRuntimeCall(MCountFn);
 }
 
