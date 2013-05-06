@@ -2125,6 +2125,10 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result, QualType Ty) {
     case Type::Complex:
       break;
 
+    // Non-deduced auto types only get here for error cases.
+    case Type::Auto:
+      break;
+
     // If T is an Objective-C object or interface type, or a pointer to an 
     // object or interface type, the associated namespace is the global
     // namespace.
@@ -3825,13 +3829,6 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
   // Don't try to correct 'super'.
   if (S && S->isInObjcMethodScope() && Typo == getSuperIdentifier())
     return TypoCorrection();
-
-  // This is for testing.
-  if (Diags.getWarnOnSpellCheck()) {
-    unsigned DiagID = Diags.getCustomDiagID(DiagnosticsEngine::Warning,
-                                            "spell-checking initiated for %0");
-    Diag(TypoName.getLoc(), DiagID) << TypoName.getName();
-  }
 
   NamespaceSpecifierSet Namespaces(Context, CurContext, SS);
 

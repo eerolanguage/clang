@@ -1196,7 +1196,7 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
   // initialize the return value.  TODO: it might be nice to have
   // a more general mechanism for this that didn't require synthesized
   // return statements.
-  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(CurFuncDecl)) {
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(CurCodeDecl)) {
     if (FD->hasImplicitReturnZero()) {
       QualType RetTy = FD->getResultType().getUnqualifiedType();
       llvm::Type* LLVMTy = CGM.getTypes().ConvertType(RetTy);
@@ -1625,7 +1625,8 @@ static bool checkThisPointer(llvm::Value *ThisArg, llvm::Value *This) {
   return false;
 }
 
-void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI) {
+void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
+                                         bool EmitRetDbgLoc) {
   // Functions with no result always return void.
   if (ReturnValue == 0) {
     Builder.CreateRetVoid();
@@ -1670,8 +1671,10 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI) {
       // If there is a dominating store to ReturnValue, we can elide
       // the load, zap the store, and usually zap the alloca.
       if (llvm::StoreInst *SI = findDominatingStoreToReturnValue(*this)) {
+        // Reuse the debug location from the store unless we're told not to.
+        if (EmitRetDbgLoc)
+          RetDbgLoc = SI->getDebugLoc();
         // Get the stored value and nuke the now-dead store.
-        RetDbgLoc = SI->getDebugLoc();
         RV = SI->getValueOperand();
         SI->eraseFromParent();
 

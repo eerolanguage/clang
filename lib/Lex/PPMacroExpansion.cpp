@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Lex/Preprocessor.h"
-#include "MacroArgs.h"
+#include "clang/Lex/MacroArgs.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
@@ -223,7 +223,7 @@ bool Preprocessor::HandleMacroExpandedIdentifier(Token &Identifier,
   // If this is a builtin macro, like __LINE__ or _Pragma, handle it specially.
   if (MI->isBuiltinMacro()) {
     if (Callbacks) Callbacks->MacroExpands(Identifier, MD,
-                                           Identifier.getLocation());
+                                           Identifier.getLocation(),/*Args=*/0);
     ExpandBuiltinMacro(Identifier);
     return false;
   }
@@ -277,11 +277,12 @@ bool Preprocessor::HandleMacroExpandedIdentifier(Token &Identifier,
       DelayedMacroExpandsCallbacks.push_back(
                               MacroExpandsInfo(Identifier, MD, ExpansionRange));
     } else {
-      Callbacks->MacroExpands(Identifier, MD, ExpansionRange);
+      Callbacks->MacroExpands(Identifier, MD, ExpansionRange, Args);
       if (!DelayedMacroExpandsCallbacks.empty()) {
         for (unsigned i=0, e = DelayedMacroExpandsCallbacks.size(); i!=e; ++i) {
           MacroExpandsInfo &Info = DelayedMacroExpandsCallbacks[i];
-          Callbacks->MacroExpands(Info.Tok, Info.MD, Info.Range);
+          // FIXME: We lose macro args info with delayed callback.
+          Callbacks->MacroExpands(Info.Tok, Info.MD, Info.Range, /*Args=*/0);
         }
         DelayedMacroExpandsCallbacks.clear();
       }
@@ -751,7 +752,8 @@ static bool HasFeature(const Preprocessor &PP, const IdentifierInfo *II) {
            .Case("c_atomic", LangOpts.C11)
            .Case("c_generic_selections", LangOpts.C11)
            .Case("c_static_assert", LangOpts.C11)
-           .Case("c_thread_local", LangOpts.C11)
+           .Case("c_thread_local", 
+                 LangOpts.C11 && PP.getTargetInfo().isTLSSupported())
            // C++11 features
            .Case("cxx_access_control_sfinae", LangOpts.CPlusPlus11)
            .Case("cxx_alias_templates", LangOpts.CPlusPlus11)
@@ -783,7 +785,8 @@ static bool HasFeature(const Preprocessor &PP, const IdentifierInfo *II) {
            .Case("cxx_rvalue_references", LangOpts.CPlusPlus11)
            .Case("cxx_strong_enums", LangOpts.CPlusPlus11)
            .Case("cxx_static_assert", LangOpts.CPlusPlus11)
-           .Case("cxx_thread_local", LangOpts.CPlusPlus11)
+           .Case("cxx_thread_local", 
+                 LangOpts.CPlusPlus11 && PP.getTargetInfo().isTLSSupported())
            .Case("cxx_trailing_return", LangOpts.CPlusPlus11)
            .Case("cxx_unicode_literals", LangOpts.CPlusPlus11)
            .Case("cxx_unrestricted_unions", LangOpts.CPlusPlus11)

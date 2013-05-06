@@ -673,19 +673,38 @@ GCCAsmStmt::GCCAsmStmt(ASTContext &C, SourceLocation asmloc, bool issimple,
 MSAsmStmt::MSAsmStmt(ASTContext &C, SourceLocation asmloc,
                      SourceLocation lbraceloc, bool issimple, bool isvolatile,
                      ArrayRef<Token> asmtoks, unsigned numoutputs,
-                     unsigned numinputs, ArrayRef<IdentifierInfo*> names,
+                     unsigned numinputs,
                      ArrayRef<StringRef> constraints, ArrayRef<Expr*> exprs,
                      StringRef asmstr, ArrayRef<StringRef> clobbers,
                      SourceLocation endloc)
   : AsmStmt(MSAsmStmtClass, asmloc, issimple, isvolatile, numoutputs,
             numinputs, clobbers.size()), LBraceLoc(lbraceloc),
-            EndLoc(endloc), AsmStr(asmstr.str()), NumAsmToks(asmtoks.size()) {
+            EndLoc(endloc), NumAsmToks(asmtoks.size()) {
 
-  unsigned NumExprs = NumOutputs + NumInputs;
+  initialize(C, asmstr, asmtoks, constraints, exprs, clobbers);
+}
 
-  Names = new (C) IdentifierInfo*[NumExprs];
-  for (unsigned i = 0, e = NumExprs; i != e; ++i)
-    Names[i] = names[i];
+static StringRef copyIntoContext(ASTContext &C, StringRef str) {
+  size_t size = str.size();
+  char *buffer = new (C) char[size];
+  memcpy(buffer, str.data(), size);
+  return StringRef(buffer, size);
+}
+
+void MSAsmStmt::initialize(ASTContext &C,
+                           StringRef asmstr,
+                           ArrayRef<Token> asmtoks,
+                           ArrayRef<StringRef> constraints,
+                           ArrayRef<Expr*> exprs,
+                           ArrayRef<StringRef> clobbers) {
+  assert(NumAsmToks == asmtoks.size());
+  assert(NumClobbers == clobbers.size());
+
+  unsigned NumExprs = exprs.size();
+  assert(NumExprs == NumOutputs + NumInputs);
+  assert(NumExprs == constraints.size());
+
+  AsmStr = copyIntoContext(C, asmstr);
 
   Exprs = new (C) Stmt*[NumExprs];
   for (unsigned i = 0, e = NumExprs; i != e; ++i)
@@ -697,19 +716,13 @@ MSAsmStmt::MSAsmStmt(ASTContext &C, SourceLocation asmloc,
 
   Constraints = new (C) StringRef[NumExprs];
   for (unsigned i = 0, e = NumExprs; i != e; ++i) {
-    size_t size = constraints[i].size();
-    char *dest = new (C) char[size];
-    std::strncpy(dest, constraints[i].data(), size); 
-    Constraints[i] = StringRef(dest, size);
+    Constraints[i] = copyIntoContext(C, constraints[i]);
   }
 
   Clobbers = new (C) StringRef[NumClobbers];
   for (unsigned i = 0, e = NumClobbers; i != e; ++i) {
     // FIXME: Avoid the allocation/copy if at all possible.
-    size_t size = clobbers[i].size();
-    char *dest = new (C) char[size];
-    std::strncpy(dest, clobbers[i].data(), size); 
-    Clobbers[i] = StringRef(dest, size);
+    Clobbers[i] = copyIntoContext(C, clobbers[i]);
   }
 }
 
@@ -1036,12 +1049,13 @@ CapturedStmt::Capture *CapturedStmt::getStoredCaptures() const {
       + FirstCaptureOffset);
 }
 
-CapturedStmt::CapturedStmt(Stmt *S, ArrayRef<Capture> Captures,
+CapturedStmt::CapturedStmt(Stmt *S, CapturedRegionKind Kind,
+                           ArrayRef<Capture> Captures,
                            ArrayRef<Expr *> CaptureInits,
                            CapturedDecl *CD,
                            RecordDecl *RD)
   : Stmt(CapturedStmtClass), NumCaptures(Captures.size()),
-    TheCapturedDecl(CD), TheRecordDecl(RD) {
+    CapDeclAndKind(CD, Kind), TheRecordDecl(RD) {
   assert( S && "null captured statement");
   assert(CD && "null captured declaration for captured statement");
   assert(RD && "null record declaration for captured statement");
@@ -1061,11 +1075,12 @@ CapturedStmt::CapturedStmt(Stmt *S, ArrayRef<Capture> Captures,
 
 CapturedStmt::CapturedStmt(EmptyShell Empty, unsigned NumCaptures)
   : Stmt(CapturedStmtClass, Empty), NumCaptures(NumCaptures),
-    TheCapturedDecl(0), TheRecordDecl(0) {
+    CapDeclAndKind(0, CR_Default), TheRecordDecl(0) {
   getStoredStmts()[NumCaptures] = 0;
 }
 
 CapturedStmt *CapturedStmt::Create(ASTContext &Context, Stmt *S,
+                                   CapturedRegionKind Kind,
                                    ArrayRef<Capture> Captures,
                                    ArrayRef<Expr *> CaptureInits,
                                    CapturedDecl *CD,
@@ -1089,7 +1104,7 @@ CapturedStmt *CapturedStmt::Create(ASTContext &Context, Stmt *S,
   }
 
   void *Mem = Context.Allocate(Size);
-  return new (Mem) CapturedStmt(S, Captures, CaptureInits, CD, RD);
+  return new (Mem) CapturedStmt(S, Kind, Captures, CaptureInits, CD, RD);
 }
 
 CapturedStmt *CapturedStmt::CreateDeserialized(ASTContext &Context,
@@ -1111,8 +1126,8 @@ Stmt::child_range CapturedStmt::children() {
 }
 
 bool CapturedStmt::capturesVariable(const VarDecl *Var) const {
-  for (capture_iterator I = capture_begin(),
-                        E = capture_end(); I != E; ++I) {
+  for (const_capture_iterator I = capture_begin(),
+                              E = capture_end(); I != E; ++I) {
     if (I->capturesThis())
       continue;
 

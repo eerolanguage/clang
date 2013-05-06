@@ -2019,6 +2019,13 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
          (isVisibilitySpecifier(Tok, NextToken()) ||
           isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(ObjCImpDecl, tok::objc_private, AtLoc);
+    else if (Tok.is(tok::less)) { // we have illegal '<' try to recover
+      Diag(Tok, diag::err_unexpected_protocol_qualifier);
+      // try to recover.
+      AttributeFactory attr;
+      DeclSpec DS(attr);
+      (void)ParseObjCProtocolQualifiers(DS);
+    }
   }
   assert(ObjCImpDecl);
 
@@ -2136,7 +2143,7 @@ Decl *Parser::ParseObjCAtAliasDeclaration(SourceLocation atLoc) {
 ///
 Decl *Parser::ParseObjCPropertySynthesize(SourceLocation atLoc) {
   assert(Tok.isObjCAtKeyword(tok::objc_synthesize) &&
-         "ParseObjCPropertyDynamic(): Expected '@synthesize'");
+         "ParseObjCPropertySynthesize(): Expected '@synthesize'");
   ConsumeToken(); // consume synthesize
 
   while (true) {

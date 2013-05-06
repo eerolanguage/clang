@@ -1,4 +1,10 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -triple=x86_64-apple-darwin -fsyntax-only -verify %s
+
+//====------------------------------------------------------------====//
+// Test deprecated direct usage of the 'isa' pointer.
+//====------------------------------------------------------------====//
+
+typedef unsigned long NSUInteger;
 
 typedef struct objc_object {
   struct objc_class *isa;
@@ -81,3 +87,11 @@ static void func() {
 }
 @end
 
+// Test for introspection of Objective-C pointers via bitmasking.
+
+void testBitmasking(NSObject *p) {
+  (void) (((NSUInteger) p) & 0x1); // expected-warning {{bitmasking for introspection of Objective-C object pointers is strongly discouraged}}
+  (void) (0x1 & ((NSUInteger) p)); // expected-warning {{bitmasking for introspection of Objective-C object pointers is strongly discouraged}}
+  (void) (((NSUInteger) p) ^ 0x1); // no-warning
+  (void) (0x1 ^ ((NSUInteger) p)); // no-warning
+}

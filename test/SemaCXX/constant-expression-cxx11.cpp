@@ -304,16 +304,16 @@ struct Str {
     expected-note {{reinterpret_cast is not allowed in a constant expression}}
   int c : (S*)(long)(sptr) == (S*)(long)(sptr); // \
     expected-warning {{not an integral constant expression}} \
-    expected-note {{cast which performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
+    expected-note {{cast that performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
   int d : (S*)(42) == (S*)(42); // \
     expected-warning {{not an integral constant expression}} \
-    expected-note {{cast which performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
+    expected-note {{cast that performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
   int e : (Str*)(sptr) == (Str*)(sptr); // \
     expected-warning {{not an integral constant expression}} \
-    expected-note {{cast which performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
+    expected-note {{cast that performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
   int f : &(U&)(*sptr) == &(U&)(*sptr); // \
     expected-warning {{not an integral constant expression}} \
-    expected-note {{cast which performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
+    expected-note {{cast that performs the conversions of a reinterpret_cast is not allowed in a constant expression}}
   int g : (S*)(void*)(sptr) == sptr; // \
     expected-warning {{not an integral constant expression}} \
     expected-note {{cast from 'void *' is not allowed in a constant expression}}
@@ -362,7 +362,7 @@ constexpr char c0 = "nought index"[0];
 constexpr char c1 = "nice index"[10];
 constexpr char c2 = "nasty index"[12]; // expected-error {{must be initialized by a constant expression}} expected-warning {{is past the end}} expected-note {{read of dereferenced one-past-the-end pointer}}
 constexpr char c3 = "negative index"[-1]; // expected-error {{must be initialized by a constant expression}} expected-warning {{is before the beginning}} expected-note {{cannot refer to element -1 of array of 15 elements}}
-constexpr char c4 = ((char*)(int*)"no reinterpret_casts allowed")[14]; // expected-error {{must be initialized by a constant expression}} expected-note {{cast which performs the conversions of a reinterpret_cast}}
+constexpr char c4 = ((char*)(int*)"no reinterpret_casts allowed")[14]; // expected-error {{must be initialized by a constant expression}} expected-note {{cast that performs the conversions of a reinterpret_cast}}
 
 constexpr const char *p = "test" + 2;
 static_assert(*p == 's', "");
@@ -1312,6 +1312,13 @@ namespace InvalidClasses {
   }
 }
 
+namespace NamespaceAlias {
+  constexpr int f() {
+    namespace NS = NamespaceAlias; // expected-warning {{use of this statement in a constexpr function is a C++1y extension}}
+    return &NS::f != nullptr;
+  }
+}
+
 // Constructors can be implicitly constexpr, even for a non-literal type.
 namespace ImplicitConstexpr {
   struct Q { Q() = default; Q(const Q&) = default; Q(Q&&) = default; ~Q(); }; // expected-note 3{{here}}
@@ -1454,4 +1461,32 @@ namespace PR14203 {
   // this would be a constant expression. For now, we generate a move
   // constructor here.
   int n = sizeof(short{duration(duration())});
+}
+
+namespace ArrayEltInit {
+  struct A {
+    constexpr A() : p(&p) {}
+    void *p;
+  };
+  constexpr A a[10];
+  static_assert(a[0].p == &a[0].p, "");
+  static_assert(a[9].p == &a[9].p, "");
+  static_assert(a[0].p != &a[9].p, "");
+  static_assert(a[9].p != &a[0].p, "");
+
+  constexpr A b[10] = {};
+  static_assert(b[0].p == &b[0].p, "");
+  static_assert(b[9].p == &b[9].p, "");
+  static_assert(b[0].p != &b[9].p, "");
+  static_assert(b[9].p != &b[0].p, "");
+}
+
+namespace PR15884 {
+  struct S {};
+  constexpr S f() { return {}; }
+  constexpr S *p = &f();
+  // expected-error@-1 {{taking the address of a temporary}}
+  // expected-error@-2 {{constexpr variable 'p' must be initialized by a constant expression}}
+  // expected-note@-3 {{pointer to temporary is not a constant expression}}
+  // expected-note@-4 {{temporary created here}}
 }

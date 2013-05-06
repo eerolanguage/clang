@@ -1479,7 +1479,8 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
     }
 
     if (D->getTLSKind()) {
-      CXXThreadLocals.push_back(std::make_pair(D, GV));
+      if (D->getTLSKind() == VarDecl::TLS_Dynamic)
+        CXXThreadLocals.push_back(std::make_pair(D, GV));
       setTLSMode(GV, *D);
     }
   }
@@ -1622,7 +1623,7 @@ CodeGenModule::MaybeEmitGlobalStdInitializerListInitializer(const VarDecl *D,
                                           D->getLocStart(), D->getLocation(),
                                           name, arrayType, sourceInfo,
                                           SC_Static);
-  backingArray->setTLSKind(D->getTLSKind());
+  backingArray->setTSCSpec(D->getTSCSpec());
 
   // Now clone the InitListExpr to initialize the array instead.
   // Incredible hack: we want to use the existing InitListExpr here, so we need
@@ -1915,7 +1916,13 @@ CodeGenModule::GetLLVMLinkageVarDefinition(const VarDecl *D,
            !D->getAttr<WeakImportAttr>()) {
     // Thread local vars aren't considered common linkage.
     return llvm::GlobalVariable::CommonLinkage;
-  }
+  } else if (D->getTLSKind() == VarDecl::TLS_Dynamic &&
+             getTarget().getTriple().isMacOSX())
+    // On Darwin, the backing variable for a C++11 thread_local variable always
+    // has internal linkage; all accesses should just be calls to the
+    // Itanium-specified entry point, which has the normal linkage of the
+    // variable.
+    return llvm::GlobalValue::InternalLinkage;
   return llvm::GlobalVariable::ExternalLinkage;
 }
 
@@ -2818,7 +2825,6 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     // No code generation needed.
   case Decl::UsingShadow:
   case Decl::Using:
-  case Decl::UsingDirective:
   case Decl::ClassTemplate:
   case Decl::FunctionTemplate:
   case Decl::TypeAliasTemplate:
@@ -2826,6 +2832,10 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
   case Decl::Block:
   case Decl::Empty:
     break;
+  case Decl::UsingDirective: // using namespace X; [C++]
+    if (CGDebugInfo *DI = getModuleDebugInfo())
+      DI->EmitUsingDirective(cast<UsingDirectiveDecl>(*D));
+    return;
   case Decl::CXXConstructor:
     // Skip function templates
     if (cast<FunctionDecl>(D)->getDescribedFunctionTemplate() ||

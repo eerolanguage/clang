@@ -867,6 +867,9 @@ public:
   const FunctionType *adjustFunctionType(const FunctionType *Fn,
                                          FunctionType::ExtInfo EInfo);
 
+  /// \brief Change the result type of a function type once it is deduced.
+  void adjustDeducedFunctionResultType(FunctionDecl *FD, QualType ResultType);
+
   /// \brief Return the uniqued reference to the type for a complex
   /// number with the specified element type.
   QualType getComplexType(QualType T) const;
@@ -1100,7 +1103,8 @@ public:
                                  UnaryTransformType::UTTKind UKind) const;
 
   /// \brief C++11 deduced auto type.
-  QualType getAutoType(QualType DeducedType) const;
+  QualType getAutoType(QualType DeducedType, bool IsDecltypeAuto,
+                       bool IsDependent = false) const;
 
   /// \brief C++11 deduction pattern for 'auto' type.
   QualType getAutoDeductType() const;
@@ -1451,7 +1455,18 @@ public:
     qs.addObjCLifetime(lifetime);
     return getQualifiedType(type, qs);
   }
-
+  
+  /// getUnqualifiedObjCPointerType - Returns version of
+  /// Objective-C pointer type with lifetime qualifier removed.
+  QualType getUnqualifiedObjCPointerType(QualType type) const {
+    if (!type.getTypePtr()->isObjCObjectPointerType() ||
+        !type.getQualifiers().hasObjCLifetime())
+      return type;
+    Qualifiers Qs = type.getQualifiers();
+    Qs.removeObjCLifetime();
+    return getQualifiedType(type.getUnqualifiedType(), Qs);
+  }
+  
   DeclarationNameInfo getNameForTemplate(TemplateName Name,
                                          SourceLocation NameLoc) const;
 

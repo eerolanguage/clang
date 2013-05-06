@@ -172,6 +172,25 @@ class Parser : public CodeCompletionHandler {
   /// The "depth" of the template parameters currently being parsed.
   unsigned TemplateParameterDepth;
 
+  /// \brief RAII class that manages the template parameter depth.
+  class TemplateParameterDepthRAII {
+    unsigned &Depth;
+    unsigned AddedLevels;
+  public:
+    explicit TemplateParameterDepthRAII(unsigned &Depth)
+      : Depth(Depth), AddedLevels(0) {}
+
+    ~TemplateParameterDepthRAII() {
+      Depth -= AddedLevels;
+    }
+
+    void operator++() {
+      ++Depth;
+      ++AddedLevels;
+    }
+    unsigned getDepth() const { return Depth; }
+  };
+
   /// Factory object for creating AttributeList objects.
   AttributeFactory AttrFactory;
 
@@ -465,19 +484,13 @@ private:
   /// \brief Read an already-translated primary expression out of an annotation
   /// token.
   static ExprResult getExprAnnotation(Token &Tok) {
-    if (Tok.getAnnotationValue())
-      return ExprResult((Expr *)Tok.getAnnotationValue());
-
-    return ExprResult(true);
+    return ExprResult::getFromOpaquePointer(Tok.getAnnotationValue());
   }
 
   /// \brief Set the primary expression corresponding to the given annotation
   /// token.
   static void setExprAnnotation(Token &Tok, ExprResult ER) {
-    if (ER.isInvalid())
-      Tok.setAnnotationValue(0);
-    else
-      Tok.setAnnotationValue(ER.get());
+    Tok.setAnnotationValue(ER.getAsOpaquePointer());
   }
 
 public:
@@ -1315,6 +1328,11 @@ public:
   ExprResult ParseConstantExpression(TypeCastState isTypeCast = NotTypeCast);
   // Expr that doesn't include commas.
   ExprResult ParseAssignmentExpression(TypeCastState isTypeCast = NotTypeCast);
+
+  ExprResult ParseMSAsmIdentifier(llvm::SmallVectorImpl<Token> &LineToks,
+                                  unsigned &NumLineToksConsumed,
+                                  void *Info,
+                                  bool IsUnevaluated);
 
 private:
   ExprResult ParseExpressionWithLeadingAt(SourceLocation AtLoc);

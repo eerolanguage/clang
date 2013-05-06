@@ -754,17 +754,20 @@ public:
                                      UnaryTransformType::UTTKind UKind,
                                      SourceLocation Loc);
 
-  /// \brief Build a new C++0x decltype type.
+  /// \brief Build a new C++11 decltype type.
   ///
   /// By default, performs semantic analysis when building the decltype type.
   /// Subclasses may override this routine to provide different behavior.
   QualType RebuildDecltypeType(Expr *Underlying, SourceLocation Loc);
 
-  /// \brief Build a new C++0x auto type.
+  /// \brief Build a new C++11 auto type.
   ///
   /// By default, builds a new AutoType with the given deduced type.
-  QualType RebuildAutoType(QualType Deduced) {
-    return SemaRef.Context.getAutoType(Deduced);
+  QualType RebuildAutoType(QualType Deduced, bool IsDecltypeAuto) {
+    // Note, IsDependent is always false here: we implicitly convert an 'auto'
+    // which has been deduced to a dependent type into an undeduced 'auto', so
+    // that we'll retry deduction after the transformation.
+    return SemaRef.Context.getAutoType(Deduced, IsDecltypeAuto);
   }
 
   /// \brief Build a new template specialization type.
@@ -1187,8 +1190,16 @@ public:
   /// By default, performs semantic analysis to build the new statement.
   /// Subclasses may override this routine to provide different behavior.
   StmtResult RebuildMSAsmStmt(SourceLocation AsmLoc, SourceLocation LBraceLoc,
-                              ArrayRef<Token> AsmToks, SourceLocation EndLoc) {
-    return getSema().ActOnMSAsmStmt(AsmLoc, LBraceLoc, AsmToks, EndLoc);
+                              ArrayRef<Token> AsmToks,
+                              StringRef AsmString,
+                              unsigned NumOutputs, unsigned NumInputs,
+                              ArrayRef<StringRef> Constraints,
+                              ArrayRef<StringRef> Clobbers,
+                              ArrayRef<Expr*> Exprs,
+                              SourceLocation EndLoc) {
+    return getSema().ActOnMSAsmStmt(AsmLoc, LBraceLoc, AsmToks, AsmString,
+                                    NumOutputs, NumInputs,
+                                    Constraints, Clobbers, Exprs, EndLoc);
   }
 
   /// \brief Build a new Objective-C \@try statement.
@@ -1343,6 +1354,9 @@ public:
     if (DeclStmt *RangeStmt = dyn_cast<DeclStmt>(Range)) {
       if (RangeStmt->isSingleDecl()) {
         if (VarDecl *RangeVar = dyn_cast<VarDecl>(RangeStmt->getSingleDecl())) {
+          if (RangeVar->isInvalidDecl())
+            return StmtError();
+
           Expr *RangeExpr = RangeVar->getInit();
           if (!RangeExpr->isTypeDependent() &&
               RangeExpr->getType()->isObjCObjectPointerType())
@@ -3407,7 +3421,7 @@ TreeTransform<Derived>::TransformQualifiedType(TypeLocBuilder &TLB,
         Qs.removeObjCLifetime();
         Deduced = SemaRef.Context.getQualifiedType(Deduced.getUnqualifiedType(),
                                                    Qs);
-        Result = SemaRef.Context.getAutoType(Deduced);
+        Result = SemaRef.Context.getAutoType(Deduced, AutoTy->isDecltypeAuto());
         TLB.TypeWasModifiedSafely(Result);
       } else {
         // Otherwise, complain about the addition of a qualifier to an
@@ -4500,8 +4514,9 @@ QualType TreeTransform<Derived>::TransformAutoType(TypeLocBuilder &TLB,
   }
 
   QualType Result = TL.getType();
-  if (getDerived().AlwaysRebuild() || NewDeduced != OldDeduced) {
-    Result = getDerived().RebuildAutoType(NewDeduced);
+  if (getDerived().AlwaysRebuild() || NewDeduced != OldDeduced ||
+      T->isDependentType()) {
+    Result = getDerived().RebuildAutoType(NewDeduced, T->isDecltypeAuto());
     if (Result.isNull())
       return QualType();
   }
@@ -5642,8 +5657,30 @@ TreeTransform<Derived>::TransformMSAsmStmt(MSAsmStmt *S) {
   ArrayRef<Token> AsmToks =
     llvm::makeArrayRef(S->getAsmToks(), S->getNumAsmToks());
 
+  bool HadError = false, HadChange = false;
+
+  ArrayRef<Expr*> SrcExprs = S->getAllExprs();
+  SmallVector<Expr*, 8> TransformedExprs;
+  TransformedExprs.reserve(SrcExprs.size());
+  for (unsigned i = 0, e = SrcExprs.size(); i != e; ++i) {
+    ExprResult Result = getDerived().TransformExpr(SrcExprs[i]);
+    if (!Result.isUsable()) {
+      HadError = true;
+    } else {
+      HadChange |= (Result.get() != SrcExprs[i]);
+      TransformedExprs.push_back(Result.take());
+    }
+  }
+
+  if (HadError) return StmtError();
+  if (!HadChange && !getDerived().AlwaysRebuild())
+    return Owned(S);
+
   return getDerived().RebuildMSAsmStmt(S->getAsmLoc(), S->getLBraceLoc(),
-                                       AsmToks, S->getEndLoc());
+                                       AsmToks, S->getAsmString(),
+                                       S->getNumOutputs(), S->getNumInputs(),
+                                       S->getAllConstraints(), S->getClobbers(),
+                                       TransformedExprs, S->getEndLoc());
 }
 
 template<typename Derived>
@@ -5944,12 +5981,15 @@ TreeTransform<Derived>::TransformCXXForRangeStmt(CXXForRangeStmt *S) {
       BeginEnd.get() != S->getBeginEndStmt() ||
       Cond.get() != S->getCond() ||
       Inc.get() != S->getInc() ||
-      LoopVar.get() != S->getLoopVarStmt())
+      LoopVar.get() != S->getLoopVarStmt()) {
     NewStmt = getDerived().RebuildCXXForRangeStmt(S->getForLoc(),
                                                   S->getColonLoc(), Range.get(),
                                                   BeginEnd.get(), Cond.get(),
                                                   Inc.get(), LoopVar.get(),
                                                   S->getRParenLoc());
+    if (NewStmt.isInvalid())
+      return StmtError();
+  }
 
   StmtResult Body = getDerived().TransformStmt(S->getBody());
   if (Body.isInvalid())
@@ -5957,12 +5997,15 @@ TreeTransform<Derived>::TransformCXXForRangeStmt(CXXForRangeStmt *S) {
 
   // Body has changed but we didn't rebuild the for-range statement. Rebuild
   // it now so we have a new statement to attach the body to.
-  if (Body.get() != S->getBody() && NewStmt.get() == S)
+  if (Body.get() != S->getBody() && NewStmt.get() == S) {
     NewStmt = getDerived().RebuildCXXForRangeStmt(S->getForLoc(),
                                                   S->getColonLoc(), Range.get(),
                                                   BeginEnd.get(), Cond.get(),
                                                   Inc.get(), LoopVar.get(),
                                                   S->getRParenLoc());
+    if (NewStmt.isInvalid())
+      return StmtError();
+  }
 
   if (NewStmt.get() == S)
     return SemaRef.Owned(S);
@@ -9406,7 +9449,18 @@ TreeTransform<Derived>::RebuildCXXPseudoDestructorExpr(Expr *Base,
 template<typename Derived>
 StmtResult
 TreeTransform<Derived>::TransformCapturedStmt(CapturedStmt *S) {
-  llvm_unreachable("not implement yet");
+  SourceLocation Loc = S->getLocStart();
+  unsigned NumParams = S->getCapturedDecl()->getNumParams();
+  getSema().ActOnCapturedRegionStart(Loc, /*CurScope*/0,
+                                     S->getCapturedRegionKind(), NumParams);
+  StmtResult Body = getDerived().TransformStmt(S->getCapturedStmt());
+
+  if (Body.isInvalid()) {
+    getSema().ActOnCapturedRegionError();
+    return StmtError();
+  }
+
+  return getSema().ActOnCapturedRegionEnd(Body.take());
 }
 
 } // end namespace clang

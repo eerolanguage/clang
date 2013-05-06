@@ -418,6 +418,35 @@ void FindLastStoreBRVisitor ::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddBoolean(EnableNullFPSuppression);
 }
 
+/// Returns true if \p N represents the DeclStmt declaring and initializing
+/// \p VR.
+static bool isInitializationOfVar(const ExplodedNode *N, const VarRegion *VR) {
+  Optional<PostStmt> P = N->getLocationAs<PostStmt>();
+  if (!P)
+    return false;
+
+  const DeclStmt *DS = P->getStmtAs<DeclStmt>();
+  if (!DS)
+    return false;
+
+  if (DS->getSingleDecl() != VR->getDecl())
+    return false;
+
+  const MemSpaceRegion *VarSpace = VR->getMemorySpace();
+  const StackSpaceRegion *FrameSpace = dyn_cast<StackSpaceRegion>(VarSpace);
+  if (!FrameSpace) {
+    // If we ever directly evaluate global DeclStmts, this assertion will be
+    // invalid, but this still seems preferable to silently accepting an
+    // initialization that may be for a path-sensitive variable.
+    assert(VR->getDecl()->isStaticLocal() && "non-static stackless VarRegion");
+    return true;
+  }
+
+  assert(VR->getDecl()->hasLocalStorage());
+  const LocationContext *LCtx = N->getLocationContext();
+  return FrameSpace->getStackFrame() == LCtx->getCurrentStackFrame();
+}
+
 PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
                                                        const ExplodedNode *Pred,
                                                        BugReporterContext &BRC,
@@ -432,13 +461,9 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
 
   // First see if we reached the declaration of the region.
   if (const VarRegion *VR = dyn_cast<VarRegion>(R)) {
-    if (Optional<PostStmt> P = Pred->getLocationAs<PostStmt>()) {
-      if (const DeclStmt *DS = P->getStmtAs<DeclStmt>()) {
-        if (DS->getSingleDecl() == VR->getDecl()) {
-          StoreSite = Pred;
-          InitE = VR->getDecl()->getInit();
-        }
-      }
+    if (isInitializationOfVar(Pred, VR)) {
+      StoreSite = Pred;
+      InitE = VR->getDecl()->getInit();
     }
   }
 
@@ -884,7 +909,7 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
       Inner = Ex;
   }
 
-  if (IsArg) {
+  if (IsArg && !Inner) {
     assert(N->getLocation().getAs<CallEnter>() && "Tracking arg but not at call");
   } else {
     // Walk through nodes until we get one that matches the statement exactly.
@@ -913,7 +938,7 @@ bool bugreporter::trackNullOrUndefValue(const ExplodedNode *N,
   // At this point in the path, the receiver should be live since we are at the
   // message send expr. If it is nil, start tracking it.
   if (const Expr *Receiver = NilReceiverBRVisitor::getNilReceiver(S, N))
-    trackNullOrUndefValue(N, Receiver, report, IsArg, EnableNullFPSuppression);
+    trackNullOrUndefValue(N, Receiver, report, false, EnableNullFPSuppression);
 
 
   // See if the expression we're interested refers to a variable.

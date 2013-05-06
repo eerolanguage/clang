@@ -155,6 +155,8 @@ private:
       }
 
       if (CurrentToken->is(tok::r_paren)) {
+        if (CurrentToken->Parent->closesScope())
+          CurrentToken->Parent->MatchingParen->NoMoreTokensOnLevel = true;
         Left->MatchingParen = CurrentToken;
         CurrentToken->MatchingParen = Left;
 
@@ -457,6 +459,10 @@ private:
     case tok::pp_warning:
       parseWarningOrError();
       break;
+    case tok::pp_if:
+    case tok::pp_elif:
+      parseLine();
+      break;
     default:
       break;
     }
@@ -590,6 +596,9 @@ private:
       Contexts.back().IsExpression = true;
     } else if (Current.is(tok::kw_new)) {
       Contexts.back().CanBeExpression = false;
+    } else if (Current.is(tok::semi)) {
+      // This should be the condition or increment in a for-loop.
+      Contexts.back().IsExpression = true;
     }
 
     if (Current.Type == TT_Unknown) {
@@ -1039,7 +1048,7 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
     return Line.Type == LT_ObjCDecl ||
            Left.isOneOf(tok::kw_if, tok::kw_for, tok::kw_while, tok::kw_switch,
                         tok::kw_return, tok::kw_catch, tok::kw_new,
-                        tok::kw_delete);
+                        tok::kw_delete, tok::semi);
   }
   if (Left.is(tok::at) &&
       Right.FormatTok.Tok.getObjCKeywordID() != tok::objc_not_keyword)
@@ -1181,6 +1190,7 @@ void TokenAnnotator::printDebugInfo(const AnnotatedLine &Line) {
     llvm::errs() << " M=" << Tok->MustBreakBefore
                  << " C=" << Tok->CanBreakBefore << " T=" << Tok->Type
                  << " S=" << Tok->SpacesRequiredBefore
+                 << " P=" << Tok->SplitPenalty
                  << " Name=" << Tok->FormatTok.Tok.getName() << " FakeLParens=";
     for (unsigned i = 0, e = Tok->FakeLParens.size(); i != e; ++i)
       llvm::errs() << Tok->FakeLParens[i] << "/";

@@ -192,30 +192,64 @@ uint32_t g12(StructC *C, StructD *D, uint64_t count) {
   return b1->a.f32;
 }
 
+// Make sure that zero-length bitfield works.
+#define ATTR __attribute__ ((ms_struct))
+struct five {
+  char a;
+  int :0;        /* ignored; prior field is not a bitfield. */
+  char b;
+  char c;
+} ATTR;
+char g13(struct five *a, struct five *b) {
+  return a->b;
+// CHECK: define signext i8 @{{.*}}(
+// CHECK: load i8* %{{.*}}, align 1, !tbaa !1
+// PATH: define signext i8 @{{.*}}(
+// PATH: load i8* %{{.*}}, align 1, !tbaa [[TAG_five_b:!.*]]
+}
+
+struct six {
+  char a;
+  int :0;
+  char b;
+  char c;
+};
+char g14(struct six *a, struct six *b) {
+// CHECK: define signext i8 @{{.*}}(
+// CHECK: load i8* %{{.*}}, align 1, !tbaa !1
+// PATH: define signext i8 @{{.*}}(
+// PATH: load i8* %{{.*}}, align 1, !tbaa [[TAG_six_b:!.*]]
+  return a->b;
+}
+
 // CHECK: !1 = metadata !{metadata !"omnipotent char", metadata !2}
 // CHECK: !2 = metadata !{metadata !"Simple C/C++ TBAA"}
 // CHECK: !4 = metadata !{metadata !"int", metadata !1}
 // CHECK: !5 = metadata !{metadata !"short", metadata !1}
 
-// PATH: [[TYPE_CHAR:!.*]] = metadata !{metadata !"omnipotent char", i64 0, metadata !3}
+// PATH: [[TYPE_CHAR:!.*]] = metadata !{metadata !"omnipotent char", metadata !3
 // PATH: [[TAG_i32]] = metadata !{metadata [[TYPE_INT:!.*]], metadata [[TYPE_INT]], i64 0}
-// PATH: [[TYPE_INT]] = metadata !{metadata !"int", i64 0, metadata [[TYPE_CHAR]]}
+// PATH: [[TYPE_INT]] = metadata !{metadata !"int", metadata [[TYPE_CHAR]]
 // PATH: [[TAG_A_f32]] = metadata !{metadata [[TYPE_A:!.*]], metadata [[TYPE_INT]], i64 4}
-// PATH: [[TYPE_A]] = metadata !{metadata !"_ZTS7StructA", i64 0, metadata [[TYPE_SHORT:!.*]], i64 4, metadata [[TYPE_INT]], i64 8, metadata [[TYPE_SHORT]], i64 12, metadata [[TYPE_INT]]}
-// PATH: [[TYPE_SHORT:!.*]] = metadata !{metadata !"short", i64 0, metadata [[TYPE_CHAR]]}
+// PATH: [[TYPE_A]] = metadata !{metadata !"_ZTS7StructA", metadata [[TYPE_SHORT:!.*]], i64 0, metadata [[TYPE_INT]], i64 4, metadata [[TYPE_SHORT]], i64 8, metadata [[TYPE_INT]], i64 12}
+// PATH: [[TYPE_SHORT:!.*]] = metadata !{metadata !"short", metadata [[TYPE_CHAR]]
 // PATH: [[TAG_A_f16]] = metadata !{metadata [[TYPE_A]], metadata [[TYPE_SHORT]], i64 0}
 // PATH: [[TAG_B_a_f32]] = metadata !{metadata [[TYPE_B:!.*]], metadata [[TYPE_INT]], i64 8}
-// PATH: [[TYPE_B]] = metadata !{metadata !"_ZTS7StructB", i64 0, metadata [[TYPE_SHORT]], i64 4, metadata [[TYPE_A]], i64 20, metadata [[TYPE_INT]]}
+// PATH: [[TYPE_B]] = metadata !{metadata !"_ZTS7StructB", metadata [[TYPE_SHORT]], i64 0, metadata [[TYPE_A]], i64 4, metadata [[TYPE_INT]], i64 20}
 // PATH: [[TAG_B_a_f16]] = metadata !{metadata [[TYPE_B]], metadata [[TYPE_SHORT]], i64 4}
 // PATH: [[TAG_B_f32]] = metadata !{metadata [[TYPE_B]], metadata [[TYPE_INT]], i64 20}
 // PATH: [[TAG_B_a_f32_2]] = metadata !{metadata [[TYPE_B]], metadata [[TYPE_INT]], i64 16}
 // PATH: [[TAG_S_f32]] = metadata !{metadata [[TYPE_S:!.*]], metadata [[TYPE_INT]], i64 4}
-// PATH: [[TYPE_S]] = metadata !{metadata !"_ZTS7StructS", i64 0, metadata [[TYPE_SHORT]], i64 4, metadata [[TYPE_INT]]}
+// PATH: [[TYPE_S]] = metadata !{metadata !"_ZTS7StructS", metadata [[TYPE_SHORT]], i64 0, metadata [[TYPE_INT]], i64 4}
 // PATH: [[TAG_S_f16]] = metadata !{metadata [[TYPE_S]], metadata [[TYPE_SHORT]], i64 0}
 // PATH: [[TAG_S2_f32]] = metadata !{metadata [[TYPE_S2:!.*]], metadata [[TYPE_INT]], i64 4}
-// PATH: [[TYPE_S2]] = metadata !{metadata !"_ZTS8StructS2", i64 0, metadata [[TYPE_SHORT]], i64 4, metadata [[TYPE_INT]]}
+// PATH: [[TYPE_S2]] = metadata !{metadata !"_ZTS8StructS2", metadata [[TYPE_SHORT]], i64 0, metadata [[TYPE_INT]], i64 4}
 // PATH: [[TAG_S2_f16]] = metadata !{metadata [[TYPE_S2]], metadata [[TYPE_SHORT]], i64 0}
 // PATH: [[TAG_C_b_a_f32]] = metadata !{metadata [[TYPE_C:!.*]], metadata [[TYPE_INT]], i64 12}
-// PATH: [[TYPE_C]] = metadata !{metadata !"_ZTS7StructC", i64 0, metadata [[TYPE_SHORT]], i64 4, metadata [[TYPE_B]], i64 28, metadata [[TYPE_INT]]}
+// PATH: [[TYPE_C]] = metadata !{metadata !"_ZTS7StructC", metadata [[TYPE_SHORT]], i64 0, metadata [[TYPE_B]], i64 4, metadata [[TYPE_INT]], i64 28}
 // PATH: [[TAG_D_b_a_f32]] = metadata !{metadata [[TYPE_D:!.*]], metadata [[TYPE_INT]], i64 12}
-// PATH: [[TYPE_D]] = metadata !{metadata !"_ZTS7StructD", i64 0, metadata [[TYPE_SHORT]], i64 4, metadata [[TYPE_B]], i64 28, metadata [[TYPE_INT]], i64 32, metadata [[TYPE_CHAR]]}
+// PATH: [[TYPE_D]] = metadata !{metadata !"_ZTS7StructD", metadata [[TYPE_SHORT]], i64 0, metadata [[TYPE_B]], i64 4, metadata [[TYPE_INT]], i64 28, metadata [[TYPE_CHAR]], i64 32}
+// PATH: [[TAG_five_b]] = metadata !{metadata [[TYPE_five:!.*]], metadata [[TYPE_CHAR]], i64 1}
+// PATH: [[TYPE_five]] = metadata !{metadata !"_ZTS4five", metadata [[TYPE_CHAR]], i64 0, metadata [[TYPE_CHAR]], i64 1, metadata [[TYPE_CHAR]], i64 2}
+// PATH: [[TAG_six_b]] = metadata !{metadata [[TYPE_six:!.*]], metadata [[TYPE_CHAR]], i64 4}
+// PATH: [[TYPE_six]] = metadata !{metadata !"_ZTS3six", metadata [[TYPE_CHAR]], i64 0, metadata [[TYPE_INT]], i64 4, metadata [[TYPE_CHAR]], i64 4, metadata [[TYPE_CHAR]], i64 5}

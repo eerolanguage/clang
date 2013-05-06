@@ -286,18 +286,18 @@ namespace {
 
     /// ParmBindings - Parameter bindings for this function call, indexed by
     /// parameters' function scope indices.
-    const APValue *Arguments;
+    APValue *Arguments;
 
     // Note that we intentionally use std::map here so that references to
     // values are stable.
-    typedef std::map<const Expr*, APValue> MapTy;
+    typedef std::map<const void*, APValue> MapTy;
     typedef MapTy::const_iterator temp_iterator;
     /// Temporaries - Temporary lvalues materialized within this stack frame.
     MapTy Temporaries;
 
     CallStackFrame(EvalInfo &Info, SourceLocation CallLoc,
                    const FunctionDecl *Callee, const LValue *This,
-                   const APValue *Arguments);
+                   APValue *Arguments);
     ~CallStackFrame();
   };
 
@@ -597,7 +597,7 @@ void SubobjectDesignator::diagnosePointerArithmetic(EvalInfo &Info,
 
 CallStackFrame::CallStackFrame(EvalInfo &Info, SourceLocation CallLoc,
                                const FunctionDecl *Callee, const LValue *This,
-                               const APValue *Arguments)
+                               APValue *Arguments)
     : Info(Info), Caller(Info.CurrentCall), CallLoc(CallLoc), Callee(Callee),
       Index(Info.NextCallIndex++), This(This), Arguments(Arguments) {
   Info.CurrentCall = this;
@@ -913,6 +913,14 @@ static bool EvaluateComplex(const Expr *E, ComplexValue &Res, EvalInfo &Info);
 // Misc utilities
 //===----------------------------------------------------------------------===//
 
+/// Evaluate an expression to see if it had side-effects, and discard its
+/// result.
+static void EvaluateIgnoredValue(EvalInfo &Info, const Expr *E) {
+  APValue Scratch;
+  if (!Evaluate(Scratch, Info, E))
+    Info.EvalStatus.HasSideEffects = true;
+}
+
 /// Should this call expression be treated as a string literal?
 static bool IsStringLiteralCall(const CallExpr *E) {
   unsigned Builtin = E->isBuiltinCall();
@@ -1046,7 +1054,7 @@ static bool CheckLValueConstantExpression(EvalInfo &Info, SourceLocation Loc,
 /// Check that this core constant expression is of literal type, and if not,
 /// produce an appropriate diagnostic.
 static bool CheckLiteralType(EvalInfo &Info, const Expr *E) {
-  if (!E->isRValue() || E->getType()->isLiteralType())
+  if (!E->isRValue() || E->getType()->isLiteralType(Info.Ctx))
     return true;
 
   // Prvalue constant expressions must be of literal types.
@@ -1461,6 +1469,21 @@ static bool EvaluateVarDeclInit(EvalInfo &Info, const Expr *E,
     return true;
   }
 
+  // If this is a local variable, dig out its value.
+  if (VD->hasLocalStorage() && Frame && Frame->Index > 1) {
+    // In C++1y, we can't safely read anything which might have been mutated
+    // when checking a potential constant expression.
+    if (Info.getLangOpts().CPlusPlus1y &&
+        Info.CheckingPotentialConstantExpression)
+      return false;
+
+    Result = Frame->Temporaries[VD];
+    // If we've carried on past an unevaluatable local variable initializer,
+    // we can't go any further. This can happen during potential constant
+    // expression checking.
+    return !Result.isUninit();
+  }
+
   // Dig out the initializer, and use the declaration which it's attached to.
   const Expr *Init = VD->getAnyInitializer(VD);
   if (!Init || Init->isValueDependent()) {
@@ -1525,15 +1548,15 @@ static unsigned getBaseIndex(const CXXRecordDecl *Derived,
   llvm_unreachable("base class missing from derived class's bases list");
 }
 
-/// Extract the value of a character from a string literal. CharType is used to
-/// determine the expected signedness of the result -- a string literal used to
-/// initialize an array of 'signed char' or 'unsigned char' might contain chars
-/// of the wrong signedness.
-static APSInt ExtractStringLiteralCharacter(EvalInfo &Info, const Expr *Lit,
-                                            uint64_t Index, QualType CharType) {
+/// Extract the value of a character from a string literal.
+static APSInt extractStringLiteralCharacter(EvalInfo &Info, const Expr *Lit,
+                                            uint64_t Index) {
   // FIXME: Support PredefinedExpr, ObjCEncodeExpr, MakeStringConstant
-  const StringLiteral *S = dyn_cast<StringLiteral>(Lit);
-  assert(S && "unexpected string literal expression kind");
+  const StringLiteral *S = cast<StringLiteral>(Lit);
+  const ConstantArrayType *CAT =
+      Info.Ctx.getAsConstantArrayType(S->getType());
+  assert(CAT && "string literal isn't an array");
+  QualType CharType = CAT->getElementType();
   assert(CharType->isIntegerType() && "unexpected character type");
 
   APSInt Value(S->getCharByteWidth() * Info.Ctx.getCharWidth(),
@@ -1543,24 +1566,77 @@ static APSInt ExtractStringLiteralCharacter(EvalInfo &Info, const Expr *Lit,
   return Value;
 }
 
-/// Extract the designated sub-object of an rvalue.
-static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
-                             APValue &Obj, QualType ObjType,
-                             const SubobjectDesignator &Sub, QualType SubType) {
+// Expand a string literal into an array of characters.
+static void expandStringLiteral(EvalInfo &Info, const Expr *Lit,
+                                APValue &Result) {
+  const StringLiteral *S = cast<StringLiteral>(Lit);
+  const ConstantArrayType *CAT =
+      Info.Ctx.getAsConstantArrayType(S->getType());
+  assert(CAT && "string literal isn't an array");
+  QualType CharType = CAT->getElementType();
+  assert(CharType->isIntegerType() && "unexpected character type");
+
+  unsigned Elts = CAT->getSize().getZExtValue();
+  Result = APValue(APValue::UninitArray(),
+                   std::min(S->getLength(), Elts), Elts);
+  APSInt Value(S->getCharByteWidth() * Info.Ctx.getCharWidth(),
+               CharType->isUnsignedIntegerType());
+  if (Result.hasArrayFiller())
+    Result.getArrayFiller() = APValue(Value);
+  for (unsigned I = 0, N = Result.getArrayInitializedElts(); I != N; ++I) {
+    Value = S->getCodeUnit(I);
+    Result.getArrayInitializedElt(I) = APValue(Value);
+  }
+}
+
+// Expand an array so that it has more than Index filled elements.
+static void expandArray(APValue &Array, unsigned Index) {
+  unsigned Size = Array.getArraySize();
+  assert(Index < Size);
+
+  // Always at least double the number of elements for which we store a value.
+  unsigned OldElts = Array.getArrayInitializedElts();
+  unsigned NewElts = std::max(Index+1, OldElts * 2);
+  NewElts = std::min(Size, std::max(NewElts, 8u));
+
+  // Copy the data across.
+  APValue NewValue(APValue::UninitArray(), NewElts, Size);
+  for (unsigned I = 0; I != OldElts; ++I)
+    NewValue.getArrayInitializedElt(I).swap(Array.getArrayInitializedElt(I));
+  for (unsigned I = OldElts; I != NewElts; ++I)
+    NewValue.getArrayInitializedElt(I) = Array.getArrayFiller();
+  if (NewValue.hasArrayFiller())
+    NewValue.getArrayFiller() = Array.getArrayFiller();
+  Array.swap(NewValue);
+}
+
+/// Kinds of access we can perform on an object.
+enum AccessKinds {
+  AK_Read,
+  AK_Assign
+};
+
+/// Find the designated sub-object of an rvalue.
+template<typename SubobjectHandler>
+typename SubobjectHandler::result_type
+findSubobject(EvalInfo &Info, const Expr *E, APValue &Obj, QualType ObjType,
+              const SubobjectDesignator &Sub, SubobjectHandler &handler) {
   if (Sub.Invalid)
     // A diagnostic will have already been produced.
-    return false;
+    return handler.failed();
   if (Sub.isOnePastTheEnd()) {
-    Info.Diag(E, Info.getLangOpts().CPlusPlus11 ?
-                (unsigned)diag::note_constexpr_read_past_end :
-                (unsigned)diag::note_invalid_subexpr_in_const_expr);
-    return false;
+    if (Info.getLangOpts().CPlusPlus11)
+      Info.Diag(E, diag::note_constexpr_access_past_end)
+        << handler.AccessKind;
+    else
+      Info.Diag(E);
+    return handler.failed();
   }
   if (Sub.Entries.empty())
-    return true;
+    return handler.found(Obj, ObjType);
   if (Info.CheckingPotentialConstantExpression && Obj.isUninit())
     // This object might be initialized later.
-    return false;
+    return handler.failed();
 
   APValue *O = &Obj;
   // Walk the designator's path to find the subobject.
@@ -1573,49 +1649,67 @@ static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
       if (CAT->getSize().ule(Index)) {
         // Note, it should not be possible to form a pointer with a valid
         // designator which points more than one past the end of the array.
-        Info.Diag(E, Info.getLangOpts().CPlusPlus11 ?
-                    (unsigned)diag::note_constexpr_read_past_end :
-                    (unsigned)diag::note_invalid_subexpr_in_const_expr);
-        return false;
+        if (Info.getLangOpts().CPlusPlus11)
+          Info.Diag(E, diag::note_constexpr_access_past_end)
+            << handler.AccessKind;
+        else
+          Info.Diag(E);
+        return handler.failed();
       }
+
+      ObjType = CAT->getElementType();
+
       // An array object is represented as either an Array APValue or as an
       // LValue which refers to a string literal.
       if (O->isLValue()) {
         assert(I == N - 1 && "extracting subobject of character?");
         assert(!O->hasLValuePath() || O->getLValuePath().empty());
-        Obj = APValue(ExtractStringLiteralCharacter(
-          Info, O->getLValueBase().get<const Expr*>(), Index, SubType));
-        return true;
-      } else if (O->getArrayInitializedElts() > Index)
+        if (handler.AccessKind != AK_Read)
+          expandStringLiteral(Info, O->getLValueBase().get<const Expr *>(),
+                              *O);
+        else
+          return handler.foundString(*O, ObjType, Index);
+      }
+
+      if (O->getArrayInitializedElts() > Index)
         O = &O->getArrayInitializedElt(Index);
-      else
+      else if (handler.AccessKind != AK_Read) {
+        expandArray(*O, Index);
+        O = &O->getArrayInitializedElt(Index);
+      } else
         O = &O->getArrayFiller();
-      ObjType = CAT->getElementType();
     } else if (ObjType->isAnyComplexType()) {
       // Next subobject is a complex number.
       uint64_t Index = Sub.Entries[I].ArrayIndex;
       if (Index > 1) {
-        Info.Diag(E, Info.getLangOpts().CPlusPlus11 ?
-                    (unsigned)diag::note_constexpr_read_past_end :
-                    (unsigned)diag::note_invalid_subexpr_in_const_expr);
-        return false;
+        if (Info.getLangOpts().CPlusPlus11)
+          Info.Diag(E, diag::note_constexpr_access_past_end)
+            << handler.AccessKind;
+        else
+          Info.Diag(E);
+        return handler.failed();
       }
+
+      bool WasConstQualified = ObjType.isConstQualified();
+      ObjType = ObjType->castAs<ComplexType>()->getElementType();
+      if (WasConstQualified)
+        ObjType.addConst();
+
       assert(I == N - 1 && "extracting subobject of scalar?");
       if (O->isComplexInt()) {
-        Obj = APValue(Index ? O->getComplexIntImag()
-                            : O->getComplexIntReal());
+        return handler.found(Index ? O->getComplexIntImag()
+                                   : O->getComplexIntReal(), ObjType);
       } else {
         assert(O->isComplexFloat());
-        Obj = APValue(Index ? O->getComplexFloatImag()
-                            : O->getComplexFloatReal());
+        return handler.found(Index ? O->getComplexFloatImag()
+                                   : O->getComplexFloatReal(), ObjType);
       }
-      return true;
     } else if (const FieldDecl *Field = getAsField(Sub.Entries[I])) {
-      if (Field->isMutable()) {
+      if (Field->isMutable() && handler.AccessKind == AK_Read) {
         Info.Diag(E, diag::note_constexpr_ltor_mutable, 1)
           << Field;
         Info.Note(Field->getLocation(), diag::note_declared_at);
-        return false;
+        return handler.failed();
       }
 
       // Next subobject is a class, struct or union field.
@@ -1624,49 +1718,153 @@ static bool ExtractSubobject(EvalInfo &Info, const Expr *E,
         const FieldDecl *UnionField = O->getUnionField();
         if (!UnionField ||
             UnionField->getCanonicalDecl() != Field->getCanonicalDecl()) {
-          Info.Diag(E, diag::note_constexpr_read_inactive_union_member)
-            << Field << !UnionField << UnionField;
-          return false;
+          Info.Diag(E, diag::note_constexpr_access_inactive_union_member)
+            << handler.AccessKind << Field << !UnionField << UnionField;
+          return handler.failed();
         }
         O = &O->getUnionValue();
       } else
         O = &O->getStructField(Field->getFieldIndex());
+
+      bool WasConstQualified = ObjType.isConstQualified();
       ObjType = Field->getType();
+      if (WasConstQualified && !Field->isMutable())
+        ObjType.addConst();
 
       if (ObjType.isVolatileQualified()) {
         if (Info.getLangOpts().CPlusPlus) {
           // FIXME: Include a description of the path to the volatile subobject.
-          Info.Diag(E, diag::note_constexpr_ltor_volatile_obj, 1)
-            << 2 << Field;
+          Info.Diag(E, diag::note_constexpr_access_volatile_obj, 1)
+            << handler.AccessKind << 2 << Field;
           Info.Note(Field->getLocation(), diag::note_declared_at);
         } else {
           Info.Diag(E, diag::note_invalid_subexpr_in_const_expr);
         }
-        return false;
+        return handler.failed();
       }
     } else {
       // Next subobject is a base class.
       const CXXRecordDecl *Derived = ObjType->getAsCXXRecordDecl();
       const CXXRecordDecl *Base = getAsBaseClass(Sub.Entries[I]);
       O = &O->getStructBase(getBaseIndex(Derived, Base));
+
+      bool WasConstQualified = ObjType.isConstQualified();
       ObjType = Info.Ctx.getRecordType(Base);
+      if (WasConstQualified)
+        ObjType.addConst();
     }
 
     if (O->isUninit()) {
       if (!Info.CheckingPotentialConstantExpression)
-        Info.Diag(E, diag::note_constexpr_read_uninit);
-      return false;
+        Info.Diag(E, diag::note_constexpr_access_uninit) << handler.AccessKind;
+      return handler.failed();
     }
   }
 
-  // This may look super-stupid, but it serves an important purpose: if we just
-  // swapped Obj and *O, we'd create an object which had itself as a subobject.
-  // To avoid the leak, we ensure that Tmp ends up owning the original complete
-  // object, which is destroyed by Tmp's destructor.
-  APValue Tmp;
-  O->swap(Tmp);
-  Obj.swap(Tmp);
-  return true;
+  return handler.found(*O, ObjType);
+}
+
+namespace {
+struct ExtractSubobjectHandler {
+  EvalInfo &Info;
+  APValue &Obj;
+
+  static const AccessKinds AccessKind = AK_Read;
+
+  typedef bool result_type;
+  bool failed() { return false; }
+  bool found(APValue &Subobj, QualType SubobjType) {
+    if (&Subobj != &Obj) {
+      // We can't just swap Obj and Subobj here, because we'd create an object
+      // that has itself as a subobject. To avoid the leak, we ensure that Tmp
+      // ends up owning the original complete object, which is destroyed by
+      // Tmp's destructor.
+      APValue Tmp;
+      Subobj.swap(Tmp);
+      Obj.swap(Tmp);
+    }
+    return true;
+  }
+  bool found(APSInt &Value, QualType SubobjType) {
+    Obj = APValue(Value);
+    return true;
+  }
+  bool found(APFloat &Value, QualType SubobjType) {
+    Obj = APValue(Value);
+    return true;
+  }
+  bool foundString(APValue &Subobj, QualType SubobjType, uint64_t Character) {
+    Obj = APValue(extractStringLiteralCharacter(
+        Info, Subobj.getLValueBase().get<const Expr *>(), Character));
+    return true;
+  }
+};
+const AccessKinds ExtractSubobjectHandler::AccessKind;
+
+/// Extract the designated sub-object of an rvalue.
+static bool extractSubobject(EvalInfo &Info, const Expr *E,
+                             APValue &Obj, QualType ObjType,
+                             const SubobjectDesignator &Sub) {
+  ExtractSubobjectHandler Handler = { Info, Obj };
+  return findSubobject(Info, E, Obj, ObjType, Sub, Handler);
+}
+
+struct ModifySubobjectHandler {
+  EvalInfo &Info;
+  APValue &NewVal;
+  const Expr *E;
+
+  typedef bool result_type;
+  static const AccessKinds AccessKind = AK_Assign;
+
+  bool checkConst(QualType QT) {
+    // Assigning to a const object has undefined behavior.
+    if (QT.isConstQualified()) {
+      Info.Diag(E, diag::note_constexpr_modify_const_type) << QT;
+      return false;
+    }
+    return true;
+  }
+
+  bool failed() { return false; }
+  bool found(APValue &Subobj, QualType SubobjType) {
+    if (!checkConst(SubobjType))
+      return false;
+    // We've been given ownership of NewVal, so just swap it in.
+    Subobj.swap(NewVal);
+    return true;
+  }
+  bool found(APSInt &Value, QualType SubobjType) {
+    if (!checkConst(SubobjType))
+      return false;
+    if (!NewVal.isInt()) {
+      // Maybe trying to write a cast pointer value into a complex?
+      Info.Diag(E);
+      return false;
+    }
+    Value = NewVal.getInt();
+    return true;
+  }
+  bool found(APFloat &Value, QualType SubobjType) {
+    if (!checkConst(SubobjType))
+      return false;
+    Value = NewVal.getFloat();
+    return true;
+  }
+  bool foundString(APValue &Subobj, QualType SubobjType, uint64_t Character) {
+    llvm_unreachable("shouldn't encounter string elements with ExpandArrays");
+  }
+};
+const AccessKinds ModifySubobjectHandler::AccessKind;
+} // end anonymous namespace
+
+/// Update the designated sub-object of an rvalue to the given value.
+static bool modifySubobject(EvalInfo &Info, const Expr *E,
+                            APValue &Obj, QualType ObjType,
+                            const SubobjectDesignator &Sub,
+                            APValue &NewVal) {
+  ModifySubobjectHandler Handler = { Info, NewVal, E };
+  return findSubobject(Info, E, Obj, ObjType, Sub, Handler);
 }
 
 /// Find the position where two subobject designators diverge, or equivalently
@@ -1727,14 +1925,14 @@ static bool AreElementsOfSameArray(QualType ObjType,
 }
 
 /// HandleLValueToRValueConversion - Perform an lvalue-to-rvalue conversion on
-/// the given lvalue. This can also be used for 'lvalue-to-lvalue' conversions
+/// the given glvalue. This can also be used for 'lvalue-to-lvalue' conversions
 /// for looking up the glvalue referred to by an entity of reference type.
 ///
 /// \param Info - Information about the ongoing evaluation.
 /// \param Conv - The expression for which we are performing the conversion.
 ///               Used for diagnostics.
-/// \param Type - The type we expect this conversion to produce, before
-///               stripping cv-qualifiers in the case of a non-clas type.
+/// \param Type - The type of the glvalue (before stripping cv-qualifiers in the
+///               case of a non-class type).
 /// \param LVal - The glvalue on which we are attempting to perform this action.
 /// \param RVal - The produced value will be placed here.
 static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
@@ -1747,8 +1945,7 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
   const Expr *Base = LVal.Base.dyn_cast<const Expr*>();
 
   if (!LVal.Base) {
-    // FIXME: Indirection through a null pointer deserves a specific diagnostic.
-    Info.Diag(Conv, diag::note_invalid_subexpr_in_const_expr);
+    Info.Diag(Conv, diag::note_constexpr_access_null) << AK_Read;
     return false;
   }
 
@@ -1756,7 +1953,8 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
   if (LVal.CallIndex) {
     Frame = Info.getCallFrame(LVal.CallIndex);
     if (!Frame) {
-      Info.Diag(Conv, diag::note_constexpr_lifetime_ended, 1) << !Base;
+      Info.Diag(Conv, diag::note_constexpr_lifetime_ended, 1)
+        << AK_Read << !Base;
       NoteLValueLocation(Info, LVal.Base);
       return false;
     }
@@ -1768,7 +1966,8 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
   // semantics.
   if (Type.isVolatileQualified()) {
     if (Info.getLangOpts().CPlusPlus)
-      Info.Diag(Conv, diag::note_constexpr_ltor_volatile_type) << Type;
+      Info.Diag(Conv, diag::note_constexpr_access_volatile_type)
+        << AK_Read << Type;
     else
       Info.Diag(Conv);
     return false;
@@ -1795,7 +1994,8 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
     QualType VT = VD->getType();
     if (VT.isVolatileQualified()) {
       if (Info.getLangOpts().CPlusPlus) {
-        Info.Diag(Conv, diag::note_constexpr_ltor_volatile_obj, 1) << 1 << VD;
+        Info.Diag(Conv, diag::note_constexpr_access_volatile_obj, 1)
+          << AK_Read << 1 << VD;
         Info.Note(VD->getLocation(), diag::note_declared_at);
       } else {
         Info.Diag(Conv);
@@ -1803,7 +2003,9 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
       return false;
     }
 
-    if (!isa<ParmVarDecl>(VD)) {
+    // Unless we're looking at a local variable or argument in a constexpr call,
+    // the variable we're reading must be const.
+    if (LVal.CallIndex <= 1 || !VD->hasLocalStorage()) {
       if (VD->isConstexpr()) {
         // OK, we can read this variable.
       } else if (VT->isIntegralOrEnumerationType()) {
@@ -1838,37 +2040,15 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
       }
     }
 
-    if (!EvaluateVarDeclInit(Info, Conv, VD, Frame, RVal))
-      return false;
-
-    if (isa<ParmVarDecl>(VD) || !VD->getAnyInitializer()->isLValue())
-      return ExtractSubobject(Info, Conv, RVal, VT, LVal.Designator, Type);
-
-    // The declaration was initialized by an lvalue, with no lvalue-to-rvalue
-    // conversion. This happens when the declaration and the lvalue should be
-    // considered synonymous, for instance when initializing an array of char
-    // from a string literal. Continue as if the initializer lvalue was the
-    // value we were originally given.
-    assert(RVal.getLValueOffset().isZero() &&
-           "offset for lvalue init of non-reference");
-    Base = RVal.getLValueBase().get<const Expr*>();
-
-    if (unsigned CallIndex = RVal.getLValueCallIndex()) {
-      Frame = Info.getCallFrame(CallIndex);
-      if (!Frame) {
-        Info.Diag(Conv, diag::note_constexpr_lifetime_ended, 1) << !Base;
-        NoteLValueLocation(Info, RVal.getLValueBase());
-        return false;
-      }
-    } else {
-      Frame = 0;
-    }
+    return EvaluateVarDeclInit(Info, Conv, VD, Frame, RVal) &&
+           extractSubobject(Info, Conv, RVal, VT, LVal.Designator);
   }
 
   // Volatile temporary objects cannot be read in constant expressions.
   if (Base->getType().isVolatileQualified()) {
     if (Info.getLangOpts().CPlusPlus) {
-      Info.Diag(Conv, diag::note_constexpr_ltor_volatile_obj, 1) << 0;
+      Info.Diag(Conv, diag::note_constexpr_access_volatile_obj, 1)
+        << AK_Read << 0;
       Info.Note(Base->getExprLoc(), diag::note_constexpr_temporary_here);
     } else {
       Info.Diag(Conv);
@@ -1877,6 +2057,12 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
   }
 
   if (Frame) {
+    // In C++1y, we can't safely read anything which might have been mutated
+    // when checking a potential constant expression.
+    if (Info.getLangOpts().CPlusPlus1y &&
+        Info.CheckingPotentialConstantExpression)
+      return false;
+
     // If this is a temporary expression with a nontrivial initializer, grab the
     // value from the relevant stack frame.
     RVal = Frame->Temporaries[Base];
@@ -1889,6 +2075,11 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
     if (!Evaluate(RVal, Info, CLE->getInitializer()))
       return false;
   } else if (isa<StringLiteral>(Base)) {
+    if (Info.getLangOpts().CPlusPlus1y &&
+        Info.CheckingPotentialConstantExpression &&
+        !Base->getType().isConstQualified())
+      return false;
+
     // We represent a string literal array as an lvalue pointing at the
     // corresponding expression, rather than building an array of chars.
     // FIXME: Support PredefinedExpr, ObjCEncodeExpr, MakeStringConstant
@@ -1898,8 +2089,105 @@ static bool HandleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv,
     return false;
   }
 
-  return ExtractSubobject(Info, Conv, RVal, Base->getType(), LVal.Designator,
-                          Type);
+  return extractSubobject(Info, Conv, RVal, Base->getType(), LVal.Designator);
+}
+
+/// Perform an assignment of Val to LVal. Takes ownership of Val.
+// FIXME: Factor out duplication with HandleLValueToRValueConversion.
+static bool HandleAssignment(EvalInfo &Info, const Expr *E, const LValue &LVal,
+                             QualType LValType, APValue &Val) {
+  if (!Info.getLangOpts().CPlusPlus1y) {
+    Info.Diag(E, diag::note_invalid_subexpr_in_const_expr);
+    return false;
+  }
+
+  if (LVal.Designator.Invalid)
+    // A diagnostic will have already been produced.
+    return false;
+
+  if (Info.CheckingPotentialConstantExpression)
+    return false;
+
+  const Expr *Base = LVal.Base.dyn_cast<const Expr*>();
+
+  if (!LVal.Base) {
+    Info.Diag(E, diag::note_constexpr_access_null) << AK_Assign;
+    return false;
+  }
+
+  if (!LVal.CallIndex) {
+    Info.Diag(E, diag::note_constexpr_modify_global);
+    return false;
+  }
+
+  CallStackFrame *Frame = Info.getCallFrame(LVal.CallIndex);
+  if (!Frame) {
+    Info.Diag(E, diag::note_constexpr_lifetime_ended, 1)
+      << AK_Assign << !Base;
+    NoteLValueLocation(Info, LVal.Base);
+    return false;
+  }
+
+  if (LValType.isVolatileQualified()) {
+    if (Info.getLangOpts().CPlusPlus)
+      Info.Diag(E, diag::note_constexpr_access_volatile_type)
+        << AK_Assign << LValType;
+    else
+      Info.Diag(E);
+    return false;
+  }
+
+  // Compute value storage location and type of base object.
+  APValue *BaseVal = 0;
+  QualType BaseType;
+
+  if (const ValueDecl *D = LVal.Base.dyn_cast<const ValueDecl*>()) {
+    const VarDecl *VD = dyn_cast<VarDecl>(D);
+    if (VD) {
+      if (const VarDecl *VDef = VD->getDefinition(Info.Ctx))
+        VD = VDef;
+    }
+    if (!VD || VD->isInvalidDecl()) {
+      Info.Diag(E);
+      return false;
+    }
+
+    // Modifications to volatile-qualified objects are not allowed.
+    BaseType = VD->getType();
+    if (BaseType.isVolatileQualified()) {
+      Info.Diag(E, diag::note_constexpr_access_volatile_obj, 1)
+        << AK_Assign << 1 << VD;
+      Info.Note(VD->getLocation(), diag::note_declared_at);
+      return false;
+    }
+
+    if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(VD)) {
+      if (!Frame || !Frame->Arguments) {
+        Info.Diag(E, diag::note_invalid_subexpr_in_const_expr);
+        return false;
+      }
+      BaseVal = &Frame->Arguments[PVD->getFunctionScopeIndex()];
+    } else if (VD->hasLocalStorage() && Frame && Frame->Index > 1) {
+      BaseVal = &Frame->Temporaries[VD];
+    } else {
+      // FIXME: Can this happen?
+      Info.Diag(E);
+      return false;
+    }
+  } else {
+    BaseType = Base->getType();
+    BaseVal = &Frame->Temporaries[Base];
+
+    // Volatile temporary objects cannot be modified in constant expressions.
+    if (BaseType.isVolatileQualified()) {
+      Info.Diag(E, diag::note_constexpr_access_volatile_obj, 1)
+        << AK_Assign << 0;
+      Info.Note(Base->getExprLoc(), diag::note_constexpr_temporary_here);
+      return false;
+    }
+  }
+
+  return modifySubobject(Info, E, *BaseVal, BaseType, LVal.Designator, Val);
 }
 
 /// Build an lvalue for the object argument of a member function call.
@@ -1911,7 +2199,7 @@ static bool EvaluateObjectArgument(EvalInfo &Info, const Expr *Object,
   if (Object->isGLValue())
     return EvaluateLValue(Object, This, Info);
 
-  if (Object->getType()->isLiteralType())
+  if (Object->getType()->isLiteralType(Info.Ctx))
     return EvaluateTemporary(Object, This, Info);
 
   return false;
@@ -2060,20 +2348,61 @@ enum EvalStmtResult {
 };
 }
 
+static bool EvaluateDecl(EvalInfo &Info, const Decl *D) {
+  if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
+    // We don't need to evaluate the initializer for a static local.
+    if (!VD->hasLocalStorage())
+      return true;
+
+    LValue Result;
+    Result.set(VD, Info.CurrentCall->Index);
+    APValue &Val = Info.CurrentCall->Temporaries[VD];
+
+    if (!EvaluateInPlace(Val, Info, Result, VD->getInit())) {
+      // Wipe out any partially-computed value, to allow tracking that this
+      // evaluation failed.
+      Val = APValue();
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Evaluate a statement.
 static EvalStmtResult EvaluateStmt(APValue &Result, EvalInfo &Info,
                                    const Stmt *S) {
+  // FIXME: Mark all temporaries in the current frame as destroyed at
+  // the end of each full-expression.
   switch (S->getStmtClass()) {
   default:
+    if (const Expr *E = dyn_cast<Expr>(S)) {
+      EvaluateIgnoredValue(Info, E);
+      // Don't bother evaluating beyond an expression-statement which couldn't
+      // be evaluated.
+      if (Info.EvalStatus.HasSideEffects && !Info.keepEvaluatingAfterFailure())
+        return ESR_Failed;
+      return ESR_Succeeded;
+    }
+
+    Info.Diag(S->getLocStart());
     return ESR_Failed;
 
   case Stmt::NullStmtClass:
-  case Stmt::DeclStmtClass:
     return ESR_Succeeded;
+
+  case Stmt::DeclStmtClass: {
+    const DeclStmt *DS = cast<DeclStmt>(S);
+    for (DeclStmt::const_decl_iterator DclIt = DS->decl_begin(),
+           DclEnd = DS->decl_end(); DclIt != DclEnd; ++DclIt)
+      if (!EvaluateDecl(Info, *DclIt) && !Info.keepEvaluatingAfterFailure())
+        return ESR_Failed;
+    return ESR_Succeeded;
+  }
 
   case Stmt::ReturnStmtClass: {
     const Expr *RetExpr = cast<ReturnStmt>(S)->getRetValue();
-    if (!Evaluate(Result, Info, RetExpr))
+    if (RetExpr && !Evaluate(Result, Info, RetExpr))
       return ESR_Failed;
     return ESR_Returned;
   }
@@ -2083,6 +2412,28 @@ static EvalStmtResult EvaluateStmt(APValue &Result, EvalInfo &Info,
     for (CompoundStmt::const_body_iterator BI = CS->body_begin(),
            BE = CS->body_end(); BI != BE; ++BI) {
       EvalStmtResult ESR = EvaluateStmt(Result, Info, *BI);
+      if (ESR != ESR_Succeeded)
+        return ESR;
+    }
+    return ESR_Succeeded;
+  }
+
+  case Stmt::IfStmtClass: {
+    const IfStmt *IS = cast<IfStmt>(S);
+
+    // Evaluate the condition, as either a var decl or as an expression.
+    bool Cond;
+    if (VarDecl *CondDecl = IS->getConditionVariable()) {
+      if (!EvaluateDecl(Info, CondDecl))
+        return ESR_Failed;
+      if (!HandleConversionToBool(Info.CurrentCall->Temporaries[CondDecl],
+                                  Cond))
+        return ESR_Failed;
+    } else if (!EvaluateAsBooleanCondition(IS->getCond(), Cond, Info))
+      return ESR_Failed;
+
+    if (const Stmt *SubStmt = Cond ? IS->getThen() : IS->getElse()) {
+      EvalStmtResult ESR = EvaluateStmt(Result, Info, SubStmt);
       if (ESR != ESR_Succeeded)
         return ESR;
     }
@@ -2181,7 +2532,13 @@ static bool HandleFunctionCall(SourceLocation CallLoc,
     return false;
 
   CallStackFrame Frame(Info, CallLoc, Callee, This, ArgValues.data());
-  return EvaluateStmt(Result, Info, Body) == ESR_Returned;
+  EvalStmtResult ESR = EvaluateStmt(Result, Info, Body);
+  if (ESR == ESR_Succeeded) {
+    if (Callee->getResultType()->isVoidType())
+      return true;
+    Info.Diag(Callee->getLocEnd(), diag::note_constexpr_no_return);
+  }
+  return ESR == ESR_Returned;
 }
 
 /// Evaluate a constructor call.
@@ -2207,7 +2564,9 @@ static bool HandleConstructorCall(SourceLocation CallLoc, const LValue &This,
   // If it's a delegating constructor, just delegate.
   if (Definition->isDelegatingConstructor()) {
     CXXConstructorDecl::init_const_iterator I = Definition->init_begin();
-    return EvaluateInPlace(Result, Info, This, (*I)->getInit());
+    if (!EvaluateInPlace(Result, Info, This, (*I)->getInit()))
+      return false;
+    return EvaluateStmt(Result, Info, Definition->getBody()) != ESR_Failed;
   }
 
   // For a trivial copy or move constructor, perform an APValue copy. This is
@@ -2307,7 +2666,8 @@ static bool HandleConstructorCall(SourceLocation CallLoc, const LValue &This,
     }
   }
 
-  return Success;
+  return Success &&
+         EvaluateStmt(Result, Info, Definition->getBody()) != ESR_Failed;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2627,7 +2987,7 @@ public:
     SubobjectDesignator Designator(BaseTy);
     Designator.addDeclUnchecked(FD);
 
-    return ExtractSubobject(Info, E, Val, BaseTy, Designator, E->getType()) &&
+    return extractSubobject(Info, E, Val, BaseTy, Designator) &&
            DerivedSuccess(Val, E);
   }
 
@@ -2660,9 +3020,7 @@ public:
 
   /// Visit a value which is evaluated, but whose value is ignored.
   void VisitIgnoredValue(const Expr *E) {
-    APValue Scratch;
-    if (!Evaluate(Scratch, Info, E))
-      Info.EvalStatus.HasSideEffects = true;
+    EvaluateIgnoredValue(Info, E);
   }
 };
 
@@ -2743,6 +3101,16 @@ public:
     case BO_PtrMemD:
     case BO_PtrMemI:
       return HandleMemberPointerAccess(this->Info, E, Result);
+
+    case BO_Assign: {
+      if (!this->Visit(E->getLHS()))
+        return false;
+      APValue NewVal;
+      if (!Evaluate(NewVal, this->Info, E->getRHS()))
+        return false;
+      return HandleAssignment(this->Info, E, Result, E->getLHS()->getType(),
+                              NewVal);
+    }
     }
   }
 
@@ -2847,14 +3215,12 @@ public:
 } // end anonymous namespace
 
 /// Evaluate an expression as an lvalue. This can be legitimately called on
-/// expressions which are not glvalues, in a few cases:
-///  * function designators in C,
-///  * "extern void" objects,
-///  * temporaries, if building with -Wno-address-of-temporary.
-static bool EvaluateLValue(const Expr* E, LValue& Result, EvalInfo &Info) {
-  assert((E->isGLValue() || E->getType()->isFunctionType() ||
-          E->getType()->isVoidType() || isa<CXXTemporaryObjectExpr>(E)) &&
-         "can't evaluate expression as an lvalue");
+/// expressions which are not glvalues, in two cases:
+///  * function designators in C, and
+///  * "extern void" objects
+static bool EvaluateLValue(const Expr *E, LValue &Result, EvalInfo &Info) {
+  assert(E->isGLValue() || E->getType()->isFunctionType() ||
+         E->getType()->isVoidType());
   return LValueExprEvaluator(Info, Result).Visit(E);
 }
 
@@ -2868,7 +3234,7 @@ bool LValueExprEvaluator::VisitDeclRefExpr(const DeclRefExpr *E) {
 
 bool LValueExprEvaluator::VisitVarDecl(const Expr *E, const VarDecl *VD) {
   if (!VD->getType()->isReferenceType()) {
-    if (isa<ParmVarDecl>(VD)) {
+    if (VD->hasLocalStorage() && Info.CurrentCall->Index > 1) {
       Result.set(VD, Info.CurrentCall->Index);
       return true;
     }
@@ -3794,6 +4160,9 @@ namespace {
 
     bool VisitInitListExpr(const InitListExpr *E);
     bool VisitCXXConstructExpr(const CXXConstructExpr *E);
+    bool VisitCXXConstructExpr(const CXXConstructExpr *E,
+                               const LValue &Subobject,
+                               APValue *Value, QualType Type);
   };
 } // end anonymous namespace
 
@@ -3827,8 +4196,16 @@ bool ArrayExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
   if (Result.isArray() && Result.hasArrayFiller())
     Filler = Result.getArrayFiller();
 
-  Result = APValue(APValue::UninitArray(), E->getNumInits(),
-                   CAT->getSize().getZExtValue());
+  unsigned NumEltsToInit = E->getNumInits();
+  unsigned NumElts = CAT->getSize().getZExtValue();
+  const Expr *FillerExpr = E->hasArrayFiller() ? E->getArrayFiller() : 0;
+
+  // If the initializer might depend on the array index, run it for each
+  // array element. For now, just whitelist non-class value-initialization.
+  if (NumEltsToInit != NumElts && !isa<ImplicitValueInitExpr>(FillerExpr))
+    NumEltsToInit = NumElts;
+
+  Result = APValue(APValue::UninitArray(), NumEltsToInit, NumElts);
 
   // If the array was previously zero-initialized, preserve the
   // zero-initialized values.
@@ -3841,12 +4218,12 @@ bool ArrayExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
 
   LValue Subobject = This;
   Subobject.addArray(Info, E, CAT);
-  unsigned Index = 0;
-  for (InitListExpr::const_iterator I = E->begin(), End = E->end();
-       I != End; ++I, ++Index) {
+  for (unsigned Index = 0; Index != NumEltsToInit; ++Index) {
+    const Expr *Init =
+        Index < E->getNumInits() ? E->getInit(Index) : FillerExpr;
     if (!EvaluateInPlace(Result.getArrayInitializedElt(Index),
-                         Info, Subobject, cast<Expr>(*I)) ||
-        !HandleLValueArrayAdjustment(Info, cast<Expr>(*I), Subobject,
+                         Info, Subobject, Init) ||
+        !HandleLValueArrayAdjustment(Info, Init, Subobject,
                                      CAT->getElementType(), 1)) {
       if (!Info.keepEvaluatingAfterFailure())
         return false;
@@ -3854,39 +4231,54 @@ bool ArrayExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
     }
   }
 
-  if (!Result.hasArrayFiller()) return Success;
-  assert(E->hasArrayFiller() && "no array filler for incomplete init list");
-  // FIXME: The Subobject here isn't necessarily right. This rarely matters,
-  // but sometimes does:
-  //   struct S { constexpr S() : p(&p) {} void *p; };
-  //   S s[10] = {};
-  return EvaluateInPlace(Result.getArrayFiller(), Info,
-                         Subobject, E->getArrayFiller()) && Success;
+  if (!Result.hasArrayFiller())
+    return Success;
+
+  // If we get here, we have a trivial filler, which we can just evaluate
+  // once and splat over the rest of the array elements.
+  assert(FillerExpr && "no array filler for incomplete init list");
+  return EvaluateInPlace(Result.getArrayFiller(), Info, Subobject,
+                         FillerExpr) && Success;
 }
 
 bool ArrayExprEvaluator::VisitCXXConstructExpr(const CXXConstructExpr *E) {
-  // FIXME: The Subobject here isn't necessarily right. This rarely matters,
-  // but sometimes does:
-  //   struct S { constexpr S() : p(&p) {} void *p; };
-  //   S s[10];
-  LValue Subobject = This;
+  return VisitCXXConstructExpr(E, This, &Result, E->getType());
+}
 
-  APValue *Value = &Result;
-  bool HadZeroInit = true;
-  QualType ElemTy = E->getType();
-  while (const ConstantArrayType *CAT =
-           Info.Ctx.getAsConstantArrayType(ElemTy)) {
-    Subobject.addArray(Info, E, CAT);
-    HadZeroInit &= !Value->isUninit();
-    if (!HadZeroInit)
-      *Value = APValue(APValue::UninitArray(), 0, CAT->getSize().getZExtValue());
-    if (!Value->hasArrayFiller())
-      return true;
-    Value = &Value->getArrayFiller();
-    ElemTy = CAT->getElementType();
+bool ArrayExprEvaluator::VisitCXXConstructExpr(const CXXConstructExpr *E,
+                                               const LValue &Subobject,
+                                               APValue *Value,
+                                               QualType Type) {
+  bool HadZeroInit = !Value->isUninit();
+
+  if (const ConstantArrayType *CAT = Info.Ctx.getAsConstantArrayType(Type)) {
+    unsigned N = CAT->getSize().getZExtValue();
+
+    // Preserve the array filler if we had prior zero-initialization.
+    APValue Filler =
+      HadZeroInit && Value->hasArrayFiller() ? Value->getArrayFiller()
+                                             : APValue();
+
+    *Value = APValue(APValue::UninitArray(), N, N);
+
+    if (HadZeroInit)
+      for (unsigned I = 0; I != N; ++I)
+        Value->getArrayInitializedElt(I) = Filler;
+
+    // Initialize the elements.
+    LValue ArrayElt = Subobject;
+    ArrayElt.addArray(Info, E, CAT);
+    for (unsigned I = 0; I != N; ++I)
+      if (!VisitCXXConstructExpr(E, ArrayElt, &Value->getArrayInitializedElt(I),
+                                 CAT->getElementType()) ||
+          !HandleLValueArrayAdjustment(Info, E, ArrayElt,
+                                       CAT->getElementType(), 1))
+        return false;
+
+    return true;
   }
 
-  if (!ElemTy->isRecordType())
+  if (!Type->isRecordType())
     return Error(E);
 
   const CXXConstructorDecl *FD = E->getConstructor();
@@ -3897,7 +4289,7 @@ bool ArrayExprEvaluator::VisitCXXConstructExpr(const CXXConstructExpr *E) {
       return true;
 
     if (ZeroInit) {
-      ImplicitValueInitExpr VIE(ElemTy);
+      ImplicitValueInitExpr VIE(Type);
       return EvaluateInPlace(*Value, Info, Subobject, &VIE);
     }
 
@@ -3918,7 +4310,7 @@ bool ArrayExprEvaluator::VisitCXXConstructExpr(const CXXConstructExpr *E) {
     return false;
 
   if (ZeroInit && !HadZeroInit) {
-    ImplicitValueInitExpr VIE(ElemTy);
+    ImplicitValueInitExpr VIE(Type);
     if (!EvaluateInPlace(*Value, Info, Subobject, &VIE))
       return false;
   }

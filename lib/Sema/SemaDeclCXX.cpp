@@ -265,7 +265,7 @@ Sema::SetParamDefaultArgument(ParmVarDecl *Param, Expr *Arg,
                                                                     Param);
   InitializationKind Kind = InitializationKind::CreateCopy(Param->getLocation(),
                                                            EqualLoc);
-  InitializationSequence InitSeq(*this, Entity, Kind, &Arg, 1);
+  InitializationSequence InitSeq(*this, Entity, Kind, Arg);
   ExprResult Result = InitSeq.Perform(*this, Entity, Kind, Arg);
   if (Result.isInvalid())
     return true;
@@ -775,12 +775,13 @@ bool Sema::CheckConstexprFunctionDecl(const FunctionDecl *NewFD) {
 }
 
 /// Check the given declaration statement is legal within a constexpr function
-/// body. C++0x [dcl.constexpr]p3,p4.
+/// body. C++11 [dcl.constexpr]p3,p4, and C++1y [dcl.constexpr]p3.
 ///
-/// \return true if the body is OK, false if we have diagnosed a problem.
+/// \return true if the body is OK (maybe only as an extension), false if we
+///         have diagnosed a problem.
 static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
-                                   DeclStmt *DS) {
-  // C++0x [dcl.constexpr]p3 and p4:
+                                   DeclStmt *DS, SourceLocation &Cxx1yLoc) {
+  // C++11 [dcl.constexpr]p3 and p4:
   //  The definition of a constexpr function(p3) or constructor(p4) [...] shall
   //  contain only
   for (DeclStmt::decl_iterator DclIt = DS->decl_begin(),
@@ -791,6 +792,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
     case Decl::UsingShadow:
     case Decl::UsingDirective:
     case Decl::UnresolvedUsingTypename:
+    case Decl::UnresolvedUsingValue:
       //   - static_assert-declarations
       //   - using-declarations,
       //   - using-directives,
@@ -814,20 +816,63 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
 
     case Decl::Enum:
     case Decl::CXXRecord:
-      // As an extension, we allow the declaration (but not the definition) of
-      // classes and enumerations in all declarations, not just in typedef and
-      // alias declarations.
-      if (cast<TagDecl>(*DclIt)->isThisDeclarationADefinition()) {
-        SemaRef.Diag(DS->getLocStart(), diag::err_constexpr_type_definition)
+      // C++1y allows types to be defined, not just declared.
+      if (cast<TagDecl>(*DclIt)->isThisDeclarationADefinition())
+        SemaRef.Diag(DS->getLocStart(),
+                     SemaRef.getLangOpts().CPlusPlus1y
+                       ? diag::warn_cxx11_compat_constexpr_type_definition
+                       : diag::ext_constexpr_type_definition)
           << isa<CXXConstructorDecl>(Dcl);
-        return false;
-      }
       continue;
 
-    case Decl::Var:
-      SemaRef.Diag(DS->getLocStart(), diag::err_constexpr_var_declaration)
+    case Decl::EnumConstant:
+    case Decl::IndirectField:
+    case Decl::ParmVar:
+      // These can only appear with other declarations which are banned in
+      // C++11 and permitted in C++1y, so ignore them.
+      continue;
+
+    case Decl::Var: {
+      // C++1y [dcl.constexpr]p3 allows anything except:
+      //   a definition of a variable of non-literal type or of static or
+      //   thread storage duration or for which no initialization is performed.
+      VarDecl *VD = cast<VarDecl>(*DclIt);
+      if (VD->isThisDeclarationADefinition()) {
+        if (VD->isStaticLocal()) {
+          SemaRef.Diag(VD->getLocation(),
+                       diag::err_constexpr_local_var_static)
+            << isa<CXXConstructorDecl>(Dcl)
+            << (VD->getTLSKind() == VarDecl::TLS_Dynamic);
+          return false;
+        }
+        if (!VD->getType()->isDependentType() &&
+            SemaRef.RequireLiteralType(
+              VD->getLocation(), VD->getType(),
+              diag::err_constexpr_local_var_non_literal_type,
+              isa<CXXConstructorDecl>(Dcl)))
+          return false;
+        if (!VD->hasInit()) {
+          SemaRef.Diag(VD->getLocation(),
+                       diag::err_constexpr_local_var_no_init)
+            << isa<CXXConstructorDecl>(Dcl);
+          return false;
+        }
+      }
+      SemaRef.Diag(VD->getLocation(),
+                   SemaRef.getLangOpts().CPlusPlus1y
+                    ? diag::warn_cxx11_compat_constexpr_local_var
+                    : diag::ext_constexpr_local_var)
         << isa<CXXConstructorDecl>(Dcl);
-      return false;
+      continue;
+    }
+
+    case Decl::NamespaceAlias:
+    case Decl::Function:
+      // These are disallowed in C++11 and permitted in C++1y. Allow them
+      // everywhere as an extension.
+      if (!Cxx1yLoc.isValid())
+        Cxx1yLoc = DS->getLocStart();
+      continue;
 
     default:
       SemaRef.Diag(DS->getLocStart(), diag::err_constexpr_body_invalid_stmt)
@@ -876,6 +921,124 @@ static void CheckConstexprCtorInitializer(Sema &SemaRef,
   }
 }
 
+/// Check the provided statement is allowed in a constexpr function
+/// definition.
+static bool
+CheckConstexprFunctionStmt(Sema &SemaRef, const FunctionDecl *Dcl, Stmt *S,
+                           llvm::SmallVectorImpl<SourceLocation> &ReturnStmts,
+                           SourceLocation &Cxx1yLoc) {
+  // - its function-body shall be [...] a compound-statement that contains only
+  switch (S->getStmtClass()) {
+  case Stmt::NullStmtClass:
+    //   - null statements,
+    return true;
+
+  case Stmt::DeclStmtClass:
+    //   - static_assert-declarations
+    //   - using-declarations,
+    //   - using-directives,
+    //   - typedef declarations and alias-declarations that do not define
+    //     classes or enumerations,
+    if (!CheckConstexprDeclStmt(SemaRef, Dcl, cast<DeclStmt>(S), Cxx1yLoc))
+      return false;
+    return true;
+
+  case Stmt::ReturnStmtClass:
+    //   - and exactly one return statement;
+    if (isa<CXXConstructorDecl>(Dcl)) {
+      // C++1y allows return statements in constexpr constructors.
+      if (!Cxx1yLoc.isValid())
+        Cxx1yLoc = S->getLocStart();
+      return true;
+    }
+
+    ReturnStmts.push_back(S->getLocStart());
+    return true;
+
+  case Stmt::CompoundStmtClass: {
+    // C++1y allows compound-statements.
+    if (!Cxx1yLoc.isValid())
+      Cxx1yLoc = S->getLocStart();
+
+    CompoundStmt *CompStmt = cast<CompoundStmt>(S);
+    for (CompoundStmt::body_iterator BodyIt = CompStmt->body_begin(),
+           BodyEnd = CompStmt->body_end(); BodyIt != BodyEnd; ++BodyIt) {
+      if (!CheckConstexprFunctionStmt(SemaRef, Dcl, *BodyIt, ReturnStmts,
+                                      Cxx1yLoc))
+        return false;
+    }
+    return true;
+  }
+
+  case Stmt::AttributedStmtClass:
+    if (!Cxx1yLoc.isValid())
+      Cxx1yLoc = S->getLocStart();
+    return true;
+
+  case Stmt::IfStmtClass: {
+    // C++1y allows if-statements.
+    if (!Cxx1yLoc.isValid())
+      Cxx1yLoc = S->getLocStart();
+
+    IfStmt *If = cast<IfStmt>(S);
+    if (!CheckConstexprFunctionStmt(SemaRef, Dcl, If->getThen(), ReturnStmts,
+                                    Cxx1yLoc))
+      return false;
+    if (If->getElse() &&
+        !CheckConstexprFunctionStmt(SemaRef, Dcl, If->getElse(), ReturnStmts,
+                                    Cxx1yLoc))
+      return false;
+    return true;
+  }
+
+  case Stmt::WhileStmtClass:
+  case Stmt::DoStmtClass:
+  case Stmt::ForStmtClass:
+  case Stmt::CXXForRangeStmtClass:
+  case Stmt::ContinueStmtClass:
+    // C++1y allows all of these. We don't allow them as extensions in C++11,
+    // because they don't make sense without variable mutation.
+    if (!SemaRef.getLangOpts().CPlusPlus1y)
+      break;
+    if (!Cxx1yLoc.isValid())
+      Cxx1yLoc = S->getLocStart();
+    for (Stmt::child_range Children = S->children(); Children; ++Children)
+      if (*Children &&
+          !CheckConstexprFunctionStmt(SemaRef, Dcl, *Children, ReturnStmts,
+                                      Cxx1yLoc))
+        return false;
+    return true;
+
+  case Stmt::SwitchStmtClass:
+  case Stmt::CaseStmtClass:
+  case Stmt::DefaultStmtClass:
+  case Stmt::BreakStmtClass:
+    // C++1y allows switch-statements, and since they don't need variable
+    // mutation, we can reasonably allow them in C++11 as an extension.
+    if (!Cxx1yLoc.isValid())
+      Cxx1yLoc = S->getLocStart();
+    for (Stmt::child_range Children = S->children(); Children; ++Children)
+      if (*Children &&
+          !CheckConstexprFunctionStmt(SemaRef, Dcl, *Children, ReturnStmts,
+                                      Cxx1yLoc))
+        return false;
+    return true;
+
+  default:
+    if (!isa<Expr>(S))
+      break;
+
+    // C++1y allows expression-statements.
+    if (!Cxx1yLoc.isValid())
+      Cxx1yLoc = S->getLocStart();
+    return true;
+  }
+
+  SemaRef.Diag(S->getLocStart(), diag::err_constexpr_body_invalid_stmt)
+    << isa<CXXConstructorDecl>(Dcl);
+  return false;
+}
+
 /// Check the body for the given constexpr function declaration only contains
 /// the permitted types of statement. C++11 [dcl.constexpr]p3,p4.
 ///
@@ -896,43 +1059,24 @@ bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body) {
     return false;
   }
 
-  // - its function-body shall be [...] a compound-statement that contains only
-  CompoundStmt *CompBody = cast<CompoundStmt>(Body);
-
   SmallVector<SourceLocation, 4> ReturnStmts;
+
+  // - its function-body shall be [...] a compound-statement that contains only
+  //   [... list of cases ...]
+  CompoundStmt *CompBody = cast<CompoundStmt>(Body);
+  SourceLocation Cxx1yLoc;
   for (CompoundStmt::body_iterator BodyIt = CompBody->body_begin(),
          BodyEnd = CompBody->body_end(); BodyIt != BodyEnd; ++BodyIt) {
-    switch ((*BodyIt)->getStmtClass()) {
-    case Stmt::NullStmtClass:
-      //   - null statements,
-      continue;
-
-    case Stmt::DeclStmtClass:
-      //   - static_assert-declarations
-      //   - using-declarations,
-      //   - using-directives,
-      //   - typedef declarations and alias-declarations that do not define
-      //     classes or enumerations,
-      if (!CheckConstexprDeclStmt(*this, Dcl, cast<DeclStmt>(*BodyIt)))
-        return false;
-      continue;
-
-    case Stmt::ReturnStmtClass:
-      //   - and exactly one return statement;
-      if (isa<CXXConstructorDecl>(Dcl))
-        break;
-
-      ReturnStmts.push_back((*BodyIt)->getLocStart());
-      continue;
-
-    default:
-      break;
-    }
-
-    Diag((*BodyIt)->getLocStart(), diag::err_constexpr_body_invalid_stmt)
-      << isa<CXXConstructorDecl>(Dcl);
-    return false;
+    if (!CheckConstexprFunctionStmt(*this, Dcl, *BodyIt, ReturnStmts, Cxx1yLoc))
+      return false;
   }
+
+  if (Cxx1yLoc.isValid())
+    Diag(Cxx1yLoc,
+         getLangOpts().CPlusPlus1y
+           ? diag::warn_cxx11_compat_constexpr_body_invalid_stmt
+           : diag::ext_constexpr_body_invalid_stmt)
+      << isa<CXXConstructorDecl>(Dcl);
 
   if (const CXXConstructorDecl *Constructor
         = dyn_cast<CXXConstructorDecl>(Dcl)) {
@@ -988,14 +1132,23 @@ bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body) {
     }
   } else {
     if (ReturnStmts.empty()) {
-      Diag(Dcl->getLocation(), diag::err_constexpr_body_no_return);
-      return false;
+      // C++1y doesn't require constexpr functions to contain a 'return'
+      // statement. We still do, unless the return type is void, because
+      // otherwise if there's no return statement, the function cannot
+      // be used in a core constant expression.
+      bool OK = getLangOpts().CPlusPlus1y && Dcl->getResultType()->isVoidType();
+      Diag(Dcl->getLocation(),
+           OK ? diag::warn_cxx11_compat_constexpr_body_no_return
+              : diag::err_constexpr_body_no_return);
+      return OK;
     }
     if (ReturnStmts.size() > 1) {
-      Diag(ReturnStmts.back(), diag::err_constexpr_body_multiple_return);
+      Diag(ReturnStmts.back(),
+           getLangOpts().CPlusPlus1y
+             ? diag::warn_cxx11_compat_constexpr_body_multiple_return
+             : diag::ext_constexpr_body_multiple_return);
       for (unsigned I = 0; I < ReturnStmts.size() - 1; ++I)
         Diag(ReturnStmts[I], diag::note_constexpr_body_previous_return);
-      return false;
     }
   }
 
@@ -2004,14 +2157,12 @@ Sema::ActOnCXXInClassMemberInitializer(Decl *D, SourceLocation InitLoc,
       Diag(FD->getLocation(), diag::warn_dangling_std_initializer_list)
         << /*at end of ctor*/1 << InitExpr->getSourceRange();
     }
-    Expr **Inits = &InitExpr;
-    unsigned NumInits = 1;
     InitializedEntity Entity = InitializedEntity::InitializeMember(FD);
     InitializationKind Kind = FD->getInClassInitStyle() == ICIS_ListInit
         ? InitializationKind::CreateDirectList(InitExpr->getLocStart())
         : InitializationKind::CreateCopy(InitExpr->getLocStart(), InitLoc);
-    InitializationSequence Seq(*this, Entity, Kind, Inits, NumInits);
-    Init = Seq.Perform(*this, Entity, Kind, MultiExprArg(Inits, NumInits));
+    InitializationSequence Seq(*this, Entity, Kind, InitExpr);
+    Init = Seq.Perform(*this, Entity, Kind, InitExpr);
     if (Init.isInvalid()) {
       FD->setInvalidDecl();
       return;
@@ -2374,23 +2525,19 @@ Sema::BuildMemberInitializer(ValueDecl *Member, Expr *Init,
   //   foo(foo)
   // where foo is not also a parameter to the constructor.
   // TODO: implement -Wuninitialized and fold this into that framework.
-  Expr **Args;
-  unsigned NumArgs;
+  MultiExprArg Args;
   if (ParenListExpr *ParenList = dyn_cast<ParenListExpr>(Init)) {
-    Args = ParenList->getExprs();
-    NumArgs = ParenList->getNumExprs();
+    Args = MultiExprArg(ParenList->getExprs(), ParenList->getNumExprs());
   } else if (InitListExpr *InitList = dyn_cast<InitListExpr>(Init)) {
-    Args = InitList->getInits();
-    NumArgs = InitList->getNumInits();
+    Args = MultiExprArg(InitList->getInits(), InitList->getNumInits());
   } else {
     // Template instantiation doesn't reconstruct ParenListExprs for us.
-    Args = &Init;
-    NumArgs = 1;
+    Args = Init;
   }
 
   if (getDiagnostics().getDiagnosticLevel(diag::warn_field_is_uninit, IdLoc)
         != DiagnosticsEngine::Ignored)
-    for (unsigned i = 0; i < NumArgs; ++i)
+    for (unsigned i = 0, e = Args.size(); i != e; ++i)
       // FIXME: Warn about the case when other fields are used before being
       // initialized. For example, let this field be the i'th field. When
       // initializing the i'th field, throw a warning if any of the >= i'th
@@ -2411,8 +2558,7 @@ Sema::BuildMemberInitializer(ValueDecl *Member, Expr *Init,
     bool InitList = false;
     if (isa<InitListExpr>(Init)) {
       InitList = true;
-      Args = &Init;
-      NumArgs = 1;
+      Args = Init;
 
       if (isStdInitializerList(Member->getType(), 0)) {
         Diag(IdLoc, diag::warn_dangling_std_initializer_list)
@@ -2429,10 +2575,8 @@ Sema::BuildMemberInitializer(ValueDecl *Member, Expr *Init,
                : InitializationKind::CreateDirect(IdLoc, InitRange.getBegin(),
                                                   InitRange.getEnd());
 
-    InitializationSequence InitSeq(*this, MemberEntity, Kind, Args, NumArgs);
-    ExprResult MemberInit = InitSeq.Perform(*this, MemberEntity, Kind,
-                                            MultiExprArg(Args, NumArgs),
-                                            0);
+    InitializationSequence InitSeq(*this, MemberEntity, Kind, Args);
+    ExprResult MemberInit = InitSeq.Perform(*this, MemberEntity, Kind, Args, 0);
     if (MemberInit.isInvalid())
       return true;
 
@@ -2468,12 +2612,10 @@ Sema::BuildDelegatingInitializer(TypeSourceInfo *TInfo, Expr *Init,
   Diag(NameLoc, diag::warn_cxx98_compat_delegating_ctor);
 
   bool InitList = true;
-  Expr **Args = &Init;
-  unsigned NumArgs = 1;
+  MultiExprArg Args = Init;
   if (ParenListExpr *ParenList = dyn_cast<ParenListExpr>(Init)) {
     InitList = false;
-    Args = ParenList->getExprs();
-    NumArgs = ParenList->getNumExprs();
+    Args = MultiExprArg(ParenList->getExprs(), ParenList->getNumExprs());
   }
 
   SourceRange InitRange = Init->getSourceRange();
@@ -2484,10 +2626,9 @@ Sema::BuildDelegatingInitializer(TypeSourceInfo *TInfo, Expr *Init,
     InitList ? InitializationKind::CreateDirectList(NameLoc)
              : InitializationKind::CreateDirect(NameLoc, InitRange.getBegin(),
                                                 InitRange.getEnd());
-  InitializationSequence InitSeq(*this, DelegationEntity, Kind, Args, NumArgs);
+  InitializationSequence InitSeq(*this, DelegationEntity, Kind, Args);
   ExprResult DelegationInit = InitSeq.Perform(*this, DelegationEntity, Kind,
-                                              MultiExprArg(Args, NumArgs),
-                                              0);
+                                              Args, 0);
   if (DelegationInit.isInvalid())
     return true;
 
@@ -2607,12 +2748,10 @@ Sema::BuildBaseInitializer(QualType BaseType, TypeSourceInfo *BaseTInfo,
 
   // Initialize the base.
   bool InitList = true;
-  Expr **Args = &Init;
-  unsigned NumArgs = 1;
+  MultiExprArg Args = Init;
   if (ParenListExpr *ParenList = dyn_cast<ParenListExpr>(Init)) {
     InitList = false;
-    Args = ParenList->getExprs();
-    NumArgs = ParenList->getNumExprs();
+    Args = MultiExprArg(ParenList->getExprs(), ParenList->getNumExprs());
   }
 
   InitializedEntity BaseEntity =
@@ -2621,9 +2760,8 @@ Sema::BuildBaseInitializer(QualType BaseType, TypeSourceInfo *BaseTInfo,
     InitList ? InitializationKind::CreateDirectList(BaseLoc)
              : InitializationKind::CreateDirect(BaseLoc, InitRange.getBegin(),
                                                 InitRange.getEnd());
-  InitializationSequence InitSeq(*this, BaseEntity, Kind, Args, NumArgs);
-  ExprResult BaseInit = InitSeq.Perform(*this, BaseEntity, Kind,
-                                        MultiExprArg(Args, NumArgs), 0);
+  InitializationSequence InitSeq(*this, BaseEntity, Kind, Args);
+  ExprResult BaseInit = InitSeq.Perform(*this, BaseEntity, Kind, Args, 0);
   if (BaseInit.isInvalid())
     return true;
 
@@ -2709,8 +2847,7 @@ BuildImplicitBaseInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
 
       InitializationKind InitKind = InitializationKind::CreateDirect(
           Constructor->getLocation(), SourceLocation(), SourceLocation());
-      InitializationSequence InitSeq(SemaRef, InitEntity, InitKind,
-                                     Args.data(), Args.size());
+      InitializationSequence InitSeq(SemaRef, InitEntity, InitKind, Args);
       BaseInit = InitSeq.Perform(SemaRef, InitEntity, InitKind, Args);
       break;
     }
@@ -2719,7 +2856,7 @@ BuildImplicitBaseInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
   case IIK_Default: {
     InitializationKind InitKind
       = InitializationKind::CreateDefault(Constructor->getLocation());
-    InitializationSequence InitSeq(SemaRef, InitEntity, InitKind, 0, 0);
+    InitializationSequence InitSeq(SemaRef, InitEntity, InitKind, MultiExprArg());
     BaseInit = InitSeq.Perform(SemaRef, InitEntity, InitKind, MultiExprArg());
     break;
   }
@@ -2757,10 +2894,8 @@ BuildImplicitBaseInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
     InitializationKind InitKind
       = InitializationKind::CreateDirect(Constructor->getLocation(),
                                          SourceLocation(), SourceLocation());
-    InitializationSequence InitSeq(SemaRef, InitEntity, InitKind, 
-                                   &CopyCtorArg, 1);
-    BaseInit = InitSeq.Perform(SemaRef, InitEntity, InitKind,
-                               MultiExprArg(&CopyCtorArg, 1));
+    InitializationSequence InitSeq(SemaRef, InitEntity, InitKind, CopyCtorArg);
+    BaseInit = InitSeq.Perform(SemaRef, InitEntity, InitKind, CopyCtorArg);
     break;
   }
   }
@@ -2911,8 +3046,7 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
       InitializationKind::CreateDirect(Loc, SourceLocation(), SourceLocation());
     
     Expr *CtorArgE = CtorArg.takeAs<Expr>();
-    InitializationSequence InitSeq(SemaRef, Entities.back(), InitKind,
-                                   &CtorArgE, 1);
+    InitializationSequence InitSeq(SemaRef, Entities.back(), InitKind, CtorArgE);
     
     ExprResult MemberInit
       = InitSeq.Perform(SemaRef, Entities.back(), InitKind, 
@@ -2951,7 +3085,7 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
     InitializationKind InitKind = 
       InitializationKind::CreateDefault(Loc);
     
-    InitializationSequence InitSeq(SemaRef, InitEntity, InitKind, 0, 0);
+    InitializationSequence InitSeq(SemaRef, InitEntity, InitKind, MultiExprArg());
     ExprResult MemberInit = 
       InitSeq.Perform(SemaRef, InitEntity, InitKind, MultiExprArg());
 
@@ -10355,7 +10489,8 @@ Decl *Sema::ActOnStartLinkageSpecification(Scope *S, SourceLocation ExternLoc,
   // FIXME: Add all the various semantics of linkage specifications
 
   LinkageSpecDecl *D = LinkageSpecDecl::Create(Context, CurContext,
-                                               ExternLoc, LangLoc, Language);
+                                               ExternLoc, LangLoc, Language,
+                                               LBraceLoc.isValid());
   CurContext->addDecl(D);
   PushDeclContext(S, D);
   return D;
@@ -10488,9 +10623,8 @@ VarDecl *Sema::BuildExceptionDeclaration(Scope *S,
 
       Expr *opaqueValue =
         new (Context) OpaqueValueExpr(Loc, initType, VK_LValue, OK_Ordinary);
-      InitializationSequence sequence(*this, entity, initKind, &opaqueValue, 1);
-      ExprResult result = sequence.Perform(*this, entity, initKind,
-                                           MultiExprArg(&opaqueValue, 1));
+      InitializationSequence sequence(*this, entity, initKind, opaqueValue);
+      ExprResult result = sequence.Perform(*this, entity, initKind, opaqueValue);
       if (result.isInvalid())
         Invalid = true;
       else {
@@ -10979,29 +11113,39 @@ NamedDecl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
 
     // Find the appropriate context according to the above.
     DC = CurContext;
-    while (true) {
-      // Skip class contexts.  If someone can cite chapter and verse
-      // for this behavior, that would be nice --- it's what GCC and
-      // EDG do, and it seems like a reasonable intent, but the spec
-      // really only says that checks for unqualified existing
-      // declarations should stop at the nearest enclosing namespace,
-      // not that they should only consider the nearest enclosing
-      // namespace.
-      while (DC->isRecord() || DC->isTransparentContext()) 
-        DC = DC->getParent();
 
-      LookupQualifiedName(Previous, DC);
+    // Skip class contexts.  If someone can cite chapter and verse
+    // for this behavior, that would be nice --- it's what GCC and
+    // EDG do, and it seems like a reasonable intent, but the spec
+    // really only says that checks for unqualified existing
+    // declarations should stop at the nearest enclosing namespace,
+    // not that they should only consider the nearest enclosing
+    // namespace.
+    while (DC->isRecord())
+      DC = DC->getParent();
+
+    DeclContext *LookupDC = DC;
+    while (LookupDC->isTransparentContext())
+      LookupDC = LookupDC->getParent();
+
+    while (true) {
+      LookupQualifiedName(Previous, LookupDC);
 
       // TODO: decide what we think about using declarations.
-      if (isLocal || !Previous.empty())
+      if (isLocal)
         break;
 
-      if (isTemplateId) {
-        if (isa<TranslationUnitDecl>(DC)) break;
-      } else {
-        if (DC->isFileContext()) break;
+      if (!Previous.empty()) {
+        DC = LookupDC;
+        break;
       }
-      DC = DC->getParent();
+
+      if (isTemplateId) {
+        if (isa<TranslationUnitDecl>(LookupDC)) break;
+      } else {
+        if (LookupDC->isFileContext()) break;
+      }
+      LookupDC = LookupDC->getParent();
     }
 
     DCScope = getScopeForDeclContext(S, DC);
@@ -11554,8 +11698,7 @@ void Sema::MarkVTableUsed(SourceLocation Loc, CXXRecordDecl *Class,
   // Ignore any vtable uses in unevaluated operands or for classes that do
   // not have a vtable.
   if (!Class->isDynamicClass() || Class->isDependentContext() ||
-      CurContext->isDependentContext() ||
-      ExprEvalContexts.back().Context == Unevaluated)
+      CurContext->isDependentContext() || isUnevaluatedContext())
     return;
 
   // Try to insert this class into the map.
@@ -11744,7 +11887,7 @@ void Sema::SetIvarInitializers(ObjCImplementationDecl *ObjCImplementation) {
       InitializationKind InitKind = 
         InitializationKind::CreateDefault(ObjCImplementation->getLocation());
       
-      InitializationSequence InitSeq(*this, InitEntity, InitKind, 0, 0);
+      InitializationSequence InitSeq(*this, InitEntity, InitKind, MultiExprArg());
       ExprResult MemberInit = 
         InitSeq.Perform(*this, InitEntity, InitKind, MultiExprArg());
       MemberInit = MaybeCreateExprWithCleanups(MemberInit);

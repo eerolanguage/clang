@@ -2495,6 +2495,17 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
   llvm_unreachable("Unhandled member declaration!");
 }
 
+/// Given that we are currently emitting a lambda, emit an l-value for
+/// one of its members.
+LValue CodeGenFunction::EmitLValueForLambdaField(const FieldDecl *Field) {
+  assert(cast<CXXMethodDecl>(CurCodeDecl)->getParent()->isLambda());
+  assert(cast<CXXMethodDecl>(CurCodeDecl)->getParent() == Field->getParent());
+  QualType LambdaTagType =
+    getContext().getTagDeclType(Field->getParent());
+  LValue LambdaLV = MakeNaturalAlignAddrLValue(CXXABIThisValue, LambdaTagType);
+  return EmitLValueForField(LambdaLV, Field);
+}
+
 LValue CodeGenFunction::EmitLValueForField(LValue base,
                                            const FieldDecl *field) {
   if (field->isBitField()) {
@@ -2588,8 +2599,8 @@ LValue CodeGenFunction::EmitLValueForField(LValue base,
         getContext().getASTRecordLayout(field->getParent());
     // Set the base type to be the base type of the base LValue and
     // update offset to be relative to the base type.
-    LV.setTBAABaseType(base.getTBAABaseType());
-    LV.setTBAAOffset(base.getTBAAOffset() +
+    LV.setTBAABaseType(mayAlias ? getContext().CharTy : base.getTBAABaseType());
+    LV.setTBAAOffset(mayAlias ? 0 : base.getTBAAOffset() +
                      Layout.getFieldOffset(field->getFieldIndex()) /
                                            getContext().getCharWidth());
   }

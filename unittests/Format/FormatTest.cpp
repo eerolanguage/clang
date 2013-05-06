@@ -302,6 +302,7 @@ TEST_F(FormatTest, FormatsForLoop) {
   verifyFormat("for (;;) {\n"
                "  f();\n"
                "}");
+  verifyFormat("for (int i = 0; (i < 10); ++i) {\n}");
 
   verifyFormat(
       "for (std::vector<UnwrappedLine>::iterator I = UnwrappedLines.begin(),\n"
@@ -621,6 +622,13 @@ TEST_F(FormatTest, CanFormatCommentsLocally) {
                    "            // line 2\n"
                    "int b;",
                    28, 0, getLLVMStyle()));
+  EXPECT_EQ("int aaaaaa; // comment\n"
+            "int b;\n"
+            "int c; // unrelated comment",
+            format("int aaaaaa; // comment\n"
+                   "int b;\n"
+                   "int   c; // unrelated comment",
+                   31, 0, getLLVMStyle()));
 }
 
 TEST_F(FormatTest, RemovesTrailingWhitespaceOfComments) {
@@ -1691,8 +1699,34 @@ TEST_F(FormatTest, ConstructorInitializers) {
                "      aaaaa(aaaaaa),\n"
                "      aaaaa(aaaaaa) {}",
                OnePerLine);
+  verifyFormat("Constructor()\n"
+               "    : aaaaa(aaaaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaa,\n"
+               "            aaaaaaaaaaaaaaaaaaaaaa) {}",
+               OnePerLine);
+}
+
+TEST_F(FormatTest, MemoizationTests) {
+  // This breaks if the memoization lookup does not take \c Indent and
+  // \c LastSpace into account.
+  verifyFormat(
+      "extern CFRunLoopTimerRef\n"
+      "CFRunLoopTimerCreate(CFAllocatorRef allocato, CFAbsoluteTime fireDate,\n"
+      "                     CFTimeInterval interval, CFOptionFlags flags,\n"
+      "                     CFIndex order, CFRunLoopTimerCallBack callout,\n"
+      "                     CFRunLoopTimerContext *context);");
+
+  // Deep nesting somewhat works around our memoization.
+  verifyFormat(
+      "aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(\n"
+      "    aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(\n"
+      "        aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(\n"
+      "            aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(aaaaa(\n"
+      "                aaaaa())))))))))))))))))))))))))))))))))))))));",
+      getLLVMStyleWithColumns(65));
 
   // This test takes VERY long when memoization is broken.
+  FormatStyle OnePerLine = getLLVMStyle();
+  OnePerLine.ConstructorInitializerAllOnOneLineOrOnePerLine = true;
   OnePerLine.BinPackParameters = false;
   std::string input = "Constructor()\n"
                       "    : aaaa(a,\n";
@@ -2514,6 +2548,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyIndependentOfContext("A<int **, int **> a;");
   verifyIndependentOfContext("void f(int *a = d * e, int *b = c * d);");
   verifyFormat("for (char **a = b; *a; ++a) {\n}");
+  verifyFormat("for (; a && b;) {\n}");
 
   verifyFormat(
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
@@ -2942,6 +2977,17 @@ TEST_F(FormatTest, DoNotInterfereWithErrorAndWarning) {
   EXPECT_EQ("#warning 1", format("  #  warning 1"));
 }
 
+TEST_F(FormatTest, FormatHashIfExpressions) {
+  // FIXME: Come up with a better indentation for #elif.
+  verifyFormat(
+      "#if !defined(AAAAAAA) && (defined CCCCCC || defined DDDDDD) &&  \\\n"
+      "    defined(BBBBBBBB)\n"
+      "#elif !defined(AAAAAA) && (defined CCCCC || defined DDDDDD) &&  \\\n"
+      "    defined(BBBBBBBB)\n"
+      "#endif",
+      getLLVMStyleWithColumns(65));
+}
+
 TEST_F(FormatTest, MergeHandlingInTheFaceOfPreprocessorDirectives) {
   FormatStyle AllowsMergedIf = getGoogleStyle();
   AllowsMergedIf.AllowShortIfStatementsOnASingleLine = true;
@@ -2952,16 +2998,16 @@ TEST_F(FormatTest, MergeHandlingInTheFaceOfPreprocessorDirectives) {
             format("if (true)\nreturn 42;", AllowsMergedIf));
   FormatStyle ShortMergedIf = AllowsMergedIf;
   ShortMergedIf.ColumnLimit = 25;
-  verifyFormat("#define A               \\\n"
+  verifyFormat("#define A \\\n"
                "  if (true) return 42;",
                ShortMergedIf);
-  verifyFormat("#define A               \\\n"
-               "  f();                  \\\n"
+  verifyFormat("#define A \\\n"
+               "  f();    \\\n"
                "  if (true)\n"
                "#define B",
                ShortMergedIf);
-  verifyFormat("#define A               \\\n"
-               "  f();                  \\\n"
+  verifyFormat("#define A \\\n"
+               "  f();    \\\n"
                "  if (true)\n"
                "g();",
                ShortMergedIf);
@@ -3778,6 +3824,15 @@ TEST_F(FormatTest, BreakStringLiterals) {
       "\"pathat/\"\n"
       "\"slashes\"",
       format("\"split/pathat/slashes\"", getLLVMStyleWithColumns(10)));
+
+  FormatStyle AlignLeft = getLLVMStyleWithColumns(12);
+  AlignLeft.AlignEscapedNewlinesLeft = true;
+  EXPECT_EQ(
+      "#define A \\\n"
+      "  \"some \" \\\n"
+      "  \"text \" \\\n"
+      "  \"other\";",
+      format("#define A \"some text other\";", AlignLeft));
 }
 
 TEST_F(FormatTest, DoNotBreakStringLiteralsInEscapeSequence) {

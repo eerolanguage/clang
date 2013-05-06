@@ -245,6 +245,9 @@ void ASTTypeWriter::VisitUnaryTransformType(const UnaryTransformType *T) {
 
 void ASTTypeWriter::VisitAutoType(const AutoType *T) {
   Writer.AddTypeRef(T->getDeducedType(), Record);
+  Record.push_back(T->isDecltypeAuto());
+  if (T->getDeducedType().isNull())
+    Record.push_back(T->isDependentType());
   Code = TYPE_AUTO;
 }
 
@@ -1169,6 +1172,8 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
     AddString(PPOpts.MacroIncludes[I], Record);
 
   Record.push_back(PPOpts.UsePredefines);
+  // Detailed record is important since it is used for the module cache hash.
+  Record.push_back(PPOpts.DetailedRecord);
   AddString(PPOpts.ImplicitPCHInclude, Record);
   AddString(PPOpts.ImplicitPTHInclude, Record);
   Record.push_back(static_cast<unsigned>(PPOpts.ObjCXXARCStandardLibrary));
@@ -2007,18 +2012,7 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP, bool IsModule) {
       // tokens in it because they are created by the parser, and thus can't
       // be in a macro definition.
       const Token &Tok = MI->getReplacementToken(TokNo);
-
-      Record.push_back(Tok.getLocation().getRawEncoding());
-      Record.push_back(Tok.getLength());
-
-      // FIXME: When reading literal tokens, reconstruct the literal pointer
-      // if it is needed.
-      AddIdentifierRef(Tok.getIdentifierInfo(), Record);
-      // FIXME: Should translate token kind to a stable encoding.
-      Record.push_back(Tok.getKind());
-      // FIXME: Should translate token flags to a stable encoding.
-      Record.push_back(Tok.getFlags());
-
+      AddToken(Tok, Record);
       Stream.EmitRecord(PP_TOKEN, Record);
       Record.clear();
     }
@@ -3105,7 +3099,28 @@ public:
     for (SmallVector<Decl *, 16>::reverse_iterator D = Decls.rbegin(),
                                                 DEnd = Decls.rend();
          D != DEnd; ++D)
-      clang::io::Emit32(Out, Writer.getDeclID(*D));
+      clang::io::Emit32(Out, Writer.getDeclID(getMostRecentLocalDecl(*D)));
+  }
+
+  /// \brief Returns the most recent local decl or the given decl if there are
+  /// no local ones. The given decl is assumed to be the most recent one.
+  Decl *getMostRecentLocalDecl(Decl *Orig) {
+    // The only way a "from AST file" decl would be more recent from a local one
+    // is if it came from a module.
+    if (!PP.getLangOpts().Modules)
+      return Orig;
+
+    // Look for a local in the decl chain.
+    for (Decl *D = Orig; D; D = D->getPreviousDecl()) {
+      if (!D->isFromASTFile())
+        return D;
+      // If we come up a decl from a (chained-)PCH stop since we won't find a
+      // local one.
+      if (D->getOwningModuleID() == 0)
+        break;
+    }
+
+    return Orig;
   }
 };
 } // end anonymous namespace
@@ -3633,6 +3648,19 @@ void ASTWriter::WriteAttributes(ArrayRef<const Attr*> Attrs,
 #include "clang/Serialization/AttrPCHWrite.inc"
 
   }
+}
+
+void ASTWriter::AddToken(const Token &Tok, RecordDataImpl &Record) {
+  AddSourceLocation(Tok.getLocation(), Record);
+  Record.push_back(Tok.getLength());
+
+  // FIXME: When reading literal tokens, reconstruct the literal pointer
+  // if it is needed.
+  AddIdentifierRef(Tok.getIdentifierInfo(), Record);
+  // FIXME: Should translate token kind to a stable encoding.
+  Record.push_back(Tok.getKind());
+  // FIXME: Should translate token flags to a stable encoding.
+  Record.push_back(Tok.getFlags());
 }
 
 void ASTWriter::AddString(StringRef Str, RecordDataImpl &Record) {

@@ -1045,7 +1045,7 @@ Decl *Sema::ActOnStartClassImplementation(
 
   ObjCImplementationDecl* IMPDecl =
     ObjCImplementationDecl::Create(Context, CurContext, IDecl, SDecl,
-                                   ClassLoc, AtClassImplLoc);
+                                   ClassLoc, AtClassImplLoc, SuperClassLoc);
 
   if (CheckObjCDeclScope(IMPDecl))
     return ActOnObjCContainerStartDefinition(IMPDecl);
@@ -1836,7 +1836,7 @@ void Sema::ImplMethodsVsClassMethods(Scope *S, ObjCImplDecl* IMPDecl,
     if  (!(LangOpts.ObjCDefaultSynthProperties &&
            LangOpts.ObjCRuntime.isNonFragile()) ||
          IDecl->isObjCRequiresPropertyDefs())
-      DiagnoseUnimplementedProperties(S, IMPDecl, CDecl, InsMap);
+      DiagnoseUnimplementedProperties(S, IMPDecl, CDecl);
       
   SelectorSet ClsMap;
   for (ObjCImplementationDecl::classmeth_iterator
@@ -1883,17 +1883,7 @@ void Sema::ImplMethodsVsClassMethods(Scope *S, ObjCImplDecl* IMPDecl,
            E = C->protocol_end(); PI != E; ++PI)
         CheckProtocolMethodDefs(IMPDecl->getLocation(), *PI, IncompleteImpl,
                                 InsMap, ClsMap, CDecl);
-      // Report unimplemented properties in the category as well.
-      // When reporting on missing setter/getters, do not report when
-      // setter/getter is implemented in category's primary class 
-      // implementation.
-      if (ObjCInterfaceDecl *ID = C->getClassInterface())
-        if (ObjCImplDecl *IMP = ID->getImplementation()) {
-          for (ObjCImplementationDecl::instmeth_iterator
-               I = IMP->instmeth_begin(), E = IMP->instmeth_end(); I!=E; ++I)
-            InsMap.insert((*I)->getSelector());
-        }
-      DiagnoseUnimplementedProperties(S, IMPDecl, CDecl, InsMap);      
+      DiagnoseUnimplementedProperties(S, IMPDecl, CDecl);
     } 
   } else
     llvm_unreachable("invalid ObjCContainerDecl type.");
@@ -2087,9 +2077,10 @@ bool Sema::MatchTwoMethodDeclarations(const ObjCMethodDecl *left,
 void Sema::addMethodToGlobalList(ObjCMethodList *List, ObjCMethodDecl *Method) {
   // Record at the head of the list whether there were 0, 1, or >= 2 methods
   // inside categories.
-  if (isa<ObjCCategoryDecl>(Method->getDeclContext()))
-    if (List->getBits() < 2)
-      List->setBits(List->getBits()+1);
+  if (ObjCCategoryDecl *
+        CD = dyn_cast<ObjCCategoryDecl>(Method->getDeclContext()))
+    if (!CD->IsClassExtension() && List->getBits() < 2)
+        List->setBits(List->getBits()+1);
 
   // If the list is empty, make it a singleton list.
   if (List->Method == 0) {
@@ -2838,7 +2829,8 @@ void Sema::CheckObjCMethodOverrides(ObjCMethodDecl *ObjCMethod,
               for (OverrideSearch::iterator
                      OI= overrides.begin(), OE= overrides.end(); OI!=OE; ++OI) {
                 ObjCMethodDecl *SuperOverridden = *OI;
-                if (CurrentClass != SuperOverridden->getClassInterface()) {
+                if (isa<ObjCProtocolDecl>(SuperOverridden->getDeclContext()) ||
+                    CurrentClass != SuperOverridden->getClassInterface()) {
                   hasOverriddenMethodsInBaseOrProtocol = true;
                   overridden->setOverriding(true);
                   break;

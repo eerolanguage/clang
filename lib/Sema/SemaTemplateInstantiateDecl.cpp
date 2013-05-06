@@ -339,7 +339,7 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D) {
                                  D->getLocation(), D->getIdentifier(),
                                  DI->getType(), DI,
                                  D->getStorageClass());
-  Var->setTLSKind(D->getTLSKind());
+  Var->setTSCSpec(D->getTSCSpec());
   Var->setInitStyle(D->getInitStyle());
   Var->setCXXForRangeDecl(D->isCXXForRangeDecl());
   Var->setConstexpr(D->isConstexpr());
@@ -801,7 +801,7 @@ void TemplateDeclInstantiator::InstantiateEnumDefinition(
   // FIXME: Fixup LBraceLoc
   SemaRef.ActOnEnumBody(Enum->getLocation(), SourceLocation(),
                         Enum->getRBraceLoc(), Enum,
-                        Enumerators.data(), Enumerators.size(),
+                        Enumerators,
                         0, 0);
 }
 
@@ -1152,12 +1152,11 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
   // this declaration.
   FunctionTemplateDecl *FunctionTemplate = D->getDescribedFunctionTemplate();
   if (FunctionTemplate && !TemplateParams) {
-    std::pair<const TemplateArgument *, unsigned> Innermost
-      = TemplateArgs.getInnermost();
+    ArrayRef<TemplateArgument> Innermost = TemplateArgs.getInnermost();
 
     void *InsertPos = 0;
     FunctionDecl *SpecFunc
-      = FunctionTemplate->findSpecialization(Innermost.first, Innermost.second,
+      = FunctionTemplate->findSpecialization(Innermost.begin(), Innermost.size(),
                                              InsertPos);
 
     // If we already have a function template specialization, return it.
@@ -1282,12 +1281,11 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
     }
   } else if (FunctionTemplate) {
     // Record this function template specialization.
-    std::pair<const TemplateArgument *, unsigned> Innermost
-      = TemplateArgs.getInnermost();
+    ArrayRef<TemplateArgument> Innermost = TemplateArgs.getInnermost();
     Function->setFunctionTemplateSpecialization(FunctionTemplate,
                             TemplateArgumentList::CreateCopy(SemaRef.Context,
-                                                             Innermost.first,
-                                                             Innermost.second),
+                                                             Innermost.begin(),
+                                                             Innermost.size()),
                                                 /*InsertPos=*/0);
   } else if (isFriend) {
     // Note, we need this connection even if the friend doesn't have a body.
@@ -1460,12 +1458,12 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
     // We are creating a function template specialization from a function
     // template. Check whether there is already a function template
     // specialization for this particular set of template arguments.
-    std::pair<const TemplateArgument *, unsigned> Innermost
-      = TemplateArgs.getInnermost();
+    ArrayRef<TemplateArgument> Innermost = TemplateArgs.getInnermost();
 
     void *InsertPos = 0;
     FunctionDecl *SpecFunc
-      = FunctionTemplate->findSpecialization(Innermost.first, Innermost.second,
+      = FunctionTemplate->findSpecialization(Innermost.begin(), 
+                                             Innermost.size(),
                                              InsertPos);
 
     // If we already have a function template specialization, return it.
@@ -1616,12 +1614,11 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
     Method->setDescribedFunctionTemplate(FunctionTemplate);
   } else if (FunctionTemplate) {
     // Record this function template specialization.
-    std::pair<const TemplateArgument *, unsigned> Innermost
-      = TemplateArgs.getInnermost();
+    ArrayRef<TemplateArgument> Innermost = TemplateArgs.getInnermost();
     Method->setFunctionTemplateSpecialization(FunctionTemplate,
                          TemplateArgumentList::CreateCopy(SemaRef.Context,
-                                                          Innermost.first,
-                                                          Innermost.second),
+                                                          Innermost.begin(),
+                                                          Innermost.size()),
                                               /*InsertPos=*/0);
   } else if (!isFriend) {
     // Record that this is an instantiation of a member function.
@@ -2871,13 +2868,15 @@ void Sema::InstantiateFunctionDefinition(SourceLocation PointOfInstantiation,
     return;
   }
 
-  // C++0x [temp.explicit]p9:
-  //   Except for inline functions, other explicit instantiation declarations
-  //   have the effect of suppressing the implicit instantiation of the entity
-  //   to which they refer.
+  // C++1y [temp.explicit]p10:
+  //   Except for inline functions, declarations with types deduced from their
+  //   initializer or return value, and class template specializations, other
+  //   explicit instantiation declarations have the effect of suppressing the
+  //   implicit instantiation of the entity to which they refer.
   if (Function->getTemplateSpecializationKind()
         == TSK_ExplicitInstantiationDeclaration &&
-      !PatternDecl->isInlined())
+      !PatternDecl->isInlined() &&
+      !PatternDecl->getResultType()->isUndeducedType())
     return;
 
   if (PatternDecl->isInlined())

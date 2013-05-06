@@ -46,6 +46,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/MC/MCParser/MCAsmParser.h"
 #include <deque>
 #include <string>
 
@@ -599,6 +600,10 @@ public:
   /// have been declared.
   bool GlobalNewDeleteDeclared;
 
+  /// A flag to indicate that we're in a context that permits abstract
+  /// references to fields.  This is really a 
+  bool AllowAbstractFieldReference;
+
   /// \brief Describes how the expressions currently being parsed are
   /// evaluated at run-time, if at all.
   enum ExpressionEvaluationContext {
@@ -608,6 +613,11 @@ public:
     /// no code will be generated to evaluate the value of the expression at
     /// run time.
     Unevaluated,
+
+    /// \brief The current expression occurs within an unevaluated
+    /// operand that unconditionally permits abstract references to
+    /// fields, such as a SIZE operator in MS-style inline assembly.
+    UnevaluatedAbstract,
 
     /// \brief The current context is "potentially evaluated" in C++11 terms,
     /// but the expression is evaluated at compile-time (like the values of
@@ -687,6 +697,10 @@ public:
       if (!LambdaMangle)
         LambdaMangle = new LambdaMangleContext;
       return *LambdaMangle;
+    }
+
+    bool isUnevaluated() const {
+      return Context == Unevaluated || Context == UnevaluatedAbstract;
     }
   };
 
@@ -820,6 +834,9 @@ public:
     bool OldFPContractState : 1;
   };
 
+  typedef llvm::MCAsmParserSemaCallback::InlineAsmIdentifierInfo
+    InlineAsmIdentifierInfo;
+
 public:
   Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
        TranslationUnitKind TUKind = TU_Complete,
@@ -923,7 +940,7 @@ public:
   void PushLambdaScope(CXXRecordDecl *Lambda, CXXMethodDecl *CallOperator);
   void PushCapturedRegionScope(Scope *RegionScope, CapturedDecl *CD,
                                RecordDecl *RD,
-                               sema::CapturedRegionScopeInfo::CapturedRegionKind K);
+                               CapturedRegionKind K);
   void PopFunctionScopeInfo(const sema::AnalysisBasedWarnings::Policy *WP =0,
                             const Decl *D = 0, const BlockExpr *blkExpr = 0);
 
@@ -1244,7 +1261,7 @@ public:
 
   bool isSimpleTypeSpecifier(tok::TokenKind Kind) const;
 
-  ParsedType getTypeName(IdentifierInfo &II, SourceLocation NameLoc,
+  ParsedType getTypeName(const IdentifierInfo &II, SourceLocation NameLoc,
                          Scope *S, CXXScopeSpec *SS = 0,
                          bool isClassName = false,
                          bool HasTrailingDot = false,
@@ -1403,6 +1420,7 @@ public:
                                      MultiTemplateParamsArg TemplateParamLists);
   // Returns true if the variable declaration is a redeclaration
   bool CheckVariableDeclaration(VarDecl *NewVD, LookupResult &Previous);
+  void CheckVariableDeclarationType(VarDecl *NewVD);
   void CheckCompleteVariableDeclaration(VarDecl *var);
   void MaybeSuggestAddingStaticToDecl(const FunctionDecl *D);
   void ActOnStartFunctionDeclarator();
@@ -1684,7 +1702,7 @@ public:
                           SourceLocation EqualLoc, Expr *Val);
   void ActOnEnumBody(SourceLocation EnumLoc, SourceLocation LBraceLoc,
                      SourceLocation RBraceLoc, Decl *EnumDecl,
-                     Decl **Elements, unsigned NumElements,
+                     ArrayRef<Decl *> Elements,
                      Scope *S, AttributeList *Attr);
 
   DeclContext *getContainingDC(DeclContext *DC);
@@ -2015,7 +2033,7 @@ public:
   void AddMethodCandidate(DeclAccessPair FoundDecl,
                           QualType ObjectType,
                           Expr::Classification ObjectClassification,
-                          Expr **Args, unsigned NumArgs,
+                          ArrayRef<Expr *> Args,
                           OverloadCandidateSet& CandidateSet,
                           bool SuppressUserConversion = false);
   void AddMethodCandidate(CXXMethodDecl *Method,
@@ -2480,8 +2498,7 @@ public:
   /// DiagnoseUnimplementedProperties - This routine warns on those properties
   /// which must be implemented by this implementation.
   void DiagnoseUnimplementedProperties(Scope *S, ObjCImplDecl* IMPDecl,
-                                       ObjCContainerDecl *CDecl,
-                                       const SelectorSet &InsMap);
+                                       ObjCContainerDecl *CDecl);
 
   /// DefaultSynthesizeProperties - This routine default synthesizes all
   /// properties which must be synthesized in the class's \@implementation.
@@ -2803,11 +2820,12 @@ public:
   StmtResult ActOnBreakStmt(SourceLocation BreakLoc, Scope *CurScope);
 
   void ActOnCapturedRegionStart(SourceLocation Loc, Scope *CurScope,
-                                sema::CapturedRegionScopeInfo::CapturedRegionKind Kind);
+                                CapturedRegionKind Kind, unsigned NumParams);
   StmtResult ActOnCapturedRegionEnd(Stmt *S);
-  void ActOnCapturedRegionError(bool IsInstantiation = false);
+  void ActOnCapturedRegionError();
   RecordDecl *CreateCapturedStmtRecordDecl(CapturedDecl *&CD,
-                                           SourceLocation Loc);
+                                           SourceLocation Loc,
+                                           unsigned NumParams);
   const VarDecl *getCopyElisionCandidate(QualType ReturnType, Expr *E,
                                          bool AllowFunctionParameters);
 
@@ -2821,13 +2839,21 @@ public:
                              Expr *AsmString, MultiExprArg Clobbers,
                              SourceLocation RParenLoc);
 
-  NamedDecl *LookupInlineAsmIdentifier(StringRef Name, SourceLocation Loc,
-                                       unsigned &Length, unsigned &Size, 
-                                       unsigned &Type, bool &IsVarDecl);
+  ExprResult LookupInlineAsmIdentifier(CXXScopeSpec &SS,
+                                       SourceLocation TemplateKWLoc,
+                                       UnqualifiedId &Id,
+                                       InlineAsmIdentifierInfo &Info,
+                                       bool IsUnevaluatedContext);
   bool LookupInlineAsmField(StringRef Base, StringRef Member,
                             unsigned &Offset, SourceLocation AsmLoc);
   StmtResult ActOnMSAsmStmt(SourceLocation AsmLoc, SourceLocation LBraceLoc,
-                            ArrayRef<Token> AsmToks, SourceLocation EndLoc);
+                            ArrayRef<Token> AsmToks,
+                            StringRef AsmString,
+                            unsigned NumOutputs, unsigned NumInputs,
+                            ArrayRef<StringRef> Constraints,
+                            ArrayRef<StringRef> Clobbers,
+                            ArrayRef<Expr*> Exprs,
+                            SourceLocation EndLoc);
 
   VarDecl *BuildObjCExceptionDecl(TypeSourceInfo *TInfo, QualType ExceptionType,
                                   SourceLocation StartLoc,
@@ -5712,8 +5738,17 @@ public:
   };
 
   DeduceAutoResult DeduceAutoType(TypeSourceInfo *AutoType, Expr *&Initializer,
-                                  TypeSourceInfo *&Result);
+                                  QualType &Result);
+  DeduceAutoResult DeduceAutoType(TypeLoc AutoTypeLoc, Expr *&Initializer,
+                                  QualType &Result);
+  QualType SubstAutoType(QualType TypeWithAuto, QualType Replacement);
   void DiagnoseAutoDeductionFailure(VarDecl *VDecl, Expr *Init);
+  bool DeduceReturnType(FunctionDecl *FD, SourceLocation Loc,
+                        bool Diagnose = true);
+
+  bool DeduceFunctionTypeFromReturnExpr(FunctionDecl *FD,
+                                        SourceLocation ReturnLoc,
+                                        Expr *&RetExpr, AutoType *AT);
 
   FunctionTemplateDecl *getMoreSpecializedTemplate(FunctionTemplateDecl *FT1,
                                                    FunctionTemplateDecl *FT2,
@@ -6066,7 +6101,7 @@ public:
   bool isUnevaluatedContext() const {
     assert(!ExprEvalContexts.empty() &&
            "Must be in an expression evaluation context");
-    return ExprEvalContexts.back().Context == Sema::Unevaluated;
+    return ExprEvalContexts.back().isUnevaluated();
   }
 
   /// \brief RAII class used to determine whether SFINAE has

@@ -443,9 +443,12 @@ ObjCInterfaceDecl *ObjCInterfaceDecl::lookupInheritedClass(
 
 /// lookupMethod - This method returns an instance/class method by looking in
 /// the class, its categories, and its super classes (using a linear search).
+/// When argument category "C" is specified, any implicit method found
+/// in this category is ignored.
 ObjCMethodDecl *ObjCInterfaceDecl::lookupMethod(Selector Sel, 
                                      bool isInstance,
-                                     bool shallowCategoryLookup) const {
+                                     bool shallowCategoryLookup,
+                                     const ObjCCategoryDecl *C) const {
   // FIXME: Should make sure no callers ever do this.
   if (!hasDefinition())
     return 0;
@@ -469,20 +472,22 @@ ObjCMethodDecl *ObjCInterfaceDecl::lookupMethod(Selector Sel,
     
     // Didn't find one yet - now look through categories.
     for (ObjCInterfaceDecl::visible_categories_iterator
-           Cat = ClassDecl->visible_categories_begin(),
-           CatEnd = ClassDecl->visible_categories_end();
+         Cat = ClassDecl->visible_categories_begin(),
+         CatEnd = ClassDecl->visible_categories_end();
          Cat != CatEnd; ++Cat) {
       if ((MethodDecl = Cat->getMethod(Sel, isInstance)))
-        return MethodDecl;
+        if (C != (*Cat) || !MethodDecl->isImplicit())
+          return MethodDecl;
 
       if (!shallowCategoryLookup) {
         // Didn't find one yet - look through protocols.
         const ObjCList<ObjCProtocolDecl> &Protocols =
-          Cat->getReferencedProtocols();
+        Cat->getReferencedProtocols();
         for (ObjCList<ObjCProtocolDecl>::iterator I = Protocols.begin(),
              E = Protocols.end(); I != E; ++I)
           if ((MethodDecl = (*I)->lookupMethod(Sel, isInstance)))
-            return MethodDecl;
+            if (C != (*Cat) || !MethodDecl->isImplicit())
+              return MethodDecl;
       }
     }
   
@@ -1643,12 +1648,13 @@ ObjCImplementationDecl::Create(ASTContext &C, DeclContext *DC,
                                ObjCInterfaceDecl *SuperDecl,
                                SourceLocation nameLoc,
                                SourceLocation atStartLoc,
+                               SourceLocation superLoc,
                                SourceLocation IvarLBraceLoc,
                                SourceLocation IvarRBraceLoc) {
   if (ClassInterface && ClassInterface->hasDefinition())
     ClassInterface = ClassInterface->getDefinition();
   return new (C) ObjCImplementationDecl(DC, ClassInterface, SuperDecl,
-                                        nameLoc, atStartLoc,
+                                        nameLoc, atStartLoc, superLoc,
                                         IvarLBraceLoc, IvarRBraceLoc);
 }
 

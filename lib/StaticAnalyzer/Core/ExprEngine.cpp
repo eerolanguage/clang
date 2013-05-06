@@ -741,21 +741,22 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       const CXXDefaultArgExpr *DefaultE = cast<CXXDefaultArgExpr>(S);
       const Expr *ArgE = DefaultE->getExpr();
 
-      // Avoid creating and destroying a lot of APSInts.
-      SVal V;
-      llvm::APSInt Result;
+      bool IsTemporary = false;
+      if (const MaterializeTemporaryExpr *MTE =
+            dyn_cast<MaterializeTemporaryExpr>(ArgE)) {
+        ArgE = MTE->GetTemporaryExpr();
+        IsTemporary = true;
+      }
+
+      Optional<SVal> ConstantVal = svalBuilder.getConstantVal(ArgE);
+      if (!ConstantVal)
+        ConstantVal = UnknownVal();
 
       for (ExplodedNodeSet::iterator I = PreVisit.begin(), E = PreVisit.end();
            I != E; ++I) {
         ProgramStateRef State = (*I)->getState();
-
-        if (ArgE->EvaluateAsInt(Result, getContext()))
-          V = svalBuilder.makeIntVal(Result);
-        else
-          V = State->getSVal(ArgE, LCtx);
-
-        State = State->BindExpr(DefaultE, LCtx, V);
-        if (DefaultE->isGLValue())
+        State = State->BindExpr(DefaultE, LCtx, *ConstantVal);
+        if (IsTemporary)
           State = createTemporaryRegionIfNeeded(State, LCtx, DefaultE,
                                                 DefaultE);
         Bldr2.generateNode(S, *I, State);

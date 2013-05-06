@@ -128,6 +128,37 @@ getStorageClass now returns what is written it the source code for that decl.
 
 ...
 
+libclang
+--------
+
+The clang_CXCursorSet_contains() function previously incorrectly returned 0
+if it contained a CXCursor, contrary to what the documentation stated.  This
+has been fixed so that the function returns a non-zero value if the set
+contains a cursor.  This is API breaking change, but matches the intended
+original behavior.  Moreover, this also fixes the issue of an invalid CXCursorSet
+appearing to contain any CXCursor.
+
+Static Analyzer
+---------------
+
+The static analyzer (which contains additional code checking beyond compiler
+warnings) has improved significantly in both in the core analysis engine and 
+also in the kinds of issues it can find.
+
+Core Analysis Improvements
+==========================
+
+- Support for interprocedural reasoning about constructors and destructors.
+- New false positive suppression mechanisms that reduced the number of false null pointer dereference warnings due to interprocedural analysis.
+- Major performance enhancements to speed up interprocedural analysis
+
+New Issues Found
+================
+
+- New memory error checks such as use-after-free with C++ 'delete'.
+- Detection of mismatched allocators and deallocators (e.g., using 'new' with 'free()', 'malloc()' with 'delete').
+- Additional checks for misuses of Apple Foundation framework collection APIs.
+
 Python Binding Changes
 ----------------------
 

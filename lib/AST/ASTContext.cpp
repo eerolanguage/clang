@@ -442,7 +442,7 @@ comments::FullComment *ASTContext::getCommentForDecl(
         if (comments::FullComment *FC = getCommentForDecl(Overridden[i], PP))
           return cloneFullComment(FC, D);
     }
-    else if (const TypedefDecl *TD = dyn_cast<TypedefDecl>(D)) {
+    else if (const TypedefNameDecl *TD = dyn_cast<TypedefNameDecl>(D)) {
       // Attach any tag type's documentation to its typedef if latter
       // does not have one of its own.
       QualType QT = TD->getUnderlyingType();
@@ -450,6 +450,53 @@ comments::FullComment *ASTContext::getCommentForDecl(
         if (const Decl *TD = TT->getDecl())
           if (comments::FullComment *FC = getCommentForDecl(TD, PP))
             return cloneFullComment(FC, D);
+    }
+    else if (const ObjCInterfaceDecl *IC = dyn_cast<ObjCInterfaceDecl>(D)) {
+      while (IC->getSuperClass()) {
+        IC = IC->getSuperClass();
+        if (comments::FullComment *FC = getCommentForDecl(IC, PP))
+          return cloneFullComment(FC, D);
+      }
+    }
+    else if (const ObjCCategoryDecl *CD = dyn_cast<ObjCCategoryDecl>(D)) {
+      if (const ObjCInterfaceDecl *IC = CD->getClassInterface())
+        if (comments::FullComment *FC = getCommentForDecl(IC, PP))
+          return cloneFullComment(FC, D);
+    }
+    else if (const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(D)) {
+      if (!(RD = RD->getDefinition()))
+        return NULL;
+      // Check non-virtual bases.
+      for (CXXRecordDecl::base_class_const_iterator I =
+           RD->bases_begin(), E = RD->bases_end(); I != E; ++I) {
+        if (I->isVirtual() || (I->getAccessSpecifier() != AS_public))
+          continue;
+        QualType Ty = I->getType();
+        if (Ty.isNull())
+          continue;
+        if (const CXXRecordDecl *NonVirtualBase = Ty->getAsCXXRecordDecl()) {
+          if (!(NonVirtualBase= NonVirtualBase->getDefinition()))
+            continue;
+        
+          if (comments::FullComment *FC = getCommentForDecl((NonVirtualBase), PP))
+            return cloneFullComment(FC, D);
+        }
+      }
+      // Check virtual bases.
+      for (CXXRecordDecl::base_class_const_iterator I =
+           RD->vbases_begin(), E = RD->vbases_end(); I != E; ++I) {
+        if (I->getAccessSpecifier() != AS_public)
+          continue;
+        QualType Ty = I->getType();
+        if (Ty.isNull())
+          continue;
+        if (const CXXRecordDecl *VirtualBase = Ty->getAsCXXRecordDecl()) {
+          if (!(VirtualBase= VirtualBase->getDefinition()))
+            continue;
+          if (comments::FullComment *FC = getCommentForDecl((VirtualBase), PP))
+            return cloneFullComment(FC, D);
+        }
+      }
     }
     return NULL;
   }
@@ -1550,7 +1597,8 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
 
   case Type::Auto: {
     const AutoType *A = cast<AutoType>(T);
-    assert(A->isDeduced() && "Cannot request the size of a dependent type");
+    assert(!A->getDeducedType().isNull() &&
+           "cannot request the size of an undeduced or dependent auto type");
     return getTypeInfo(A->getDeducedType().getTypePtr());
   }
 
@@ -1985,6 +2033,16 @@ const FunctionType *ASTContext::adjustFunctionType(const FunctionType *T,
   }
 
   return cast<FunctionType>(Result.getTypePtr());
+}
+
+void ASTContext::adjustDeducedFunctionResultType(FunctionDecl *FD,
+                                                 QualType ResultType) {
+  // FIXME: Need to inform serialization code about this!
+  for (FD = FD->getMostRecentDecl(); FD; FD = FD->getPreviousDecl()) {
+    const FunctionProtoType *FPT = FD->getType()->castAs<FunctionProtoType>();
+    FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
+    FD->setType(getFunctionType(ResultType, FPT->getArgTypes(), EPI));
+  }
 }
 
 /// getComplexType - Return the uniqued reference to the type for a complex
@@ -3515,18 +3573,24 @@ QualType ASTContext::getUnaryTransformType(QualType BaseType,
   return QualType(Ty, 0);
 }
 
-/// getAutoType - We only unique auto types after they've been deduced.
-QualType ASTContext::getAutoType(QualType DeducedType) const {
-  void *InsertPos = 0;
-  if (!DeducedType.isNull()) {
-    // Look in the folding set for an existing type.
-    llvm::FoldingSetNodeID ID;
-    AutoType::Profile(ID, DeducedType);
-    if (AutoType *AT = AutoTypes.FindNodeOrInsertPos(ID, InsertPos))
-      return QualType(AT, 0);
-  }
+/// getAutoType - Return the uniqued reference to the 'auto' type which has been
+/// deduced to the given type, or to the canonical undeduced 'auto' type, or the
+/// canonical deduced-but-dependent 'auto' type.
+QualType ASTContext::getAutoType(QualType DeducedType, bool IsDecltypeAuto,
+                                 bool IsDependent) const {
+  if (DeducedType.isNull() && !IsDecltypeAuto && !IsDependent)
+    return getAutoDeductType();
 
-  AutoType *AT = new (*this, TypeAlignment) AutoType(DeducedType);
+  // Look in the folding set for an existing type.
+  void *InsertPos = 0;
+  llvm::FoldingSetNodeID ID;
+  AutoType::Profile(ID, DeducedType, IsDecltypeAuto, IsDependent);
+  if (AutoType *AT = AutoTypes.FindNodeOrInsertPos(ID, InsertPos))
+    return QualType(AT, 0);
+
+  AutoType *AT = new (*this, TypeAlignment) AutoType(DeducedType,
+                                                     IsDecltypeAuto,
+                                                     IsDependent);
   Types.push_back(AT);
   if (InsertPos)
     AutoTypes.InsertNode(AT, InsertPos);
@@ -3564,8 +3628,10 @@ QualType ASTContext::getAtomicType(QualType T) const {
 /// getAutoDeductType - Get type pattern for deducing against 'auto'.
 QualType ASTContext::getAutoDeductType() const {
   if (AutoDeductTy.isNull())
-    AutoDeductTy = getAutoType(QualType());
-  assert(!AutoDeductTy.isNull() && "can't build 'auto' pattern");
+    AutoDeductTy = QualType(
+      new (*this, TypeAlignment) AutoType(QualType(), /*decltype(auto)*/false,
+                                          /*dependent*/false),
+      0);
   return AutoDeductTy;
 }
 
@@ -5338,6 +5404,11 @@ void ASTContext::getObjCEncodingForTypeImpl(QualType T, std::string& S,
     // FIXME. We should do a better job than gcc.
     return;
 
+  case Type::Auto:
+    // We could see an undeduced auto type here during error recovery.
+    // Just ignore it.
+    return;
+
 #define ABSTRACT_TYPE(KIND, BASE)
 #define TYPE(KIND, BASE)
 #define DEPENDENT_TYPE(KIND, BASE) \
@@ -6979,6 +7050,7 @@ QualType ASTContext::mergeTypes(QualType LHS, QualType RHS,
 #include "clang/AST/TypeNodes.def"
     llvm_unreachable("Non-canonical and dependent types shouldn't get here");
 
+  case Type::Auto:
   case Type::LValueReference:
   case Type::RValueReference:
   case Type::MemberPointer:

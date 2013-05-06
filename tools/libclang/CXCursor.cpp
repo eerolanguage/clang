@@ -435,7 +435,21 @@ CXCursor cxcursor::MakeCXCursor(const Stmt *S, const Decl *Parent,
     K = CXCursor_SizeOfPackExpr;
     break;
 
-  case Stmt::DeclRefExprClass:           
+  case Stmt::DeclRefExprClass:
+    if (const ImplicitParamDecl *IPD =
+         dyn_cast_or_null<ImplicitParamDecl>(cast<DeclRefExpr>(S)->getDecl())) {
+      if (const ObjCMethodDecl *MD =
+            dyn_cast<ObjCMethodDecl>(IPD->getDeclContext())) {
+        if (MD->getSelfDecl() == IPD) {
+          K = CXCursor_ObjCSelfExpr;
+          break;
+        }
+      }
+    }
+
+    K = CXCursor_DeclRefExpr;
+    break;
+
   case Stmt::DependentScopeDeclRefExprClass:
   case Stmt::SubstNonTypeTemplateParmExprClass:
   case Stmt::SubstNonTypeTemplateParmPackExprClass:
@@ -1031,7 +1045,7 @@ unsigned clang_CXCursorSet_contains(CXCursorSet set, CXCursor cursor) {
   CXCursorSet_Impl *setImpl = unpackCXCursorSet(set);
   if (!setImpl)
     return 0;
-  return setImpl->find(cursor) == setImpl->end();
+  return setImpl->find(cursor) != setImpl->end();
 }
 
 unsigned clang_CXCursorSet_insert(CXCursorSet set, CXCursor cursor) {

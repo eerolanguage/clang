@@ -667,7 +667,7 @@ private:
     friend class ASTDeclReader;
 
     unsigned SClass : 3;
-    unsigned TLSKind : 2;
+    unsigned TSCSpec : 2;
     unsigned InitStyle : 2;
 
     /// \brief Whether this variable is the exception variable in a C++ catch
@@ -774,9 +774,23 @@ public:
   }
   void setStorageClass(StorageClass SC);
 
-  void setTLSKind(TLSKind TLS) { VarDeclBits.TLSKind = TLS; }
+  void setTSCSpec(ThreadStorageClassSpecifier TSC) {
+    VarDeclBits.TSCSpec = TSC;
+  }
+  ThreadStorageClassSpecifier getTSCSpec() const {
+    return static_cast<ThreadStorageClassSpecifier>(VarDeclBits.TSCSpec);
+  }
   TLSKind getTLSKind() const {
-    return static_cast<TLSKind>(VarDeclBits.TLSKind);
+    switch (VarDeclBits.TSCSpec) {
+    case TSCS_unspecified:
+      return TLS_None;
+    case TSCS___thread: // Fall through.
+    case TSCS__Thread_local:
+      return TLS_Static;
+    case TSCS_thread_local:
+      return TLS_Dynamic;
+    }
+    llvm_unreachable("Unknown thread storage class specifier!");
   }
 
   /// hasLocalStorage - Returns true if a variable with function scope
@@ -3169,16 +3183,48 @@ public:
 /// DeclContext.
 class CapturedDecl : public Decl, public DeclContext {
 private:
+  /// \brief The number of parameters to the outlined function.
+  unsigned NumParams;
+  /// \brief The body of the outlined function.
   Stmt *Body;
 
-  explicit CapturedDecl(DeclContext *DC)
-    : Decl(Captured, DC, SourceLocation()), DeclContext(Captured) { }
+  explicit CapturedDecl(DeclContext *DC, unsigned NumParams)
+    : Decl(Captured, DC, SourceLocation()), DeclContext(Captured),
+      NumParams(NumParams), Body(0) { }
+
+  ImplicitParamDecl **getParams() const {
+    return reinterpret_cast<ImplicitParamDecl **>(
+             const_cast<CapturedDecl *>(this) + 1);
+  }
 
 public:
-  static CapturedDecl *Create(ASTContext &C, DeclContext *DC);
+  static CapturedDecl *Create(ASTContext &C, DeclContext *DC, unsigned NumParams);
+  static CapturedDecl *CreateDeserialized(ASTContext &C, unsigned ID,
+                                          unsigned NumParams);
 
   Stmt *getBody() const { return Body; }
   void setBody(Stmt *B) { Body = B; }
+
+  unsigned getNumParams() const { return NumParams; }
+
+  ImplicitParamDecl *getParam(unsigned i) const {
+    assert(i < NumParams);
+    return getParams()[i];
+  }
+  void setParam(unsigned i, ImplicitParamDecl *P) {
+    assert(i < NumParams);
+    getParams()[i] = P;
+  }
+
+  /// \brief Retrieve the parameter containing captured variables.
+  ImplicitParamDecl *getContextParam() const { return getParam(0); }
+  void setContextParam(ImplicitParamDecl *P) { setParam(0, P); }
+
+  typedef ImplicitParamDecl **param_iterator;
+  /// \brief Retrieve an iterator pointing to the first parameter decl.
+  param_iterator param_begin() const { return getParams(); }
+  /// \brief Retrieve an iterator one past the last parameter decl.
+  param_iterator param_end() const { return getParams() + NumParams; }
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -3189,6 +3235,9 @@ public:
   static CapturedDecl *castFromDeclContext(const DeclContext *DC) {
     return static_cast<CapturedDecl *>(const_cast<DeclContext *>(DC));
   }
+
+  friend class ASTDeclReader;
+  friend class ASTDeclWriter;
 };
 
 /// \brief Describes a module import declaration, which makes the contents

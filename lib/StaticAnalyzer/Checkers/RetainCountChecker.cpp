@@ -326,7 +326,7 @@ void RefVal::print(raw_ostream &Out) const {
       break;
 
     case RefVal::ErrorOverAutorelease:
-      Out << "Over autoreleased";
+      Out << "Over-autoreleased";
       break;
 
     case RefVal::ErrorReturnedNotOwned:
@@ -1116,12 +1116,14 @@ RetainSummaryManager::getFunctionSummary(const FunctionDecl *FD) {
       // correctly.
       ScratchArgs = AF.add(ScratchArgs, 12, StopTracking);
       S = getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
-    } else if (FName == "dispatch_set_context") {
+    } else if (FName == "dispatch_set_context" ||
+               FName == "xpc_connection_set_context") {
       // <rdar://problem/11059275> - The analyzer currently doesn't have
       // a good way to reason about the finalizer function for libdispatch.
       // If we pass a context object that is memory managed, stop tracking it.
+      // <rdar://problem/13783514> - Same problem, but for XPC.
       // FIXME: this hack should possibly go away once we can handle
-      // libdispatch finalizers.
+      // libdispatch and XPC finalizers.
       ScratchArgs = AF.add(ScratchArgs, 1, StopTracking);
       S = getPersistentSummary(RetEffect::MakeNoRet(), DoNothing, DoNothing);
     } else if (FName.startswith("NSLog")) {
@@ -1662,10 +1664,10 @@ namespace {
   class OverAutorelease : public CFRefBug {
   public:
     OverAutorelease()
-    : CFRefBug("Object sent -autorelease too many times") {}
+    : CFRefBug("Object autoreleased too many times") {}
 
     const char *getDescription() const {
-      return "Object sent -autorelease too many times";
+      return "Object autoreleased too many times";
     }
   };
 
@@ -2050,7 +2052,7 @@ PathDiagnosticPiece *CFRefReportVisitor::VisitNode(const ExplodedNode *N,
               return 0;
 
             assert(PrevV.getAutoreleaseCount() < CurrV.getAutoreleaseCount());
-            os << "Object sent -autorelease message";
+            os << "Object autoreleased";
             break;
           }
 
@@ -2192,7 +2194,7 @@ GetAllocationSite(ProgramStateManager& StateMgr, const ExplodedNode *N,
     if (!InitMethodContext)
       if (Optional<CallEnter> CEP = N->getLocation().getAs<CallEnter>()) {
         const Stmt *CE = CEP->getCallExpr();
-        if (const ObjCMessageExpr *ME = dyn_cast<ObjCMessageExpr>(CE)) {
+        if (const ObjCMessageExpr *ME = dyn_cast_or_null<ObjCMessageExpr>(CE)) {
           const Stmt *RecExpr = ME->getInstanceReceiver();
           if (RecExpr) {
             SVal RecV = St->getSVal(RecExpr, NContext);
@@ -2358,8 +2360,17 @@ CFRefLeakReport::CFRefLeakReport(CFRefBug &D, const LangOptions &LOpts,
   else
     AllocStmt = P.castAs<PostStmt>().getStmt();
   assert(AllocStmt && "All allocations must come from explicit calls");
-  Location = PathDiagnosticLocation::createBegin(AllocStmt, SMgr,
-                                                  n->getLocationContext());
+
+  PathDiagnosticLocation AllocLocation =
+    PathDiagnosticLocation::createBegin(AllocStmt, SMgr,
+                                        AllocNode->getLocationContext());
+  Location = AllocLocation;
+
+  // Set uniqieing info, which will be used for unique the bug reports. The
+  // leaks should be uniqued on the allocation site.
+  UniqueingLocation = AllocLocation;
+  UniqueingDecl = AllocNode->getLocationContext()->getDecl();
+
   // Fill in the description of the bug.
   Description.clear();
   llvm::raw_string_ostream os(Description);
@@ -3554,10 +3565,12 @@ RetainCountChecker::handleAutoreleaseCounts(ProgramStateRef state,
   if (N) {
     SmallString<128> sbuf;
     llvm::raw_svector_ostream os(sbuf);
-    os << "Object over-autoreleased: object was sent -autorelease ";
+    os << "Object was autoreleased ";
     if (V.getAutoreleaseCount() > 1)
-      os << V.getAutoreleaseCount() << " times ";
-    os << "but the object has a +" << V.getCount() << " retain count";
+      os << V.getAutoreleaseCount() << " times but the object ";
+    else
+      os << "but ";
+    os << "has a +" << V.getCount() << " retain count";
 
     if (!overAutorelease)
       overAutorelease.reset(new OverAutorelease());

@@ -224,6 +224,68 @@ loc::MemRegionVal SValBuilder::getCXXThis(const CXXRecordDecl *D,
   return loc::MemRegionVal(getRegionManager().getCXXThisRegion(PT, SFC));
 }
 
+Optional<SVal> SValBuilder::getConstantVal(const Expr *E) {
+  E = E->IgnoreParens();
+
+  switch (E->getStmtClass()) {
+  // Handle expressions that we treat differently from the AST's constant
+  // evaluator.
+  case Stmt::AddrLabelExprClass:
+    return makeLoc(cast<AddrLabelExpr>(E));
+
+  case Stmt::CXXScalarValueInitExprClass:
+  case Stmt::ImplicitValueInitExprClass:
+    return makeZeroVal(E->getType());
+
+  case Stmt::ObjCStringLiteralClass: {
+    const ObjCStringLiteral *SL = cast<ObjCStringLiteral>(E);
+    return makeLoc(getRegionManager().getObjCStringRegion(SL));
+  }
+
+  case Stmt::StringLiteralClass: {
+    const StringLiteral *SL = cast<StringLiteral>(E);
+    return makeLoc(getRegionManager().getStringRegion(SL));
+  }
+
+  // Fast-path some expressions to avoid the overhead of going through the AST's
+  // constant evaluator
+  case Stmt::CharacterLiteralClass: {
+    const CharacterLiteral *C = cast<CharacterLiteral>(E);
+    return makeIntVal(C->getValue(), C->getType());
+  }
+
+  case Stmt::CXXBoolLiteralExprClass:
+    return makeBoolVal(cast<CXXBoolLiteralExpr>(E));
+
+  case Stmt::IntegerLiteralClass:
+    return makeIntVal(cast<IntegerLiteral>(E));
+
+  case Stmt::ObjCBoolLiteralExprClass:
+    return makeBoolVal(cast<ObjCBoolLiteralExpr>(E));
+
+  case Stmt::CXXNullPtrLiteralExprClass:
+    return makeNull();
+
+  // If we don't have a special case, fall back to the AST's constant evaluator.
+  default: {
+    // Don't try to come up with a value for materialized temporaries.
+    if (E->isGLValue())
+      return None;
+
+    ASTContext &Ctx = getContext();
+    llvm::APSInt Result;
+    if (E->EvaluateAsInt(Result, Ctx))
+      return makeIntVal(Result);
+
+    if (Loc::isLocType(E->getType()))
+      if (E->isNullPointerConstant(Ctx, Expr::NPC_ValueDependentIsNotNull))
+        return makeNull();
+
+    return None;
+  }
+  }
+}
+
 //===----------------------------------------------------------------------===//
 
 SVal SValBuilder::makeSymExprValNN(ProgramStateRef State,
@@ -326,6 +388,22 @@ SVal SValBuilder::evalCast(SVal val, QualType castTy, QualType originalTy) {
   originalTy = Context.getCanonicalType(originalTy);
   if (val.isUnknownOrUndef() || castTy == originalTy)
     return val;
+
+  if (castTy->isBooleanType()) {
+    if (val.isUnknownOrUndef())
+      return val;
+    if (val.isConstant())
+      return makeTruthVal(!val.isZeroConstant(), castTy);
+    if (SymbolRef Sym = val.getAsSymbol()) {
+      BasicValueFactory &BVF = getBasicValueFactory();
+      // FIXME: If we had a state here, we could see if the symbol is known to
+      // be zero, but we don't.
+      return makeNonLoc(Sym, BO_NE, BVF.getValue(0, Sym->getType()), castTy);
+    }
+
+    assert(val.getAs<Loc>());
+    return makeTruthVal(true, castTy);
+  }
 
   // For const casts, casts to void, just propagate the value.
   if (!castTy->isVariableArrayType() && !originalTy->isVariableArrayType())

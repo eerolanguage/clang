@@ -16,10 +16,12 @@
 
 #include "clang/AST/DeclGroup.h"
 #include "clang/AST/StmtIterator.h"
+#include "clang/Basic/CapturedStmt.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/PointerIntPair.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <string>
@@ -1386,7 +1388,6 @@ protected:
   unsigned NumInputs;
   unsigned NumClobbers;
 
-  IdentifierInfo **Names;
   Stmt **Exprs;
 
   AsmStmt(StmtClass SC, SourceLocation asmloc, bool issimple, bool isvolatile,
@@ -1394,10 +1395,12 @@ protected:
     Stmt (SC), AsmLoc(asmloc), IsSimple(issimple), IsVolatile(isvolatile),
     NumOutputs(numoutputs), NumInputs(numinputs), NumClobbers(numclobbers) { }
 
+  friend class ASTStmtReader;
+
 public:
   /// \brief Build an empty inline-assembly statement.
   explicit AsmStmt(StmtClass SC, EmptyShell Empty) :
-    Stmt(SC, Empty), Names(0), Exprs(0) { }
+    Stmt(SC, Empty), Exprs(0) { }
 
   SourceLocation getAsmLoc() const { return AsmLoc; }
   void setAsmLoc(SourceLocation L) { AsmLoc = L; }
@@ -1420,17 +1423,6 @@ public:
 
   unsigned getNumOutputs() const { return NumOutputs; }
 
-  IdentifierInfo *getOutputIdentifier(unsigned i) const {
-    return Names[i];
-  }
-
-  StringRef getOutputName(unsigned i) const {
-    if (IdentifierInfo *II = getOutputIdentifier(i))
-      return II->getName();
-
-    return StringRef();
-  }
-
   /// getOutputConstraint - Return the constraint string for the specified
   /// output operand.  All output constraints are known to be non-empty (either
   /// '=' or '+').
@@ -1452,17 +1444,6 @@ public:
   //===--- Input operands ---===//
 
   unsigned getNumInputs() const { return NumInputs; }
-
-  IdentifierInfo *getInputIdentifier(unsigned i) const {
-    return Names[i + NumOutputs];
-  }
-
-  StringRef getInputName(unsigned i) const {
-    if (IdentifierInfo *II = getInputIdentifier(i))
-      return II->getName();
-
-    return StringRef();
-  }
 
   /// getInputConstraint - Return the specified input constraint.  Unlike output
   /// constraints, these can be empty.
@@ -1534,6 +1515,9 @@ class GCCAsmStmt : public AsmStmt {
   // FIXME: If we wanted to, we could allocate all of these in one big array.
   StringLiteral **Constraints;
   StringLiteral **Clobbers;
+  IdentifierInfo **Names;
+
+  friend class ASTStmtReader;
 
 public:
   GCCAsmStmt(ASTContext &C, SourceLocation asmloc, bool issimple,
@@ -1544,7 +1528,7 @@ public:
 
   /// \brief Build an empty inline-assembly statement.
   explicit GCCAsmStmt(EmptyShell Empty) : AsmStmt(GCCAsmStmtClass, Empty),
-    Constraints(0), Clobbers(0) { }
+    Constraints(0), Clobbers(0), Names(0) { }
 
   SourceLocation getRParenLoc() const { return RParenLoc; }
   void setRParenLoc(SourceLocation L) { RParenLoc = L; }
@@ -1609,6 +1593,17 @@ public:
 
   //===--- Output operands ---===//
 
+  IdentifierInfo *getOutputIdentifier(unsigned i) const {
+    return Names[i];
+  }
+
+  StringRef getOutputName(unsigned i) const {
+    if (IdentifierInfo *II = getOutputIdentifier(i))
+      return II->getName();
+
+    return StringRef();
+  }
+
   StringRef getOutputConstraint(unsigned i) const;
 
   const StringLiteral *getOutputConstraintLiteral(unsigned i) const {
@@ -1626,6 +1621,17 @@ public:
 
   //===--- Input operands ---===//
 
+  IdentifierInfo *getInputIdentifier(unsigned i) const {
+    return Names[i + NumOutputs];
+  }
+
+  StringRef getInputName(unsigned i) const {
+    if (IdentifierInfo *II = getInputIdentifier(i))
+      return II->getName();
+
+    return StringRef();
+  }
+
   StringRef getInputConstraint(unsigned i) const;
 
   const StringLiteral *getInputConstraintLiteral(unsigned i) const {
@@ -1642,6 +1648,7 @@ public:
     return const_cast<GCCAsmStmt*>(this)->getInputExpr(i);
   }
 
+private:
   void setOutputsAndInputsAndClobbers(ASTContext &C,
                                       IdentifierInfo **Names,
                                       StringLiteral **Constraints,
@@ -1650,6 +1657,7 @@ public:
                                       unsigned NumInputs,
                                       StringLiteral **Clobbers,
                                       unsigned NumClobbers);
+public:
 
   //===--- Other ---===//
 
@@ -1676,7 +1684,7 @@ public:
 ///
 class MSAsmStmt : public AsmStmt {
   SourceLocation LBraceLoc, EndLoc;
-  std::string AsmStr;
+  StringRef AsmStr;
 
   unsigned NumAsmToks;
 
@@ -1684,11 +1692,13 @@ class MSAsmStmt : public AsmStmt {
   StringRef *Constraints;
   StringRef *Clobbers;
 
+  friend class ASTStmtReader;
+
 public:
   MSAsmStmt(ASTContext &C, SourceLocation asmloc, SourceLocation lbraceloc,
             bool issimple, bool isvolatile, ArrayRef<Token> asmtoks,
             unsigned numoutputs, unsigned numinputs,
-            ArrayRef<IdentifierInfo*> names, ArrayRef<StringRef> constraints,
+            ArrayRef<StringRef> constraints,
             ArrayRef<Expr*> exprs, StringRef asmstr,
             ArrayRef<StringRef> clobbers, SourceLocation endloc);
 
@@ -1707,10 +1717,7 @@ public:
   Token *getAsmToks() { return AsmToks; }
 
   //===--- Asm String Analysis ---===//
-
-  const std::string *getAsmString() const { return &AsmStr; }
-  std::string *getAsmString() { return &AsmStr; }
-  void setAsmString(StringRef &E) { AsmStr = E.str(); }
+  StringRef getAsmString() const { return AsmStr; }
 
   /// Assemble final IR asm string.
   std::string generateAsmString(ASTContext &C) const;
@@ -1718,6 +1725,7 @@ public:
   //===--- Output operands ---===//
 
   StringRef getOutputConstraint(unsigned i) const {
+    assert(i < NumOutputs);
     return Constraints[i];
   }
 
@@ -1730,6 +1738,7 @@ public:
   //===--- Input operands ---===//
 
   StringRef getInputConstraint(unsigned i) const {
+    assert(i < NumInputs);
     return Constraints[i + NumOutputs];
   }
 
@@ -1742,7 +1751,27 @@ public:
 
   //===--- Other ---===//
 
-  StringRef getClobber(unsigned i) const { return Clobbers[i]; }
+  ArrayRef<StringRef> getAllConstraints() const {
+    return ArrayRef<StringRef>(Constraints, NumInputs + NumOutputs);
+  }
+  ArrayRef<StringRef> getClobbers() const {
+    return ArrayRef<StringRef>(Clobbers, NumClobbers);
+  }
+  ArrayRef<Expr*> getAllExprs() const {
+    return ArrayRef<Expr*>(reinterpret_cast<Expr**>(Exprs),
+                           NumInputs + NumOutputs);
+  }
+
+  StringRef getClobber(unsigned i) const { return getClobbers()[i]; }
+
+private:
+  void initialize(ASTContext &C,
+                  StringRef AsmString,
+                  ArrayRef<Token> AsmToks,
+                  ArrayRef<StringRef> Constraints,
+                  ArrayRef<Expr*> Exprs,
+                  ArrayRef<StringRef> Clobbers);
+public:
 
   SourceLocation getLocStart() const LLVM_READONLY { return AsmLoc; }
   SourceLocation getLocEnd() const LLVM_READONLY { return EndLoc; }
@@ -1903,7 +1932,7 @@ public:
 
   /// \brief Describes the capture of either a variable or 'this'.
   class Capture {
-    VarDecl *Var;
+    llvm::PointerIntPair<VarDecl *, 1, VariableCaptureKind> VarAndKind;
     SourceLocation Loc;
 
   public:
@@ -1916,7 +1945,7 @@ public:
     /// \param Var The variable being captured, or null if capturing this.
     ///
     Capture(SourceLocation Loc, VariableCaptureKind Kind, VarDecl *Var = 0)
-      : Var(Var), Loc(Loc) {
+      : VarAndKind(Var, Kind), Loc(Loc) {
       switch (Kind) {
       case VCK_This:
         assert(Var == 0 && "'this' capture cannot have a variable!");
@@ -1928,46 +1957,42 @@ public:
     }
 
     /// \brief Determine the kind of capture.
-    VariableCaptureKind getCaptureKind() const {
-      if (capturesThis())
-        return VCK_This;
-
-      return VCK_ByRef;
-    }
+    VariableCaptureKind getCaptureKind() const { return VarAndKind.getInt(); }
 
     /// \brief Retrieve the source location at which the variable or 'this' was
     /// first used.
     SourceLocation getLocation() const { return Loc; }
 
     /// \brief Determine whether this capture handles the C++ 'this' pointer.
-    bool capturesThis() const { return Var == 0; }
+    bool capturesThis() const { return getCaptureKind() == VCK_This; }
 
     /// \brief Determine whether this capture handles a variable.
-    bool capturesVariable() const { return Var != 0; }
+    bool capturesVariable() const { return getCaptureKind() != VCK_This; }
 
     /// \brief Retrieve the declaration of the variable being captured.
     ///
     /// This operation is only valid if this capture does not capture 'this'.
     VarDecl *getCapturedVar() const {
       assert(!capturesThis() && "No variable available for 'this' capture");
-      return Var;
+      return VarAndKind.getPointer();
     }
+    friend class ASTStmtReader;
   };
 
 private:
   /// \brief The number of variable captured, including 'this'.
   unsigned NumCaptures;
 
-  /// \brief The implicit outlined function.
-  CapturedDecl *TheCapturedDecl;
+  /// \brief The pointer part is the implicit the outlined function and the 
+  /// int part is the captured region kind, 'CR_Default' etc.
+  llvm::PointerIntPair<CapturedDecl *, 1, CapturedRegionKind> CapDeclAndKind;
 
   /// \brief The record for captured variables, a RecordDecl or CXXRecordDecl.
   RecordDecl *TheRecordDecl;
 
   /// \brief Construct a captured statement.
-  CapturedStmt(Stmt *S, ArrayRef<Capture> Captures,
-               ArrayRef<Expr *> CaptureInits,
-               CapturedDecl *CD, RecordDecl *RD);
+  CapturedStmt(Stmt *S, CapturedRegionKind Kind, ArrayRef<Capture> Captures,
+               ArrayRef<Expr *> CaptureInits, CapturedDecl *CD, RecordDecl *RD);
 
   /// \brief Construct an empty captured statement.
   CapturedStmt(EmptyShell Empty, unsigned NumCaptures);
@@ -1978,8 +2003,11 @@ private:
 
   Capture *getStoredCaptures() const;
 
+  void setCapturedStmt(Stmt *S) { getStoredStmts()[NumCaptures] = S; }
+
 public:
   static CapturedStmt *Create(ASTContext &Context, Stmt *S,
+                              CapturedRegionKind Kind,
                               ArrayRef<Capture> Captures,
                               ArrayRef<Expr *> CaptureInits,
                               CapturedDecl *CD, RecordDecl *RD);
@@ -1994,19 +2022,46 @@ public:
   }
 
   /// \brief Retrieve the outlined function declaration.
-  CapturedDecl *getCapturedDecl() const { return TheCapturedDecl; }
+  CapturedDecl *getCapturedDecl() { return CapDeclAndKind.getPointer(); }
+  const CapturedDecl *getCapturedDecl() const {
+    return const_cast<CapturedStmt *>(this)->getCapturedDecl();
+  }
+
+  /// \brief Set the outlined function declaration.
+  void setCapturedDecl(CapturedDecl *D) {
+    assert(D && "null CapturedDecl");
+    CapDeclAndKind.setPointer(D);
+  }
+
+  /// \brief Retrieve the captured region kind.
+  CapturedRegionKind getCapturedRegionKind() const {
+    return CapDeclAndKind.getInt();
+  }
+
+  /// \brief Set the captured region kind.
+  void setCapturedRegionKind(CapturedRegionKind Kind) {
+    CapDeclAndKind.setInt(Kind);
+  }
 
   /// \brief Retrieve the record declaration for captured variables.
   const RecordDecl *getCapturedRecordDecl() const { return TheRecordDecl; }
+
+  /// \brief Set the record declaration for captured variables.
+  void setCapturedRecordDecl(RecordDecl *D) {
+    assert(D && "null RecordDecl");
+    TheRecordDecl = D;
+  }
 
   /// \brief True if this variable has been captured.
   bool capturesVariable(const VarDecl *Var) const;
 
   /// \brief An iterator that walks over the captures.
-  typedef const Capture *capture_iterator;
+  typedef Capture *capture_iterator;
+  typedef const Capture *const_capture_iterator;
 
   /// \brief Retrieve an iterator pointing to the first capture.
-  capture_iterator capture_begin() const { return getStoredCaptures(); }
+  capture_iterator capture_begin() { return getStoredCaptures(); }
+  const_capture_iterator capture_begin() const { return getStoredCaptures(); }
 
   /// \brief Retrieve an iterator pointing past the end of the sequence of
   /// captures.
@@ -2046,6 +2101,8 @@ public:
   }
 
   child_range children();
+
+  friend class ASTStmtReader;
 };
 
 }  // end namespace clang

@@ -1106,6 +1106,8 @@ private:
 
   void finishPendingActions();
 
+  void pushExternalDeclIntoScope(NamedDecl *D, DeclarationName Name);
+
   void addPendingDeclContextInfo(Decl *D,
                                  serialization::GlobalDeclID SemaDC,
                                  serialization::GlobalDeclID LexicalDC) {
@@ -1799,6 +1801,9 @@ public:
 
   /// \brief Reads a sub-expression operand during statement reading.
   Expr *ReadSubExpr();
+
+  /// \brief Reads a token out of a record.
+  Token ReadToken(ModuleFile &M, const RecordData &Record, unsigned &Idx);
 
   /// \brief Reads the macro record located at the given offset.
   MacroInfo *ReadMacroRecord(ModuleFile &F, uint64_t Offset);

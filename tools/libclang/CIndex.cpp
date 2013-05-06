@@ -3588,6 +3588,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
       return cxstring::createRef("ObjCStringLiteral");
   case CXCursor_ObjCBoolLiteralExpr:
       return cxstring::createRef("ObjCBoolLiteralExpr");
+  case CXCursor_ObjCSelfExpr:
+      return cxstring::createRef("ObjCSelfExpr");
   case CXCursor_ObjCEncodeExpr:
       return cxstring::createRef("ObjCEncodeExpr");
   case CXCursor_ObjCSelectorExpr:
@@ -6051,6 +6053,13 @@ CXModule clang_Cursor_getModule(CXCursor C) {
   }
 
   return 0;
+}
+
+CXFile clang_Module_getASTFile(CXModule CXMod) {
+  if (!CXMod)
+    return 0;
+  Module *Mod = static_cast<Module*>(CXMod);
+  return const_cast<FileEntry *>(Mod->getASTFile());
 }
 
 CXModule clang_Module_getParent(CXModule CXMod) {
