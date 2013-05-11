@@ -275,11 +275,12 @@ static EnumDecl *findEnumForBlockReturn(Expr *E) {
   //   - it is an implicit integral conversion applied to an
   //     enumerator-like expression of type T or
   if (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(E)) {
-    // We can only see integral conversions in valid enumerator-like
-    // expressions.
+    // We can sometimes see integral conversions in valid
+    // enumerator-like expressions.
     if (ICE->getCastKind() == CK_IntegralCast)
       return findEnumForBlockReturn(ICE->getSubExpr());
-    return 0;
+
+    // Otherwise, just rely on the type.
   }
 
   //   - it is an expression of that formal enum type.
@@ -452,8 +453,7 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
     FunctionProtoType::ExtProtoInfo EPI;
     EPI.HasTrailingReturn = true;
     EPI.TypeQuals |= DeclSpec::TQ_const;
-    QualType MethodTy = Context.getFunctionType(Context.DependentTy,
-                                                ArrayRef<QualType>(),
+    QualType MethodTy = Context.getFunctionType(Context.DependentTy, None,
                                                 EPI);
     MethodTyInfo = Context.getTrivialTypeSourceInfo(MethodTy);
     ExplicitParams = false;
@@ -556,6 +556,14 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
       }
       
       CheckCXXThisCapture(C->Loc, /*Explicit=*/true);
+      continue;
+    }
+
+    // FIXME: C++1y [expr.prim.lambda]p11
+    if (C->Init.isInvalid())
+      continue;
+    if (C->Init.isUsable()) {
+      Diag(C->Loc, diag::err_lambda_init_capture_unsupported);
       continue;
     }
 
@@ -708,7 +716,7 @@ static void addFunctionPointerConversion(Sema &S,
   FunctionProtoType::ExtProtoInfo ExtInfo;
   ExtInfo.TypeQuals = Qualifiers::Const;
   QualType ConvTy =
-    S.Context.getFunctionType(FunctionPtrTy, ArrayRef<QualType>(), ExtInfo);
+    S.Context.getFunctionType(FunctionPtrTy, None, ExtInfo);
   
   SourceLocation Loc = IntroducerRange.getBegin();
   DeclarationName Name
@@ -779,8 +787,7 @@ static void addBlockPointerConversion(Sema &S,
   
   FunctionProtoType::ExtProtoInfo ExtInfo;
   ExtInfo.TypeQuals = Qualifiers::Const;
-  QualType ConvTy = S.Context.getFunctionType(BlockPtrTy, ArrayRef<QualType>(),
-                                              ExtInfo);
+  QualType ConvTy = S.Context.getFunctionType(BlockPtrTy, None, ExtInfo);
   
   SourceLocation Loc = IntroducerRange.getBegin();
   DeclarationName Name

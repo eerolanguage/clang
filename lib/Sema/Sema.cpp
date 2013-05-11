@@ -90,7 +90,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
     AccessCheckingSFINAE(false), InNonInstantiationSFINAEContext(false),
     NonInstantiationEntries(0), ArgumentPackSubstitutionIndex(-1),
     CurrentInstantiationScope(0), TyposCorrected(0),
-    AnalysisWarnings(*this), Ident_super(0)
+    AnalysisWarnings(*this), CurScope(0), Ident_super(0)
 {
   TUScope = 0;
 
@@ -1296,7 +1296,7 @@ bool Sema::tryToRecoverWithCall(ExprResult &E, const PartialDiagnostic &PD,
     // FIXME: Try this before emitting the fixit, and suppress diagnostics
     // while doing so.
     E = ActOnCallExpr(0, E.take(), ParenInsertionLoc,
-                      MultiExprArg(), ParenInsertionLoc.getLocWithOffset(1));
+                      None, ParenInsertionLoc.getLocWithOffset(1));
     return true;
   }
 

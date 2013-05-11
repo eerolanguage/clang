@@ -33,6 +33,7 @@ using namespace CodeGen;
 CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
   : CodeGenTypeCache(cgm), CGM(cgm), Target(cgm.getTarget()),
     Builder(cgm.getModule().getContext()),
+    CapturedStmtInfo(0),
     SanitizePerformTypeCheck(CGM.getSanOpts().Null |
                              CGM.getSanOpts().Alignment |
                              CGM.getSanOpts().ObjectSize |
@@ -928,6 +929,16 @@ void CodeGenFunction::EmitBranchOnBoolExpr(const Expr *Cond,
     return;
   }
 
+  if (const CXXThrowExpr *Throw = dyn_cast<CXXThrowExpr>(Cond)) {
+    // Conditional operator handling can give us a throw expression as a
+    // condition for a case like:
+    //   br(c ? throw x : y, t, f) -> br(c, br(throw x, t, f), br(y, t, f)
+    // Fold this to:
+    //   br(c, throw x, br(y, t, f))
+    EmitCXXThrowExpr(Throw, /*KeepInsertionPoint*/false);
+    return;
+  }
+
   // Emit the code with the fully general case.
   llvm::Value *CondV = EvaluateExprAsBool(Cond);
   Builder.CreateCondBr(CondV, TrueBlock, FalseBlock);
@@ -1437,3 +1448,5 @@ llvm::Value *CodeGenFunction::EmitFieldAnnotations(const FieldDecl *D,
 
   return V;
 }
+
+CodeGenFunction::CGCapturedStmtInfo::~CGCapturedStmtInfo() { }

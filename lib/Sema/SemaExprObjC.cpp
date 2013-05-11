@@ -255,7 +255,7 @@ static ObjCMethodDecl *getNSNumberFactoryMethod(Sema &S, SourceLocation Loc,
                                              &CX.Idents.get("value"),
                                              NumberType, /*TInfo=*/0, SC_None,
                                              0);
-    Method->setMethodParams(S.Context, value, ArrayRef<SourceLocation>());
+    Method->setMethodParams(S.Context, value, None);
   }
 
   if (!validateBoxingMethod(S, Loc, S.NSNumberDecl, Sel, Method))
@@ -282,7 +282,7 @@ ExprResult Sema::BuildObjCNumericLiteral(SourceLocation AtLoc, Expr *Number) {
       break;
       
     case CharacterLiteral::Wide:
-      NumberType = Context.getWCharType();
+      NumberType = Context.getWideCharType();
       break;
       
     case CharacterLiteral::UTF16:
@@ -506,7 +506,7 @@ ExprResult Sema::BuildObjCBoxedExpr(SourceRange SR, Expr *ValueExpr) {
                                 Context.getPointerType(ConstCharType),
                                 /*TInfo=*/0,
                                 SC_None, 0);
-          M->setMethodParams(Context, value, ArrayRef<SourceLocation>());
+          M->setMethodParams(Context, value, None);
           BoxingMethod = M;
         }
 
@@ -537,7 +537,7 @@ ExprResult Sema::BuildObjCBoxedExpr(SourceRange SR, Expr *ValueExpr) {
         break;
         
       case CharacterLiteral::Wide:
-        ValueType = Context.getWCharType();
+        ValueType = Context.getWideCharType();
         break;
         
       case CharacterLiteral::UTF16:
@@ -690,7 +690,7 @@ ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
                                              Context.UnsignedLongTy,
                                              /*TInfo=*/0, SC_None, 0);
       Params.push_back(cnt);
-      Method->setMethodParams(Context, Params, ArrayRef<SourceLocation>());
+      Method->setMethodParams(Context, Params, None);
     }
 
     if (!validateBoxingMethod(*this, SR.getBegin(), NSArrayDecl, Sel, Method))
@@ -822,7 +822,7 @@ ExprResult Sema::BuildObjCDictionaryLiteral(SourceRange SR,
                                              Context.UnsignedLongTy,
                                              /*TInfo=*/0, SC_None, 0);
       Params.push_back(cnt);
-      Method->setMethodParams(Context, Params, ArrayRef<SourceLocation>());
+      Method->setMethodParams(Context, Params, None);
     }
 
     if (!validateBoxingMethod(*this, SR.getBegin(), NSDictionaryDecl, Sel,
@@ -1218,8 +1218,8 @@ void Sema::EmitRelatedResultTypeNote(const Expr *E) {
 }
 
 bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
-                                     Expr **Args, unsigned NumArgs,
-                                     Selector Sel, 
+                                     MultiExprArg Args,
+                                     Selector Sel,
                                      ArrayRef<SourceLocation> SelectorLocs,
                                      ObjCMethodDecl *Method,
                                      bool isClassMessage, bool isSuperMessage,
@@ -1233,7 +1233,7 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
 
   if (!Method) {
     // Apply default argument promotion as for (C99 6.5.2.2p6).
-    for (unsigned i = 0; i != NumArgs; i++) {
+    for (unsigned i = 0, e = Args.size(); i != e; i++) {
       if (Args[i]->isTypeDependent())
         continue;
 
@@ -1281,9 +1281,9 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
   if (Method->param_size() > Sel.getNumArgs())
     NumNamedArgs = Method->param_size();
   // FIXME. This need be cleaned up.
-  if (NumArgs < NumNamedArgs) {
+  if (Args.size() < NumNamedArgs) {
     Diag(SelLoc, diag::err_typecheck_call_too_few_args)
-      << 2 << NumNamedArgs << NumArgs;
+      << 2 << NumNamedArgs << static_cast<unsigned>(Args.size());
     return false;
   }
 
@@ -1363,7 +1363,7 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
 
   // Promote additional arguments to variadic methods.
   if (Method->isVariadic()) {
-    for (unsigned i = NumNamedArgs; i < NumArgs; ++i) {
+    for (unsigned i = NumNamedArgs, e = Args.size(); i < e; ++i) {
       if (Args[i]->isTypeDependent())
         continue;
 
@@ -1374,20 +1374,22 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
     }
   } else {
     // Check for extra arguments to non-variadic methods.
-    if (NumArgs != NumNamedArgs) {
+    if (Args.size() != NumNamedArgs) {
       Diag(Args[NumNamedArgs]->getLocStart(),
            diag::err_typecheck_call_too_many_args)
-        << 2 /*method*/ << NumNamedArgs << NumArgs
+        << 2 /*method*/ << NumNamedArgs << static_cast<unsigned>(Args.size())
         << Method->getSourceRange()
         << SourceRange(Args[NumNamedArgs]->getLocStart(),
-                       Args[NumArgs-1]->getLocEnd());
+                       Args.back()->getLocEnd());
     }
   }
 
-  DiagnoseSentinelCalls(Method, SelLoc, Args, NumArgs);
+  DiagnoseSentinelCalls(Method, SelLoc, Args);
 
   // Do additional checkings on method.
-  IsError |= CheckObjCMethodCall(Method, SelLoc, Args, NumArgs);
+  IsError |= CheckObjCMethodCall(
+                  Method, SelLoc,
+                  llvm::makeArrayRef<const Expr *>(Args.data(), Args.size()));
 
   return IsError;
 }
@@ -2125,7 +2127,8 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
 
   unsigned NumArgs = ArgsIn.size();
   Expr **Args = ArgsIn.data();
-  if (CheckMessageArgumentTypes(ReceiverType, Args, NumArgs, Sel, SelectorLocs,
+  if (CheckMessageArgumentTypes(ReceiverType, MultiExprArg(Args, NumArgs),
+                                Sel, SelectorLocs,
                                 Method, true,
                                 SuperLoc.isValid(), LBracLoc, RBracLoc, 
                                 ReturnType, VK))
@@ -2470,8 +2473,8 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
   ExprValueKind VK = VK_RValue;
   bool ClassMessage = (ReceiverType->isObjCClassType() ||
                        ReceiverType->isObjCQualifiedClassType());
-  if (CheckMessageArgumentTypes(ReceiverType, Args, NumArgs, Sel,
-                                SelectorLocs, Method, 
+  if (CheckMessageArgumentTypes(ReceiverType, MultiExprArg(Args, NumArgs),
+                                Sel, SelectorLocs, Method,
                                 ClassMessage, SuperLoc.isValid(), 
                                 LBracLoc, RBracLoc, ReturnType, VK))
     return ExprError();

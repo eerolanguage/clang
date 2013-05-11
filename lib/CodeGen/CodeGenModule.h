@@ -355,6 +355,9 @@ class CodeGenModule : public CodeGenTypeCache {
   /// \brief The complete set of modules that has been imported.
   llvm::SetVector<clang::Module *> ImportedModules;
 
+  /// \brief A vector of metadata strings.
+  SmallVector<llvm::Value *, 16> LinkerOptionsMetadata;
+
   /// @name Cache for Objective-C runtime types
   /// @{
 
@@ -713,7 +716,7 @@ public:
   /// (if one is created).
   llvm::Constant *GetAddrOfConstantString(StringRef Str,
                                           const char *GlobalName=0,
-                                          unsigned Alignment=1);
+                                          unsigned Alignment=0);
 
   /// GetAddrOfConstantCString - Returns a pointer to a character array
   /// containing the literal and a terminating '\0' character. The result has
@@ -723,7 +726,7 @@ public:
   /// created).
   llvm::Constant *GetAddrOfConstantCString(const std::string &str,
                                            const char *GlobalName=0,
-                                           unsigned Alignment=1);
+                                           unsigned Alignment=0);
 
   /// GetAddrOfConstantCompoundLiteral - Returns a pointer to a constant global
   /// variable for the given file-scope compound literal expression.
@@ -750,8 +753,7 @@ public:
   llvm::Value *getBuiltinLibFunction(const FunctionDecl *FD,
                                      unsigned BuiltinID);
 
-  llvm::Function *getIntrinsic(unsigned IID, ArrayRef<llvm::Type*> Tys =
-                                                 ArrayRef<llvm::Type*>());
+  llvm::Function *getIntrinsic(unsigned IID, ArrayRef<llvm::Type*> Tys = None);
 
   /// EmitTopLevelDecl - Emit code for a single top level declaration.
   void EmitTopLevelDecl(Decl *D);
@@ -907,6 +909,12 @@ public:
 
   void EmitVTable(CXXRecordDecl *Class, bool DefinitionRequired);
 
+  /// \brief Appends Opts to the "Linker Options" metadata value.
+  void AppendLinkerOptions(StringRef Opts);
+
+  /// \brief Appends a dependent lib to the "Linker Options" metadata value.
+  void AddDependentLib(StringRef Lib);
+
   llvm::GlobalVariable::LinkageTypes
   getFunctionLinkage(const FunctionDecl *FD);
 
@@ -1017,6 +1025,7 @@ private:
 
   void EmitNamespace(const NamespaceDecl *D);
   void EmitLinkageSpec(const LinkageSpecDecl *D);
+  void CompleteDIClassType(const CXXMethodDecl* D);
 
   /// EmitCXXConstructors - Emit constructors (base, complete) from a
   /// C++ constructor Decl.

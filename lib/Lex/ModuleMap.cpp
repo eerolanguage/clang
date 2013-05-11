@@ -87,7 +87,7 @@ ModuleMap::ModuleMap(FileManager &FileMgr, DiagnosticConsumer &DC,
                      const LangOptions &LangOpts, const TargetInfo *Target,
                      HeaderSearch &HeaderInfo)
   : LangOpts(LangOpts), Target(Target), HeaderInfo(HeaderInfo),
-    BuiltinIncludeDir(0)
+    BuiltinIncludeDir(0), CompilingModule(0)
 {
   IntrusiveRefCntPtr<DiagnosticIDs> DiagIDs(new DiagnosticIDs);
   Diags = IntrusiveRefCntPtr<DiagnosticsEngine>(
@@ -183,8 +183,7 @@ Module *ModuleMap::findModuleForHeader(const FileEntry *File) {
   // specific module (e.g., in /usr/include).
   if (File->getDir() == BuiltinIncludeDir &&
       isBuiltinHeader(llvm::sys::path::filename(File->getName()))) {
-    SmallVector<Module *, 4> AllModules;
-    HeaderInfo.collectAllModules(AllModules);
+    HeaderInfo.loadTopLevelSystemModules();
 
     // Check again.
     Known = Headers.find(File);
@@ -388,8 +387,13 @@ ModuleMap::findOrCreateModule(StringRef Name, Module *Parent, bool IsFramework,
   // Create a new module with this name.
   Module *Result = new Module(Name, SourceLocation(), Parent, IsFramework, 
                               IsExplicit);
-  if (!Parent)
+  if (!Parent) {
     Modules[Name] = Result;
+    if (!LangOpts.CurrentModule.empty() && !CompilingModule &&
+        Name == LangOpts.CurrentModule) {
+      CompilingModule = Result;
+    }
+  }
   return std::make_pair(Result, true);
 }
 
@@ -605,7 +609,8 @@ void ModuleMap::addHeader(Module *Mod, const FileEntry *Header,
     Mod->ExcludedHeaders.push_back(Header);
   } else {
     Mod->Headers.push_back(Header);
-    HeaderInfo.MarkFileModuleHeader(Header);
+    bool isCompilingModuleHeader = Mod->getTopLevelModule() == CompilingModule;
+    HeaderInfo.MarkFileModuleHeader(Header, isCompilingModuleHeader);
   }
   Headers[Header] = KnownHeader(Mod, Excluded);
 }

@@ -863,18 +863,16 @@ Corrected:
 
   // Check for a tag type hidden by a non-type decl in a few cases where it
   // seems likely a type is wanted instead of the non-type that was found.
-  if (!getLangOpts().ObjC1) {
-    bool NextIsOp = NextToken.is(tok::amp) || NextToken.is(tok::star);
-    if ((NextToken.is(tok::identifier) ||
-         (NextIsOp && FirstDecl->isFunctionOrFunctionTemplate())) &&
-        isTagTypeWithMissingTag(*this, Result, S, SS, Name, NameLoc)) {
-      TypeDecl *Type = Result.getAsSingle<TypeDecl>();
-      DiagnoseUseOfDecl(Type, NameLoc);
-      QualType T = Context.getTypeDeclType(Type);
-      if (SS.isNotEmpty())
-        return buildNestedType(*this, SS, T, NameLoc);
-      return ParsedType::make(T);
-    }
+  bool NextIsOp = NextToken.is(tok::amp) || NextToken.is(tok::star);
+  if ((NextToken.is(tok::identifier) ||
+       (NextIsOp && FirstDecl->isFunctionOrFunctionTemplate())) &&
+      isTagTypeWithMissingTag(*this, Result, S, SS, Name, NameLoc)) {
+    TypeDecl *Type = Result.getAsSingle<TypeDecl>();
+    DiagnoseUseOfDecl(Type, NameLoc);
+    QualType T = Context.getTypeDeclType(Type);
+    if (SS.isNotEmpty())
+      return buildNestedType(*this, SS, T, NameLoc);
+    return ParsedType::make(T);
   }
   
   if (FirstDecl->isCXXClassMember())
@@ -2251,11 +2249,9 @@ static bool haveIncompatibleLanguageLinkages(const T *Old, const T *New) {
     return false;
 
   LanguageLinkage OldLinkage = Old->getLanguageLinkage();
-  if (OldLinkage == CXXLanguageLinkage &&
-      New->getDeclContext()->isExternCContext())
+  if (OldLinkage == CXXLanguageLinkage && New->isInExternCContext())
     return true;
-  if (OldLinkage == CLanguageLinkage &&
-      New->getDeclContext()->isExternCXXContext())
+  if (OldLinkage == CLanguageLinkage && New->isInExternCXXContext())
     return true;
   return false;
 }
@@ -4736,16 +4732,6 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     SC = SC_None;
   }
 
-  // C++11 [dcl.stc]p4:
-  //   When thread_local is applied to a variable of block scope the
-  //   storage-class-specifier static is implied if it does not appear
-  //   explicitly.
-  // Core issue: 'static' is not implied if the variable is declared 'extern'.
-  if (SCSpec == DeclSpec::SCS_unspecified &&
-      D.getDeclSpec().getThreadStorageClassSpec() ==
-          DeclSpec::TSCS_thread_local && DC->isFunctionOrMethod())
-    SC = SC_Static;
-
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   if (!II) {
     Diag(D.getIdentifierLoc(), diag::err_bad_variable_name)
@@ -4903,11 +4889,22 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   NewVD->setLexicalDeclContext(CurContext);
 
   if (DeclSpec::TSCS TSCS = D.getDeclSpec().getThreadStorageClassSpec()) {
-    if (NewVD->hasLocalStorage())
-      Diag(D.getDeclSpec().getThreadStorageClassSpecLoc(),
-           diag::err_thread_non_global)
-        << DeclSpec::getSpecifierName(TSCS);
-    else if (!Context.getTargetInfo().isTLSSupported())
+    if (NewVD->hasLocalStorage()) {
+      // C++11 [dcl.stc]p4:
+      //   When thread_local is applied to a variable of block scope the
+      //   storage-class-specifier static is implied if it does not appear
+      //   explicitly.
+      // Core issue: 'static' is not implied if the variable is declared
+      //   'extern'.
+      if (SCSpec == DeclSpec::SCS_unspecified &&
+          TSCS == DeclSpec::TSCS_thread_local &&
+          DC->isFunctionOrMethod())
+        NewVD->setTSCSpec(TSCS);
+      else
+        Diag(D.getDeclSpec().getThreadStorageClassSpecLoc(),
+             diag::err_thread_non_global)
+          << DeclSpec::getSpecifierName(TSCS);
+    } else if (!Context.getTargetInfo().isTLSSupported())
       Diag(D.getDeclSpec().getThreadStorageClassSpecLoc(),
            diag::err_thread_unsupported);
     else
@@ -5172,7 +5169,7 @@ static bool mayConflictWithNonVisibleExternC(const T *ND) {
   // This code runs before the init of foo is set, and therefore before
   // the type of foo is known. Not knowing the type we cannot know its linkage
   // unless it is in an extern C block.
-  if (!DC->isExternCContext()) {
+  if (!ND->isInExternCContext()) {
     const ASTContext &Context = ND->getASTContext();
     if (Context.getLangOpts().CPlusPlus)
       return false;
@@ -5277,7 +5274,7 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
       if (NewVD->isFileVarDecl())
         Diag(NewVD->getLocation(), diag::err_vla_decl_in_file_scope)
         << SizeRange;
-      else if (NewVD->getStorageClass() == SC_Static)
+      else if (NewVD->isStaticLocal())
         Diag(NewVD->getLocation(), diag::err_vla_decl_has_static_storage)
         << SizeRange;
       else
@@ -6633,9 +6630,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     EPI.Variadic = true;
     EPI.ExtInfo = FT->getExtInfo();
 
-    QualType R = Context.getFunctionType(FT->getResultType(),
-                                         ArrayRef<QualType>(),
-                                         EPI);
+    QualType R = Context.getFunctionType(FT->getResultType(), None, EPI);
     NewFD->setType(R);
   }
 
@@ -8016,9 +8011,9 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl,
     InitializedEntity Entity = InitializedEntity::InitializeVariable(Var);
     InitializationKind Kind
       = InitializationKind::CreateDefault(Var->getLocation());
-    
-    InitializationSequence InitSeq(*this, Entity, Kind, MultiExprArg());
-    ExprResult Init = InitSeq.Perform(*this, Entity, Kind, MultiExprArg());
+
+    InitializationSequence InitSeq(*this, Entity, Kind, None);
+    ExprResult Init = InitSeq.Perform(*this, Entity, Kind, None);
     if (Init.isInvalid())
       Var->setInvalidDecl();
     else if (Init.get()) {
@@ -8918,7 +8913,9 @@ bool Sema::canSkipFunctionBody(Decl *D) {
   // We cannot skip the body of a function (or function template) which is
   // constexpr, since we may need to evaluate its body in order to parse the
   // rest of the file.
-  return !FD->isConstexpr();
+  // We cannot skip the body of a function with an undeduced return type,
+  // because any callers of that function need to know the type.
+  return !FD->isConstexpr() && !FD->getResultType()->isUndeducedType();
 }
 
 Decl *Sema::ActOnSkippedFunctionBody(Decl *Decl) {
@@ -8948,18 +8945,21 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
   if (FD) {
     FD->setBody(Body);
 
-    if (getLangOpts().CPlusPlus1y && !FD->isInvalidDecl() &&
-        !FD->isDependentContext()) {
-      if (FD->getResultType()->isUndeducedType()) {
-        // If the function has a deduced result type but contains no 'return'
-        // statements, the result type as written must be exactly 'auto', and
-        // the deduced result type is 'void'.
-        if (!FD->getResultType()->getAs<AutoType>()) {
-          Diag(dcl->getLocation(), diag::err_auto_fn_no_return_but_not_auto)
-            << FD->getResultType();
-          FD->setInvalidDecl();
-        }
-        Context.adjustDeducedFunctionResultType(FD, Context.VoidTy);
+    if (getLangOpts().CPlusPlus1y && !FD->isInvalidDecl() && Body &&
+        !FD->isDependentContext() && FD->getResultType()->isUndeducedType()) {
+      // If the function has a deduced result type but contains no 'return'
+      // statements, the result type as written must be exactly 'auto', and
+      // the deduced result type is 'void'.
+      if (!FD->getResultType()->getAs<AutoType>()) {
+        Diag(dcl->getLocation(), diag::err_auto_fn_no_return_but_not_auto)
+          << FD->getResultType();
+        FD->setInvalidDecl();
+      } else {
+        // Substitute 'void' for the 'auto' in the type.
+        TypeLoc ResultType = FD->getTypeSourceInfo()->getTypeLoc().
+            IgnoreParens().castAs<FunctionProtoTypeLoc>().getResultLoc();
+        Context.adjustDeducedFunctionResultType(
+            FD, SubstAutoType(ResultType.getType(), Context.VoidTy));
       }
     }
 

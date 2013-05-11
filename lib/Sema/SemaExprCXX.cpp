@@ -1306,16 +1306,13 @@ Sema::BuildCXXNew(SourceRange Range, bool UseGlobal,
 
   FunctionDecl *OperatorNew = 0;
   FunctionDecl *OperatorDelete = 0;
-  Expr **PlaceArgs = PlacementArgs.data();
-  unsigned NumPlaceArgs = PlacementArgs.size();
 
   if (!AllocType->isDependentType() &&
-      !Expr::hasAnyTypeDependentArguments(
-        llvm::makeArrayRef(PlaceArgs, NumPlaceArgs)) &&
+      !Expr::hasAnyTypeDependentArguments(PlacementArgs) &&
       FindAllocationFunctions(StartLoc,
                               SourceRange(PlacementLParen, PlacementRParen),
-                              UseGlobal, AllocType, ArraySize, PlaceArgs,
-                              NumPlaceArgs, OperatorNew, OperatorDelete))
+                              UseGlobal, AllocType, ArraySize, PlacementArgs,
+                              OperatorNew, OperatorDelete))
     return ExprError();
 
   // If this is an array allocation, compute whether the usual array
@@ -1333,24 +1330,21 @@ Sema::BuildCXXNew(SourceRange Range, bool UseGlobal,
     VariadicCallType CallType =
       Proto->isVariadic() ? VariadicFunction : VariadicDoesNotApply;
 
-    if (GatherArgumentsForCall(PlacementLParen, OperatorNew,
-                               Proto, 1, PlaceArgs, NumPlaceArgs,
-                               AllPlaceArgs, CallType))
+    if (GatherArgumentsForCall(PlacementLParen, OperatorNew, Proto, 1,
+                               PlacementArgs, AllPlaceArgs, CallType))
       return ExprError();
 
-    NumPlaceArgs = AllPlaceArgs.size();
-    if (NumPlaceArgs > 0)
-      PlaceArgs = &AllPlaceArgs[0];
+    if (!AllPlaceArgs.empty())
+      PlacementArgs = AllPlaceArgs;
 
-    DiagnoseSentinelCalls(OperatorNew, PlacementLParen,
-                          PlaceArgs, NumPlaceArgs);
+    DiagnoseSentinelCalls(OperatorNew, PlacementLParen, PlacementArgs);
 
     // FIXME: Missing call to CheckFunctionCall or equivalent
   }
 
   // Warn if the type is over-aligned and is being allocated by global operator
   // new.
-  if (NumPlaceArgs == 0 && OperatorNew && 
+  if (PlacementArgs.empty() && OperatorNew &&
       (OperatorNew->isImplicit() ||
        getSourceManager().isInSystemHeader(OperatorNew->getLocStart()))) {
     if (unsigned Align = Context.getPreferredTypeAlign(AllocType.getTypePtr())){
@@ -1458,8 +1452,7 @@ Sema::BuildCXXNew(SourceRange Range, bool UseGlobal,
   return Owned(new (Context) CXXNewExpr(Context, UseGlobal, OperatorNew,
                                         OperatorDelete,
                                         UsualArrayDeleteWantsSize,
-                                   llvm::makeArrayRef(PlaceArgs, NumPlaceArgs),
-                                        TypeIdParens,
+                                        PlacementArgs, TypeIdParens,
                                         ArraySize, initStyle, Initializer,
                                         ResultType, AllocTypeInfo,
                                         Range, DirectInitRange));
@@ -1520,8 +1513,7 @@ static bool isNonPlacementDeallocationFunction(FunctionDecl *FD) {
 /// that are appropriate for the allocation.
 bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
                                    bool UseGlobal, QualType AllocType,
-                                   bool IsArray, Expr **PlaceArgs,
-                                   unsigned NumPlaceArgs,
+                                   bool IsArray, MultiExprArg PlaceArgs,
                                    FunctionDecl *&OperatorNew,
                                    FunctionDecl *&OperatorDelete) {
   // --- Choosing an allocation function ---
@@ -1533,7 +1525,7 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
   // 3) The first argument is always size_t. Append the arguments from the
   //   placement form.
 
-  SmallVector<Expr*, 8> AllocArgs(1 + NumPlaceArgs);
+  SmallVector<Expr*, 8> AllocArgs(1 + PlaceArgs.size());
   // We don't care about the actual value of this argument.
   // FIXME: Should the Sema create the expression and embed it in the syntax
   // tree? Or should the consumer just recalculate the value?
@@ -1542,7 +1534,7 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
                       Context.getSizeType(),
                       SourceLocation());
   AllocArgs[0] = &Size;
-  std::copy(PlaceArgs, PlaceArgs + NumPlaceArgs, AllocArgs.begin() + 1);
+  std::copy(PlaceArgs.begin(), PlaceArgs.end(), AllocArgs.begin() + 1);
 
   // C++ [expr.new]p8:
   //   If the allocated type is a non-array type, the allocation
@@ -1560,18 +1552,16 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
   if (AllocElemType->isRecordType() && !UseGlobal) {
     CXXRecordDecl *Record
       = cast<CXXRecordDecl>(AllocElemType->getAs<RecordType>()->getDecl());
-    if (FindAllocationOverload(StartLoc, Range, NewName, &AllocArgs[0],
-                          AllocArgs.size(), Record, /*AllowMissing=*/true,
-                          OperatorNew))
+    if (FindAllocationOverload(StartLoc, Range, NewName, AllocArgs, Record,
+                               /*AllowMissing=*/true, OperatorNew))
       return true;
   }
   if (!OperatorNew) {
     // Didn't find a member overload. Look for a global one.
     DeclareGlobalNewDelete();
     DeclContext *TUDecl = Context.getTranslationUnitDecl();
-    if (FindAllocationOverload(StartLoc, Range, NewName, &AllocArgs[0],
-                          AllocArgs.size(), TUDecl, /*AllowMissing=*/false,
-                          OperatorNew))
+    if (FindAllocationOverload(StartLoc, Range, NewName, AllocArgs, TUDecl,
+                               /*AllowMissing=*/false, OperatorNew))
       return true;
   }
 
@@ -1584,8 +1574,8 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
 
   // FindAllocationOverload can change the passed in arguments, so we need to
   // copy them back.
-  if (NumPlaceArgs > 0)
-    std::copy(&AllocArgs[1], AllocArgs.end(), PlaceArgs);
+  if (!PlaceArgs.empty())
+    std::copy(AllocArgs.begin() + 1, AllocArgs.end(), PlaceArgs.data());
 
   // C++ [expr.new]p19:
   //
@@ -1619,7 +1609,7 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
   // we had explicit placement arguments.  This matters for things like
   //   struct A { void *operator new(size_t, int = 0); ... };
   //   A *a = new A()
-  bool isPlacementNew = (NumPlaceArgs > 0 || OperatorNew->param_size() != 1);
+  bool isPlacementNew = (!PlaceArgs.empty() || OperatorNew->param_size() != 1);
 
   if (isPlacementNew) {
     // C++ [expr.new]p20:
@@ -1694,11 +1684,11 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
     //   as a placement deallocation function, would have been
     //   selected as a match for the allocation function, the program
     //   is ill-formed.
-    if (NumPlaceArgs && getLangOpts().CPlusPlus11 &&
+    if (!PlaceArgs.empty() && getLangOpts().CPlusPlus11 &&
         isNonPlacementDeallocationFunction(OperatorDelete)) {
       Diag(StartLoc, diag::err_placement_new_non_placement_delete)
-        << SourceRange(PlaceArgs[0]->getLocStart(),
-                       PlaceArgs[NumPlaceArgs - 1]->getLocEnd());
+        << SourceRange(PlaceArgs.front()->getLocStart(),
+                       PlaceArgs.back()->getLocEnd());
       Diag(OperatorDelete->getLocation(), diag::note_previous_decl)
         << DeleteName;
     } else {
@@ -1713,8 +1703,8 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
 /// FindAllocationOverload - Find an fitting overload for the allocation
 /// function in the specified scope.
 bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
-                                  DeclarationName Name, Expr** Args,
-                                  unsigned NumArgs, DeclContext *Ctx,
+                                  DeclarationName Name, MultiExprArg Args,
+                                  DeclContext *Ctx,
                                   bool AllowMissing, FunctionDecl *&Operator,
                                   bool Diagnose) {
   LookupResult R(*this, Name, StartLoc, LookupOrdinaryName);
@@ -1741,15 +1731,13 @@ bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
     if (FunctionTemplateDecl *FnTemplate = dyn_cast<FunctionTemplateDecl>(D)) {
       AddTemplateOverloadCandidate(FnTemplate, Alloc.getPair(),
                                    /*ExplicitTemplateArgs=*/0,
-                                   llvm::makeArrayRef(Args, NumArgs),
-                                   Candidates,
+                                   Args, Candidates,
                                    /*SuppressUserConversions=*/false);
       continue;
     }
 
     FunctionDecl *Fn = cast<FunctionDecl>(D);
-    AddOverloadCandidate(Fn, Alloc.getPair(),
-                         llvm::makeArrayRef(Args, NumArgs), Candidates,
+    AddOverloadCandidate(Fn, Alloc.getPair(), Args, Candidates,
                          /*SuppressUserConversions=*/false);
   }
 
@@ -1765,7 +1753,7 @@ bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
     // asserted on, though, since invalid decls are left in there.)
     // Watch out for variadic allocator function.
     unsigned NumArgsInFnDecl = FnDecl->getNumParams();
-    for (unsigned i = 0; (i < NumArgs && i < NumArgsInFnDecl); ++i) {
+    for (unsigned i = 0; (i < Args.size() && i < NumArgsInFnDecl); ++i) {
       InitializedEntity Entity = InitializedEntity::InitializeParameter(Context,
                                                        FnDecl->getParamDecl(i));
 
@@ -1793,8 +1781,7 @@ bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
     if (Diagnose) {
       Diag(StartLoc, diag::err_ovl_no_viable_function_in_call)
         << Name << Range;
-      Candidates.NoteCandidates(*this, OCD_AllCandidates,
-                                llvm::makeArrayRef(Args, NumArgs));
+      Candidates.NoteCandidates(*this, OCD_AllCandidates, Args);
     }
     return true;
 
@@ -1802,8 +1789,7 @@ bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
     if (Diagnose) {
       Diag(StartLoc, diag::err_ovl_ambiguous_call)
         << Name << Range;
-      Candidates.NoteCandidates(*this, OCD_ViableCandidates,
-                                llvm::makeArrayRef(Args, NumArgs));
+      Candidates.NoteCandidates(*this, OCD_ViableCandidates, Args);
     }
     return true;
 
@@ -1814,8 +1800,7 @@ bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
         << Name 
         << getDeletedOrUnavailableSuffix(Best->Function)
         << Range;
-      Candidates.NoteCandidates(*this, OCD_AllCandidates,
-                                llvm::makeArrayRef(Args, NumArgs));
+      Candidates.NoteCandidates(*this, OCD_AllCandidates, Args);
     }
     return true;
   }
@@ -2050,10 +2035,9 @@ bool Sema::FindDeallocationFunction(SourceLocation StartLoc, CXXRecordDecl *RD,
   DeclContext *TUDecl = Context.getTranslationUnitDecl();
 
   CXXNullPtrLiteralExpr Null(Context.VoidPtrTy, SourceLocation());
-  Expr* DeallocArgs[1];
-  DeallocArgs[0] = &Null;
+  Expr *DeallocArgs[1] = { &Null };
   if (FindAllocationOverload(StartLoc, SourceRange(), Name,
-                             DeallocArgs, 1, TUDecl, !Diagnose,
+                             DeallocArgs, TUDecl, !Diagnose,
                              Operator, Diagnose))
     return true;
 
@@ -2246,8 +2230,9 @@ Sema::ActOnCXXDelete(SourceLocation StartLoc, bool UseGlobal,
       if (!Context.hasSameType(Arg->getType(), Context.VoidPtrTy))
         Arg = ImplicitCastExpr::Create(Context, Context.VoidPtrTy,
                                        CK_BitCast, Arg, 0, VK_RValue);
+      Expr *DeallocArgs[1] = { Arg };
       if (FindAllocationOverload(StartLoc, SourceRange(), DeleteName,
-                                 &Arg, 1, TUDecl, /*AllowMissing=*/false,
+                                 DeallocArgs, TUDecl, /*AllowMissing=*/false,
                                  OperatorDelete))
         return ExprError();
     }
@@ -4127,7 +4112,7 @@ static bool FindConditionalOverload(Sema &Self, ExprResult &LHS, ExprResult &RHS
                                     SourceLocation QuestionLoc) {
   Expr *Args[2] = { LHS.get(), RHS.get() };
   OverloadCandidateSet CandidateSet(QuestionLoc);
-  Self.AddBuiltinOperatorCandidates(OO_Conditional, QuestionLoc, Args, 2,
+  Self.AddBuiltinOperatorCandidates(OO_Conditional, QuestionLoc, Args,
                                     CandidateSet);
 
   OverloadCandidateSet::iterator Best;
@@ -5099,7 +5084,7 @@ ExprResult Sema::DiagnoseDtorReference(SourceLocation NameLoc,
   return ActOnCallExpr(/*Scope*/ 0,
                        MemExpr,
                        /*LPLoc*/ ExpectedLParenLoc,
-                       MultiExprArg(),
+                       None,
                        /*RPLoc*/ ExpectedLParenLoc);
 }
 
@@ -5447,7 +5432,7 @@ ExprResult Sema::BuildCXXMemberCallExpr(Expr *E, NamedDecl *FoundDecl,
   ResultType = ResultType.getNonLValueExprType(Context);
 
   CXXMemberCallExpr *CE =
-    new (Context) CXXMemberCallExpr(Context, ME, MultiExprArg(), ResultType, VK,
+    new (Context) CXXMemberCallExpr(Context, ME, None, ResultType, VK,
                                     Exp.get()->getLocEnd());
   return CE;
 }

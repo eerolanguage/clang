@@ -65,7 +65,7 @@ static Expr *IsStringInit(Expr *Init, const ArrayType *AT,
     // correction from DR343): "An array with element type compatible with a
     // qualified or unqualified version of wchar_t may be initialized by a wide
     // string literal, optionally enclosed in braces."
-    if (Context.typesAreCompatible(Context.getWCharType(),
+    if (Context.typesAreCompatible(Context.getWideCharType(),
                                    ElemTy.getUnqualifiedType()))
       return Init;
 
@@ -80,6 +80,24 @@ static Expr *IsStringInit(Expr *init, QualType declType, ASTContext &Context) {
   if (!arrayType) return 0;
 
   return IsStringInit(init, arrayType, Context);
+}
+
+/// Update the type of a string literal, including any surrounding parentheses,
+/// to match the type of the object which it is initializing.
+static void updateStringLiteralType(Expr *E, QualType Ty) {
+  while (true) {
+    E->setType(Ty);
+    if (isa<StringLiteral>(E) || isa<ObjCEncodeExpr>(E))
+      break;
+    else if (ParenExpr *PE = dyn_cast<ParenExpr>(E))
+      E = PE->getSubExpr();
+    else if (UnaryOperator *UO = dyn_cast<UnaryOperator>(E))
+      E = UO->getSubExpr();
+    else if (GenericSelectionExpr *GSE = dyn_cast<GenericSelectionExpr>(E))
+      E = GSE->getResultExpr();
+    else
+      llvm_unreachable("unexpected expr in string literal init");
+  }
 }
 
 static void CheckStringInit(Expr *Str, QualType &DeclT, const ArrayType *AT,
@@ -97,7 +115,7 @@ static void CheckStringInit(Expr *Str, QualType &DeclT, const ArrayType *AT,
     DeclT = S.Context.getConstantArrayType(IAT->getElementType(),
                                            ConstVal,
                                            ArrayType::Normal, 0);
-    Str->setType(DeclT);
+    updateStringLiteralType(Str, DeclT);
     return;
   }
 
@@ -107,7 +125,7 @@ static void CheckStringInit(Expr *Str, QualType &DeclT, const ArrayType *AT,
   // the size may be smaller or larger than the string we are initializing.
   // FIXME: Avoid truncation for 64-bit length strings.
   if (S.getLangOpts().CPlusPlus) {
-    if (StringLiteral *SL = dyn_cast<StringLiteral>(Str)) {
+    if (StringLiteral *SL = dyn_cast<StringLiteral>(Str->IgnoreParens())) {
       // For Pascal strings it's OK to strip off the terminating null character,
       // so the example below is valid:
       //
@@ -133,7 +151,7 @@ static void CheckStringInit(Expr *Str, QualType &DeclT, const ArrayType *AT,
   // something like:
   //   char x[1] = "foo";
   // then this will set the string literal's type to char[1].
-  Str->setType(DeclT);
+  updateStringLiteralType(Str, DeclT);
 }
 
 //===----------------------------------------------------------------------===//
@@ -280,7 +298,7 @@ void InitListChecker::CheckValueInitializable(const InitializedEntity &Entity) {
   SourceLocation Loc;
   InitializationKind Kind = InitializationKind::CreateValue(Loc, Loc, Loc,
                                                             true);
-  InitializationSequence InitSeq(SemaRef, Entity, Kind, MultiExprArg());
+  InitializationSequence InitSeq(SemaRef, Entity, Kind, None);
   if (InitSeq.Failed())
     hadError = true;
 }
@@ -328,15 +346,15 @@ void InitListChecker::FillInValueInitForField(unsigned Init, FieldDecl *Field,
 
     InitializationKind Kind = InitializationKind::CreateValue(Loc, Loc, Loc,
                                                               true);
-    InitializationSequence InitSeq(SemaRef, MemberEntity, Kind, MultiExprArg());
+    InitializationSequence InitSeq(SemaRef, MemberEntity, Kind, None);
     if (!InitSeq) {
-      InitSeq.Diagnose(SemaRef, MemberEntity, Kind, ArrayRef<Expr *>());
+      InitSeq.Diagnose(SemaRef, MemberEntity, Kind, None);
       hadError = true;
       return;
     }
 
     ExprResult MemberInit
-      = InitSeq.Perform(SemaRef, MemberEntity, Kind, MultiExprArg());
+      = InitSeq.Perform(SemaRef, MemberEntity, Kind, None);
     if (MemberInit.isInvalid()) {
       hadError = true;
       return;
@@ -446,15 +464,15 @@ InitListChecker::FillInValueInitializations(const InitializedEntity &Entity,
     if (!InitExpr && !ILE->hasArrayFiller()) {
       InitializationKind Kind = InitializationKind::CreateValue(Loc, Loc, Loc,
                                                                 true);
-      InitializationSequence InitSeq(SemaRef, ElementEntity, Kind, MultiExprArg());
+      InitializationSequence InitSeq(SemaRef, ElementEntity, Kind, None);
       if (!InitSeq) {
-        InitSeq.Diagnose(SemaRef, ElementEntity, Kind, ArrayRef<Expr *>());
+        InitSeq.Diagnose(SemaRef, ElementEntity, Kind, None);
         hadError = true;
         return;
       }
 
       ExprResult ElementInit
-        = InitSeq.Perform(SemaRef, ElementEntity, Kind, MultiExprArg());
+        = InitSeq.Perform(SemaRef, ElementEntity, Kind, None);
       if (ElementInit.isInvalid()) {
         hadError = true;
         return;
@@ -2113,7 +2131,7 @@ InitListChecker::getStructuredSubobjectInit(InitListExpr *IList, unsigned Index,
 
   InitListExpr *Result
     = new (SemaRef.Context) InitListExpr(SemaRef.Context,
-                                         InitRange.getBegin(), MultiExprArg(),
+                                         InitRange.getBegin(), None,
                                          InitRange.getEnd());
 
   QualType ResultType = CurrentObjectType;
@@ -2376,6 +2394,7 @@ DeclarationName InitializedEntity::getName() const {
   case EK_VectorElement:
   case EK_ComplexElement:
   case EK_BlockElement:
+  case EK_CompoundLiteralInit:
     return DeclarationName();
   }
 
@@ -2402,6 +2421,7 @@ DeclaratorDecl *InitializedEntity::getDecl() const {
   case EK_ComplexElement:
   case EK_BlockElement:
   case EK_LambdaCapture:
+  case EK_CompoundLiteralInit:
     return 0;
   }
 
@@ -2419,6 +2439,7 @@ bool InitializedEntity::allowsNRVO() const {
   case EK_Member:
   case EK_New:
   case EK_Temporary:
+  case EK_CompoundLiteralInit:
   case EK_Base:
   case EK_Delegating:
   case EK_ArrayElement:
@@ -3419,7 +3440,7 @@ convertQualifiersAndValueKindIfNecessary(Sema &S,
                                          Qualifiers T1Quals,
                                          Qualifiers T2Quals,
                                          bool IsLValueRef) {
-  bool IsNonAddressableType = Initializer->getBitField() ||
+  bool IsNonAddressableType = Initializer->refersToBitField() ||
                               Initializer->refersToVectorElement();
 
   if (IsNonAddressableType) {
@@ -3794,7 +3815,7 @@ static void TryDefaultInitialization(Sema &S,
   //       constructor for T is called (and the initialization is ill-formed if
   //       T has no accessible default constructor);
   if (DestType->isRecordType() && S.getLangOpts().CPlusPlus) {
-    TryConstructorInitialization(S, Entity, Kind, MultiExprArg(), DestType, Sequence);
+    TryConstructorInitialization(S, Entity, Kind, None, DestType, Sequence);
     return;
   }
 
@@ -4450,6 +4471,7 @@ getAssignmentAction(const InitializedEntity &Entity) {
   case InitializedEntity::EK_ComplexElement:
   case InitializedEntity::EK_BlockElement:
   case InitializedEntity::EK_LambdaCapture:
+  case InitializedEntity::EK_CompoundLiteralInit:
     return Sema::AA_Initializing;
   }
 
@@ -4472,6 +4494,7 @@ static bool shouldBindAsTemporary(const InitializedEntity &Entity) {
   case InitializedEntity::EK_Exception:
   case InitializedEntity::EK_BlockElement:
   case InitializedEntity::EK_LambdaCapture:
+  case InitializedEntity::EK_CompoundLiteralInit:
     return false;
 
   case InitializedEntity::EK_Parameter:
@@ -4502,6 +4525,7 @@ static bool shouldDestroyTemporary(const InitializedEntity &Entity) {
     case InitializedEntity::EK_Temporary:
     case InitializedEntity::EK_ArrayElement:
     case InitializedEntity::EK_Exception:
+    case InitializedEntity::EK_CompoundLiteralInit:
       return true;
   }
 
@@ -4583,6 +4607,7 @@ static SourceLocation getInitializationLoc(const InitializedEntity &Entity,
   case InitializedEntity::EK_VectorElement:
   case InitializedEntity::EK_ComplexElement:
   case InitializedEntity::EK_BlockElement:
+  case InitializedEntity::EK_CompoundLiteralInit:
     return Initializer->getLocStart();
   }
   llvm_unreachable("missed an InitializedEntity kind?");
@@ -4810,6 +4835,31 @@ static bool isReferenceBinding(const InitializationSequence::Step &s) {
          s.Kind == InitializationSequence::SK_BindReferenceToTemporary;
 }
 
+/// Returns true if the parameters describe a constructor initialization of
+/// an explicit temporary object, e.g. "Point(x, y)".
+static bool isExplicitTemporary(const InitializedEntity &Entity,
+                                const InitializationKind &Kind,
+                                unsigned NumArgs) {
+  switch (Entity.getKind()) {
+  case InitializedEntity::EK_Temporary:
+  case InitializedEntity::EK_CompoundLiteralInit:
+    break;
+  default:
+    return false;
+  }
+
+  switch (Kind.getKind()) {
+  case InitializationKind::IK_DirectList:
+    return true;
+  // FIXME: Hack to work around cast weirdness.
+  case InitializationKind::IK_Direct:
+  case InitializationKind::IK_Value:
+    return NumArgs != 1;
+  default:
+    return false;
+  }
+}
+
 static ExprResult
 PerformConstructorInitialization(Sema &S,
                                  const InitializedEntity &Entity,
@@ -4860,11 +4910,7 @@ PerformConstructorInitialization(Sema &S,
     return ExprError();
 
 
-  if (Entity.getKind() == InitializedEntity::EK_Temporary &&
-      (Kind.getKind() == InitializationKind::IK_DirectList ||
-       (NumArgs != 1 && // FIXME: Hack to work around cast weirdness
-        (Kind.getKind() == InitializationKind::IK_Direct ||
-         Kind.getKind() == InitializationKind::IK_Value)))) {
+  if (isExplicitTemporary(Entity, Kind, NumArgs)) {
     // An explicitly-constructed temporary, e.g., X(1, 2).
     S.MarkFunctionReferenced(Loc, Constructor);
     if (S.DiagnoseUseOfDecl(Constructor, Loc))
@@ -4966,6 +5012,7 @@ InitializedEntityOutlivesFullExpression(const InitializedEntity &Entity) {
   case InitializedEntity::EK_Parameter:
   case InitializedEntity::EK_Temporary:
   case InitializedEntity::EK_LambdaCapture:
+  case InitializedEntity::EK_CompoundLiteralInit:
     // The entity being initialized might not outlive the full-expression.
     return false;
   }
@@ -5178,13 +5225,18 @@ InitializationSequence::Perform(Sema &S,
     }
 
     case SK_BindReference:
-      if (FieldDecl *BitField = CurInit.get()->getBitField()) {
-        // References cannot bind to bit fields (C++ [dcl.init.ref]p5).
+      // References cannot bind to bit-fields (C++ [dcl.init.ref]p5).
+      if (CurInit.get()->refersToBitField()) {
+        // We don't necessarily have an unambiguous source bit-field.
+        FieldDecl *BitField = CurInit.get()->getSourceBitField();
         S.Diag(Kind.getLocation(), diag::err_reference_bind_to_bitfield)
           << Entity.getType().isVolatileQualified()
-          << BitField->getDeclName()
+          << (BitField ? BitField->getDeclName() : DeclarationName())
+          << (BitField != NULL)
           << CurInit.get()->getSourceRange();
-        S.Diag(BitField->getLocation(), diag::note_bitfield_decl);
+        if (BitField)
+          S.Diag(BitField->getLocation(), diag::note_bitfield_decl);
+
         return ExprError();
       }
 

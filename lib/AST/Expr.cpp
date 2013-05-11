@@ -3149,7 +3149,7 @@ bool Expr::isObjCSelfExpr() const {
   return M->getSelfDecl() == Param;
 }
 
-FieldDecl *Expr::getBitField() {
+FieldDecl *Expr::getSourceBitField() {
   Expr *E = this->IgnoreParens();
 
   while (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(E)) {
@@ -3165,6 +3165,11 @@ FieldDecl *Expr::getBitField() {
       if (Field->isBitField())
         return Field;
 
+  if (ObjCIvarRefExpr *IvarRef = dyn_cast<ObjCIvarRefExpr>(E))
+    if (FieldDecl *Ivar = dyn_cast<FieldDecl>(IvarRef->getDecl()))
+      if (Ivar->isBitField())
+        return Ivar;
+
   if (DeclRefExpr *DeclRef = dyn_cast<DeclRefExpr>(E))
     if (FieldDecl *Field = dyn_cast<FieldDecl>(DeclRef->getDecl()))
       if (Field->isBitField())
@@ -3172,10 +3177,10 @@ FieldDecl *Expr::getBitField() {
 
   if (BinaryOperator *BinOp = dyn_cast<BinaryOperator>(E)) {
     if (BinOp->isAssignmentOp() && BinOp->getLHS())
-      return BinOp->getLHS()->getBitField();
+      return BinOp->getLHS()->getSourceBitField();
 
     if (BinOp->getOpcode() == BO_Comma && BinOp->getRHS())
-      return BinOp->getRHS()->getBitField();
+      return BinOp->getRHS()->getSourceBitField();
   }
 
   return 0;
@@ -3560,13 +3565,12 @@ ShuffleVectorExpr::ShuffleVectorExpr(ASTContext &C, ArrayRef<Expr*> args,
   }
 }
 
-void ShuffleVectorExpr::setExprs(ASTContext &C, Expr ** Exprs,
-                                 unsigned NumExprs) {
+void ShuffleVectorExpr::setExprs(ASTContext &C, ArrayRef<Expr *> Exprs) {
   if (SubExprs) C.Deallocate(SubExprs);
 
-  SubExprs = new (C) Stmt* [NumExprs];
-  this->NumExprs = NumExprs;
-  memcpy(SubExprs, Exprs, sizeof(Expr *) * NumExprs);
+  this->NumExprs = Exprs.size();
+  SubExprs = new (C) Stmt*[NumExprs];
+  memcpy(SubExprs, Exprs.data(), sizeof(Expr *) * Exprs.size());
 }
 
 GenericSelectionExpr::GenericSelectionExpr(ASTContext &Context,

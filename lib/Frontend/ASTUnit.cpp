@@ -509,23 +509,19 @@ class ASTInfoCollector : public ASTReaderListener {
   Preprocessor &PP;
   ASTContext &Context;
   LangOptions &LangOpt;
-  HeaderSearch &HSI;
   IntrusiveRefCntPtr<TargetOptions> &TargetOpts;
   IntrusiveRefCntPtr<TargetInfo> &Target;
   unsigned &Counter;
 
-  unsigned NumHeaderInfos;
-
   bool InitializedLanguage;
 public:
   ASTInfoCollector(Preprocessor &PP, ASTContext &Context, LangOptions &LangOpt, 
-                   HeaderSearch &HSI, 
                    IntrusiveRefCntPtr<TargetOptions> &TargetOpts,
                    IntrusiveRefCntPtr<TargetInfo> &Target,
                    unsigned &Counter)
-    : PP(PP), Context(Context), LangOpt(LangOpt), HSI(HSI), 
+    : PP(PP), Context(Context), LangOpt(LangOpt),
       TargetOpts(TargetOpts), Target(Target),
-      Counter(Counter), NumHeaderInfos(0),
+      Counter(Counter),
       InitializedLanguage(false) {}
 
   virtual bool ReadLanguageOptions(const LangOptions &LangOpts,
@@ -552,10 +548,6 @@ public:
 
     updated();
     return false;
-  }
-
-  virtual void ReadHeaderFileInfo(const HeaderFileInfo &HFI, unsigned ID) {
-    HSI.setHeaderFileInfoForUID(HFI, NumHeaderInfos++);
   }
 
   virtual void ReadCounter(const serialization::ModuleFile &M, unsigned Value) {
@@ -644,6 +636,12 @@ void StoredDiagnosticConsumer::HandleDiagnostic(DiagnosticsEngine::Level Level,
   // FIXME: In the long run, ee don't want to drop source managers from modules.
   if (!Info.hasSourceManager() || &Info.getSourceManager() == SourceMgr)
     StoredDiags.push_back(StoredDiagnostic(Level, Info));
+}
+
+ASTMutationListener *ASTUnit::getASTMutationListener() {
+  if (WriterData)
+    return &WriterData->Writer;
+  return 0;
 }
 
 ASTDeserializationListener *ASTUnit::getDeserializationListener() {
@@ -798,7 +796,7 @@ ASTUnit *ASTUnit::LoadFromASTFile(const std::string &Filename,
     ReaderCleanup(Reader.get());
 
   Reader->setListener(new ASTInfoCollector(*AST->PP, Context,
-                                           AST->ASTFileLangOpts, HeaderInfo, 
+                                           AST->ASTFileLangOpts,
                                            AST->TargetOpts, AST->Target, 
                                            Counter));
 
@@ -937,6 +935,10 @@ public:
       handleTopLevelDecl(*it);
   }
 
+  virtual ASTMutationListener *GetASTMutationListener() {
+    return Unit.getASTMutationListener();
+  }
+
   virtual ASTDeserializationListener *GetASTDeserializationListener() {
     return Unit.getDeserializationListener();
   }
@@ -1037,16 +1039,17 @@ public:
 
 }
 
-static void checkAndRemoveNonDriverDiags(SmallVectorImpl<StoredDiagnostic> &
-                                                            StoredDiagnostics) {
+static bool isNonDriverDiag(const StoredDiagnostic &StoredDiag) {
+  return StoredDiag.getLocation().isValid();
+}
+
+static void
+checkAndRemoveNonDriverDiags(SmallVectorImpl<StoredDiagnostic> &StoredDiags) {
   // Get rid of stored diagnostics except the ones from the driver which do not
   // have a source location.
-  for (unsigned I = 0; I < StoredDiagnostics.size(); ++I) {
-    if (StoredDiagnostics[I].getLocation().isValid()) {
-      StoredDiagnostics.erase(StoredDiagnostics.begin()+I);
-      --I;
-    }
-  }
+  StoredDiags.erase(
+      std::remove_if(StoredDiags.begin(), StoredDiags.end(), isNonDriverDiag),
+      StoredDiags.end());
 }
 
 static void checkAndSanitizeDiags(SmallVectorImpl<StoredDiagnostic> &

@@ -113,6 +113,17 @@ public:
                             Token &FirstToken);
 };
 
+/// PragmaCommentHandler - "\#pragma comment ...".
+class PragmaCommentHandler : public PragmaHandler {
+public:
+  PragmaCommentHandler(Sema &Actions)
+    : PragmaHandler("comment"), Actions(Actions) {}
+  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
+                            Token &FirstToken);
+private:
+  Sema &Actions;
+};
+
 }  // end namespace clang
 
 #endif

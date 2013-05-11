@@ -45,6 +45,7 @@ enum TokenType {
   TT_ObjCMethodSpecifier,
   TT_ObjCProperty,
   TT_ObjCSelectorName,
+  TT_OverloadedOperator,
   TT_OverloadedOperatorLParen,
   TT_PointerOrReference,
   TT_PureVirtualSpecifier,
@@ -75,7 +76,7 @@ public:
         CanBreakBefore(false), MustBreakBefore(false),
         ClosesTemplateDeclaration(false), MatchingParen(NULL),
         ParameterCount(0), BindingStrength(0), SplitPenalty(0),
-        LongestObjCSelectorName(0), Parent(NULL),
+        LongestObjCSelectorName(0), DefinesFunctionType(false), Parent(NULL),
         FakeRParens(0), LastInChainOfCalls(false),
         PartOfMultiVariableDeclStmt(false), NoMoreTokensOnLevel(false) {}
 
@@ -164,6 +165,9 @@ public:
   /// definition or call, this contains the length of the longest name.
   unsigned LongestObjCSelectorName;
 
+  /// \brief \c true if this is a "(" that starts a function type definition.
+  bool DefinesFunctionType;
+
   std::vector<AnnotatedToken> Children;
   AnnotatedToken *Parent;
 
@@ -209,8 +213,8 @@ public:
   AnnotatedLine(const UnwrappedLine &Line)
       : First(Line.Tokens.front()), Level(Line.Level),
         InPPDirective(Line.InPPDirective),
-        MustBeDeclaration(Line.MustBeDeclaration),
-        MightBeFunctionDecl(false) {
+        MustBeDeclaration(Line.MustBeDeclaration), MightBeFunctionDecl(false),
+        StartsDefinition(false) {
     assert(!Line.Tokens.empty());
     AnnotatedToken *Current = &First;
     for (std::list<FormatToken>::const_iterator I = ++Line.Tokens.begin(),
@@ -226,7 +230,8 @@ public:
       : First(Other.First), Type(Other.Type), Level(Other.Level),
         InPPDirective(Other.InPPDirective),
         MustBeDeclaration(Other.MustBeDeclaration),
-        MightBeFunctionDecl(Other.MightBeFunctionDecl) {
+        MightBeFunctionDecl(Other.MightBeFunctionDecl),
+        StartsDefinition(Other.StartsDefinition) {
     Last = &First;
     while (!Last->Children.empty()) {
       Last->Children[0].Parent = Last;
@@ -242,6 +247,7 @@ public:
   bool InPPDirective;
   bool MustBeDeclaration;
   bool MightBeFunctionDecl;
+  bool StartsDefinition;
 };
 
 inline prec::Level getPrecedence(const AnnotatedToken &Tok) {

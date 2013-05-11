@@ -697,10 +697,13 @@ PathDiagnosticPiece *FindLastStoreBRVisitor::VisitNode(const ExplodedNode *Succ,
   if (P.getAs<CallEnter>() && InitE)
     L = PathDiagnosticLocation(InitE, BRC.getSourceManager(),
                                P.getLocationContext());
-  else
+
+  if (!L.isValid() || !L.asLocation().isValid())
     L = PathDiagnosticLocation::create(P, BRC.getSourceManager());
-  if (!L.isValid())
+
+  if (!L.isValid() || !L.asLocation().isValid())
     return NULL;
+
   return new PathDiagnosticEventPiece(L, os.str());
 }
 
@@ -1536,12 +1539,11 @@ LikelyFalsePositiveSuppressionBRVisitor::getEndPath(BugReporterContext &BRC,
   SourceManager &SM = BRC.getSourceManager();
   FullSourceLoc Loc = BR.getLocation(SM).asLocation();
   while (Loc.isMacroID()) {
-    if (SM.isInSystemMacro(Loc) &&
-       (SM.getFilename(SM.getSpellingLoc(Loc)).endswith("sys/queue.h"))) {
+    Loc = Loc.getSpellingLoc();
+    if (SM.getFilename(Loc).endswith("sys/queue.h")) {
       BR.markInvalid(getTag(), 0);
       return 0;
     }
-    Loc = Loc.getSpellingLoc();
   }
 
   return 0;

@@ -2014,8 +2014,7 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
                                                   /*TInfo=*/0,
                                                   SC_None,
                                                   0);
-      SetterMethod->setMethodParams(Context, Argument,
-                                    ArrayRef<SourceLocation>());
+      SetterMethod->setMethodParams(Context, Argument, None);
 
       AddPropertyAttrs(*this, SetterMethod, property);
 
