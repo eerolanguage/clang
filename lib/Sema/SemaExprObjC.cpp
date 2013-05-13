@@ -2058,6 +2058,11 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
   SourceLocation Loc = SuperLoc.isValid()? SuperLoc
     : ReceiverTypeInfo->getTypeLoc().getSourceRange().getBegin();
   if (LBracLoc.isInvalid()) {
+    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+      SourceLocation MissingPeriodLoc = PP.getLocForEndOfToken(Loc);
+      Diag(MissingPeriodLoc, diag::err_expected) << "'.' after class for message send"
+        << FixItHint::CreateReplacement(MissingPeriodLoc, ".");
+    } else
     Diag(Loc, diag::err_missing_open_square_message_send)
       << FixItHint::CreateInsertion(Loc, "[");
     LBracLoc = Loc;
@@ -2243,6 +2248,11 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
     SelLoc = Loc;
 
   if (LBracLoc.isInvalid()) {
+    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+      SourceLocation MissingPeriodLoc = PP.getLocForEndOfToken(Loc);
+      Diag(MissingPeriodLoc, diag::err_expected) << "'.' after instance for message send"
+        << FixItHint::CreateReplacement(MissingPeriodLoc, ".");
+    } else
     Diag(Loc, diag::err_missing_open_square_message_send)
       << FixItHint::CreateInsertion(Loc, "[");
     LBracLoc = Loc;
