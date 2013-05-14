@@ -1596,6 +1596,42 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
                                     ObjectType, TemplateKWLoc, Name))
         LHS = ExprError();
       
+      // Universal dot notation, including for 'id' objects
+      //
+      if (isEero && !LHS.isInvalid()) {
+        const QualType LHSType = LHS.get()->getType();
+        if (LHSType->isObjCIdType() || LHSType->isObjCQualifiedIdType()) {
+          const SourceLocation LHSLoc = LHS.get()->getLocStart();
+          Selector Sel;
+          SourceLocation MsgEndLoc;
+          MultiExprArg MsgExprArg;
+          // Distinguish between getter-like and setter-like methods
+          if (Tok.isNot(tok::equal)) { // it's a getter-like method with no args
+            Sel = PP.getSelectorTable().getNullarySelector(Name.Identifier);
+            MsgEndLoc = Name.getLocEnd();
+          } else { // it's effectively a setter
+            Sel = SelectorTable::constructSetterName(
+                PP.getIdentifierTable(),
+                PP.getSelectorTable(), Name.Identifier);
+            ConsumeToken(); // the '='
+            ExprResult SetterArgExpr = ParseAssignmentExpression();
+            if (!SetterArgExpr.isInvalid()) {
+              Expr* SetterArg = SetterArgExpr.take();
+              MsgExprArg = MultiExprArg(SetterArg);
+              MsgEndLoc = SetterArg->getLocEnd();
+            }
+          }
+          LHS = Actions.ActOnInstanceMessage(getCurScope(),
+                                             LHS.take(),
+                                             Sel,
+                                             LHSLoc,
+                                             Name.getLocStart(),
+                                             MsgEndLoc,
+                                             MsgExprArg);
+          break;
+        }
+      }
+      
       if (!LHS.isInvalid())
         LHS = Actions.ActOnMemberAccessExpr(getCurScope(), LHS.take(), OpLoc, 
                                             OpKind, SS, TemplateKWLoc, Name,
