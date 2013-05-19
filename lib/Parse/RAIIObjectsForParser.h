@@ -505,6 +505,11 @@ namespace clang {
     void skipToEnd();
     
     void restoreOpen() {
+      // Make sure to fix close level
+      P.PP.EnterToken(P.Tok);
+      P.Tok.setKind(Close);
+      consumeClose();
+      // Restore the orig open tok
       P.PP.EnterToken(P.Tok);
       P.Tok = SavedOpen;
     }

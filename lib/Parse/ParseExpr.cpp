@@ -2081,14 +2081,14 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
     return ExprError();
   SourceLocation OpenLoc = T.getOpenLocation();
 
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   // Support blocks with forms:
   //   "()", "(| expr)", and "(return expr)"
-  if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
-    if (isDeclarationSpecifier(true) ||
-        Tok.is(tok::r_paren) || Tok.is(tok::pipe) | Tok.is(tok::kw_return)) {
+  if (isEero &&
+      (Tok.is(tok::r_paren) || Tok.is(tok::pipe) | Tok.is(tok::kw_return))) {
       T.restoreOpen();
       return ParseBlockLiteralExpression();
-    }
   }
 
   ExprResult Result(true);
@@ -2174,6 +2174,33 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
                                         RParenLoc, SubExpr.get());
   } else if (ExprType >= CompoundLiteral &&
              isTypeIdInParens(isAmbiguousTypeId)) {
+
+    // Look for block literals of the form: "(int x ...)"
+    if (isEero) {
+      bool isBlock = false;
+      // We already know there's at least one type here
+      int i = 1;
+      Token t = GetLookAheadToken(i);
+      while (!isBlock && t.isNot(tok::r_paren) && t.isNot(tok::eof)) {
+        if (t.is(tok::identifier)) {
+          const Token next = GetLookAheadToken(i+1);
+          // faster check for "(int x, int y)" or "(int x | ...)"
+          if (next.is(tok::comma) || next.is(tok::pipe)) {
+            isBlock = true;
+          } else { // See if it's a type. If not, it's a block.
+            IdentifierInfo &II = *t.getIdentifierInfo();
+            if (!Actions.getTypeName(II, t.getLocation(), getCurScope())) {
+              isBlock = true;
+            }
+          }
+        }
+        t = GetLookAheadToken(++i);
+      }
+      if (isBlock) {
+        T.restoreOpen();
+        return ParseBlockLiteralExpression();
+      }
+    }
 
     // Otherwise, this is a compound literal expression or cast expression.
 
