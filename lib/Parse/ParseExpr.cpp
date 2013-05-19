@@ -822,6 +822,12 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       break;
     }
 
+    // Support blocks resembling "SomeType (int x)"
+    if (isEero && (Actions.getTypeName(II, ILoc, getCurScope()))) {
+      Res = ParseBlockLiteralExpression();
+      break;
+    }
+
     // In an Objective-C method, if we have "super" followed by an identifier,
     // the token sequence is ill-formed. However, if there's a ':' or ']' after
     // that identifier, this is probably a message send with a missing open
@@ -1065,6 +1071,11 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_image3d_t:
   case tok::kw_sampler_t:
   case tok::kw_event_t: {
+    // Support blocks resembling "int (int x)"
+    if (isEero) {
+      Res = ParseBlockLiteralExpression();
+      break;
+    }  
     if (!getLangOpts().CPlusPlus) {
       Diag(Tok, diag::err_expected_expression);
       if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
@@ -1269,6 +1280,10 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_selector:  //
     return ParseObjCAtExpression(Tok.getLocation());
   case tok::caret:
+    if (isEero) { // disable block literals with '^'
+      NotCastExpr = true;
+      return ExprError();
+    }
     Res = ParseBlockLiteralExpression();
     break;
   case tok::code_completion: {
@@ -2066,6 +2081,16 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
     return ExprError();
   SourceLocation OpenLoc = T.getOpenLocation();
 
+  // Support blocks with forms:
+  //   "()", "(| expr)", and "(return expr)"
+  if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+    if (isDeclarationSpecifier(true) ||
+        Tok.is(tok::r_paren) || Tok.is(tok::pipe) | Tok.is(tok::kw_return)) {
+      T.restoreOpen();
+      return ParseBlockLiteralExpression();
+    }
+  }
+
   ExprResult Result(true);
   bool isAmbiguousTypeId;
   CastTy = ParsedType();
@@ -2517,8 +2542,9 @@ void Parser::ParseBlockId(SourceLocation CaretLoc) {
 /// [clang]   '(' parameter-list ')'
 /// \endverbatim
 ExprResult Parser::ParseBlockLiteralExpression() {
-  assert(Tok.is(tok::caret) && "block literal starts with ^");
-  SourceLocation CaretLoc = ConsumeToken();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  assert((Tok.is(tok::caret) || isEero) && "block literal starts with ^");
+  SourceLocation CaretLoc = !isEero ? ConsumeToken() : Tok.getLocation();
 
   PrettyStackTraceLoc CrashInfo(PP.getSourceManager(), CaretLoc,
                                 "block literal parsing");

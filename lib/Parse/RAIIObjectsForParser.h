@@ -364,6 +364,7 @@ namespace clang {
     tok::TokenKind Kind, Close;
     SourceLocation (Parser::*Consumer)();
     SourceLocation LOpen, LClose;
+    Token SavedOpen;
 
     // For Eero optional and ignored delimeters
     //
@@ -478,6 +479,7 @@ namespace clang {
       optional = false; // the closing delim is no longer optional
       
       if (getDepth() < P.getLangOpts().BracketDepth) {
+        SavedOpen = P.Tok;
         LOpen = (P.*Consumer)();
         return false;
       }
@@ -501,6 +503,11 @@ namespace clang {
       return diagnoseMissingClose();
     }
     void skipToEnd();
+    
+    void restoreOpen() {
+      P.PP.EnterToken(P.Tok);
+      P.Tok = SavedOpen;
+    }
   };
 
 } // end namespace clang
