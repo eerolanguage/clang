@@ -16,7 +16,6 @@
 #define DEBUG_TYPE "format-parser"
 
 #include "UnwrappedLineParser.h"
-#include "clang/Basic/Diagnostic.h"
 #include "llvm/Support/Debug.h"
 
 namespace clang {
@@ -125,11 +124,11 @@ private:
   UnwrappedLine *PreBlockLine;
 };
 
-UnwrappedLineParser::UnwrappedLineParser(
-    clang::DiagnosticsEngine &Diag, const FormatStyle &Style,
-    FormatTokenSource &Tokens, UnwrappedLineConsumer &Callback)
+UnwrappedLineParser::UnwrappedLineParser(const FormatStyle &Style,
+                                         FormatTokenSource &Tokens,
+                                         UnwrappedLineConsumer &Callback)
     : Line(new UnwrappedLine), MustBreakBeforeNextToken(false),
-      CurrentLines(&Lines), StructuralError(false), Diag(Diag), Style(Style),
+      CurrentLines(&Lines), StructuralError(false), Style(Style),
       Tokens(&Tokens), Callback(Callback) {}
 
 bool UnwrappedLineParser::parse() {
@@ -173,9 +172,6 @@ void UnwrappedLineParser::parseLevel(bool HasOpeningBrace) {
     case tok::r_brace:
       if (HasOpeningBrace)
         return;
-      Diag.Report(FormatTok.Tok.getLocation(),
-                  Diag.getCustomDiagID(clang::DiagnosticsEngine::Error,
-                                       "unexpected '}'"));
       StructuralError = true;
       nextToken();
       addUnwrappedLine();
@@ -402,6 +398,10 @@ void UnwrappedLineParser::parseStructuralElement() {
       // structural element.
       // FIXME: Figure out cases where this is not true, and add projections for
       // them (the one we know is missing are lambdas).
+      if (Style.BreakBeforeBraces == FormatStyle::BS_Linux ||
+          Style.BreakBeforeBraces == FormatStyle::BS_Stroustrup)
+        addUnwrappedLine();
+
       parseBlock(/*MustBeDeclaration=*/ false);
       addUnwrappedLine();
       return;
@@ -577,6 +577,9 @@ void UnwrappedLineParser::parseNamespace() {
   if (FormatTok.Tok.is(tok::identifier))
     nextToken();
   if (FormatTok.Tok.is(tok::l_brace)) {
+    if (Style.BreakBeforeBraces == FormatStyle::BS_Linux)
+      addUnwrappedLine();
+
     parseBlock(/*MustBeDeclaration=*/ true, 0);
     // Munch the semicolon after a namespace. This is more common than one would
     // think. Puttin the semicolon into its own line is very ugly.
@@ -751,8 +754,12 @@ void UnwrappedLineParser::parseRecord() {
       }
     }
   }
-  if (FormatTok.Tok.is(tok::l_brace))
+  if (FormatTok.Tok.is(tok::l_brace)) {
+    if (Style.BreakBeforeBraces == FormatStyle::BS_Linux)
+      addUnwrappedLine();
+
     parseBlock(/*MustBeDeclaration=*/ true);
+  }
   // We fall through to parsing a structural element afterwards, so
   // class A {} n, m;
   // will end up in one unwrapped line.

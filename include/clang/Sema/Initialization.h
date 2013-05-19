@@ -706,6 +706,16 @@ public:
     /// \brief Array must be initialized with an initializer list or a 
     /// string literal.
     FK_ArrayNeedsInitListOrStringLiteral,
+    /// \brief Array must be initialized with an initializer list or a
+    /// wide string literal.
+    FK_ArrayNeedsInitListOrWideStringLiteral,
+    /// \brief Initializing a wide char array with narrow string literal.
+    FK_NarrowStringIntoWideCharArray,
+    /// \brief Initializing char array with wide string literal.
+    FK_WideStringIntoCharArray,
+    /// \brief Initializing wide char array with incompatible wide string
+    /// literal.
+    FK_IncompatWideStringIntoWideChar,
     /// \brief Array type mismatch.
     FK_ArrayTypeMismatch,
     /// \brief Non-constant array initializer
@@ -841,7 +851,7 @@ public:
   void setSequenceKind(enum SequenceKind SK) { SequenceKind = SK; }
   
   /// \brief Determine whether the initialization sequence is valid.
-  operator bool() const { return !Failed(); }
+  LLVM_EXPLICIT operator bool() const { return !Failed(); }
 
   /// \brief Determine whether the initialization sequence is invalid.
   bool Failed() const { return SequenceKind == FailedSequence; }

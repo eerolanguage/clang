@@ -94,17 +94,16 @@ namespace clang {
     /// \brief Add a new outermost level to the multi-level template argument 
     /// list.
     void addOuterTemplateArguments(const TemplateArgumentList *TemplateArgs) {
-      TemplateArgumentLists.push_back(ArgList(TemplateArgs->data(),
-                                              TemplateArgs->size()));
+      addOuterTemplateArguments(ArgList(TemplateArgs->data(),
+                                        TemplateArgs->size()));
     }
-    
+
     /// \brief Add a new outmost level to the multi-level template argument
     /// list.
-    void addOuterTemplateArguments(const TemplateArgument *Args, 
-                                   unsigned NumArgs) {
-      TemplateArgumentLists.push_back(ArgList(Args, NumArgs));
+    void addOuterTemplateArguments(ArgList Args) {
+      TemplateArgumentLists.push_back(Args);
     }
-    
+
     /// \brief Retrieve the innermost template argument list.
     const ArgList &getInnermost() const { 
       return TemplateArgumentLists.front(); 

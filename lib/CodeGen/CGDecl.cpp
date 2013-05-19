@@ -72,13 +72,14 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::Block:
   case Decl::Captured:
   case Decl::ClassScopeFunctionSpecialization:
-  case Decl::UsingShadow:
     llvm_unreachable("Declaration should not be in declstmts!");
   case Decl::Function:  // void X();
   case Decl::Record:    // struct/union/class X;
   case Decl::Enum:      // enum X;
   case Decl::EnumConstant: // enum ? { X = ? }
   case Decl::CXXRecord: // struct/union/class X; [C++]
+  case Decl::Using:          // using X; [C++]
+  case Decl::UsingShadow:
   case Decl::NamespaceAlias:
   case Decl::StaticAssert: // static_assert(X, ""); [C++0x]
   case Decl::Label:        // __label__ x;
@@ -88,10 +89,6 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
     // None of these decls require codegen support.
     return;
 
-  case Decl::Using:          // using X; [C++]
-    if (CGDebugInfo *DI = getDebugInfo())
-      DI->EmitUsingDecl(cast<UsingDecl>(D));
-    return;
   case Decl::UsingDirective: // using namespace X; [C++]
     if (CGDebugInfo *DI = getDebugInfo())
       DI->EmitUsingDirective(cast<UsingDirectiveDecl>(D));
@@ -117,12 +114,7 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
 /// EmitVarDecl - This method handles emission of any variable declaration
 /// inside a function, including static vars etc.
 void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
-  switch (D.getStorageClass()) {
-  case SC_None:
-  case SC_Auto:
-  case SC_Register:
-    return EmitAutoVarDecl(D);
-  case SC_Static: {
+  if (D.isStaticLocal()) {
     llvm::GlobalValue::LinkageTypes Linkage =
       llvm::GlobalValue::InternalLinkage;
 
@@ -137,15 +129,16 @@ void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
 
     return EmitStaticVarDecl(D, Linkage);
   }
-  case SC_Extern:
-  case SC_PrivateExtern:
+
+  if (D.hasExternalStorage())
     // Don't emit it now, allow it to be emitted lazily on its first use.
     return;
-  case SC_OpenCLWorkGroupLocal:
-    return CGM.getOpenCLRuntime().EmitWorkGroupLocalVarDecl(*this, D);
-  }
 
-  llvm_unreachable("Unknown storage class");
+  if (D.getStorageClass() == SC_OpenCLWorkGroupLocal)
+    return CGM.getOpenCLRuntime().EmitWorkGroupLocalVarDecl(*this, D);
+
+  assert(D.hasLocalStorage());
+  return EmitAutoVarDecl(D);
 }
 
 static std::string GetStaticDeclName(CodeGenFunction &CGF, const VarDecl &D,
