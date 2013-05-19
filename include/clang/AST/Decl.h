@@ -24,6 +24,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace clang {
 struct ASTTemplateArgumentListInfo;
@@ -142,7 +143,7 @@ public:
   // FIXME: Deprecated, move clients to getName().
   std::string getNameAsString() const { return Name.getAsString(); }
 
-  void printName(raw_ostream &os) const { return Name.printName(os); }
+  void printName(raw_ostream &os) const { os << Name; }
 
   /// getDeclName - Get the actual, stored name of the declaration,
   /// which may be a special name.
@@ -212,11 +213,26 @@ public:
   bool isCXXInstanceMember() const;
 
   /// \brief Determine what kind of linkage this entity has.
-  Linkage getLinkage() const;
+  /// This is not the linkage as defined by the standard or the codegen notion
+  /// of linkage. It is just an implementation detail that is used to compute
+  /// those.
+  Linkage getLinkageInternal() const;
+
+  /// \brief Get the linkage from a semantic point of view. Entities in
+  /// anonymous namespaces are external (in c++98).
+  Linkage getFormalLinkage() const {
+    Linkage L = getLinkageInternal();
+    if (L == UniqueExternalLinkage)
+      return ExternalLinkage;
+    return L;
+  }
 
   /// \brief True if this decl has external linkage.
-  bool hasExternalLinkage() const {
-    return getLinkage() == ExternalLinkage;
+  bool hasExternalFormalLinkage() const {
+    return getFormalLinkage() == ExternalLinkage;
+  }
+  bool isExternallyVisible() const {
+    return getLinkageInternal() == ExternalLinkage;
   }
 
   /// \brief Determines the visibility of this entity.

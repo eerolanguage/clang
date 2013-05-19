@@ -101,8 +101,10 @@ private:
         return true;
       }
       if (CurrentToken->isOneOf(tok::r_paren, tok::r_square, tok::r_brace,
-                                tok::pipepipe, tok::ampamp, tok::question,
-                                tok::colon))
+                                tok::question, tok::colon))
+        return false;
+      if (CurrentToken->isOneOf(tok::pipepipe, tok::ampamp) &&
+          Line.First.isNot(tok::kw_template))
         return false;
       updateParameterCount(Left, CurrentToken);
       if (!consumeToken())
@@ -155,6 +157,9 @@ private:
       }
 
       if (CurrentToken->is(tok::r_paren)) {
+        if (CurrentToken->Children.empty() ||
+            !CurrentToken->Children[0].isOneOf(tok::l_paren, tok::l_square))
+          Left->DefinesFunctionType = false;
         if (CurrentToken->Parent->closesScope())
           CurrentToken->Parent->MatchingParen->NoMoreTokensOnLevel = true;
         Left->MatchingParen = CurrentToken;
@@ -591,6 +596,7 @@ private:
       }
     } else if (Current.isOneOf(tok::kw_return, tok::kw_throw) ||
                (Current.is(tok::l_paren) && !Line.MustBeDeclaration &&
+                !Line.InPPDirective &&
                 (!Current.Parent || Current.Parent->isNot(tok::kw_for)))) {
       Contexts.back().IsExpression = true;
     } else if (Current.isOneOf(tok::r_paren, tok::greater, tok::comma)) {
@@ -871,8 +877,6 @@ void TokenAnnotator::annotate(AnnotatedLine &Line) {
   Line.First.SpacesRequiredBefore = 1;
   Line.First.MustBreakBefore = Line.First.FormatTok.MustBreakBefore;
   Line.First.CanBreakBefore = Line.First.MustBreakBefore;
-
-  Line.First.TotalLength = Line.First.FormatTok.TokenLength;
 }
 
 void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {

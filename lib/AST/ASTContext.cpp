@@ -409,6 +409,8 @@ comments::FullComment *ASTContext::cloneFullComment(comments::FullComment *FC,
 comments::FullComment *ASTContext::getCommentForDecl(
                                               const Decl *D,
                                               const Preprocessor *PP) const {
+  if (D->isInvalidDecl())
+    return NULL;
   D = adjustDeclToTemplate(D);
   
   const Decl *Canonical = D->getCanonicalDecl();
@@ -1343,8 +1345,28 @@ ASTContext::getTypeInfoDataSizeInChars(QualType T) const {
   return sizeAndAlign;
 }
 
+/// getConstantArrayInfoInChars - Performing the computation in CharUnits
+/// instead of in bits prevents overflowing the uint64_t for some large arrays.
+std::pair<CharUnits, CharUnits>
+static getConstantArrayInfoInChars(const ASTContext &Context,
+                                   const ConstantArrayType *CAT) {
+  std::pair<CharUnits, CharUnits> EltInfo =
+      Context.getTypeInfoInChars(CAT->getElementType());
+  uint64_t Size = CAT->getSize().getZExtValue();
+  assert((Size == 0 || static_cast<uint64_t>(EltInfo.first.getQuantity()) <=
+              (uint64_t)(-1)/Size) &&
+         "Overflow in array type char size evaluation");
+  uint64_t Width = EltInfo.first.getQuantity() * Size;
+  unsigned Align = EltInfo.second.getQuantity();
+  Width = llvm::RoundUpToAlignment(Width, Align);
+  return std::make_pair(CharUnits::fromQuantity(Width),
+                        CharUnits::fromQuantity(Align));
+}
+
 std::pair<CharUnits, CharUnits>
 ASTContext::getTypeInfoInChars(const Type *T) const {
+  if (const ConstantArrayType *CAT = dyn_cast<ConstantArrayType>(T))
+    return getConstantArrayInfoInChars(*this, CAT);
   std::pair<uint64_t, unsigned> Info = getTypeInfo(T);
   return std::make_pair(toCharUnitsFromBits(Info.first),
                         toCharUnitsFromBits(Info.second));
@@ -1700,10 +1722,10 @@ int64_t ASTContext::toBits(CharUnits CharSize) const {
 /// getTypeSizeInChars - Return the size of the specified type, in characters.
 /// This method does not work on incomplete types.
 CharUnits ASTContext::getTypeSizeInChars(QualType T) const {
-  return toCharUnitsFromBits(getTypeSize(T));
+  return getTypeInfoInChars(T).first;
 }
 CharUnits ASTContext::getTypeSizeInChars(const Type *T) const {
-  return toCharUnitsFromBits(getTypeSize(T));
+  return getTypeInfoInChars(T).first;
 }
 
 /// getTypeAlignInChars - Return the ABI-specified alignment of a type, in 
@@ -7767,30 +7789,23 @@ QualType ASTContext::GetBuiltinType(unsigned Id,
 }
 
 GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) {
-  GVALinkage External = GVA_StrongExternal;
-
-  Linkage L = FD->getLinkage();
-  switch (L) {
-  case NoLinkage:
-  case InternalLinkage:
-  case UniqueExternalLinkage:
+  if (!FD->isExternallyVisible())
     return GVA_Internal;
-    
-  case ExternalLinkage:
-    switch (FD->getTemplateSpecializationKind()) {
-    case TSK_Undeclared:
-    case TSK_ExplicitSpecialization:
-      External = GVA_StrongExternal;
-      break;
 
-    case TSK_ExplicitInstantiationDefinition:
-      return GVA_ExplicitTemplateInstantiation;
+  GVALinkage External = GVA_StrongExternal;
+  switch (FD->getTemplateSpecializationKind()) {
+  case TSK_Undeclared:
+  case TSK_ExplicitSpecialization:
+    External = GVA_StrongExternal;
+    break;
 
-    case TSK_ExplicitInstantiationDeclaration:
-    case TSK_ImplicitInstantiation:
-      External = GVA_TemplateInstantiation;
-      break;
-    }
+  case TSK_ExplicitInstantiationDefinition:
+    return GVA_ExplicitTemplateInstantiation;
+
+  case TSK_ExplicitInstantiationDeclaration:
+  case TSK_ImplicitInstantiation:
+    External = GVA_TemplateInstantiation;
+    break;
   }
 
   if (!FD->isInlined())
@@ -7820,6 +7835,9 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) {
 }
 
 GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
+  if (!VD->isExternallyVisible())
+    return GVA_Internal;
+
   // If this is a static data member, compute the kind of template
   // specialization. Otherwise, this variable is not part of a
   // template.
@@ -7827,30 +7845,20 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
   if (VD->isStaticDataMember())
     TSK = VD->getTemplateSpecializationKind();
 
-  Linkage L = VD->getLinkage();
+  switch (TSK) {
+  case TSK_Undeclared:
+  case TSK_ExplicitSpecialization:
+    return GVA_StrongExternal;
 
-  switch (L) {
-  case NoLinkage:
-  case InternalLinkage:
-  case UniqueExternalLinkage:
-    return GVA_Internal;
+  case TSK_ExplicitInstantiationDeclaration:
+    llvm_unreachable("Variable should not be instantiated");
+  // Fall through to treat this like any other instantiation.
 
-  case ExternalLinkage:
-    switch (TSK) {
-    case TSK_Undeclared:
-    case TSK_ExplicitSpecialization:
-      return GVA_StrongExternal;
+  case TSK_ExplicitInstantiationDefinition:
+    return GVA_ExplicitTemplateInstantiation;
 
-    case TSK_ExplicitInstantiationDeclaration:
-      llvm_unreachable("Variable should not be instantiated");
-      // Fall through to treat this like any other instantiation.
-        
-    case TSK_ExplicitInstantiationDefinition:
-      return GVA_ExplicitTemplateInstantiation;
-
-    case TSK_ImplicitInstantiation:
-      return GVA_TemplateInstantiation;      
-    }
+  case TSK_ImplicitInstantiation:
+    return GVA_TemplateInstantiation;
   }
 
   llvm_unreachable("Invalid Linkage!");
@@ -7986,7 +7994,8 @@ size_t ASTContext::getSideTableAllocatedMemory() const {
 void ASTContext::addUnnamedTag(const TagDecl *Tag) {
   // FIXME: This mangling should be applied to function local classes too
   if (!Tag->getName().empty() || Tag->getTypedefNameForAnonDecl() ||
-      !isa<CXXRecordDecl>(Tag->getParent()) || Tag->getLinkage() != ExternalLinkage)
+      !isa<CXXRecordDecl>(Tag->getParent()) ||
+      !Tag->isExternallyVisible())
     return;
 
   std::pair<llvm::DenseMap<const DeclContext *, unsigned>::iterator, bool> P =

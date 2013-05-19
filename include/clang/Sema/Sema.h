@@ -216,7 +216,7 @@ class Sema {
     // it will keep having external linkage. If it has internal linkage, we
     // will not link it. Since it has no previous decls, it will remain
     // with internal linkage.
-    return !Old->isHidden() || New->hasExternalLinkage();
+    return !Old->isHidden() || New->isExternallyVisible();
   }
 
 public:
@@ -4385,6 +4385,11 @@ public:
                                           bool ExplicitResultType,
                                           bool Mutable);
 
+  /// \brief Check and build an init-capture with the specified name and
+  /// initializer.
+  FieldDecl *checkInitCapture(SourceLocation Loc, bool ByRef,
+                              IdentifierInfo *Id, Expr *Init);
+
   /// \brief Note that we have finished the explicit captures for the
   /// given lambda.
   void finishLambdaExplicitCaptures(sema::LambdaScopeInfo *LSI);
@@ -6066,7 +6071,7 @@ public:
 
     /// \brief Determines whether we have exceeded the maximum
     /// recursive template instantiations.
-    operator bool() const { return Invalid; }
+    LLVM_EXPLICIT operator bool() const { return Invalid; }
 
   private:
     Sema &SemaRef;
@@ -6754,16 +6759,19 @@ public:
                       unsigned SpellingListIndex, bool IsPackExpansion);
 
   // OpenMP directives and clauses.
-
+  /// \brief Called on correct id-expression from the '#pragma omp
+  /// threadprivate'.
+  ExprResult ActOnOpenMPIdExpression(Scope *CurScope,
+                                     CXXScopeSpec &ScopeSpec,
+                                     const DeclarationNameInfo &Id);
   /// \brief Called on well-formed '#pragma omp threadprivate'.
   DeclGroupPtrTy ActOnOpenMPThreadprivateDirective(
-                        SourceLocation Loc,
-                        Scope *CurScope,
-                        ArrayRef<DeclarationNameInfo> IdList);
-  /// \brief Build a new OpenMPThreadPrivateDecl and check its correctness.
+                                     SourceLocation Loc,
+                                     ArrayRef<Expr *> VarList);
+  // \brief Builds a new OpenMPThreadPrivateDecl and checks its correctness.
   OMPThreadPrivateDecl *CheckOMPThreadPrivateDecl(
-                        SourceLocation Loc,
-                        ArrayRef<DeclRefExpr *> VarList);
+                                     SourceLocation Loc,
+                                     ArrayRef<Expr *> VarList);
 
   /// \brief The kind of conversion being performed.
   enum CheckedConversionKind {

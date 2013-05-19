@@ -2007,7 +2007,7 @@ QualType Sema::CheckTemplateIdType(TemplateName Name,
     TemplateArgLists.addOuterTemplateArguments(&TemplateArgs);
     unsigned Depth = AliasTemplate->getTemplateParameters()->getDepth();
     for (unsigned I = 0; I < Depth; ++I)
-      TemplateArgLists.addOuterTemplateArguments(0, 0);
+      TemplateArgLists.addOuterTemplateArguments(None);
 
     LocalInstantiationScope Scope(*this);
     InstantiatingTemplate Inst(*this, TemplateLoc, Template);
@@ -3793,14 +3793,14 @@ CheckTemplateArgumentAddressOfObjectOrFunction(Sema &S,
   }
 
   // Address / reference template args must have external linkage in C++98.
-  if (Entity->getLinkage() == InternalLinkage) {
+  if (Entity->getFormalLinkage() == InternalLinkage) {
     S.Diag(Arg->getLocStart(), S.getLangOpts().CPlusPlus11 ?
              diag::warn_cxx98_compat_template_arg_object_internal :
              diag::ext_template_arg_object_internal)
       << !Func << Entity << Arg->getSourceRange();
     S.Diag(Entity->getLocation(), diag::note_template_arg_internal_object)
       << !Func;
-  } else if (Entity->getLinkage() == NoLinkage) {
+  } else if (!Entity->hasLinkage()) {
     S.Diag(Arg->getLocStart(), diag::err_template_arg_object_no_linkage)
       << !Func << Entity << Arg->getSourceRange();
     S.Diag(Entity->getLocation(), diag::note_template_arg_internal_object)

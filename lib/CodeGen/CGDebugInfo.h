@@ -18,6 +18,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/DIBuilder.h"
 #include "llvm/DebugInfo.h"
@@ -35,7 +36,6 @@ namespace clang {
   class ObjCIvarDecl;
   class ClassTemplateSpecializationDecl;
   class GlobalDecl;
-  class UsingDecl;
 
 namespace CodeGen {
   class CodeGenModule;
@@ -47,6 +47,7 @@ namespace CodeGen {
 /// the backend.
 class CGDebugInfo {
   CodeGenModule &CGM;
+  CodeGenOptions::DebugInfoKind DebugKind;
   llvm::DIBuilder DBuilder;
   llvm::DICompileUnit TheCU;
   SourceLocation CurLoc, PrevLoc;
@@ -58,7 +59,7 @@ class CGDebugInfo {
   llvm::DIType OCLImage2dDITy, OCLImage2dArrayDITy;
   llvm::DIType OCLImage3dDITy;
   llvm::DIType OCLEventDITy;
-  
+
   /// TypeCache - Cache of previously constructed Types.
   llvm::DenseMap<void *, llvm::WeakVH> TypeCache;
 
@@ -95,7 +96,6 @@ class CGDebugInfo {
 
   llvm::DenseMap<const char *, llvm::WeakVH> DIFileCache;
   llvm::DenseMap<const FunctionDecl *, llvm::WeakVH> SPCache;
-  llvm::DenseMap<const Decl *, llvm::WeakVH> DeclCache;
   llvm::DenseMap<const NamespaceDecl *, llvm::WeakVH> NameSpaceCache;
   llvm::DenseMap<const Decl *, llvm::WeakVH> StaticDataMemberCache;
 
@@ -143,7 +143,7 @@ class CGDebugInfo {
   llvm::DISubprogram CreateCXXMemberFunction(const CXXMethodDecl *Method,
                                              llvm::DIFile F,
                                              llvm::DIType RecordTy);
-  
+
   void CollectCXXMemberFunctions(const CXXRecordDecl *Decl,
                                  llvm::DIFile F,
                                  SmallVectorImpl<llvm::Value *> &E,
@@ -158,14 +158,14 @@ class CGDebugInfo {
                        llvm::DIFile F,
                        SmallVectorImpl<llvm::Value *> &EltTys,
                        llvm::DIType RecordTy);
-  
+
   llvm::DIArray
   CollectTemplateParams(const TemplateParameterList *TPList,
                         const TemplateArgumentList &TAList,
                         llvm::DIFile Unit);
   llvm::DIArray
   CollectFunctionTemplateParams(const FunctionDecl *FD, llvm::DIFile Unit);
-  llvm::DIArray 
+  llvm::DIArray
   CollectCXXTemplateParams(const ClassTemplateSpecializationDecl *TS,
                            llvm::DIFile F);
 
@@ -197,7 +197,7 @@ class CGDebugInfo {
   // CreateLexicalBlock - Create a new lexical block node and push it on
   // the stack.
   void CreateLexicalBlock(SourceLocation Loc);
-  
+
 public:
   CGDebugInfo(CodeGenModule &CGM);
   ~CGDebugInfo();
@@ -207,6 +207,9 @@ public:
   /// setLocation - Update the current source location. If \arg loc is
   /// invalid it is ignored.
   void setLocation(SourceLocation Loc);
+
+  /// getLocation - Return the current source location.
+  SourceLocation getLocation() const { return CurLoc; }
 
   /// EmitLocation - Emit metadata to indicate a change in line/column
   /// information in the source file.
@@ -267,23 +270,20 @@ public:
   /// \brief - Emit C++ using directive.
   void EmitUsingDirective(const UsingDirectiveDecl &UD);
 
-  /// \brief - Emit C++ using declaration.
-  void EmitUsingDecl(const UsingDecl &UD);
-
-  /// getOrCreateRecordType - Emit record type's standalone debug info. 
+  /// getOrCreateRecordType - Emit record type's standalone debug info.
   llvm::DIType getOrCreateRecordType(QualType Ty, SourceLocation L);
 
   /// getOrCreateInterfaceType - Emit an objective c interface type standalone
   /// debug info.
   llvm::DIType getOrCreateInterfaceType(QualType Ty,
-					SourceLocation Loc);
+                                        SourceLocation Loc);
 
 private:
   /// EmitDeclare - Emit call to llvm.dbg.declare for a variable declaration.
   void EmitDeclare(const VarDecl *decl, unsigned Tag, llvm::Value *AI,
                    unsigned ArgNo, CGBuilderTy &Builder);
 
-  // EmitTypeForVarWithBlocksAttr - Build up structure info for the byref.  
+  // EmitTypeForVarWithBlocksAttr - Build up structure info for the byref.
   // See BuildByRefType.
   llvm::DIType EmitTypeForVarWithBlocksAttr(const VarDecl *VD,
                                             uint64_t *OffSet);
@@ -291,12 +291,10 @@ private:
   /// getContextDescriptor - Get context info for the decl.
   llvm::DIScope getContextDescriptor(const Decl *Decl);
 
-  llvm::DIScope getCurrentContextDescriptor(const Decl *Decl);
-
   /// createRecordFwdDecl - Create a forward decl for a RecordType in a given
   /// context.
   llvm::DIType createRecordFwdDecl(const RecordDecl *, llvm::DIDescriptor);
-  
+
   /// createContextChain - Create a set of decls for the context chain.
   llvm::DIDescriptor createContextChain(const Decl *Decl);
 
@@ -306,7 +304,7 @@ private:
   /// CreateCompileUnit - Create new compile unit.
   void CreateCompileUnit();
 
-  /// getOrCreateFile - Get the file debug info descriptor for the input 
+  /// getOrCreateFile - Get the file debug info descriptor for the input
   /// location.
   llvm::DIFile getOrCreateFile(SourceLocation Loc);
 
@@ -336,10 +334,6 @@ private:
   llvm::DIType CreateMemberType(llvm::DIFile Unit, QualType FType,
                                 StringRef Name, uint64_t *Offset);
 
-  /// \brief Retrieve the DIDescriptor, if any, for the canonical form of this
-  /// declaration.
-  llvm::DIDescriptor getDeclarationOrDefinition(const Decl *D);
-
   /// getFunctionDeclaration - Return debug info descriptor to describe method
   /// declaration for the given method definition.
   llvm::DISubprogram getFunctionDeclaration(const Decl *D);
@@ -355,7 +349,7 @@ private:
   StringRef getFunctionName(const FunctionDecl *FD);
 
   /// getObjCMethodName - Returns the unmangled name of an Objective-C method.
-  /// This is the display name for the debugging info.  
+  /// This is the display name for the debugging info.
   StringRef getObjCMethodName(const ObjCMethodDecl *FD);
 
   /// getSelectorName - Return selector name. This is used for debugging
@@ -372,7 +366,7 @@ private:
   /// then use current location.
   unsigned getLineNumber(SourceLocation Loc);
 
-  /// getColumnNumber - Get column number for the location. If location is 
+  /// getColumnNumber - Get column number for the location. If location is
   /// invalid then use current location.
   /// \param Force  Assume DebugColumnInfo option is true.
   unsigned getColumnNumber(SourceLocation Loc, bool Force=false);

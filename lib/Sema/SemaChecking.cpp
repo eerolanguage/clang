@@ -5133,7 +5133,15 @@ void AnalyzeImplicitConversions(Sema &S, Expr *OrigE, SourceLocation CC) {
     CheckImplicitConversion(S, E, T, CC);
 
   // Now continue drilling into this expression.
-
+  
+  if (PseudoObjectExpr * POE = dyn_cast<PseudoObjectExpr>(E)) {
+    if (POE->getResultExpr())
+      E = POE->getResultExpr();
+  }
+  
+  if (const OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(E))
+    return AnalyzeImplicitConversions(S, OVE->getSourceExpr(), CC);
+  
   // Skip past explicit casts.
   if (isa<ExplicitCastExpr>(E)) {
     E = cast<ExplicitCastExpr>(E)->getSubExpr()->IgnoreParenImpCasts();

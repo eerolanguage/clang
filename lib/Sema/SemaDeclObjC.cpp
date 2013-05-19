@@ -350,7 +350,7 @@ void Sema::ActOnStartOfObjCMethodDef(Scope *FnBodyScope, Decl *D) {
     case OMF_release:
     case OMF_autorelease:
       Diag(MDecl->getLocation(), diag::err_arc_illegal_method_def)
-        << MDecl->getSelector();
+        << 0 << MDecl->getSelector();
       break;
 
     case OMF_None:
@@ -2949,7 +2949,7 @@ Decl *Sema::ActOnMethodDeclaration(
     QualType ArgType;
     TypeSourceInfo *DI;
 
-    if (ArgInfo[i].Type == 0) {
+    if (!ArgInfo[i].Type) {
       ArgType = Context.getObjCIdType();
       DI = 0;
     } else {
@@ -3061,6 +3061,8 @@ Decl *Sema::ActOnMethodDeclaration(
     Diag(ObjCMethod->getLocation(), diag::err_duplicate_method_decl)
       << ObjCMethod->getDeclName();
     Diag(PrevMethod->getLocation(), diag::note_previous_declaration);
+    ObjCMethod->setInvalidDecl();
+    return ObjCMethod;
   }
 
   // If this Objective-C method does not have a related result type, but we

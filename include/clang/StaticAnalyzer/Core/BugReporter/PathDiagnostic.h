@@ -331,6 +331,10 @@ private:
   const std::string str;
   const Kind kind;
   const DisplayHint Hint;
+
+  /// \brief In the containing bug report, this piece is the last piece from
+  /// the main source file.
+  bool LastInMainSourceFile;
   
   /// A constant string that can be used to tag the PathDiagnosticPiece,
   /// typically with the identification of the creator.  The actual pointer
@@ -389,6 +393,14 @@ public:
   ArrayRef<SourceRange> getRanges() const { return ranges; }
 
   virtual void Profile(llvm::FoldingSetNodeID &ID) const;
+
+  void setAsLastInMainSourceFile() {
+    LastInMainSourceFile = true;
+  }
+
+  bool isLastInMainSourceFile() const {
+    return LastInMainSourceFile;
+  }
 };
   
   
@@ -403,6 +415,8 @@ public:
     flattenTo(Result, Result, ShouldFlattenMacros);
     return Result;
   }
+
+  LLVM_ATTRIBUTE_USED void dump() const;
 };
 
 class PathDiagnosticSpotPiece : public PathDiagnosticPiece {
@@ -504,7 +518,7 @@ public:
   }
   
   bool hasCallStackHint() {
-    return (CallStackHint != 0);
+    return CallStackHint.isValid();
   }
 
   /// Produce the hint for the given node. The node contains 
@@ -687,7 +701,10 @@ class PathDiagnostic : public llvm::FoldingSetNode {
   std::string ShortDesc;
   std::string Category;
   std::deque<std::string> OtherDesc;
+
+  /// \brief Loc The location of the path diagnostic report.
   PathDiagnosticLocation Loc;
+
   PathPieces pathImpl;
   SmallVector<PathPieces *, 3> pathStack;
   
@@ -735,12 +752,23 @@ public:
     getActivePath().push_back(EndPiece);
   }
 
+  void appendToDesc(StringRef S) {
+    if (!ShortDesc.empty())
+      ShortDesc.append(S);
+    VerboseDesc.append(S);
+  }
+
   void resetPath() {
     pathStack.clear();
     pathImpl.clear();
     Loc = PathDiagnosticLocation();
   }
-  
+
+  /// \brief If the last piece of the report point to the header file, resets
+  /// the location of the report to be the last location in the main source
+  /// file.
+  void resetDiagnosticLocationToMainFile();
+
   StringRef getVerboseDescription() const { return VerboseDesc; }
   StringRef getShortDescription() const {
     return ShortDesc.empty() ? VerboseDesc : ShortDesc;
@@ -759,7 +787,7 @@ public:
   void addMeta(StringRef s) { OtherDesc.push_back(s); }
 
   PathDiagnosticLocation getLocation() const {
-    assert(Loc.isValid() && "No end-of-path location set yet!");
+    assert(Loc.isValid() && "No report location set yet!");
     return Loc;
   }
 

@@ -4204,7 +4204,7 @@ std::string TypoCorrection::getAsString(const LangOptions &LO) const {
     std::string tmpBuffer;
     llvm::raw_string_ostream PrefixOStream(tmpBuffer);
     CorrectionNameSpec->print(PrefixOStream, PrintingPolicy(LO));
-    CorrectionName.printName(PrefixOStream);
+    PrefixOStream << CorrectionName;
     return PrefixOStream.str();
   }
 
