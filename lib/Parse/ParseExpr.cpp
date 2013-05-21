@@ -1397,13 +1397,6 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       // Fall through; this isn't a message send.
                 
     default:  // Not a postfix-expression suffix.      
-      if (isEero && Tok.is(tok::colon) && // message to unnamed selector
-          !LHS.isInvalid()) {
-        LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(),
-                                             SourceLocation(),
-                                             ParsedType(), LHS.get());
-        break;
-      }
       return LHS;
 
     case tok::l_square: {  // postfix-expression: p-e '[' expression ']'
@@ -1599,7 +1592,8 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         SourceLocation Loc = ConsumeToken();
         Name.setIdentifier(Id, Loc);
       } else if (isEero && !LHS.isInvalid() && 
-                 Tok.is(tok::identifier) && NextToken().is(tok::colon)) {
+                 ((Tok.is(tok::identifier) && NextToken().is(tok::colon)) ||
+                  Tok.is(tok::colon))) {
         LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(), SourceLocation(),
                                              ParsedType(), LHS.get());
         break;

@@ -148,8 +148,11 @@ Retry:
     Token Next = NextToken();
 
     if (isEero && Next.is(tok::colon)) {
-      // identifier ':' statement - message to unnamed selector
-      return ParseExprStatement();
+      // identifier ':' statement - no goto or labels in eero
+      Diag(Tok, diag::err_expected_statement);
+      ConsumeToken(); // the identifier
+      ConsumeToken(); // the colon
+      return StmtError();
     }
 
     if (Next.is(tok::colon)) { // C99 6.8.1: labeled-statement
