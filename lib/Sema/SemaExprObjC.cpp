@@ -1709,6 +1709,17 @@ ActOnClassPropertyRefExpr(IdentifierInfo &receiverName,
           }
           QualType T = Context.getObjCInterfaceType(Super);
           T = Context.getObjCObjectPointerType(T);
+
+          // For Eero global dot notation, make sure that
+          // unnecessary attribute "objc_requires_super" 
+          // warnings are avoided.
+          if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+            Selector Sel = 
+              PP.getSelectorTable().getNullarySelector(&propertyName);
+            if (CurMethod->getSelector() == Sel) {
+              getCurFunction()->ObjCShouldCallSuper = false;
+            }
+          }
         
           return HandleExprPropertyRefExpr(T->getAsObjCInterfacePointerType(),
                                            /*BaseExpr*/0, 
