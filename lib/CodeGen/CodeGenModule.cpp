@@ -1937,7 +1937,13 @@ CodeGenModule::GetLLVMLinkageVarDefinition(const VarDecl *D,
     return llvm::Function::DLLImportLinkage;
   else if (D->hasAttr<DLLExportAttr>())
     return llvm::Function::DLLExportLinkage;
-  else if (D->hasAttr<WeakAttr>()) {
+  else if (D->hasAttr<SelectAnyAttr>()) {
+    // selectany symbols are externally visible, so use weak instead of
+    // linkonce.  MSVC optimizes away references to const selectany globals, so
+    // all definitions should be the same and ODR linkage should be used.
+    // http://msdn.microsoft.com/en-us/library/5tkz6s71.aspx
+    return llvm::GlobalVariable::WeakODRLinkage;
+  } else if (D->hasAttr<WeakAttr>()) {
     if (GV->isConstant())
       return llvm::GlobalVariable::WeakODRLinkage;
     else
@@ -2873,10 +2879,13 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
   case Decl::ClassTemplate:
   case Decl::FunctionTemplate:
   case Decl::TypeAliasTemplate:
-  case Decl::NamespaceAlias:
   case Decl::Block:
   case Decl::Empty:
     break;
+  case Decl::NamespaceAlias:
+    if (CGDebugInfo *DI = getModuleDebugInfo())
+        DI->EmitNamespaceAlias(cast<NamespaceAliasDecl>(*D));
+    return;
   case Decl::UsingDirective: // using namespace X; [C++]
     if (CGDebugInfo *DI = getModuleDebugInfo())
       DI->EmitUsingDirective(cast<UsingDirectiveDecl>(*D));

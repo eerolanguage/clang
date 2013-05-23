@@ -1528,6 +1528,13 @@ TEST_F(FormatTest, MacroCallsWithoutTrailingSemicolon) {
                    "};"));
 }
 
+TEST_F(FormatTest, LayoutMacroDefinitionsStatementsSpanningBlocks) {
+  verifyFormat("#define A \\\n"
+               "  f({     \\\n"
+               "    g();  \\\n"
+               "  });", getLLVMStyleWithColumns(11));
+}
+
 TEST_F(FormatTest, IndentPreprocessorDirectivesAtZero) {
   EXPECT_EQ("{\n  {\n#define A\n  }\n}", format("{{\n#define A\n}}"));
 }
@@ -1627,12 +1634,6 @@ TEST_F(FormatTest, PutEmptyBlocksIntoOneLine) {
 //===----------------------------------------------------------------------===//
 // Line break tests.
 //===----------------------------------------------------------------------===//
-
-TEST_F(FormatTest, FormatsFunctionDefinition) {
-  verifyFormat("void f(int a, int b, int c, int d, int e, int f, int g,"
-               " int h, int j, int f,\n"
-               "       int c, int ddddddddddddd) {}");
-}
 
 TEST_F(FormatTest, FormatsAwesomeMethodCall) {
   verifyFormat(
@@ -1832,6 +1833,26 @@ TEST_F(FormatTest, MemoizationTests) {
       "                                                aaaaa,\n"
       "                                                aaaaa))))))))))));",
       getLLVMStyleWithColumns(65));
+  verifyFormat(
+      "a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(a(), a), a), a), a),\n"
+      "                                  a),\n"
+      "                                a),\n"
+      "                              a),\n"
+      "                            a),\n"
+      "                          a),\n"
+      "                        a),\n"
+      "                      a),\n"
+      "                    a),\n"
+      "                  a),\n"
+      "                a),\n"
+      "              a),\n"
+      "            a),\n"
+      "          a),\n"
+      "        a),\n"
+      "      a),\n"
+      "    a),\n"
+      "  a)",
+      getLLVMStyleWithColumns(65));
 
   // This test takes VERY long when memoization is broken.
   FormatStyle OnePerLine = getLLVMStyle();
@@ -1913,6 +1934,44 @@ TEST_F(FormatTest, BreaksFunctionDeclarations) {
                "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
                "    bbbb bbbb);");
 }
+
+TEST_F(FormatTest, BreaksFunctionDeclarationsWithTrailingTokens) {
+  verifyFormat("void someLongFunction(\n"
+               "    int someLongParameter) const {}",
+               getLLVMStyleWithColumns(46));
+  FormatStyle Style = getGoogleStyle();
+  Style.ColumnLimit = 47;
+  verifyFormat("void\n"
+               "someLongFunction(int someLongParameter) const {\n}",
+               getLLVMStyleWithColumns(47));
+  verifyFormat("void someLongFunction(\n"
+               "    int someLongParameter) const {}",
+               Style);
+  verifyFormat("LoooooongReturnType\n"
+               "someLoooooooongFunction() const {}",
+               getLLVMStyleWithColumns(47));
+  verifyFormat("LoooooongReturnType someLoooooooongFunction()\n"
+               "    const {}",
+               Style);
+
+  verifyFormat("void aaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+               "    LOCKS_EXCLUDED(aaaaaaaaaaaaa);");
+  verifyFormat("void aaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) const\n"
+               "    LOCKS_EXCLUDED(aaaaaaaaaaaaa);");
+  verifyFormat("void aaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) const\n"
+               "    LOCKS_EXCLUDED(aaaaaaaaaaaaa) {}");
+
+  verifyFormat(
+      "void aaaaaaaaaaaaaaaaaa()\n"
+      "    __attribute__((aaaaaaaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaa,\n"
+      "                   aaaaaaaaaaaaaaaaaaaaaaaaa));");
+  verifyFormat("bool aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    __attribute__((unused));");
+  verifyFormat(
+      "bool aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "    GUARDED_BY(aaaaaaaaaaaa);");
+}
+
 
 TEST_F(FormatTest, BreaksDesireably) {
   verifyFormat("if (aaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaa) ||\n"
@@ -2025,6 +2084,10 @@ TEST_F(FormatTest, FormatsOneParameterPerLineIfNecessary) {
       "      .aaaaaaa();\n"
       "}",
       NoBinPacking);
+  verifyFormat(
+      "template <class SomeType, class SomeOtherType>\n"
+      "SomeType SomeFunction(SomeType Type, SomeOtherType OtherType) {}",
+      NoBinPacking);
 }
 
 TEST_F(FormatTest, FormatsBuilderPattern) {
@@ -2049,24 +2112,6 @@ TEST_F(FormatTest, FormatsBuilderPattern) {
       "    ->aaaaaaaaaaaaaaaa(\n"
       "          aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
       "    ->aaaaaaaaaaaaaaaaa();");
-}
-
-TEST_F(FormatTest, DoesNotBreakTrailingAnnotation) {
-  verifyFormat("void aaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
-               "    LOCKS_EXCLUDED(aaaaaaaaaaaaa);");
-  verifyFormat("void aaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) const\n"
-               "    LOCKS_EXCLUDED(aaaaaaaaaaaaa);");
-  verifyFormat("void aaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) const\n"
-               "    LOCKS_EXCLUDED(aaaaaaaaaaaaa) {}");
-  verifyFormat(
-      "void aaaaaaaaaaaaaaaaaa()\n"
-      "    __attribute__((aaaaaaaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaa,\n"
-      "                   aaaaaaaaaaaaaaaaaaaaaaaaa));");
-  verifyFormat("bool aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
-               "    __attribute__((unused));");
-  verifyFormat(
-      "bool aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
-      "    GUARDED_BY(aaaaaaaaaaaa);");
 }
 
 TEST_F(FormatTest, BreaksAccordingToOperatorPrecedence) {
@@ -2322,6 +2367,8 @@ TEST_F(FormatTest, AlignsPipes) {
       "             << \"eeeeeeeeeeeeeeeee = \" << eeeeeeeeeeeeeeeee;");
   verifyFormat("llvm::outs() << aaaaaaaaaaaaaaaaaaaaaaaa << \"=\"\n"
                "             << bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;");
+  verifyFormat("llvm::outs() << \"aaaaaaaaaaaaaaaaaaaaaaaa: \"\n"
+               "             << aaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
 
   verifyFormat(
       "llvm::errs() << aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"

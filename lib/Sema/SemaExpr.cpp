@@ -1550,7 +1550,7 @@ Sema::BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
       Diags.getDiagnosticLevel(diag::warn_arc_repeated_use_of_weak,
                                E->getLocStart());
     if (Level != DiagnosticsEngine::Ignored)
-      getCurFunction()->recordUseOfWeak(E);
+      recordUseOfEvaluatedWeak(E);
   }
 
   // Just in case we're building an illegal pointer-to-member.
@@ -2152,7 +2152,7 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
           DiagnosticsEngine::Level Level =
             Diags.getDiagnosticLevel(diag::warn_arc_repeated_use_of_weak, Loc);
           if (Level != DiagnosticsEngine::Ignored)
-            getCurFunction()->recordUseOfWeak(Result);
+            recordUseOfEvaluatedWeak(Result);
         }
         if (CurContext->isClosure())
           Diag(Loc, diag::warn_implicitly_retains_self)
@@ -10474,112 +10474,52 @@ Sema::VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
     //   have a single non-explicit conversion function to an integral or
     //   unscoped enumeration type
     ExprResult Converted;
-    if (!Diagnoser.Suppress) {
-      class CXX11ConvertDiagnoser : public ICEConvertDiagnoser {
-      public:
-        CXX11ConvertDiagnoser() : ICEConvertDiagnoser(false, true) { }
-        
-        virtual DiagnosticBuilder diagnoseNotInt(Sema &S, SourceLocation Loc,
-                                                 QualType T) {
-          return S.Diag(Loc, diag::err_ice_not_integral) << T;
-        }
-        
-        virtual DiagnosticBuilder diagnoseIncomplete(Sema &S,
-                                                     SourceLocation Loc,
-                                                     QualType T) {
-          return S.Diag(Loc, diag::err_ice_incomplete_type) << T;
-        }
-        
-        virtual DiagnosticBuilder diagnoseExplicitConv(Sema &S,
-                                                       SourceLocation Loc,
-                                                       QualType T,
-                                                       QualType ConvTy) {
-          return S.Diag(Loc, diag::err_ice_explicit_conversion) << T << ConvTy;
-        }
-        
-        virtual DiagnosticBuilder noteExplicitConv(Sema &S,
-                                                   CXXConversionDecl *Conv,
-                                                   QualType ConvTy) {
-          return S.Diag(Conv->getLocation(), diag::note_ice_conversion_here)
-                   << ConvTy->isEnumeralType() << ConvTy;
-        }
-        
-        virtual DiagnosticBuilder diagnoseAmbiguous(Sema &S, SourceLocation Loc,
-                                                    QualType T) {
-          return S.Diag(Loc, diag::err_ice_ambiguous_conversion) << T;
-        }
-        
-        virtual DiagnosticBuilder noteAmbiguous(Sema &S,
-                                                CXXConversionDecl *Conv,
-                                                QualType ConvTy) {
-          return S.Diag(Conv->getLocation(), diag::note_ice_conversion_here)
-                   << ConvTy->isEnumeralType() << ConvTy;
-        }
-        
-        virtual DiagnosticBuilder diagnoseConversion(Sema &S,
-                                                     SourceLocation Loc,
-                                                     QualType T,
-                                                     QualType ConvTy) {
-          return DiagnosticBuilder::getEmpty();
-        }
-      } ConvertDiagnoser;
+    class CXX11ConvertDiagnoser : public ICEConvertDiagnoser {
+    public:
+      CXX11ConvertDiagnoser(bool Silent)
+          : ICEConvertDiagnoser(/*AllowScopedEnumerations*/false,
+                                Silent, true) {}
 
-      Converted = ConvertToIntegralOrEnumerationType(DiagLoc, E,
-                                                     ConvertDiagnoser,
-                                             /*AllowScopedEnumerations*/ false);
-    } else {
-      // The caller wants to silently enquire whether this is an ICE. Don't
-      // produce any diagnostics if it isn't.
-      class SilentICEConvertDiagnoser : public ICEConvertDiagnoser {
-      public:
-        SilentICEConvertDiagnoser() : ICEConvertDiagnoser(true, true) { }
-        
-        virtual DiagnosticBuilder diagnoseNotInt(Sema &S, SourceLocation Loc,
-                                                 QualType T) {
-          return DiagnosticBuilder::getEmpty();
-        }
-        
-        virtual DiagnosticBuilder diagnoseIncomplete(Sema &S,
-                                                     SourceLocation Loc,
-                                                     QualType T) {
-          return DiagnosticBuilder::getEmpty();
-        }
-        
-        virtual DiagnosticBuilder diagnoseExplicitConv(Sema &S,
-                                                       SourceLocation Loc,
-                                                       QualType T,
-                                                       QualType ConvTy) {
-          return DiagnosticBuilder::getEmpty();
-        }
-        
-        virtual DiagnosticBuilder noteExplicitConv(Sema &S,
-                                                   CXXConversionDecl *Conv,
-                                                   QualType ConvTy) {
-          return DiagnosticBuilder::getEmpty();
-        }
-        
-        virtual DiagnosticBuilder diagnoseAmbiguous(Sema &S, SourceLocation Loc,
-                                                    QualType T) {
-          return DiagnosticBuilder::getEmpty();
-        }
-        
-        virtual DiagnosticBuilder noteAmbiguous(Sema &S,
-                                                CXXConversionDecl *Conv,
-                                                QualType ConvTy) {
-          return DiagnosticBuilder::getEmpty();
-        }
-        
-        virtual DiagnosticBuilder diagnoseConversion(Sema &S,
-                                                     SourceLocation Loc,
-                                                     QualType T,
-                                                     QualType ConvTy) {
-          return DiagnosticBuilder::getEmpty();
-        }
-      } ConvertDiagnoser;
-      
-      Converted = ConvertToIntegralOrEnumerationType(DiagLoc, E,
-                                                     ConvertDiagnoser, false);
-    }
+      virtual SemaDiagnosticBuilder diagnoseNotInt(Sema &S, SourceLocation Loc,
+                                                   QualType T) {
+        return S.Diag(Loc, diag::err_ice_not_integral) << T;
+      }
+
+      virtual SemaDiagnosticBuilder diagnoseIncomplete(
+          Sema &S, SourceLocation Loc, QualType T) {
+        return S.Diag(Loc, diag::err_ice_incomplete_type) << T;
+      }
+
+      virtual SemaDiagnosticBuilder diagnoseExplicitConv(
+          Sema &S, SourceLocation Loc, QualType T, QualType ConvTy) {
+        return S.Diag(Loc, diag::err_ice_explicit_conversion) << T << ConvTy;
+      }
+
+      virtual SemaDiagnosticBuilder noteExplicitConv(
+          Sema &S, CXXConversionDecl *Conv, QualType ConvTy) {
+        return S.Diag(Conv->getLocation(), diag::note_ice_conversion_here)
+                 << ConvTy->isEnumeralType() << ConvTy;
+      }
+
+      virtual SemaDiagnosticBuilder diagnoseAmbiguous(
+          Sema &S, SourceLocation Loc, QualType T) {
+        return S.Diag(Loc, diag::err_ice_ambiguous_conversion) << T;
+      }
+
+      virtual SemaDiagnosticBuilder noteAmbiguous(
+          Sema &S, CXXConversionDecl *Conv, QualType ConvTy) {
+        return S.Diag(Conv->getLocation(), diag::note_ice_conversion_here)
+                 << ConvTy->isEnumeralType() << ConvTy;
+      }
+
+      virtual SemaDiagnosticBuilder diagnoseConversion(
+          Sema &S, SourceLocation Loc, QualType T, QualType ConvTy) {
+        llvm_unreachable("conversion functions are permitted");
+      }
+    } ConvertDiagnoser(Diagnoser.Suppress);
+
+    Converted = PerformContextualImplicitConversion(DiagLoc, E,
+                                                    ConvertDiagnoser);
     if (Converted.isInvalid())
       return Converted;
     E = Converted.take();

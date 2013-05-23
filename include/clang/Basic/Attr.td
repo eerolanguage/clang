@@ -962,6 +962,10 @@ def ForceInline : InheritableAttr {
   let Spellings = [Keyword<"__forceinline">];
 }
 
+def SelectAny : InheritableAttr {
+  let Spellings = [Declspec<"selectany">];
+}
+
 def Win64 : InheritableAttr {
   let Spellings = [Keyword<"__w64">];
 }
@@ -972,6 +976,14 @@ def Ptr32 : InheritableAttr {
 
 def Ptr64 : InheritableAttr {
   let Spellings = [Keyword<"__ptr64">];
+}
+
+def SPtr : InheritableAttr {
+  let Spellings = [Keyword<"__sptr">];
+}
+
+def UPtr : InheritableAttr {
+  let Spellings = [Keyword<"__uptr">];
 }
 
 class MSInheritanceAttr : InheritableAttr;

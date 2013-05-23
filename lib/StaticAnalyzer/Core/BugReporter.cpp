@@ -1566,6 +1566,16 @@ static void addEdgeToPath(PathPieces &path,
   PrevLoc = NewLoc;
 }
 
+/// A customized wrapper for CFGBlock::getTerminatorCondition()
+/// which returns the element for ObjCForCollectionStmts.
+static const Stmt *getTerminatorCondition(const CFGBlock *B) {
+  const Stmt *S = B->getTerminatorCondition();
+  if (const ObjCForCollectionStmt *FS =
+      dyn_cast_or_null<ObjCForCollectionStmt>(S))
+    return FS->getElement();
+  return S;
+}
+
 static bool
 GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
                                          PathDiagnosticBuilder &PDB,
@@ -1693,9 +1703,14 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
                                               N->getState().getPtr(), Ex,
                                               N->getLocationContext());
 
-        PathDiagnosticLocation L =
-          PathDiagnosticLocation(PS->getStmt(), SM, PDB.LC);
-        addEdgeToPath(PD.getActivePath(), PrevLoc, L, PDB.LC);
+        // Add an edge.  If this is an ObjCForCollectionStmt do
+        // not add an edge here as it appears in the CFG both
+        // as a terminator and as a terminator condition.
+        if (!isa<ObjCForCollectionStmt>(PS->getStmt())) {
+          PathDiagnosticLocation L =
+            PathDiagnosticLocation(PS->getStmt(), SM, PDB.LC);
+          addEdgeToPath(PD.getActivePath(), PrevLoc, L, PDB.LC);
+        }
         break;
       }
 
@@ -1722,6 +1737,10 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
             CS = dyn_cast<CompoundStmt>(FS->getBody());
           else if (const WhileStmt *WS = dyn_cast<WhileStmt>(Loop))
             CS = dyn_cast<CompoundStmt>(WS->getBody());
+          else if (const ObjCForCollectionStmt *OFS =
+                   dyn_cast<ObjCForCollectionStmt>(Loop)) {
+            CS = dyn_cast<CompoundStmt>(OFS->getBody());
+          }
 
           PathDiagnosticEventPiece *p =
             new PathDiagnosticEventPiece(L, "Looping back to the head "
@@ -1745,7 +1764,7 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
           // Are we jumping past the loop body without ever executing the
           // loop (because the condition was false)?
           if (isLoop(Term)) {
-            const Stmt *TermCond = BSrc->getTerminatorCondition();
+            const Stmt *TermCond = getTerminatorCondition(BSrc);
             bool IsInLoopBody =
               isInLoopBody(PM, getStmtBeforeCond(PM, TermCond, N), Term);
 
@@ -1819,7 +1838,9 @@ const Stmt *getStmtParent(const Stmt *S, ParentMap &PM) {
     if (!S)
       break;
 
-    if (isa<ExprWithCleanups>(S))
+    if (isa<ExprWithCleanups>(S) ||
+        isa<CXXBindTemporaryExpr>(S) ||
+        isa<SubstNonTypeTemplateParmExpr>(S))
       continue;
 
     break;
@@ -1929,12 +1950,112 @@ void PathPieces::dump() const {
   }
 }
 
+/// \brief Return true if X is contained by Y.
+static bool lexicalContains(ParentMap &PM,
+                            const Stmt *X,
+                            const Stmt *Y) {
+  while (X) {
+    if (X == Y)
+      return true;
+    X = PM.getParent(X);
+  }
+  return false;
+}
+
+// Remove short edges on the same line less than 3 columns in difference.
+static void removePunyEdges(PathPieces &path,
+                            SourceManager &SM,
+                            ParentMap &PM) {
+
+  bool erased = false;
+
+  for (PathPieces::iterator I = path.begin(), E = path.end(); I != E;
+       erased ? I : ++I) {
+
+    erased = false;
+
+    PathDiagnosticControlFlowPiece *PieceI =
+      dyn_cast<PathDiagnosticControlFlowPiece>(*I);
+
+    if (!PieceI)
+      continue;
+
+    const Stmt *start = getLocStmt(PieceI->getStartLocation());
+    const Stmt *end   = getLocStmt(PieceI->getEndLocation());
+
+    if (!start || !end)
+      continue;
+
+    const Stmt *endParent = PM.getParent(end);
+    if (!endParent)
+      continue;
+
+    if (isConditionForTerminator(end, endParent))
+      continue;
+
+    bool Invalid = false;
+    FullSourceLoc StartL(start->getLocStart(), SM);
+    FullSourceLoc EndL(end->getLocStart(), SM);
+
+    unsigned startLine = StartL.getSpellingLineNumber(&Invalid);
+    if (Invalid)
+      continue;
+
+    unsigned endLine = EndL.getSpellingLineNumber(&Invalid);
+    if (Invalid)
+      continue;
+
+    if (startLine != endLine)
+      continue;
+
+    unsigned startCol = StartL.getSpellingColumnNumber(&Invalid);
+    if (Invalid)
+      continue;
+
+    unsigned endCol = EndL.getSpellingColumnNumber(&Invalid);
+    if (Invalid)
+      continue;
+
+    if (abs((int)startCol - (int)endCol) <= 2) {
+      I = path.erase(I);
+      erased = true;
+      continue;
+    }
+  }
+}
+
+static void removeIdenticalEvents(PathPieces &path) {
+  for (PathPieces::iterator I = path.begin(), E = path.end(); I != E; ++I) {
+    PathDiagnosticEventPiece *PieceI =
+      dyn_cast<PathDiagnosticEventPiece>(*I);
+
+    if (!PieceI)
+      continue;
+
+    PathPieces::iterator NextI = I; ++NextI;
+    if (NextI == E)
+      return;
+
+    PathDiagnosticEventPiece *PieceNextI =
+      dyn_cast<PathDiagnosticEventPiece>(*I);
+
+    if (!PieceNextI)
+      continue;
+
+    // Erase the second piece if it has the same exact message text.
+    if (PieceI->getString() == PieceNextI->getString()) {
+      path.erase(NextI);
+    }
+  }
+}
+
 static bool optimizeEdges(PathPieces &path, SourceManager &SM,
                           OptimizedCallsSet &OCS,
                           LocationContextMap &LCM) {
   bool hasChanges = false;
   const LocationContext *LC = LCM[&path];
   assert(LC);
+  ParentMap &PM = LC->getParentMap();
   bool isFirst = true;
 
   for (PathPieces::iterator I = path.begin(), E = path.end(); I != E; ) {
@@ -1962,15 +2083,12 @@ static bool optimizeEdges(PathPieces &path, SourceManager &SM,
       continue;
     }
 
-    ParentMap &PM = LC->getParentMap();
     const Stmt *s1Start = getLocStmt(PieceI->getStartLocation());
     const Stmt *s1End   = getLocStmt(PieceI->getEndLocation());
     const Stmt *level1 = getStmtParent(s1Start, PM);
     const Stmt *level2 = getStmtParent(s1End, PM);
 
     if (wasFirst) {
-      wasFirst = false;
-
       // If the first edge (in isolation) is just a transition from
       // an expression to a parent expression then eliminate that edge.
       if (level1 && level2 && level2 == PM.getParent(level1)) {
@@ -2037,10 +2155,59 @@ static bool optimizeEdges(PathPieces &path, SourceManager &SM,
     // to prevent this optimization.
     //
     if (s1End && s1End == s2Start && level2) {
-      if (isIncrementOrInitInForLoop(s1End, level2) ||
-          (isa<Expr>(s1End) && PM.isConsumedExpr(cast<Expr>(s1End)) &&
-            !isConditionForTerminator(level2, s1End)))
-      {
+      bool removeEdge = false;
+      // Remove edges into the increment or initialization of a
+      // loop that have no interleaving event.  This means that
+      // they aren't interesting.
+      if (isIncrementOrInitInForLoop(s1End, level2))
+        removeEdge = true;
+      // Next only consider edges that are not anchored on
+      // the condition of a terminator.  This are intermediate edges
+      // that we might want to trim.
+      else if (!isConditionForTerminator(level2, s1End)) {
+        // Trim edges on expressions that are consumed by
+        // the parent expression.
+        if (isa<Expr>(s1End) && PM.isConsumedExpr(cast<Expr>(s1End))) {
+          removeEdge = true;          
+        }
+        // Trim edges where a lexical containment doesn't exist.
+        // For example:
+        //
+        //  X -> Y -> Z
+        //
+        // If 'Z' lexically contains Y (it is an ancestor) and
+        // 'X' does not lexically contain Y (it is a descendant OR
+        // it has no lexical relationship at all) then trim.
+        //
+        // This can eliminate edges where we dive into a subexpression
+        // and then pop back out, etc.
+        else if (s1Start && s2End &&
+                 lexicalContains(PM, s2Start, s2End) &&
+                 !lexicalContains(PM, s1End, s1Start)) {
+          removeEdge = true;
+        }
+      }
+
+      if (removeEdge) {
+        PieceI->setEndLocation(PieceNextI->getEndLocation());
+        path.erase(NextI);
+        hasChanges = true;
+        continue;
+      }
+    }
+
+    // Optimize edges for ObjC fast-enumeration loops.
+    //
+    // (X -> collection) -> (collection -> element)
+    //
+    // becomes:
+    //
+    // (X -> element)
+    if (s1End == s2Start) {
+      const ObjCForCollectionStmt *FS =
+        dyn_cast_or_null<ObjCForCollectionStmt>(level3);
+      if (FS && FS->getCollection()->IgnoreParens() == s2Start &&
+          s2End == FS->getElement()) {
         PieceI->setEndLocation(PieceNextI->getEndLocation());
         path.erase(NextI);
         hasChanges = true;
@@ -2052,7 +2219,13 @@ static bool optimizeEdges(PathPieces &path, SourceManager &SM,
     ++I;
   }
 
-  // No changes.
+  if (!hasChanges) {
+    // Remove any puny edges left over after primary optimization pass.
+    removePunyEdges(path, SM, PM);
+    // Remove identical events.
+    removeIdenticalEvents(path);
+  }
+
   return hasChanges;
 }
 
@@ -2102,6 +2275,13 @@ static void adjustBranchEdges(PathPieces &pieces, LocationContextMap &LCM,
           Branch = IS;
         break;
       }
+      if (const ObjCForCollectionStmt *OFS =
+          dyn_cast<ObjCForCollectionStmt>(Parent)) {
+        if (OFS->getElement() == S)
+          Branch = OFS;
+        break;
+      }
+
       S = Parent;
     }
 

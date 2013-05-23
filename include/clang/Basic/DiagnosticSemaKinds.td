@@ -496,6 +496,9 @@ def warn_property_attribute : Warning<
   "'%1' attribute on property %0 does not match the property inherited from %2">;
 def warn_property_types_are_incompatible : Warning<
   "property type %0 is incompatible with type %1 inherited from %2">;
+def warn_protocol_property_mismatch : Warning<
+  "property of type %0 was selected for synthesis">,
+  InGroup<DiagGroup<"protocol-property-synthesis-ambiguity">>;
 def err_undef_interface : Error<"cannot find interface declaration for %0">;
 def err_category_forward_interface : Error<
   "cannot define %select{category|class extension}0 for undefined class %1">;
@@ -737,6 +740,8 @@ def error_category_property : Error<
   "class implementation">;
 def note_property_declare : Note<
   "property declared here">;
+def note_protocol_property_declare : Note<
+  "it could also be property of type %0 declared here">;
 def note_property_synthesize : Note<
   "property synthesized here">;
 def error_synthesize_category_decl : Error<
@@ -1791,7 +1796,9 @@ def err_attribute_uuid_malformed_guid : Error<
 def warn_nonnull_pointers_only : Warning<
   "nonnull attribute only applies to pointer arguments">;
 def err_attribute_pointers_only : Error<
-  "'%0' attribute only applies to pointer arguments">;
+  "%0 attribute only applies to pointer arguments">;
+def err_attribute_no_member_pointers : Error<
+  "%0 attribute cannot be used with pointers to members">;
 def err_attribute_invalid_implicit_this_argument : Error<
   "'%0' attribute is invalid for the implicit this argument">;
 def err_ownership_type : Error<
@@ -1958,8 +1965,10 @@ def warn_weak_identifier_undeclared : Warning<
   "weak identifier %0 never declared">;
 def err_attribute_weak_static : Error<
   "weak declaration cannot have internal linkage">;
-def warn_attribute_weak_import_invalid_on_definition : Warning<
-  "'weak_import' attribute cannot be specified on a definition">,
+def err_attribute_selectany_non_extern_data : Error<
+  "'selectany' can only be applied to data items with external linkage">;
+def warn_attribute_invalid_on_definition : Warning<
+  "'%0' attribute cannot be specified on a definition">,
   InGroup<IgnoredAttributes>;
 def err_attribute_weakref_not_static : Error<
   "weakref declaration must have internal linkage">;
@@ -4764,13 +4773,17 @@ def err_default_init_const : Error<
 def err_delete_operand : Error<"cannot delete expression of type %0">;
 def ext_delete_void_ptr_operand : ExtWarn<
   "cannot delete expression with pointer-to-'void' type %0">;
-def err_ambiguous_delete_operand : Error<"ambiguous conversion of delete "
-                                         "expression of type %0 to a pointer">;
+def err_ambiguous_delete_operand : Error<
+  "ambiguous conversion of delete expression of type %0 to a pointer">;
 def warn_delete_incomplete : Warning<
   "deleting pointer to incomplete type %0 may cause undefined behavior">,
   InGroup<DiagGroup<"delete-incomplete">>;
 def err_delete_incomplete_class_type : Error<
   "deleting incomplete class type %0; no conversions to pointer type">;
+def err_delete_explicit_conversion : Error<
+  "converting delete expression from type %0 to type %1 invokes an explicit "
+  "conversion function">;
+def note_delete_conversion : Note<"conversion to pointer type %0">;
 def warn_delete_array_type : Warning<
   "'delete' applied to a pointer-to-array type %0 treated as delete[]">;
 def err_no_suitable_delete_member_function_found : Error<
@@ -6192,6 +6205,9 @@ def warn_collection_expr_type : Warning<
 
 def err_invalid_conversion_between_ext_vectors : Error<
   "invalid conversion between ext-vector type %0 and %1">;
+
+def warn_duplicate_attribute_exact : Warning<
+  "attribute %0 is already applied">, InGroup<IgnoredAttributes>;
 
 def warn_duplicate_attribute : Warning<
   "attribute %0 is already applied with different parameters">,
