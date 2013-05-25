@@ -1605,11 +1605,11 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
                                     ObjectType, TemplateKWLoc, Name))
         LHS = ExprError();
       
-      // Universal dot notation, including for 'id' objects
-      //
+      // Universal dot notation, including for 'id' and block objects
       if (isEero && !LHS.isInvalid()) {
         const QualType LHSType = LHS.get()->getType();
-        if (LHSType->isObjCIdType() || LHSType->isObjCQualifiedIdType()) {
+        if (LHSType->isObjCObjectPointerType() ||
+            LHSType->isBlockPointerType()) {
           const SourceLocation LHSLoc = LHS.get()->getLocStart();
           Selector Sel;
           SourceLocation MsgEndLoc;
