@@ -1587,6 +1587,7 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC, const ArgList &Args)
   bool NeedsAsan = needsAsanRt();
   bool NeedsTsan = needsTsanRt();
   bool NeedsMsan = needsMsanRt();
+  bool NeedsLsan = needsLeakDetection();
   if (NeedsAsan && NeedsTsan)
     D.Diag(diag::err_drv_argument_not_allowed_with)
       << lastArgumentForKind(D, Args, NeedsAsanRt)
@@ -1599,6 +1600,18 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC, const ArgList &Args)
     D.Diag(diag::err_drv_argument_not_allowed_with)
       << lastArgumentForKind(D, Args, NeedsTsanRt)
       << lastArgumentForKind(D, Args, NeedsMsanRt);
+  if (NeedsLsan && NeedsTsan)
+    D.Diag(diag::err_drv_argument_not_allowed_with)
+      << lastArgumentForKind(D, Args, NeedsLeakDetection)
+      << lastArgumentForKind(D, Args, NeedsTsanRt);
+  if (NeedsLsan && NeedsMsan)
+    D.Diag(diag::err_drv_argument_not_allowed_with)
+      << lastArgumentForKind(D, Args, NeedsLeakDetection)
+      << lastArgumentForKind(D, Args, NeedsMsanRt);
+  // FIXME: Currenly -fsanitize=leak is silently ignored in the presence of
+  // -fsanitize=address. Perhaps it should print an error, or perhaps
+  // -f(-no)sanitize=leak should change whether leak detection is enabled by
+  // default in ASan?
 
   // If -fsanitize contains extra features of ASan, it should also
   // explicitly contain -fsanitize=address (probably, turned off later in the
@@ -1679,6 +1692,7 @@ static void addSanitizerRTLinkFlagsLinux(
                  LibSanitizerArgs.begin(), LibSanitizerArgs.end());
 
   CmdArgs.push_back("-lpthread");
+  CmdArgs.push_back("-lrt");
   CmdArgs.push_back("-ldl");
 
   // If possible, use a dynamic symbols file to export the symbols from the
@@ -1704,9 +1718,8 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
             TC.getArchName() + "-android.so"));
     CmdArgs.insert(CmdArgs.begin(), Args.MakeArgString(LibAsan));
   } else {
-    if (!Args.hasArg(options::OPT_shared)) {
+    if (!Args.hasArg(options::OPT_shared))
       addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "asan", true);
-    }
   }
 }
 
@@ -1714,18 +1727,24 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
 /// This needs to be called before we add the C run-time (malloc, etc).
 static void addTsanRTLinux(const ToolChain &TC, const ArgList &Args,
                            ArgStringList &CmdArgs) {
-  if (!Args.hasArg(options::OPT_shared)) {
+  if (!Args.hasArg(options::OPT_shared))
     addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "tsan", true);
-  }
 }
 
 /// If MemorySanitizer is enabled, add appropriate linker flags (Linux).
 /// This needs to be called before we add the C run-time (malloc, etc).
 static void addMsanRTLinux(const ToolChain &TC, const ArgList &Args,
                            ArgStringList &CmdArgs) {
-  if (!Args.hasArg(options::OPT_shared)) {
+  if (!Args.hasArg(options::OPT_shared))
     addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "msan", true);
-  }
+}
+
+/// If LeakSanitizer is enabled, add appropriate linker flags (Linux).
+/// This needs to be called before we add the C run-time (malloc, etc).
+static void addLsanRTLinux(const ToolChain &TC, const ArgList &Args,
+                           ArgStringList &CmdArgs) {
+  if (!Args.hasArg(options::OPT_shared))
+    addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "lsan", true);
 }
 
 /// If UndefinedBehaviorSanitizer is enabled, add appropriate linker flags
@@ -5907,6 +5926,38 @@ static bool hasMipsN32ABIArg(const ArgList &Args) {
   return A && (A->getValue() == StringRef("n32"));
 }
 
+static StringRef getLinuxDynamicLinker(const ArgList &Args,
+                                       const toolchains::Linux &ToolChain) {
+  if (ToolChain.getTriple().getEnvironment() == llvm::Triple::Android)
+    return "/system/bin/linker";
+  else if (ToolChain.getArch() == llvm::Triple::x86)
+    return "/lib/ld-linux.so.2";
+  else if (ToolChain.getArch() == llvm::Triple::aarch64)
+    return "/lib/ld-linux-aarch64.so.1";
+  else if (ToolChain.getArch() == llvm::Triple::arm ||
+           ToolChain.getArch() == llvm::Triple::thumb) {
+    if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF)
+      return "/lib/ld-linux-armhf.so.3";
+    else
+      return "/lib/ld-linux.so.3";
+  } else if (ToolChain.getArch() == llvm::Triple::mips ||
+             ToolChain.getArch() == llvm::Triple::mipsel)
+    return "/lib/ld.so.1";
+  else if (ToolChain.getArch() == llvm::Triple::mips64 ||
+           ToolChain.getArch() == llvm::Triple::mips64el) {
+    if (hasMipsN32ABIArg(Args))
+      return "/lib32/ld.so.1";
+    else
+      return "/lib64/ld.so.1";
+  } else if (ToolChain.getArch() == llvm::Triple::ppc)
+    return "/lib/ld.so.1";
+  else if (ToolChain.getArch() == llvm::Triple::ppc64 ||
+           ToolChain.getArch() == llvm::Triple::systemz)
+    return "/lib64/ld64.so.1";
+  else
+    return "/lib64/ld-linux-x86-64.so.2";
+}
+
 void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
                                   const InputInfoList &Inputs,
@@ -6004,36 +6055,8 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       (!Args.hasArg(options::OPT_static) &&
        !Args.hasArg(options::OPT_shared))) {
     CmdArgs.push_back("-dynamic-linker");
-    if (isAndroid)
-      CmdArgs.push_back("/system/bin/linker");
-    else if (ToolChain.getArch() == llvm::Triple::x86)
-      CmdArgs.push_back("/lib/ld-linux.so.2");
-    else if (ToolChain.getArch() == llvm::Triple::aarch64)
-      CmdArgs.push_back("/lib/ld-linux-aarch64.so.1");
-    else if (ToolChain.getArch() == llvm::Triple::arm ||
-             ToolChain.getArch() == llvm::Triple::thumb) {
-      if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF)
-        CmdArgs.push_back("/lib/ld-linux-armhf.so.3");
-      else
-        CmdArgs.push_back("/lib/ld-linux.so.3");
-    }
-    else if (ToolChain.getArch() == llvm::Triple::mips ||
-             ToolChain.getArch() == llvm::Triple::mipsel)
-      CmdArgs.push_back("/lib/ld.so.1");
-    else if (ToolChain.getArch() == llvm::Triple::mips64 ||
-             ToolChain.getArch() == llvm::Triple::mips64el) {
-      if (hasMipsN32ABIArg(Args))
-        CmdArgs.push_back("/lib32/ld.so.1");
-      else
-        CmdArgs.push_back("/lib64/ld.so.1");
-    }
-    else if (ToolChain.getArch() == llvm::Triple::ppc)
-      CmdArgs.push_back("/lib/ld.so.1");
-    else if (ToolChain.getArch() == llvm::Triple::ppc64 ||
-	     ToolChain.getArch() == llvm::Triple::systemz)
-      CmdArgs.push_back("/lib64/ld64.so.1");
-    else
-      CmdArgs.push_back("/lib64/ld-linux-x86-64.so.2");
+    CmdArgs.push_back(Args.MakeArgString(
+        D.DyldPrefix + getLinuxDynamicLinker(Args, ToolChain)));
   }
 
   CmdArgs.push_back("-o");
@@ -6115,13 +6138,15 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (Sanitize.needsUbsanRt())
     addUbsanRTLinux(getToolChain(), Args, CmdArgs, D.CCCIsCXX,
                     Sanitize.needsAsanRt() || Sanitize.needsTsanRt() ||
-                    Sanitize.needsMsanRt());
+                    Sanitize.needsMsanRt() || Sanitize.needsLsanRt());
   if (Sanitize.needsAsanRt())
     addAsanRTLinux(getToolChain(), Args, CmdArgs);
   if (Sanitize.needsTsanRt())
     addTsanRTLinux(getToolChain(), Args, CmdArgs);
   if (Sanitize.needsMsanRt())
     addMsanRTLinux(getToolChain(), Args, CmdArgs);
+  if (Sanitize.needsLsanRt())
+    addLsanRTLinux(getToolChain(), Args, CmdArgs);
 
   if (D.CCCIsCXX &&
       !Args.hasArg(options::OPT_nostdlib) &&

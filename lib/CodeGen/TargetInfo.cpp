@@ -1266,6 +1266,17 @@ public:
 
 };
 
+static std::string qualifyWindowsLibrary(llvm::StringRef Lib) {
+  // If the argument does not end in .lib, automatically add the suffix. This
+  // matches the behavior of MSVC.
+  std::string ArgStr = Lib;
+  if (Lib.size() <= 4 ||
+      Lib.substr(Lib.size() - 4).compare_lower(".lib") != 0) {
+    ArgStr += ".lib";
+  }
+  return ArgStr;
+}
+
 class WinX86_32TargetCodeGenInfo : public X86_32TargetCodeGenInfo {
 public:
   WinX86_32TargetCodeGenInfo(CodeGen::CodeGenTypes &CGT, unsigned RegParms)
@@ -1274,7 +1285,7 @@ public:
   void getDependentLibraryOption(llvm::StringRef Lib,
                                  llvm::SmallString<24> &Opt) const {
     Opt = "/DEFAULTLIB:";
-    Opt += Lib;
+    Opt += qualifyWindowsLibrary(Lib);
   }
 };
 
@@ -1300,7 +1311,7 @@ public:
   void getDependentLibraryOption(llvm::StringRef Lib,
                                  llvm::SmallString<24> &Opt) const {
     Opt = "/DEFAULTLIB:";
-    Opt += Lib;
+    Opt += qualifyWindowsLibrary(Lib);
   }
 };
 
@@ -5114,6 +5125,221 @@ llvm::Value *HexagonABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
 }
 
 
+//===----------------------------------------------------------------------===//
+// SPARC v9 ABI Implementation.
+// Based on the SPARC Compliance Definition version 2.4.1.
+//
+// Function arguments a mapped to a nominal "parameter array" and promoted to
+// registers depending on their type. Each argument occupies 8 or 16 bytes in
+// the array, structs larger than 16 bytes are passed indirectly.
+//
+// One case requires special care:
+//
+//   struct mixed {
+//     int i;
+//     float f;
+//   };
+//
+// When a struct mixed is passed by value, it only occupies 8 bytes in the
+// parameter array, but the int is passed in an integer register, and the float
+// is passed in a floating point register. This is represented as two arguments
+// with the LLVM IR inreg attribute:
+//
+//   declare void f(i32 inreg %i, float inreg %f)
+//
+// The code generator will only allocate 4 bytes from the parameter array for
+// the inreg arguments. All other arguments are allocated a multiple of 8
+// bytes.
+//
+namespace {
+class SparcV9ABIInfo : public ABIInfo {
+public:
+  SparcV9ABIInfo(CodeGenTypes &CGT) : ABIInfo(CGT) {}
+
+private:
+  ABIArgInfo classifyType(QualType RetTy, unsigned SizeLimit) const;
+  virtual void computeInfo(CGFunctionInfo &FI) const;
+  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                 CodeGenFunction &CGF) const;
+
+  // Coercion type builder for structs passed in registers. The coercion type
+  // serves two purposes:
+  //
+  // 1. Pad structs to a multiple of 64 bits, so they are passed 'left-aligned'
+  //    in registers.
+  // 2. Expose aligned floating point elements as first-level elements, so the
+  //    code generator knows to pass them in floating point registers.
+  //
+  // We also compute the InReg flag which indicates that the struct contains
+  // aligned 32-bit floats.
+  //
+  struct CoerceBuilder {
+    llvm::LLVMContext &Context;
+    const llvm::DataLayout &DL;
+    SmallVector<llvm::Type*, 8> Elems;
+    uint64_t Size;
+    bool InReg;
+
+    CoerceBuilder(llvm::LLVMContext &c, const llvm::DataLayout &dl)
+      : Context(c), DL(dl), Size(0), InReg(false) {}
+
+    // Pad Elems with integers until Size is ToSize.
+    void pad(uint64_t ToSize) {
+      assert(ToSize >= Size && "Cannot remove elements");
+      if (ToSize == Size)
+        return;
+
+      // Finish the current 64-bit word.
+      uint64_t Aligned = llvm::RoundUpToAlignment(Size, 64);
+      if (Aligned > Size && Aligned <= ToSize) {
+        Elems.push_back(llvm::IntegerType::get(Context, Aligned - Size));
+        Size = Aligned;
+      }
+
+      // Add whole 64-bit words.
+      while (Size + 64 <= ToSize) {
+        Elems.push_back(llvm::Type::getInt64Ty(Context));
+        Size += 64;
+      }
+
+      // Final in-word padding.
+      if (Size < ToSize) {
+        Elems.push_back(llvm::IntegerType::get(Context, ToSize - Size));
+        Size = ToSize;
+      }
+    }
+
+    // Add a floating point element at Offset.
+    void addFloat(uint64_t Offset, llvm::Type *Ty, unsigned Bits) {
+      // Unaligned floats are treated as integers.
+      if (Offset % Bits)
+        return;
+      // The InReg flag is only required if there are any floats < 64 bits.
+      if (Bits < 64)
+        InReg = true;
+      pad(Offset);
+      Elems.push_back(Ty);
+      Size = Offset + Bits;
+    }
+
+    // Add a struct type to the coercion type, starting at Offset (in bits).
+    void addStruct(uint64_t Offset, llvm::StructType *StrTy) {
+      const llvm::StructLayout *Layout = DL.getStructLayout(StrTy);
+      for (unsigned i = 0, e = StrTy->getNumElements(); i != e; ++i) {
+        llvm::Type *ElemTy = StrTy->getElementType(i);
+        uint64_t ElemOffset = Offset + Layout->getElementOffsetInBits(i);
+        switch (ElemTy->getTypeID()) {
+        case llvm::Type::StructTyID:
+          addStruct(ElemOffset, cast<llvm::StructType>(ElemTy));
+          break;
+        case llvm::Type::FloatTyID:
+          addFloat(ElemOffset, ElemTy, 32);
+          break;
+        case llvm::Type::DoubleTyID:
+          addFloat(ElemOffset, ElemTy, 64);
+          break;
+        case llvm::Type::FP128TyID:
+          addFloat(ElemOffset, ElemTy, 128);
+          break;
+        case llvm::Type::PointerTyID:
+          if (ElemOffset % 64 == 0) {
+            pad(ElemOffset);
+            Elems.push_back(ElemTy);
+            Size += 64;
+          }
+          break;
+        default:
+          break;
+        }
+      }
+    }
+
+    // Check if Ty is a usable substitute for the coercion type.
+    bool isUsableType(llvm::StructType *Ty) const {
+      if (Ty->getNumElements() != Elems.size())
+        return false;
+      for (unsigned i = 0, e = Elems.size(); i != e; ++i)
+        if (Elems[i] != Ty->getElementType(i))
+          return false;
+      return true;
+    }
+
+    // Get the coercion type as a literal struct type.
+    llvm::Type *getType() const {
+      if (Elems.size() == 1)
+        return Elems.front();
+      else
+        return llvm::StructType::get(Context, Elems);
+    }
+  };
+};
+} // end anonymous namespace
+
+ABIArgInfo
+SparcV9ABIInfo::classifyType(QualType Ty, unsigned SizeLimit) const {
+  if (Ty->isVoidType())
+    return ABIArgInfo::getIgnore();
+
+  uint64_t Size = getContext().getTypeSize(Ty);
+
+  // Anything too big to fit in registers is passed with an explicit indirect
+  // pointer / sret pointer.
+  if (Size > SizeLimit)
+    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+
+  // Treat an enum type as its underlying type.
+  if (const EnumType *EnumTy = Ty->getAs<EnumType>())
+    Ty = EnumTy->getDecl()->getIntegerType();
+
+  // Integer types smaller than a register are extended.
+  if (Size < 64 && Ty->isIntegerType())
+    return ABIArgInfo::getExtend();
+
+  // Other non-aggregates go in registers.
+  if (!isAggregateTypeForABI(Ty))
+    return ABIArgInfo::getDirect();
+
+  // This is a small aggregate type that should be passed in registers.
+  // Build a coercion type from the LLVM struct type.
+  llvm::StructType *StrTy = dyn_cast<llvm::StructType>(CGT.ConvertType(Ty));
+  if (!StrTy)
+    return ABIArgInfo::getDirect();
+
+  CoerceBuilder CB(getVMContext(), getDataLayout());
+  CB.addStruct(0, StrTy);
+  CB.pad(llvm::RoundUpToAlignment(CB.DL.getTypeSizeInBits(StrTy), 64));
+
+  // Try to use the original type for coercion.
+  llvm::Type *CoerceTy = CB.isUsableType(StrTy) ? StrTy : CB.getType();
+
+  if (CB.InReg)
+    return ABIArgInfo::getDirectInReg(CoerceTy);
+  else
+    return ABIArgInfo::getDirect(CoerceTy);
+}
+
+llvm::Value *SparcV9ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                       CodeGenFunction &CGF) const {
+  // FIXME: Implement with va_arg.
+  return 0;
+}
+
+void SparcV9ABIInfo::computeInfo(CGFunctionInfo &FI) const {
+  FI.getReturnInfo() = classifyType(FI.getReturnType(), 32 * 8);
+  for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
+       it != ie; ++it)
+    it->info = classifyType(it->type, 16 * 8);
+}
+
+namespace {
+class SparcV9TargetCodeGenInfo : public TargetCodeGenInfo {
+public:
+  SparcV9TargetCodeGenInfo(CodeGenTypes &CGT)
+    : TargetCodeGenInfo(new SparcV9ABIInfo(CGT)) {}
+};
+} // end anonymous namespace
+
+
 const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   if (TheTargetCodeGenInfo)
     return *TheTargetCodeGenInfo;
@@ -5229,5 +5455,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   }
   case llvm::Triple::hexagon:
     return *(TheTargetCodeGenInfo = new HexagonTargetCodeGenInfo(Types));
+  case llvm::Triple::sparcv9:
+    return *(TheTargetCodeGenInfo = new SparcV9TargetCodeGenInfo(Types));
   }
 }

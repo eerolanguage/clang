@@ -908,10 +908,18 @@ ExprResult Sema::SemaAtomicOpsOverloaded(ExprResult TheCallResult,
     SubExprs.push_back(TheCall->getArg(3)); // Weak
     break;
   }
+  
+  AtomicExpr *AE = new (Context) AtomicExpr(TheCall->getCallee()->getLocStart(),
+                                            SubExprs, ResultType, Op,
+                                            TheCall->getRParenLoc());
+  
+  if ((Op == AtomicExpr::AO__c11_atomic_load ||
+       (Op == AtomicExpr::AO__c11_atomic_store)) &&
+      Context.AtomicUsesUnsupportedLibcall(AE))
+    Diag(AE->getLocStart(), diag::err_atomic_load_store_uses_lib) <<
+    ((Op == AtomicExpr::AO__c11_atomic_load) ? 0 : 1);
 
-  return Owned(new (Context) AtomicExpr(TheCall->getCallee()->getLocStart(),
-                                        SubExprs, ResultType, Op,
-                                        TheCall->getRParenLoc()));
+  return Owned(AE);
 }
 
 
@@ -1355,6 +1363,11 @@ bool Sema::SemaBuiltinVAStart(CallExpr *TheCall) {
   bool SecondArgIsLastNamedArgument = false;
   const Expr *Arg = TheCall->getArg(1)->IgnoreParenCasts();
 
+  // These are valid if SecondArgIsLastNamedArgument is false after the next
+  // block.
+  QualType Type;
+  SourceLocation ParamLoc;
+
   if (const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(Arg)) {
     if (const ParmVarDecl *PV = dyn_cast<ParmVarDecl>(DR->getDecl())) {
       // FIXME: This isn't correct for methods (results in bogus warning).
@@ -1367,12 +1380,21 @@ bool Sema::SemaBuiltinVAStart(CallExpr *TheCall) {
       else
         LastArg = *(getCurMethodDecl()->param_end()-1);
       SecondArgIsLastNamedArgument = PV == LastArg;
+
+      Type = PV->getType();
+      ParamLoc = PV->getLocation();
     }
   }
 
   if (!SecondArgIsLastNamedArgument)
     Diag(TheCall->getArg(1)->getLocStart(),
          diag::warn_second_parameter_of_va_start_not_last_named_argument);
+  else if (Type->isReferenceType()) {
+    Diag(Arg->getLocStart(),
+         diag::warn_va_start_of_reference_type_is_undefined);
+    Diag(ParamLoc, diag::note_parameter_type) << Type;
+  }
+
   return false;
 }
 
