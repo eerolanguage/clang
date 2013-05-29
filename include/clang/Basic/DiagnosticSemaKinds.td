@@ -828,10 +828,10 @@ def warn_auto_readonly_iboutlet_property : Warning<
   "not work correctly with 'nib' loader">,
   InGroup<DiagGroup<"readonly-iboutlet-property">>;
 def warn_auto_implicit_atomic_property : Warning<
-  "property is assumed atomic when auto-synthesizing the property">, 
+  "property is assumed atomic when auto-synthesizing the property">,
   InGroup<ImplicitAtomic>, DefaultIgnore;
 def warn_unimplemented_selector:  Warning<
-  "unimplemented selector %0">, InGroup<Selector>, DefaultIgnore;
+  "creating selector for nonexistent method %0">, InGroup<Selector>, DefaultIgnore;
 def warn_unimplemented_protocol_method : Warning<
   "method %0 in protocol not implemented">, InGroup<Protocol>;
 
@@ -5334,6 +5334,10 @@ def err_atomic_op_needs_atomic_int_or_ptr : Error<
 def err_atomic_op_bitwise_needs_atomic_int : Error<
   "first argument to bitwise atomic operation must be a pointer to "
   "%select{|atomic }0integer (%1 invalid)">;
+  
+def err_atomic_load_store_uses_lib : Error<
+  "atomic %select{load|store}0 requires runtime support that is not "
+  "available for this target">;
 
 def err_deleted_function_use : Error<"attempt to use a deleted function">;
 
@@ -6102,7 +6106,9 @@ def note_empty_body_on_separate_line : Note<
 def err_va_start_used_in_non_variadic_function : Error<
   "'va_start' used in function with fixed args">;
 def warn_second_parameter_of_va_start_not_last_named_argument : Warning<
-  "second parameter of 'va_start' not last named argument">;
+  "second parameter of 'va_start' not last named argument">, InGroup<Varargs>;
+def warn_va_start_of_reference_type_is_undefined : Warning<
+  "'va_start' has undefined behavior with reference types">, InGroup<Varargs>;
 def err_first_argument_to_va_arg_not_of_type_va_list : Error<
   "first argument to 'va_arg' is of type %0 and not 'va_list'">;
 def err_second_parameter_to_va_arg_incomplete: Error<
@@ -6117,7 +6123,7 @@ def warn_second_parameter_to_va_arg_ownership_qualified : Warning<
   InGroup<NonPODVarargs>, DefaultError;
 def warn_second_parameter_to_va_arg_never_compatible : Warning<
   "second argument to 'va_arg' is of promotable type %0; this va_arg has "
-  "undefined behavior because arguments will be promoted to %1">;
+  "undefined behavior because arguments will be promoted to %1">, InGroup<Varargs>;
 
 def warn_return_missing_expr : Warning<
   "non-void %select{function|method}1 %0 should return a value">, DefaultError,

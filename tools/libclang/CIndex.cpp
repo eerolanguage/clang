@@ -2544,8 +2544,12 @@ void clang_toggleCrashRecovery(unsigned isEnabled) {
   
 CXTranslationUnit clang_createTranslationUnit(CXIndex CIdx,
                                               const char *ast_filename) {
-  if (!CIdx)
+  if (!CIdx || !ast_filename)
     return 0;
+
+  LOG_FUNC_SECTION {
+    *Log << ast_filename;
+  }
 
   CIndexer *CXXIdx = static_cast<CIndexer *>(CIdx);
   FileSystemOptions FileSystemOpts;
@@ -5683,7 +5687,8 @@ CXLinkageKind clang_getCursorLinkage(CXCursor cursor) {
   const Decl *D = cxcursor::getCursorDecl(cursor);
   if (const NamedDecl *ND = dyn_cast_or_null<NamedDecl>(D))
     switch (ND->getLinkageInternal()) {
-      case NoLinkage: return CXLinkage_NoLinkage;
+      case NoLinkage:
+      case VisibleNoLinkage: return CXLinkage_NoLinkage;
       case InternalLinkage: return CXLinkage_Internal;
       case UniqueExternalLinkage: return CXLinkage_UniqueExternal;
       case ExternalLinkage: return CXLinkage_External;

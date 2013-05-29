@@ -210,6 +210,13 @@ static bool removeUnneededCalls(PathPieces &pieces, BugReport *R,
   return containsSomethingInteresting;
 }
 
+/// Returns true if the given decl has been implicitly given a body, either by
+/// the analyzer or by the compiler proper.
+static bool hasImplicitBody(const Decl *D) {
+  assert(D);
+  return D->isImplicit() || !D->hasBody();
+}
+
 /// Recursively scan through a path and make sure that all call pieces have
 /// valid locations. Note that all other pieces with invalid locations should
 /// have already been pruned out.
@@ -224,11 +231,10 @@ static void adjustCallLocations(PathPieces &Pieces,
     }
 
     if (LastCallLocation) {
-      if (!Call->callEnter.asLocation().isValid() ||
-          Call->getCaller()->isImplicit())
+      bool CallerIsImplicit = hasImplicitBody(Call->getCaller());
+      if (CallerIsImplicit || !Call->callEnter.asLocation().isValid())
         Call->callEnter = *LastCallLocation;
-      if (!Call->callReturn.asLocation().isValid() ||
-          Call->getCaller()->isImplicit())
+      if (CallerIsImplicit || !Call->callReturn.asLocation().isValid())
         Call->callReturn = *LastCallLocation;
     }
 
@@ -236,7 +242,7 @@ static void adjustCallLocations(PathPieces &Pieces,
     // it contains any informative diagnostics.
     PathDiagnosticLocation *ThisCallLocation;
     if (Call->callEnterWithin.asLocation().isValid() &&
-        !Call->getCallee()->isImplicit())
+        !hasImplicitBody(Call->getCallee()))
       ThisCallLocation = &Call->callEnterWithin;
     else
       ThisCallLocation = &Call->callEnter;
@@ -1588,11 +1594,7 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
   StackDiagVector CallStack;
   InterestingExprs IE;
 
-  // Record the last location for a given visited stack frame.
-  llvm::DenseMap<const StackFrameContext *, PathDiagnosticLocation>
-    PrevLocMap;
-  PrevLocMap[N->getLocationContext()->getCurrentStackFrame()] =
-    PD.getLocation();
+  PathDiagnosticLocation PrevLoc = PD.getLocation();
 
   const ExplodedNode *NextNode = N->getFirstPred();
   while (NextNode) {
@@ -1633,16 +1635,15 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
           // If this is the first item in the active path, record
           // the new mapping from active path to location context.
           const LocationContext *&NewLC = LCM[&PD.getActivePath()];
-          if (!NewLC) {
+          if (!NewLC)
             NewLC = N->getLocationContext();
-          }
-          PDB.LC = NewLC;
 
-          // Update the previous location in the active path
-          // since we just created the call piece lazily.
-          PrevLocMap[PDB.LC->getCurrentStackFrame()] = C->getLocation();
+          PDB.LC = NewLC;
         }
         C->setCallee(*CE, SM);
+
+        // Update the previous location in the active path.
+        PrevLoc = C->getLocation();
 
         if (!CallStack.empty()) {
           assert(CallStack.back().first == C);
@@ -1654,12 +1655,6 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
       // Query the location context here and the previous location
       // as processing CallEnter may change the active path.
       PDB.LC = N->getLocationContext();
-
-      // Get the previous location for the current active
-      // location context.  All edges will be based on this
-      // location, and it will be updated in place.
-      PathDiagnosticLocation &PrevLoc =
-        PrevLocMap[PDB.LC->getCurrentStackFrame()];
 
       // Record the mapping from the active path to the location
       // context.
@@ -1688,6 +1683,7 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
         // Add the edge to the return site.
         addEdgeToPath(PD.getActivePath(), PrevLoc, C->callReturn, PDB.LC);
         PD.getActivePath().push_front(C);
+        PrevLoc.invalidate();
 
         // Make the contents of the call the active path for now.
         PD.pushActivePath(&C->path);
@@ -1802,11 +1798,6 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
     if (!NextNode)
       continue;
 
-    // Since the active path may have been updated prior
-    // to this point, query the active location context now.
-    PathDiagnosticLocation &PrevLoc =
-      PrevLocMap[PDB.LC->getCurrentStackFrame()];
-
     // Add pieces from custom visitors.
     for (ArrayRef<BugReporterVisitor *>::iterator I = visitors.begin(),
          E = visitors.end();
@@ -1822,13 +1813,13 @@ GenerateAlternateExtensivePathDiagnostic(PathDiagnostic& PD,
   return report->isValid();
 }
 
-const Stmt *getLocStmt(PathDiagnosticLocation L) {
+static const Stmt *getLocStmt(PathDiagnosticLocation L) {
   if (!L.isValid())
     return 0;
   return L.asStmt();
 }
 
-const Stmt *getStmtParent(const Stmt *S, ParentMap &PM) {
+static const Stmt *getStmtParent(const Stmt *S, ParentMap &PM) {
   if (!S)
     return 0;
 
@@ -2037,7 +2028,7 @@ static void removeIdenticalEvents(PathPieces &path) {
       return;
 
     PathDiagnosticEventPiece *PieceNextI =
-      dyn_cast<PathDiagnosticEventPiece>(*I);
+      dyn_cast<PathDiagnosticEventPiece>(*NextI);
 
     if (!PieceNextI)
       continue;
