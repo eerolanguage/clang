@@ -797,6 +797,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       
       // Allow either an identifier or the keyword 'class' (in C++).
       if (Tok.isNot(tok::identifier) && 
+          !(isEero && Tok.is(tok::kw_class)) &&
           !(getLangOpts().CPlusPlus && Tok.is(tok::kw_class))) {
         Diag(Tok, diag::err_expected_property_name);
         return ExprError();
@@ -1580,7 +1581,8 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       if (isEero && Tok.is(tok::kw_end)) {
         Tok.setKind(tok::identifier);
       }
-      if (getLangOpts().ObjC2 && OpKind == tok::period && Tok.is(tok::kw_class)) {
+      if (getLangOpts().ObjC2 && OpKind == tok::period && 
+          (Tok.is(tok::kw_class) || Tok.is(tok::kw_selector))) {
         // Objective-C++:
         //   After a '.' in a member access expression, treat the keyword
         //   'class' as if it were an identifier.
