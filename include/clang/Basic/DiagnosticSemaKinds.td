@@ -832,6 +832,8 @@ def warn_auto_implicit_atomic_property : Warning<
   InGroup<ImplicitAtomic>, DefaultIgnore;
 def warn_unimplemented_selector:  Warning<
   "creating selector for nonexistent method %0">, InGroup<Selector>, DefaultIgnore;
+def warning_multiple_selectors: Warning<
+  "multiple selectors named %0 found">, InGroup<SelectorTypeMismatch>, DefaultIgnore;
 def warn_unimplemented_protocol_method : Warning<
   "method %0 in protocol not implemented">, InGroup<Protocol>;
 
@@ -1187,6 +1189,9 @@ def ext_static_data_member_in_union : ExtWarn<
 def warn_cxx98_compat_static_data_member_in_union : Warning<
   "static data member %0 in union is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
+def ext_union_member_of_reference_type : ExtWarn<
+  "union member %0 has reference type %1, which is a Microsoft extension">,
+  InGroup<Microsoft>;
 def err_union_member_of_reference_type : Error<
   "union member %0 has reference type %1">;
 def ext_anonymous_struct_union_qualified : Extension<
@@ -2230,9 +2235,17 @@ def warn_cast_align : Warning<
   "cast from %0 to %1 increases required alignment from %2 to %3">,
   InGroup<CastAlign>, DefaultIgnore;
 
+// Separate between casts to void* and non-void* pointers.
+// Some APIs use (abuse) void* for something like a user context,
+// and often that value is an integer even if it isn't a pointer itself.
+// Having a separate warning flag allows users to control the warning
+// for their workflow.
 def warn_int_to_pointer_cast : Warning<
   "cast to %1 from smaller integer type %0">,
   InGroup<IntToPointerCast>;
+def warn_int_to_void_pointer_cast : Warning<
+  "cast to %1 from smaller integer type %0">,
+  InGroup<IntToVoidPointerCast>;
 
 def warn_attribute_ignored_for_field_of_type : Warning<
   "%0 attribute ignored for field of type %1">,
@@ -5495,8 +5508,8 @@ let CategoryName = "Inline Assembly Issue" in {
     "accepted due to -fheinous-gnu-extensions, but clang may remove support "
     "for this in the future">;
   def warn_asm_mismatched_size_modifier : Warning<
-    "the value is truncated when put into register, "
-    "use a modifier to specify the size">,
+    "value size does not match register size specified by the constraint "
+    "and modifier">,
     InGroup<ASMOperandWidths>;
 }
 

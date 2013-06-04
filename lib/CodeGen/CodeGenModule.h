@@ -912,6 +912,9 @@ public:
   /// \brief Appends Opts to the "Linker Options" metadata value.
   void AppendLinkerOptions(StringRef Opts);
 
+  /// \brief Appends a detect mismatch command to the linker options.
+  void AddDetectMismatch(StringRef Name, StringRef Value);
+
   /// \brief Appends a dependent lib to the "Linker Options" metadata value.
   void AddDependentLib(StringRef Lib);
 

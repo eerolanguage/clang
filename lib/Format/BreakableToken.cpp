@@ -87,8 +87,16 @@ BreakableToken::Split getCommentSplit(StringRef Text,
   StringRef::size_type SpaceOffset = Text.rfind(' ', MaxSplit);
   if (SpaceOffset == StringRef::npos ||
       // Don't break at leading whitespace.
-      Text.find_last_not_of(' ', SpaceOffset) == StringRef::npos)
-    SpaceOffset = Text.find(' ', MaxSplit);
+      Text.find_last_not_of(' ', SpaceOffset) == StringRef::npos) {
+    // Make sure that we don't break at leading whitespace that
+    // reaches past MaxSplit.
+    StringRef::size_type FirstNonWhitespace = Text.find_first_not_of(" ");
+    if (FirstNonWhitespace == StringRef::npos)
+      // If the comment is only whitespace, we cannot split.
+      return BreakableToken::Split(StringRef::npos, 0);
+    SpaceOffset =
+        Text.find(' ', std::max<unsigned>(MaxSplit, FirstNonWhitespace));
+  }
   if (SpaceOffset != StringRef::npos && SpaceOffset != 0) {
     StringRef BeforeCut = Text.substr(0, SpaceOffset).rtrim();
     StringRef AfterCut = Text.substr(SpaceOffset).ltrim();
@@ -235,6 +243,7 @@ BreakableBlockComment::BreakableBlockComment(const FormatStyle &Style,
     }
     IndentAtLineBreak = std::min<int>(IndentAtLineBreak, StartOfLineColumn[i]);
   }
+  IndentAtLineBreak = std::max<unsigned>(IndentAtLineBreak, Decoration.size());
   DEBUG({
     for (size_t i = 0; i < Lines.size(); ++i) {
       llvm::dbgs() << i << " |" << Lines[i] << "| " << LeadingWhitespace[i]
@@ -308,6 +317,7 @@ void BreakableBlockComment::insertBreak(unsigned LineIndex, unsigned TailOffset,
   unsigned BreakOffsetInToken =
       Text.data() - Tok.TokenText.data() + Split.first;
   unsigned CharsToRemove = Split.second;
+  assert(IndentAtLineBreak >= Decoration.size());
   Whitespaces.breakToken(Tok, BreakOffsetInToken, CharsToRemove, "", Prefix,
                          InPPDirective, IndentAtLineBreak - Decoration.size());
 }
@@ -329,11 +339,17 @@ BreakableBlockComment::replaceWhitespaceBefore(unsigned LineIndex,
       // contain a trailing whitespace.
       Prefix = Prefix.substr(0, 1);
     }
+  } else {
+    if (StartOfLineColumn[LineIndex] == 1) {
+      // This lines starts immediately after the decorating *.
+      Prefix = Prefix.substr(0, 1);
+    }
   }
 
   unsigned WhitespaceOffsetInToken =
       Lines[LineIndex].data() - Tok.TokenText.data() -
       LeadingWhitespace[LineIndex];
+  assert(StartOfLineColumn[LineIndex] >= Prefix.size());
   Whitespaces.breakToken(
       Tok, WhitespaceOffsetInToken, LeadingWhitespace[LineIndex], "", Prefix,
       InPPDirective, StartOfLineColumn[LineIndex] - Prefix.size());

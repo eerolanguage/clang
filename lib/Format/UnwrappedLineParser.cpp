@@ -45,6 +45,7 @@ public:
     else
       Line.MustBeDeclaration = true;
   }
+
 private:
   UnwrappedLine &Line;
   std::vector<bool> &Stack;
@@ -81,9 +82,7 @@ public:
     return Token;
   }
 
-  virtual unsigned getPosition() {
-    return PreviousTokenSource->getPosition();
-  }
+  virtual unsigned getPosition() { return PreviousTokenSource->getPosition(); }
 
   virtual FormatToken *setPosition(unsigned Position) {
     Token = PreviousTokenSource->setPosition(Position);
@@ -264,8 +263,8 @@ void UnwrappedLineParser::calculateBraceTypes() {
           // Thus, if the parent is a braced init list, we consider all
           // brace blocks inside it braced init list. That works good enough
           // for now, but we will need to fix it to correctly handle lambdas.
-          if (NextTok->Tok.is(tok::comma) || NextTok->Tok.is(tok::semi) ||
-              NextTok->Tok.is(tok::r_paren) || NextTok->Tok.is(tok::l_brace))
+          if (NextTok->isOneOf(tok::comma, tok::semi, tok::r_paren,
+                               tok::l_brace, tok::colon))
             LBraces[LBraceStack.back()] = BS_BracedInit;
           else
             LBraces[LBraceStack.back()] = BS_Block;
@@ -279,7 +278,7 @@ void UnwrappedLineParser::calculateBraceTypes() {
     case tok::kw_for:
     case tok::kw_switch:
     case tok::kw_try:
-      if (!LBraceStack.empty()) 
+      if (!LBraceStack.empty())
         LBraces[LBraceStack.back()] = BS_Block;
       break;
     default:
@@ -386,9 +385,7 @@ void UnwrappedLineParser::parsePPElse() {
   parsePPUnknown();
 }
 
-void UnwrappedLineParser::parsePPElIf() {
-  parsePPElse();
-}
+void UnwrappedLineParser::parsePPElIf() { parsePPElse(); }
 
 void UnwrappedLineParser::parsePPEndIf() {
   if (!PPStack.empty())
@@ -581,7 +578,8 @@ void UnwrappedLineParser::parseStructuralElement() {
       // Otherwise this was a braced init list, and the structural
       // element continues.
       break;
-    case tok::identifier:
+    case tok::identifier: {
+      StringRef Text = FormatTok->TokenText;
       nextToken();
       if (Line->Tokens.size() == 1) {
         if (FormatTok->Tok.is(tok::colon)) {
@@ -596,9 +594,15 @@ void UnwrappedLineParser::parseStructuralElement() {
             addUnwrappedLine();
             return;
           }
+        } else if (FormatTok->HasUnescapedNewline && Text.size() >= 5 &&
+                   Text == Text.upper()) {
+          // Recognize free-standing macros like Q_OBJECT.
+          addUnwrappedLine();
+          return;
         }
       }
       break;
+    }
     case tok::equal:
       nextToken();
       if (FormatTok->Tok.is(tok::l_brace)) {
@@ -693,15 +697,21 @@ void UnwrappedLineParser::parseParens() {
     case tok::r_paren:
       nextToken();
       return;
+    case tok::r_brace:
+      // A "}" inside parenthesis is an error if there wasn't a matching "{".
+      return;
     case tok::l_brace: {
       if (!tryToParseBracedList()) {
         nextToken();
-        ScopedLineState LineState(*this);
-        ScopedDeclarationState DeclarationState(*Line, DeclarationScopeStack,
-                                                /*MustBeDeclaration=*/ false);
-        Line->Level += 1;
-        parseLevel(/*HasOpeningBrace=*/ true);
-        Line->Level -= 1;
+        {
+          ScopedLineState LineState(*this);
+          ScopedDeclarationState DeclarationState(*Line, DeclarationScopeStack,
+                                                  /*MustBeDeclaration=*/ false);
+          Line->Level += 1;
+          parseLevel(/*HasOpeningBrace=*/ true);
+          Line->Level -= 1;
+        }
+        nextToken();
       }
       break;
     }

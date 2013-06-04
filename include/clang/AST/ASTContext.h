@@ -2209,18 +2209,17 @@ private:
                 const ObjCImplementationDecl *Impl) const;
 
 private:
-  /// \brief A set of deallocations that should be performed when the 
+  /// \brief A set of deallocations that should be performed when the
   /// ASTContext is destroyed.
-  SmallVector<std::pair<void (*)(void*), void *>, 16> Deallocations;
-                                       
+  typedef llvm::SmallDenseMap<void(*)(void*), llvm::SmallVector<void*, 16> >
+    DeallocationMap;
+  DeallocationMap Deallocations;
+
   // FIXME: This currently contains the set of StoredDeclMaps used
   // by DeclContext objects.  This probably should not be in ASTContext,
   // but we include it here so that ASTContext can quickly deallocate them.
   llvm::PointerIntPair<StoredDeclsMap*,1> LastSDM;
 
-  /// \brief A counter used to uniquely identify "blocks".
-  mutable unsigned int UniqueBlockByRefTypeID;
-  
   friend class DeclContext;
   friend class DeclarationNameTable;
   void ReleaseDeclContextMaps();

@@ -338,7 +338,8 @@ def AutomaticReferenceCounting : DiagGroup<"arc",
 def ARCRepeatedUseOfWeakMaybe : DiagGroup<"arc-maybe-repeated-use-of-weak">;
 def ARCRepeatedUseOfWeak : DiagGroup<"arc-repeated-use-of-weak",
                                      [ARCRepeatedUseOfWeakMaybe]>;
-def Selector : DiagGroup<"selector">;
+def SelectorTypeMismatch : DiagGroup<"selector-type-mismatch">;
+def Selector : DiagGroup<"selector", [SelectorTypeMismatch]>;
 def Protocol : DiagGroup<"protocol">;
 def SuperSubClassMismatch : DiagGroup<"super-class-method-mismatch">;
 def OverridingMethodMismatch : DiagGroup<"overriding-method-mismatch">;
@@ -416,7 +417,9 @@ def Format2 : DiagGroup<"format=2",
 
 def TypeSafety : DiagGroup<"type-safety">;
 
-def IntToPointerCast : DiagGroup<"int-to-pointer-cast">;
+def IntToVoidPointerCast : DiagGroup<"int-to-void-pointer-cast">;
+def IntToPointerCast : DiagGroup<"int-to-pointer-cast",
+                                 [IntToVoidPointerCast]>;
 
 def Extra : DiagGroup<"extra", [
     MissingFieldInitializers,

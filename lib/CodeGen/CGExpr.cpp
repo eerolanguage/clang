@@ -295,8 +295,13 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
     return ReferenceTemporary;
   }
 
+  SmallVector<const Expr *, 2> CommaLHSs;
   SmallVector<SubobjectAdjustment, 2> Adjustments;
-  E = E->skipRValueSubobjectAdjustments(Adjustments);
+  E = E->skipRValueSubobjectAdjustments(CommaLHSs, Adjustments);
+
+  for (unsigned I = 0, N = CommaLHSs.size(); I != N; ++I)
+    CGF.EmitIgnoredExpr(CommaLHSs[I]);
+
   if (const OpaqueValueExpr *opaque = dyn_cast<OpaqueValueExpr>(E))
     if (opaque->getType()->isRecordType())
       return CGF.EmitOpaqueValueLValue(opaque).getAddress();
@@ -332,6 +337,10 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
 
   RValue RV = CGF.EmitAnyExpr(E, AggSlot);
 
+  // FIXME: This is wrong. We need to register the destructor for the temporary
+  // now, *before* we perform the adjustments, because in the case of a
+  // pointer-to-member adjustment, the adjustment might throw.
+
   // Check if need to perform derived-to-base casts and/or field accesses, to
   // get from the temporary object we created (and, potentially, for which we
   // extended the lifetime) to the subobject we're binding the reference to.
@@ -352,19 +361,9 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
       case SubobjectAdjustment::FieldAdjustment: {
         LValue LV = CGF.MakeAddrLValue(Object, E->getType());
         LV = CGF.EmitLValueForField(LV, Adjustment.Field);
-        if (LV.isSimple()) {
-          Object = LV.getAddress();
-          break;
-        }
-        
-        // For non-simple lvalues, we actually have to create a copy of
-        // the object we're binding to.
-        QualType T = Adjustment.Field->getType().getNonReferenceType()
-                                                .getUnqualifiedType();
-        Object = CreateReferenceTemporary(CGF, T, InitializedDecl);
-        LValue TempLV = CGF.MakeAddrLValue(Object,
-                                           Adjustment.Field->getType());
-        CGF.EmitStoreThroughLValue(CGF.EmitLoadOfLValue(LV), TempLV);
+        assert(LV.isSimple() &&
+               "materialized temporary field is not a simple lvalue");
+        Object = LV.getAddress();
         break;
       }
 

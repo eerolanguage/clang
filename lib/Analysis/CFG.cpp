@@ -1639,19 +1639,11 @@ CFGBlock *CFGBuilder::VisitDeclStmt(DeclStmt *DS) {
 /// DeclStmts and initializers in them.
 CFGBlock *CFGBuilder::VisitDeclSubExpr(DeclStmt *DS) {
   assert(DS->isSingleDecl() && "Can handle single declarations only.");
-  Decl *D = DS->getSingleDecl();
- 
-  if (isa<StaticAssertDecl>(D)) {
-    // static_asserts aren't added to the CFG because they do not impact
-    // runtime semantics.
-    return Block;
-  }
-  
   VarDecl *VD = dyn_cast<VarDecl>(DS->getSingleDecl());
 
   if (!VD) {
-    autoCreateBlock();
-    appendStmt(Block, DS);
+    // Of everything that can be declared in a DeclStmt, only VarDecls impact
+    // runtime semantics.
     return Block;
   }
 
@@ -2679,9 +2671,15 @@ CFGBlock *CFGBuilder::VisitSwitchStmt(SwitchStmt *Terminator) {
   // If we have no "default:" case, the default transition is to the code
   // following the switch body.  Moreover, take into account if all the
   // cases of a switch are covered (e.g., switching on an enum value).
+  //
+  // Note: We add a successor to a switch that is considered covered yet has no
+  //       case statements if the enumeration has no enumerators.
+  bool SwitchAlwaysHasSuccessor = false;
+  SwitchAlwaysHasSuccessor |= switchExclusivelyCovered;
+  SwitchAlwaysHasSuccessor |= Terminator->isAllEnumCasesCovered() &&
+                              Terminator->getSwitchCaseList();
   addSuccessor(SwitchTerminatedBlock,
-               switchExclusivelyCovered || Terminator->isAllEnumCasesCovered()
-               ? 0 : DefaultCaseBlock);
+               SwitchAlwaysHasSuccessor ? 0 : DefaultCaseBlock);
 
   // Add the terminator and condition in the switch block.
   SwitchTerminatedBlock->setTerminator(Terminator);

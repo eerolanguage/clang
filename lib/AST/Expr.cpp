@@ -50,9 +50,9 @@ const CXXRecordDecl *Expr::getBestDynamicClassType() const {
   return cast<CXXRecordDecl>(D);
 }
 
-const Expr *
-Expr::skipRValueSubobjectAdjustments(
-                     SmallVectorImpl<SubobjectAdjustment> &Adjustments) const  {
+const Expr *Expr::skipRValueSubobjectAdjustments(
+    SmallVectorImpl<const Expr *> &CommaLHSs,
+    SmallVectorImpl<SubobjectAdjustment> &Adjustments) const {
   const Expr *E = this;
   while (true) {
     E = E->IgnoreParens();
@@ -76,9 +76,11 @@ Expr::skipRValueSubobjectAdjustments(
       if (!ME->isArrow() && ME->getBase()->isRValue()) {
         assert(ME->getBase()->getType()->isRecordType());
         if (FieldDecl *Field = dyn_cast<FieldDecl>(ME->getMemberDecl())) {
-          E = ME->getBase();
-          Adjustments.push_back(SubobjectAdjustment(Field));
-          continue;
+          if (!Field->isBitField()) {
+            E = ME->getBase();
+            Adjustments.push_back(SubobjectAdjustment(Field));
+            continue;
+          }
         }
       }
     } else if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(E)) {
@@ -88,6 +90,11 @@ Expr::skipRValueSubobjectAdjustments(
         const MemberPointerType *MPT =
           BO->getRHS()->getType()->getAs<MemberPointerType>();
         Adjustments.push_back(SubobjectAdjustment(MPT, BO->getRHS()));
+        continue;
+      } else if (BO->getOpcode() == BO_Comma) {
+        CommaLHSs.push_back(BO->getLHS());
+        E = BO->getRHS();
+        continue;
       }
     }
 
