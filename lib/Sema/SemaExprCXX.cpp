@@ -1554,13 +1554,28 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
                                /*AllowMissing=*/true, OperatorNew))
       return true;
   }
+
   if (!OperatorNew) {
     // Didn't find a member overload. Look for a global one.
     DeclareGlobalNewDelete();
     DeclContext *TUDecl = Context.getTranslationUnitDecl();
+    bool FallbackEnabled = IsArray && Context.getLangOpts().MicrosoftMode;
     if (FindAllocationOverload(StartLoc, Range, NewName, AllocArgs, TUDecl,
+                               /*AllowMissing=*/FallbackEnabled, OperatorNew,
+                               /*Diagnose=*/!FallbackEnabled)) {
+      if (!FallbackEnabled)
+        return true;
+
+      // MSVC will fall back on trying to find a matching global operator new
+      // if operator new[] cannot be found.  Also, MSVC will leak by not
+      // generating a call to operator delete or operator delete[], but we
+      // will not replicate that bug.
+      NewName = Context.DeclarationNames.getCXXOperatorName(OO_New);
+      DeleteName = Context.DeclarationNames.getCXXOperatorName(OO_Delete);
+      if (FindAllocationOverload(StartLoc, Range, NewName, AllocArgs, TUDecl,
                                /*AllowMissing=*/false, OperatorNew))
       return true;
+    }
   }
 
   // We don't need an operator delete if we're running under
@@ -4258,8 +4273,8 @@ QualType Sema::CXXCheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
     //   ... and one of the following shall hold:
     //   -- The second or the third operand (but not both) is a throw-
     //      expression; the result is of the type of the other and is a prvalue.
-    bool LThrow = isa<CXXThrowExpr>(LHS.get());
-    bool RThrow = isa<CXXThrowExpr>(RHS.get());
+    bool LThrow = isa<CXXThrowExpr>(LHS.get()->IgnoreParenCasts());
+    bool RThrow = isa<CXXThrowExpr>(RHS.get()->IgnoreParenCasts());
     if (LThrow && !RThrow)
       return RTy;
     if (RThrow && !LThrow)

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 | FileCheck %s
+// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -std=c++11 | FileCheck %s
 struct A {
   A();
   ~A();
@@ -557,4 +557,84 @@ namespace AssignmentOp {
   // CHECK: call {{.*}} @_ZN12AssignmentOp1AD1Ev(
   // CHECK: call {{.*}} @_ZN12AssignmentOp1BaSERKS
   // CHECK: call {{.*}} @_ZN12AssignmentOp1AD1Ev(
+}
+
+namespace BindToSubobject {
+  struct A {
+    A();
+    ~A();
+    int a;
+  };
+
+  void f(), g();
+
+  // CHECK: call void @_ZN15BindToSubobject1AC1Ev({{.*}} @_ZGRN15BindToSubobject1aE)
+  // CHECK: call i32 @__cxa_atexit({{.*}} bitcast ({{.*}} @_ZN15BindToSubobject1AD1Ev to void (i8*)*), i8* bitcast ({{.*}} @_ZGRN15BindToSubobject1aE to i8*), i8* @__dso_handle)
+  // CHECK: store i32* getelementptr inbounds ({{.*}} @_ZGRN15BindToSubobject1aE, i32 0, i32 0), i32** @_ZN15BindToSubobject1aE, align 8
+  int &&a = A().a;
+
+  // CHECK: call void @_ZN15BindToSubobject1fEv()
+  // CHECK: call void @_ZN15BindToSubobject1AC1Ev({{.*}} @_ZGRN15BindToSubobject1bE)
+  // CHECK: call i32 @__cxa_atexit({{.*}} bitcast ({{.*}} @_ZN15BindToSubobject1AD1Ev to void (i8*)*), i8* bitcast ({{.*}} @_ZGRN15BindToSubobject1bE to i8*), i8* @__dso_handle)
+  // CHECK: store i32* getelementptr inbounds ({{.*}} @_ZGRN15BindToSubobject1bE, i32 0, i32 0), i32** @_ZN15BindToSubobject1bE, align 8
+  int &&b = (f(), A().a);
+
+  int A::*h();
+
+  // CHECK: call void @_ZN15BindToSubobject1fEv()
+  // CHECK: call void @_ZN15BindToSubobject1gEv()
+  // CHECK: call void @_ZN15BindToSubobject1AC1Ev({{.*}} @_ZGRN15BindToSubobject1cE)
+  // FIXME: This is wrong. We should emit the call to __cxa_atexit prior to
+  // calling h(), in case h() throws.
+  // CHECK: call {{.*}} @_ZN15BindToSubobject1hE
+  // CHECK: getelementptr
+  // CHECK: call i32 @__cxa_atexit({{.*}} bitcast ({{.*}} @_ZN15BindToSubobject1AD1Ev to void (i8*)*), i8* bitcast ({{.*}} @_ZGRN15BindToSubobject1cE to i8*), i8* @__dso_handle)
+  // CHECK: store i32* {{.*}}, i32** @_ZN15BindToSubobject1cE, align 8
+  int &&c = (f(), (g(), A().*h()));
+
+  struct B {
+    int padding;
+    A a;
+  };
+
+  // CHECK: call void @_ZN15BindToSubobject1BC1Ev({{.*}} @_ZGRN15BindToSubobject1dE)
+  // CHECK: call {{.*}} @_ZN15BindToSubobject1hE
+  // CHECK: getelementptr {{.*}} getelementptr
+  // CHECK: call i32 @__cxa_atexit({{.*}} bitcast ({{.*}} @_ZN15BindToSubobject1BD1Ev to void (i8*)*), i8* bitcast ({{.*}} @_ZGRN15BindToSubobject1dE to i8*), i8* @__dso_handle)
+  // CHECK: store i32* {{.*}}, i32** @_ZN15BindToSubobject1dE, align 8
+  int &&d = (B().a).*h();
+}
+
+namespace Bitfield {
+  struct S { int a : 5; ~S(); };
+
+  // Do not lifetime extend the S() temporary here.
+  // CHECK: alloca
+  // CHECK: call {{.*}}memset
+  // CHECK: store i32 {{.*}}, i32* @_ZGRN8Bitfield1rE, align 4
+  // CHECK: call void @_ZN8Bitfield1SD1
+  // CHECK: store i32* @_ZGRN8Bitfield1rE, i32** @_ZN8Bitfield1rE, align 8
+  int &&r = S().a;
+}
+
+namespace Vector {
+  typedef __attribute__((vector_size(16))) int vi4a;
+  typedef __attribute__((ext_vector_type(4))) int vi4b;
+  struct S {
+    vi4a v;
+    vi4b w;
+  };
+  // CHECK: alloca
+  // CHECK: extractelement
+  // CHECK: store i32 {{.*}}, i32* @_ZGRN6Vector1rE,
+  // CHECK: store i32* @_ZGRN6Vector1rE, i32** @_ZN6Vector1rE,
+  int &&r = S().v[1];
+
+  // CHECK: alloca
+  // CHECK: extractelement
+  // CHECK: store i32 {{.*}}, i32* @_ZGRN6Vector1sE,
+  // CHECK: store i32* @_ZGRN6Vector1sE, i32** @_ZN6Vector1sE,
+  int &&s = S().w[1];
+  // FIXME PR16204: The following code leads to an assertion in Sema.
+  //int &&s = S().w.y;
 }
