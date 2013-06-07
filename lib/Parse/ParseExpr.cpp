@@ -795,9 +795,12 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
          (&II == Ident_super && getCurScope()->isInObjcMethodScope()))) {
       ConsumeToken();
       
+      if (isEero && (Tok.is(tok::kw_new) || Tok.is(tok::kw_class))) {
+        Tok.setKind(tok::identifier);
+      }
+
       // Allow either an identifier or the keyword 'class' (in C++).
       if (Tok.isNot(tok::identifier) && 
-          !(isEero && Tok.is(tok::kw_class)) &&
           !(getLangOpts().CPlusPlus && Tok.is(tok::kw_class))) {
         Diag(Tok, diag::err_expected_property_name);
         return ExprError();
