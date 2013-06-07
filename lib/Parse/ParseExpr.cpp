@@ -1611,6 +1611,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       if (isEero && !LHS.isInvalid()) {
         const QualType LHSType = LHS.get()->getType();
         if (LHSType->isObjCObjectPointerType() ||
+            LHSType->isSpecificPlaceholderType(BuiltinType::PseudoObject) ||
             LHSType->isBlockPointerType()) {
           const SourceLocation LHSLoc = LHS.get()->getLocStart();
           Selector Sel;
