@@ -4884,6 +4884,7 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
     const QualType castExprType =
         GetExprOrPseudoObjectType(CastExpr);
     if (!castType->isVoidPointerType() &&      // ignore void* casts
+        !castType->isVoidType() &&             // ignore void casts
         !castExprType->isVoidPointerType() &&  //
         !castType->isBlockPointerType() &&     // ignore block casts
         !castExprType->isBlockPointerType() && //
