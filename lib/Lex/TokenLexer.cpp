@@ -497,7 +497,7 @@ void TokenLexer::Lex(Token &Tok) {
   }
 
   // For legacy headers, revert the keywords eero introduced
-  if (PP.getLangOpts().Eero && PP.isInLegacyHeader()) {
+  if (!Macro && PP.getLangOpts().Eero && PP.isInLegacyHeader()) {
     switch (Tok.getKind()) {
       case tok::kw_compatibility_alias:
       case tok::kw_defs:
