@@ -445,6 +445,7 @@ FieldDecl *Sema::checkInitCapture(SourceLocation Loc, bool ByRef,
     assert(!DeductType.isNull() && "can't build reference to auto");
     TLB.push<ReferenceTypeLoc>(DeductType).setSigilLoc(Loc);
   }
+  TypeSourceInfo *TSI = TLB.getTypeSourceInfo(Context, DeductType);
 
   InitializationKind InitKind = InitializationKind::CreateDefault(Loc);
   Expr *Init = InitExpr;
@@ -476,8 +477,7 @@ FieldDecl *Sema::checkInitCapture(SourceLocation Loc, bool ByRef,
   else
     InitKind = InitializationKind::CreateCopy(Loc, Loc);
   QualType DeducedType;
-  if (DeduceAutoType(TLB.getTemporaryTypeLoc(DeductType),
-                     Init, DeducedType) == DAR_Failed) {
+  if (DeduceAutoType(TSI, Init, DeducedType) == DAR_Failed) {
     if (isa<InitListExpr>(Init))
       Diag(Loc, diag::err_init_capture_deduction_failure_from_init_list)
           << Id << Init->getSourceRange();
@@ -492,7 +492,7 @@ FieldDecl *Sema::checkInitCapture(SourceLocation Loc, bool ByRef,
   //   the closure type. This member is not a bit-field and not mutable.
   // Core issue: the member is (probably...) public.
   FieldDecl *NewFD = CheckFieldDecl(
-      Id, DeducedType, TLB.getTypeSourceInfo(Context, DeductType), LSI->Lambda,
+      Id, DeducedType, TSI, LSI->Lambda,
       Loc, /*Mutable*/ false, /*BitWidth*/ 0, ICIS_NoInit,
       Loc, AS_public, /*PrevDecl*/ 0, /*Declarator*/ 0);
   LSI->Lambda->addDecl(NewFD);
@@ -811,11 +811,8 @@ static void addFunctionPointerConversion(Sema &S,
   {
     FunctionProtoType::ExtProtoInfo ExtInfo = Proto->getExtProtoInfo();
     ExtInfo.TypeQuals = 0;
-    FunctionTy =
-      S.Context.getFunctionType(Proto->getResultType(),
-                                ArrayRef<QualType>(Proto->arg_type_begin(),
-                                                   Proto->getNumArgs()),
-                                ExtInfo);
+    FunctionTy = S.Context.getFunctionType(Proto->getResultType(),
+                                           Proto->getArgTypes(), ExtInfo);
     FunctionPtrTy = S.Context.getPointerType(FunctionTy);
   }
   
@@ -883,11 +880,8 @@ static void addBlockPointerConversion(Sema &S,
   {
     FunctionProtoType::ExtProtoInfo ExtInfo = Proto->getExtProtoInfo();
     ExtInfo.TypeQuals = 0;
-    QualType FunctionTy
-      = S.Context.getFunctionType(Proto->getResultType(),
-                                  ArrayRef<QualType>(Proto->arg_type_begin(),
-                                                     Proto->getNumArgs()),
-                                  ExtInfo);
+    QualType FunctionTy = S.Context.getFunctionType(
+        Proto->getResultType(), Proto->getArgTypes(), ExtInfo);
     BlockPtrTy = S.Context.getBlockPointerType(FunctionTy);
   }
   
@@ -1010,11 +1004,8 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
       // Create a function type with the inferred return type.
       const FunctionProtoType *Proto
         = CallOperator->getType()->getAs<FunctionProtoType>();
-      QualType FunctionTy
-        = Context.getFunctionType(LSI->ReturnType,
-                                  ArrayRef<QualType>(Proto->arg_type_begin(),
-                                                     Proto->getNumArgs()),
-                                  Proto->getExtProtoInfo());
+      QualType FunctionTy = Context.getFunctionType(
+          LSI->ReturnType, Proto->getArgTypes(), Proto->getExtProtoInfo());
       CallOperator->setType(FunctionTy);
     }
 

@@ -509,7 +509,8 @@ void CodeGenModule::EmitCtorList(const CtorList &Fns, const char *GlobalName) {
 }
 
 llvm::GlobalValue::LinkageTypes
-CodeGenModule::getFunctionLinkage(const FunctionDecl *D) {
+CodeGenModule::getFunctionLinkage(GlobalDecl GD) {
+  const FunctionDecl *D = cast<FunctionDecl>(GD.getDecl());
   GVALinkage Linkage = getContext().GetGVALinkageForFunction(D);
 
   if (Linkage == GVA_Internal)
@@ -1230,9 +1231,10 @@ CodeGenModule::isTriviallyRecursive(const FunctionDecl *FD) {
 }
 
 bool
-CodeGenModule::shouldEmitFunction(const FunctionDecl *F) {
-  if (getFunctionLinkage(F) != llvm::Function::AvailableExternallyLinkage)
+CodeGenModule::shouldEmitFunction(GlobalDecl GD) {
+  if (getFunctionLinkage(GD) != llvm::Function::AvailableExternallyLinkage)
     return true;
+  const FunctionDecl *F = cast<FunctionDecl>(GD.getDecl());
   if (CodeGenOpts.OptimizationLevel == 0 &&
       !F->hasAttr<AlwaysInlineAttr>() && !F->hasAttr<ForceInlineAttr>())
     return false;
@@ -1268,10 +1270,10 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD) {
                                  Context.getSourceManager(),
                                  "Generating code for declaration");
   
-  if (const FunctionDecl *Function = dyn_cast<FunctionDecl>(D)) {
+  if (isa<FunctionDecl>(D)) {
     // At -O0, don't generate IR for functions with available_externally 
     // linkage.
-    if (!shouldEmitFunction(Function))
+    if (!shouldEmitFunction(GD))
       return;
 
     if (const CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D)) {
@@ -2177,7 +2179,7 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD) {
   // want to propagate this information down (e.g. to local static
   // declarations).
   llvm::Function *Fn = cast<llvm::Function>(Entry);
-  setFunctionLinkage(D, Fn);
+  setFunctionLinkage(GD, Fn);
 
   // FIXME: this is redundant with part of SetFunctionDefinitionAttributes
   setGlobalVisibility(Fn, D);
@@ -2733,6 +2735,63 @@ llvm::Constant *CodeGenModule::GetAddrOfConstantCString(const std::string &Str,
                                                         unsigned Alignment) {
   StringRef StrWithNull(Str.c_str(), Str.size() + 1);
   return GetAddrOfConstantString(StrWithNull, GlobalName, Alignment);
+}
+
+llvm::Constant *CodeGenModule::GetAddrOfGlobalTemporary(
+    const MaterializeTemporaryExpr *E, const Expr *Inner) {
+  assert((E->getStorageDuration() == SD_Static ||
+          E->getStorageDuration() == SD_Thread) && "not a global temporary");
+  const VarDecl *VD = cast<VarDecl>(E->getExtendingDecl());
+
+  // If we're not materializing a subobject of the temporary, keep the
+  // cv-qualifiers from the type of the MaterializeTemporaryExpr.
+  if (Inner == E->GetTemporaryExpr())
+    Inner = E;
+
+  llvm::Constant *&Slot = MaterializedGlobalTemporaryMap[E];
+  if (Slot)
+    return Slot;
+
+  // FIXME: If an externally-visible declaration extends multiple temporaries,
+  // we need to give each temporary the same name in every translation unit (and
+  // we also need to make the temporaries externally-visible).
+  SmallString<256> Name;
+  llvm::raw_svector_ostream Out(Name);
+  getCXXABI().getMangleContext().mangleReferenceTemporary(VD, Out);
+  Out.flush();
+
+  llvm::Constant *InitialValue = 0;
+  APValue *Value = 0;
+  if (E->getStorageDuration() == SD_Static) {
+    // We might have a constant initializer for this temporary.
+    Value = getContext().getMaterializedTemporaryValue(E, false);
+    if (Value && Value->isUninit())
+      Value = 0;
+  }
+
+  bool Constant;
+  if (Value) {
+    // The temporary has a constant initializer, use it.
+    InitialValue = EmitConstantValue(*Value, Inner->getType(), 0);
+    Constant = isTypeConstant(Inner->getType(), /*ExcludeCtor*/Value);
+  } else {
+    // No constant initializer, the initialization will be provided when we
+    // initialize the declaration which performed lifetime extension.
+    InitialValue = EmitNullConstant(Inner->getType());
+    Constant = false;
+  }
+
+  // Create a global variable for this lifetime-extended temporary.
+  llvm::GlobalVariable *GV =
+    new llvm::GlobalVariable(getModule(), InitialValue->getType(), Constant,
+                             llvm::GlobalValue::PrivateLinkage, InitialValue,
+                             Name.c_str());
+  GV->setAlignment(
+      getContext().getTypeAlignInChars(Inner->getType()).getQuantity());
+  if (VD->getTLSKind())
+    setTLSMode(GV, *VD);
+  Slot = GV;
+  return GV;
 }
 
 /// EmitObjCPropertyImplementations - Emit information for synthesized

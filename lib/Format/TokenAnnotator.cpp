@@ -15,7 +15,6 @@
 
 #include "TokenAnnotator.h"
 #include "clang/Basic/SourceManager.h"
-#include "clang/Lex/Lexer.h"
 #include "llvm/Support/Debug.h"
 
 namespace clang {
@@ -28,10 +27,9 @@ namespace format {
 /// into template parameter lists.
 class AnnotatingParser {
 public:
-  AnnotatingParser(SourceManager &SourceMgr, Lexer &Lex, AnnotatedLine &Line,
-                   IdentifierInfo &Ident_in)
-      : SourceMgr(SourceMgr), Lex(Lex), Line(Line), CurrentToken(Line.First),
-        KeywordVirtualFound(false), NameFound(false), Ident_in(Ident_in) {
+  AnnotatingParser(AnnotatedLine &Line, IdentifierInfo &Ident_in)
+      : Line(Line), CurrentToken(Line.First), KeywordVirtualFound(false),
+        NameFound(false), Ident_in(Ident_in) {
     Contexts.push_back(Context(tok::unknown, 1, /*IsExpression=*/ false));
   }
 
@@ -105,13 +103,16 @@ private:
       // '*' has to be a binary operator but determineStarAmpUsage() will
       // categorize it as an unary operator, so set the right type here.
       if (LookForDecls && CurrentToken->Next) {
-        FormatToken *Prev = CurrentToken->Previous;
-        FormatToken *Next = CurrentToken->Next;
-        if (Prev->Previous->is(tok::identifier) &&
-            Prev->isOneOf(tok::star, tok::amp, tok::ampamp) &&
-            CurrentToken->is(tok::identifier) && Next->isNot(tok::equal)) {
-          Prev->Type = TT_BinaryOperator;
-          LookForDecls = false;
+        FormatToken *Prev = CurrentToken->getPreviousNoneComment();
+        if (Prev) {
+          FormatToken *PrevPrev = Prev->getPreviousNoneComment();
+          FormatToken *Next = CurrentToken->Next;
+          if (PrevPrev && PrevPrev->is(tok::identifier) &&
+              Prev->isOneOf(tok::star, tok::amp, tok::ampamp) &&
+              CurrentToken->is(tok::identifier) && Next->isNot(tok::equal)) {
+            Prev->Type = TT_BinaryOperator;
+            LookForDecls = false;
+          }
         }
       }
 
@@ -295,9 +296,11 @@ private:
                  Line.First->Type == TT_ObjCMethodSpecifier) {
         Tok->Type = TT_ObjCMethodExpr;
         Tok->Previous->Type = TT_ObjCSelectorName;
-        if (Tok->Previous->TokenLength >
-            Contexts.back().LongestObjCSelectorName)
-          Contexts.back().LongestObjCSelectorName = Tok->Previous->TokenLength;
+        if (Tok->Previous->CodePointCount >
+            Contexts.back().LongestObjCSelectorName) {
+          Contexts.back().LongestObjCSelectorName =
+              Tok->Previous->CodePointCount;
+        }
         if (Contexts.back().FirstObjCSelectorName == NULL)
           Contexts.back().FirstObjCSelectorName = Tok->Previous;
       } else if (Contexts.back().ColonIsForRangeExpr) {
@@ -602,9 +605,7 @@ private:
       } else if (Current.isBinaryOperator()) {
         Current.Type = TT_BinaryOperator;
       } else if (Current.is(tok::comment)) {
-        std::string Data(
-            Lexer::getSpelling(Current.Tok, SourceMgr, Lex.getLangOpts()));
-        if (StringRef(Data).startswith("//"))
+        if (Current.TokenText.startswith("//"))
           Current.Type = TT_LineComment;
         else
           Current.Type = TT_BlockComment;
@@ -628,12 +629,15 @@ private:
             Contexts.back().IsExpression)
           IsCast = true;
         if (Current.Next &&
+            Current.Next->isNot(tok::string_literal) &&
             (Current.Next->Tok.isLiteral() ||
              Current.Next->isOneOf(tok::kw_sizeof, tok::kw_alignof)))
           IsCast = true;
         // If there is an identifier after the (), it is likely a cast, unless
         // there is also an identifier before the ().
-        if (LeftOfParens && LeftOfParens->Tok.getIdentifierInfo() == NULL &&
+        if (LeftOfParens && (LeftOfParens->Tok.getIdentifierInfo() == NULL ||
+                             LeftOfParens->is(tok::kw_return)) &&
+            LeftOfParens->Type != TT_TemplateCloser &&
             LeftOfParens->Type != TT_ObjCMethodExpr && Current.Next &&
             (Current.Next->is(tok::identifier)))
           IsCast = true;
@@ -748,23 +752,19 @@ private:
     case tok::kw_wchar_t:
     case tok::kw_bool:
     case tok::kw___underlying_type:
-      return true;
     case tok::annot_typename:
     case tok::kw_char16_t:
     case tok::kw_char32_t:
     case tok::kw_typeof:
     case tok::kw_decltype:
-      return Lex.getLangOpts().CPlusPlus;
+      return true;
     default:
-      break;
+      return false;
     }
-    return false;
   }
 
   SmallVector<Context, 8> Contexts;
 
-  SourceManager &SourceMgr;
-  Lexer &Lex;
   AnnotatedLine &Line;
   FormatToken *CurrentToken;
   bool KeywordVirtualFound;
@@ -776,7 +776,11 @@ private:
 /// operator precedence.
 class ExpressionParser {
 public:
-  ExpressionParser(AnnotatedLine &Line) : Current(Line.First) {}
+  ExpressionParser(AnnotatedLine &Line) : Current(Line.First) {
+    // Skip leading "}", e.g. in "} else if (...) {".
+    if (Current->is(tok::r_brace))
+      next();
+  }
 
   /// \brief Parse expressions with the given operatore precedence.
   void parse(int Precedence = 0) {
@@ -866,7 +870,7 @@ private:
 };
 
 void TokenAnnotator::annotate(AnnotatedLine &Line) {
-  AnnotatingParser Parser(SourceMgr, Lex, Line, Ident_in);
+  AnnotatingParser Parser(Line, Ident_in);
   Line.Type = Parser.parseLine();
   if (Line.Type == LT_Invalid)
     return;
@@ -886,7 +890,7 @@ void TokenAnnotator::annotate(AnnotatedLine &Line) {
 }
 
 void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
-  Line.First->TotalLength = Line.First->TokenLength;
+  Line.First->TotalLength = Line.First->CodePointCount;
   if (!Line.First->Next)
     return;
   FormatToken *Current = Line.First->Next;
@@ -920,7 +924,7 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
       Current->TotalLength = Current->Previous->TotalLength + Style.ColumnLimit;
     else
       Current->TotalLength =
-          Current->Previous->TotalLength + Current->TokenLength +
+          Current->Previous->TotalLength + Current->CodePointCount +
           Current->SpacesRequiredBefore;
     // FIXME: Only calculate this if CanBreakBefore is true once static
     // initializers etc. are sorted out.
@@ -947,7 +951,7 @@ void TokenAnnotator::calculateUnbreakableTailLengths(AnnotatedLine &Line) {
       UnbreakableTailLength = 0;
     } else {
       UnbreakableTailLength +=
-          Current->TokenLength + Current->SpacesRequiredBefore;
+          Current->CodePointCount + Current->SpacesRequiredBefore;
     }
     Current = Current->Previous;
   }
@@ -1015,8 +1019,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
 
   if (Right.is(tok::lessless)) {
     if (Left.is(tok::string_literal)) {
-      StringRef Content =
-          StringRef(Left.Tok.getLiteralData(), Left.TokenLength);
+      StringRef Content = Left.TokenText;
       Content = Content.drop_back(1).drop_front(1).trim();
       if (Content.size() > 1 &&
           (Content.back() == ':' || Content.back() == '='))
@@ -1198,7 +1201,7 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
       Left.Previous->is(tok::kw___attribute))
     return false;
 
-  if (Right.Type == TT_LineComment)
+  if (Right.isTrailingComment())
     // We rely on MustBreakBefore being set correctly here as we should not
     // change the "binding" behavior of a comment.
     return false;

@@ -256,7 +256,8 @@ void Sema::LookupTemplateName(LookupResult &Found,
     assert(!SS.isSet() && "ObjectType and scope specifier cannot coexist");
     LookupCtx = computeDeclContext(ObjectType);
     isDependent = ObjectType->isDependentType();
-    assert((isDependent || !ObjectType->isIncompleteType()) &&
+    assert((isDependent || !ObjectType->isIncompleteType() ||
+            ObjectType->castAs<TagType>()->isBeingDefined()) &&
            "Caller should have completed object type");
     
     // Template names cannot appear inside an Objective-C class or object type.
@@ -5300,6 +5301,7 @@ Sema::ActOnClassTemplateSpecialization(Scope *S, unsigned TagSpec,
   } else if (TUK != TUK_Friend) {
     Diag(KWLoc, diag::err_template_spec_needs_header)
       << FixItHint::CreateInsertion(KWLoc, "template<> ");
+    TemplateKWLoc = KWLoc;
     isExplicitSpecialization = true;
   }
 
@@ -5948,9 +5950,7 @@ Sema::CheckFunctionTemplateSpecialization(FunctionDecl *FD,
           const FunctionProtoType *FPT = FT->castAs<FunctionProtoType>();
           FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
           EPI.TypeQuals |= Qualifiers::Const;
-          FT = Context.getFunctionType(FPT->getResultType(),
-                                       ArrayRef<QualType>(FPT->arg_type_begin(),
-                                                          FPT->getNumArgs()),
+          FT = Context.getFunctionType(FPT->getResultType(), FPT->getArgTypes(),
                                        EPI);
         }
       }

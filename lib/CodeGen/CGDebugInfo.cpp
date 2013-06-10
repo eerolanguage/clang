@@ -501,7 +501,8 @@ llvm::DIType CGDebugInfo::CreateType(const ComplexType *Ty) {
 
 /// CreateCVRType - Get the qualified type from the cache or create
 /// a new one if necessary.
-llvm::DIType CGDebugInfo::CreateQualifiedType(QualType Ty, llvm::DIFile Unit) {
+llvm::DIType CGDebugInfo::CreateQualifiedType(QualType Ty, llvm::DIFile Unit,
+                                              bool Declaration) {
   QualifierCollector Qc;
   const Type *T = Qc.strip(Ty);
 
@@ -527,7 +528,8 @@ llvm::DIType CGDebugInfo::CreateQualifiedType(QualType Ty, llvm::DIFile Unit) {
     return getOrCreateType(QualType(T, 0), Unit);
   }
 
-  llvm::DIType FromTy = getOrCreateType(Qc.apply(CGM.getContext(), T), Unit);
+  llvm::DIType FromTy =
+      getOrCreateType(Qc.apply(CGM.getContext(), T), Unit, Declaration);
 
   // No need to fill in the Name, Line, Size, Alignment, Offset in case of
   // CVR derived types.
@@ -613,27 +615,7 @@ llvm::DIType CGDebugInfo::getOrCreateTypeDeclaration(QualType PointeeTy,
                                                      llvm::DIFile Unit) {
   if (DebugKind > CodeGenOptions::LimitedDebugInfo)
     return getOrCreateType(PointeeTy, Unit);
-
-  // Limit debug info for the pointee type.
-
-  // If we have an existing type, use that, it's still smaller than creating
-  // a new type.
-  llvm::DIType Ty = getTypeOrNull(PointeeTy);
-  if (Ty.Verify()) return Ty;
-
-  // Handle qualifiers.
-  if (PointeeTy.hasLocalQualifiers())
-    return CreateQualifiedType(PointeeTy, Unit);
-
-  if (const RecordType *RTy = dyn_cast<RecordType>(PointeeTy)) {
-    RecordDecl *RD = RTy->getDecl();
-    llvm::DIDescriptor FDContext =
-      getContextDescriptor(cast<Decl>(RD->getDeclContext()));
-    llvm::DIType RetTy = createRecordFwdDecl(RD, FDContext);
-    TypeCache[QualType(RTy, 0).getAsOpaquePtr()] = RetTy;
-    return RetTy;
-  }
-  return getOrCreateType(PointeeTy, Unit);
+  return getOrCreateType(PointeeTy, Unit, true);
 }
 
 llvm::DIType CGDebugInfo::CreatePointerLikeType(unsigned Tag,
@@ -730,11 +712,12 @@ llvm::DIType CGDebugInfo::CreateType(const BlockPointerType *Ty,
   return BlockLiteralGeneric;
 }
 
-llvm::DIType CGDebugInfo::CreateType(const TypedefType *Ty, llvm::DIFile Unit) {
+llvm::DIType CGDebugInfo::CreateType(const TypedefType *Ty, llvm::DIFile Unit,
+                                     bool Declaration) {
   // Typedefs are derived from some other type.  If we have a typedef of a
   // typedef, make sure to emit the whole chain.
   llvm::DIType Src =
-      getOrCreateTypeDeclaration(Ty->getDecl()->getUnderlyingType(), Unit);
+      getOrCreateType(Ty->getDecl()->getUnderlyingType(), Unit, Declaration);
   if (!Src.Verify())
     return llvm::DIType();
   // We don't set size information, but do specify where the typedef was
@@ -1394,8 +1377,15 @@ llvm::DIType CGDebugInfo::getOrCreateInterfaceType(QualType D,
 }
 
 /// CreateType - get structure or union type.
-llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty) {
+llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty, bool Declaration) {
   RecordDecl *RD = Ty->getDecl();
+  if (Declaration) {
+    llvm::DIDescriptor FDContext =
+      getContextDescriptor(cast<Decl>(RD->getDeclContext()));
+    llvm::DIType RetTy = createRecordFwdDecl(RD, FDContext);
+    TypeCache[QualType(Ty, 0).getAsOpaquePtr()] = RetTy;
+    return RetTy;
+  }
 
   // Get overall information about the record type for the debug info.
   llvm::DIFile DefUnit = getOrCreateFile(RD->getLocation());
@@ -1461,6 +1451,31 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCObjectType *Ty,
                                      llvm::DIFile Unit) {
   // Ignore protocols.
   return getOrCreateType(Ty->getBaseType(), Unit);
+}
+
+
+/// \return true if Getter has the default name for the property PD.
+static bool hasDefaultGetterName(const ObjCPropertyDecl *PD,
+                                 const ObjCMethodDecl *Getter) {
+  assert(PD);
+  if (!Getter)
+    return true;
+
+  assert(Getter->getDeclName().isObjCZeroArgSelector());
+  return PD->getName() ==
+    Getter->getDeclName().getObjCSelector().getNameForSlot(0);
+}
+
+/// \return true if Setter has the default name for the property PD.
+static bool hasDefaultSetterName(const ObjCPropertyDecl *PD,
+                                 const ObjCMethodDecl *Setter) {
+  assert(PD);
+  if (!Setter)
+    return true;
+
+  assert(Setter->getDeclName().isObjCOneArgSelector());
+  return SelectorTable::constructSetterName(PD->getName()) ==
+    Setter->getDeclName().getObjCSelector().getNameForSlot(0);
 }
 
 /// CreateType - get objective-c interface type.
@@ -1536,9 +1551,9 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
     llvm::MDNode *PropertyNode =
       DBuilder.createObjCProperty(PD->getName(),
                                   PUnit, PLine,
-                                  (Getter && Getter->isImplicit()) ? "" :
+                                  hasDefaultGetterName(PD, Getter) ? "" :
                                   getSelectorName(PD->getGetterName()),
-                                  (Setter && Setter->isImplicit()) ? "" :
+                                  hasDefaultSetterName(PD, Setter) ? "" :
                                   getSelectorName(PD->getSetterName()),
                                   PD->getPropertyAttributes(),
                                   getOrCreateType(PD->getType(), PUnit));
@@ -1610,9 +1625,9 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
           PropertyNode =
             DBuilder.createObjCProperty(PD->getName(),
                                         PUnit, PLine,
-                                        (Getter && Getter->isImplicit()) ? "" :
+                                        hasDefaultGetterName(PD, Getter) ? "" :
                                         getSelectorName(PD->getGetterName()),
-                                        (Setter && Setter->isImplicit()) ? "" :
+                                        hasDefaultSetterName(PD, Setter) ? "" :
                                         getSelectorName(PD->getSetterName()),
                                         PD->getPropertyAttributes(),
                                         getOrCreateType(PD->getType(), PUnit));
@@ -1908,7 +1923,8 @@ llvm::Value *CGDebugInfo::getCachedInterfaceTypeOrNull(QualType Ty) {
 
 /// getOrCreateType - Get the type from the cache or create a new
 /// one if necessary.
-llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
+llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit,
+                                          bool Declaration) {
   if (Ty.isNull())
     return llvm::DIType();
 
@@ -1921,7 +1937,7 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
     return T;
 
   // Otherwise create the type.
-  llvm::DIType Res = CreateTypeNode(Ty, Unit);
+  llvm::DIType Res = CreateTypeNode(Ty, Unit, Declaration);
   void* TyPtr = Ty.getAsOpaquePtr();
 
   // And update the type cache.
@@ -1959,13 +1975,18 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit) {
   return Res;
 }
 
-/// Currently the checksum merely consists of the number of ivars.
-unsigned CGDebugInfo::Checksum(const ObjCInterfaceDecl
-                               *InterfaceDecl) {
-  unsigned IvarNo = 0;
-  for (const ObjCIvarDecl *Ivar = InterfaceDecl->all_declared_ivar_begin();
-       Ivar != 0; Ivar = Ivar->getNextIvar()) ++IvarNo;
-  return IvarNo;
+/// Currently the checksum of an interface includes the number of
+/// ivars and property accessors.
+unsigned CGDebugInfo::Checksum(const ObjCInterfaceDecl *ID) {
+  // The assumption is that the number of ivars can only increase
+  // monotonically, so it is safe to just use their current number as
+  // a checksum.
+  unsigned Sum = 0;
+  for (const ObjCIvarDecl *Ivar = ID->all_declared_ivar_begin();
+       Ivar != 0; Ivar = Ivar->getNextIvar())
+    ++Sum;
+
+  return Sum;
 }
 
 ObjCInterfaceDecl *CGDebugInfo::getObjCInterfaceDecl(QualType Ty) {
@@ -1981,10 +2002,11 @@ ObjCInterfaceDecl *CGDebugInfo::getObjCInterfaceDecl(QualType Ty) {
 }
 
 /// CreateTypeNode - Create a new debug type node.
-llvm::DIType CGDebugInfo::CreateTypeNode(QualType Ty, llvm::DIFile Unit) {
+llvm::DIType CGDebugInfo::CreateTypeNode(QualType Ty, llvm::DIFile Unit,
+                                         bool Declaration) {
   // Handle qualifiers, which recursively handles what they refer to.
   if (Ty.hasLocalQualifiers())
-    return CreateQualifiedType(Ty, Unit);
+    return CreateQualifiedType(Ty, Unit, Declaration);
 
   const char *Diag = 0;
 
@@ -2015,9 +2037,9 @@ llvm::DIType CGDebugInfo::CreateTypeNode(QualType Ty, llvm::DIFile Unit) {
   case Type::BlockPointer:
     return CreateType(cast<BlockPointerType>(Ty), Unit);
   case Type::Typedef:
-    return CreateType(cast<TypedefType>(Ty), Unit);
+    return CreateType(cast<TypedefType>(Ty), Unit, Declaration);
   case Type::Record:
-    return CreateType(cast<RecordType>(Ty));
+    return CreateType(cast<RecordType>(Ty), Declaration);
   case Type::Enum:
     return CreateEnumType(cast<EnumType>(Ty)->getDecl());
   case Type::FunctionProto:
@@ -2174,7 +2196,7 @@ llvm::DIType CGDebugInfo::CreateLimitedTypeNode(QualType Ty,llvm::DIFile Unit) {
   case Type::Record:
     return CreateLimitedType(cast<RecordType>(Ty));
   default:
-    return CreateTypeNode(Ty, Unit);
+    return CreateTypeNode(Ty, Unit, false);
   }
 }
 
@@ -2581,22 +2603,6 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, unsigned Tag,
   // for this variable.
   if (!Ty)
     return;
-
-  if (llvm::Argument *Arg = dyn_cast<llvm::Argument>(Storage)) {
-    // If Storage is an aggregate returned as 'sret' then let debugger know
-    // about this.
-    if (Arg->hasStructRetAttr())
-      Ty = DBuilder.createReferenceType(llvm::dwarf::DW_TAG_reference_type, Ty);
-    else if (CXXRecordDecl *Record = VD->getType()->getAsCXXRecordDecl()) {
-      // If an aggregate variable has non trivial destructor or non trivial copy
-      // constructor than it is pass indirectly. Let debug info know about this
-      // by using reference of the aggregate type as a argument type.
-      if (Record->hasNonTrivialCopyConstructor() ||
-          !Record->hasTrivialDestructor())
-        Ty = DBuilder.createReferenceType(llvm::dwarf::DW_TAG_reference_type,
-                                          Ty);
-    }
-  }
 
   // Get location information.
   unsigned Line = getLineNumber(VD->getLocation());
@@ -3008,10 +3014,11 @@ void CGDebugInfo::EmitGlobalVariable(llvm::GlobalVariable *Var,
     LinkageName = StringRef();
   llvm::DIDescriptor DContext =
     getContextDescriptor(dyn_cast<Decl>(D->getDeclContext()));
-  llvm::DIGlobalVariable GV = DBuilder.createStaticVariable(DContext, DeclName, LinkageName,
-                                Unit, LineNo, getOrCreateType(T, Unit),
-                                Var->hasInternalLinkage(), Var,
-                                getStaticDataMemberDeclaration(D));
+  llvm::DIGlobalVariable GV =
+      DBuilder.createStaticVariable(DContext, DeclName, LinkageName, Unit,
+                                    LineNo, getOrCreateType(T, Unit),
+                                    Var->hasInternalLinkage(), Var,
+                                    getStaticDataMemberDeclaration(D));
   DeclCache.insert(std::make_pair(D->getCanonicalDecl(), llvm::WeakVH(GV)));
 }
 
@@ -3057,10 +3064,10 @@ void CGDebugInfo::EmitGlobalVariable(const ValueDecl *VD,
   // Do not use DIGlobalVariable for enums.
   if (Ty.getTag() == llvm::dwarf::DW_TAG_enumeration_type)
     return;
-  llvm::DIGlobalVariable GV = DBuilder.createStaticVariable(Unit, Name, Name, Unit,
-                                getLineNumber(VD->getLocation()),
-                                Ty, true, Init,
-                                getStaticDataMemberDeclaration(VD));
+  llvm::DIGlobalVariable GV =
+      DBuilder.createStaticVariable(Unit, Name, Name, Unit,
+                                    getLineNumber(VD->getLocation()), Ty, true,
+                                    Init, getStaticDataMemberDeclaration(VD));
   DeclCache.insert(std::make_pair(VD->getCanonicalDecl(), llvm::WeakVH(GV)));
 }
 
@@ -3087,7 +3094,8 @@ void CGDebugInfo::EmitUsingDecl(const UsingDecl &UD) {
   // Emitting one decl is sufficient - debuggers can detect that this is an
   // overloaded name & provide lookup for all the overloads.
   const UsingShadowDecl &USD = **UD.shadow_begin();
-  if (llvm::DIDescriptor Target = getDeclarationOrDefinition(USD.getUnderlyingDecl()))
+  if (llvm::DIDescriptor Target =
+          getDeclarationOrDefinition(USD.getUnderlyingDecl()))
     DBuilder.createImportedDeclaration(
         getCurrentContextDescriptor(cast<Decl>(USD.getDeclContext())), Target,
         getLineNumber(USD.getLocation()));

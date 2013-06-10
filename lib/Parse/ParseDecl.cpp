@@ -1064,9 +1064,8 @@ void Parser::ParseLexedAttribute(LateParsedAttribute &LA,
     RecordDecl *RD = dyn_cast_or_null<RecordDecl>(D->getDeclContext());
 
     // Allow 'this' within late-parsed attributes.
-    Sema::CXXThisScopeRAII ThisScope(Actions, RD,
-                                     /*TypeQuals=*/0,
-                                     ND && RD && ND->isCXXInstanceMember());
+    Sema::CXXThisScopeRAII ThisScope(Actions, RD, /*TypeQuals=*/0,
+                                     ND && ND->isCXXInstanceMember());
 
     if (LA.Decls.size() == 1) {
       // If the Decl is templatized, add template parameters to scope.
@@ -3302,12 +3301,6 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
 
   ParseScope StructScope(this, Scope::ClassScope|Scope::DeclScope);
   Actions.ActOnTagStartDefinition(getCurScope(), TagDecl);
-
-  // Empty structs are an extension in C (C99 6.7.2.1p7).
-  if (Tok.is(tok::r_brace)) {
-    Diag(Tok, diag::ext_empty_struct_union) << (TagType == TST_union);
-    Diag(Tok, diag::warn_empty_struct_union_compat) << (TagType == TST_union);
-  }
 
   SmallVector<Decl *, 32> FieldDecls;
 

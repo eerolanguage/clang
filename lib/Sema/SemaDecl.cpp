@@ -5964,10 +5964,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     T = Context.getObjCObjectPointerType(T);
     if (const FunctionProtoType *FPT = dyn_cast<FunctionProtoType>(R)) {
       FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
-      R = Context.getFunctionType(T,
-                                  ArrayRef<QualType>(FPT->arg_type_begin(),
-                                                     FPT->getNumArgs()),
-                                  EPI);
+      R = Context.getFunctionType(T, FPT->getArgTypes(), EPI);
     }
     else if (isa<FunctionNoProtoType>(R))
       R = Context.getFunctionNoProtoType(T);
@@ -6266,9 +6263,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
       EPI.ExceptionSpecType = EST_BasicNoexcept;
       NewFD->setType(Context.getFunctionType(FPT->getResultType(),
-                                      ArrayRef<QualType>(FPT->arg_type_begin(),
-                                                         FPT->getNumArgs()),
-                                             EPI));
+                                             FPT->getArgTypes(), EPI));
     }
   }
 
@@ -6861,9 +6856,7 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
       FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
       EPI.TypeQuals |= Qualifiers::Const;
       MD->setType(Context.getFunctionType(FPT->getResultType(),
-                                      ArrayRef<QualType>(FPT->arg_type_begin(),
-                                                         FPT->getNumArgs()),
-                                          EPI));
+                                          FPT->getArgTypes(), EPI));
 
       // Warn that we did this, if we're not performing template instantiation.
       // In that case, we'll have warned already when the template was defined.
@@ -11303,6 +11296,41 @@ void Sema::ActOnFields(Scope* S,
 
     if (Record->hasAttrs())
       CheckAlignasUnderalignment(Record);
+
+    // Check if the structure/union declaration is a language extension.
+    if (!getLangOpts().CPlusPlus) {
+      bool ZeroSize = true;
+      bool UnnamedOnly = true;
+      unsigned UnnamedCnt = 0;
+      for (RecordDecl::field_iterator I = Record->field_begin(),
+                                      E = Record->field_end(); UnnamedOnly && I != E; ++I) {
+        if (I->isUnnamedBitfield()) {
+          UnnamedCnt++;
+          if (I->getBitWidthValue(Context) > 0)
+            ZeroSize = false;
+        } else {
+          UnnamedOnly = ZeroSize = false;
+        }
+      }
+
+      // Empty structs are an extension in C (C99 6.7.2.1p7), but are allowed in
+      // C++.
+      if (ZeroSize) {
+        if (UnnamedCnt == 0)
+          Diag(RecLoc, diag::warn_empty_struct_union_compat) << Record->isUnion();
+        else
+          Diag(RecLoc, diag::warn_zero_size_struct_union_compat) << Record->isUnion();
+      }
+
+      // Structs without named members are extension in C (C99 6.7.2.1p7), but
+      // are accepted by GCC.
+      if (UnnamedOnly) {
+        if (UnnamedCnt == 0)
+          Diag(RecLoc, diag::ext_empty_struct_union) << Record->isUnion();
+        else
+          Diag(RecLoc, diag::ext_no_named_members_in_struct_union) << Record->isUnion();
+      }
+    }
   } else {
     ObjCIvarDecl **ClsFields =
       reinterpret_cast<ObjCIvarDecl**>(RecFields.data());
