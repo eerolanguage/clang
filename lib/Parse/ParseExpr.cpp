@@ -1625,7 +1625,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
             Sel = PP.getSelectorTable().getNullarySelector(Name.Identifier);
             MsgEndLoc = Name.getLocEnd();
           } else { // it's effectively a setter
-            Sel = SelectorTable::constructSetterName(
+            Sel = SelectorTable::constructSetterSelector(
                 PP.getIdentifierTable(),
                 PP.getSelectorTable(), Name.Identifier);
             ConsumeToken(); // the '='
