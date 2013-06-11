@@ -1002,8 +1002,18 @@ ExprResult Sema::ParseObjCSelectorExpression(Selector Sel,
   if (!Method)
     Method = LookupFactoryMethodInGlobalPool(Sel,
                                           SourceRange(LParenLoc, RParenLoc));
-  if (!Method)
-    Diag(SelLoc, diag::warn_undeclared_selector) << Sel;
+  if (!Method) {
+    if (const ObjCMethodDecl *OM = SelectorsForTypoCorrection(Sel)) {
+      Selector MatchedSel = OM->getSelector();
+      SourceRange SelectorRange(LParenLoc.getLocWithOffset(1),
+                                RParenLoc.getLocWithOffset(-1));
+      Diag(SelLoc, diag::warn_undeclared_selector_with_typo)
+        << Sel << MatchedSel
+        << FixItHint::CreateReplacement(SelectorRange, MatchedSel.getAsString());
+      
+    } else
+        Diag(SelLoc, diag::warn_undeclared_selector) << Sel;
+  }
   
   if (!Method ||
       Method->getImplementationControl() != ObjCMethodDecl::Optional) {
@@ -1603,8 +1613,8 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
   // If we found a getter then this may be a valid dot-reference, we
   // will look for the matching setter, in case it is needed.
   Selector SetterSel =
-    SelectorTable::constructSetterName(PP.getIdentifierTable(),
-                                       PP.getSelectorTable(), Member);
+    SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
+                                           PP.getSelectorTable(), Member);
   ObjCMethodDecl *Setter = IFace->lookupInstanceMethod(SetterSel);
       
   // May be founf in property's qualified list.
@@ -1761,8 +1771,9 @@ ActOnClassPropertyRefExpr(IdentifierInfo &receiverName,
 
   // Look for the matching setter, in case it is needed.
   Selector SetterSel =
-    SelectorTable::constructSetterName(PP.getIdentifierTable(),
-                                       PP.getSelectorTable(), &propertyName);
+    SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
+                                           PP.getSelectorTable(),
+                                           &propertyName);
 
   ObjCMethodDecl *Setter = IFace->lookupClassMethod(SetterSel);
   if (!Setter) {

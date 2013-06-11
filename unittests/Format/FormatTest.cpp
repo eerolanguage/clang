@@ -675,7 +675,7 @@ TEST_F(FormatTest, UnderstandsSingleLineComments) {
                "};");
   verifyGoogleFormat(
       "aaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
-      "    aaaaaaaaaaaaaaaaaaaaaa);  // 81 cols with this comment");
+      "    aaaaaaaaaaaaaaaaaaaaaa);  // 81_cols_with_this_comment");
   EXPECT_EQ("D(a, {\n"
             "  // test\n"
             "  int a;\n"
@@ -767,6 +767,15 @@ TEST_F(FormatTest, UnderstandsMultiLineComments) {
       "  /* Leading comment for bb... */ bbbbbbbbbbbbbbbbbbbbbbbbb);",
       format("f(aaaaaaaaaaaaaaaaaaaaaaaaa    ,   \n"
              "/* Leading comment for bb... */   bbbbbbbbbbbbbbbbbbbbbbbbb);"));
+  EXPECT_EQ(
+      "void aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+      "    aaaaaaaaaaaaaaaaaa,\n"
+      "    aaaaaaaaaaaaaaaaaa) { /* aaaaaaaaaaaaaaaaaaaaaaaaaaaaa */\n"
+      "}",
+      format("void      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+             "                      aaaaaaaaaaaaaaaaaa  ,\n"
+             "    aaaaaaaaaaaaaaaaaa) {   /* aaaaaaaaaaaaaaaaaaaaaaaaaaaaa */\n"
+             "}"));
 
   FormatStyle NoBinPacking = getLLVMStyle();
   NoBinPacking.BinPackParameters = false;
@@ -862,37 +871,36 @@ TEST_F(FormatTest, SplitsLongCxxComments) {
             format("// A comment before a macro definition\n"
                    "#define a b",
                    getLLVMStyleWithColumns(20)));
+}
 
-  EXPECT_EQ("/* A comment before\n"
-            " * a macro\n"
-            " * definition */\n"
-            "#define a b",
-            format("/* A comment before a macro definition */\n"
-                   "#define a b",
-                   getLLVMStyleWithColumns(20)));
-
-  EXPECT_EQ("/* some comment\n"
-            "     *   a comment\n"
-            "* that we break\n"
-            " * another comment\n"
-            "* we have to break\n"
-            "* a left comment\n"
-            " */",
-            format("  /* some comment\n"
-                   "       *   a comment that we break\n"
-                   "   * another comment we have to break\n"
-                   "* a left comment\n"
-                   "   */",
-                   getLLVMStyleWithColumns(20)));
-
-  EXPECT_EQ("/*\n"
-            "\n"
-            "\n"
-            "    */\n",
-            format("  /*       \n"
-                   "      \n"
-                   "               \n"
-                   "      */\n"));
+TEST_F(FormatTest, PriorityOfCommentBreaking) {
+  EXPECT_EQ("if (xxx == yyy && // aaaaaaaaaaaa\n"
+            "                  // bbbbbbbbb\n"
+            "    zzz)\n"
+            "  q();",
+            format("if (xxx == yyy && // aaaaaaaaaaaa bbbbbbbbb\n"
+                   "    zzz) q();",
+                   getLLVMStyleWithColumns(40)));
+  EXPECT_EQ("if (xxxxxxxxxx ==\n"
+            "        yyy && // aaaaaa bbbbbbbb cccc\n"
+            "    zzz)\n"
+            "  q();",
+            format("if (xxxxxxxxxx == yyy && // aaaaaa bbbbbbbb cccc\n"
+                   "    zzz) q();",
+                   getLLVMStyleWithColumns(40)));
+  EXPECT_EQ("if (xxxxxxxxxx &&\n"
+            "        yyy || // aaaaaa bbbbbbbb cccc\n"
+            "    zzz)\n"
+            "  q();",
+            format("if (xxxxxxxxxx && yyy || // aaaaaa bbbbbbbb cccc\n"
+                   "    zzz) q();",
+                   getLLVMStyleWithColumns(40)));
+  EXPECT_EQ("fffffffff(&xxx, // aaaaaaaaaaaa\n"
+            "                // bbbbbbbbbbb\n"
+            "          zzz);",
+            format("fffffffff(&xxx, // aaaaaaaaaaaa bbbbbbbbbbb\n"
+                   " zzz);",
+                   getLLVMStyleWithColumns(40)));
 }
 
 TEST_F(FormatTest, MultiLineCommentsInDefines) {
@@ -1050,6 +1058,37 @@ TEST_F(FormatTest, SplitsLongLinesInComments) {
                    "    ;\n"
                    "}",
                    getLLVMStyleWithColumns(30)));
+
+  EXPECT_EQ("/* A comment before\n"
+            " * a macro\n"
+            " * definition */\n"
+            "#define a b",
+            format("/* A comment before a macro definition */\n"
+                   "#define a b",
+                   getLLVMStyleWithColumns(20)));
+
+  EXPECT_EQ("/* some comment\n"
+            "     *   a comment\n"
+            "* that we break\n"
+            " * another comment\n"
+            "* we have to break\n"
+            "* a left comment\n"
+            " */",
+            format("  /* some comment\n"
+                   "       *   a comment that we break\n"
+                   "   * another comment we have to break\n"
+                   "* a left comment\n"
+                   "   */",
+                   getLLVMStyleWithColumns(20)));
+
+  EXPECT_EQ("/*\n"
+            "\n"
+            "\n"
+            "    */\n",
+            format("  /*       \n"
+                   "      \n"
+                   "               \n"
+                   "      */\n"));
 }
 
 TEST_F(FormatTest, SplitsLongLinesInCommentsInPreprocessor) {
@@ -1896,10 +1935,11 @@ TEST_F(FormatTest, FormatUnbalancedStructuralElements) {
             format("#define A } }\nint i;", getLLVMStyleWithColumns(11)));
 }
 
-TEST_F(FormatTest, EscapedNewlineAtStartOfTokenInMacroDefinition) {
+TEST_F(FormatTest, EscapedNewlineAtStartOfToken) {
   EXPECT_EQ(
       "#define A \\\n  int i;  \\\n  int j;",
       format("#define A \\\nint i;\\\n  int j;", getLLVMStyleWithColumns(11)));
+  EXPECT_EQ("template <class T> f();", format("\\\ntemplate <class T> f();"));
 }
 
 TEST_F(FormatTest, CalculateSpaceOnConsecutiveLinesInMacro) {
@@ -2073,6 +2113,10 @@ TEST_F(FormatTest, ExpressionIndentation) {
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa *\n"
                "            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +\n"
                "        bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n}");
+  verifyFormat("if () {\n"
+               "} else if (aaaaa && bbbbb > // break\n"
+               "                        ccccc) {\n"
+               "}");
 }
 
 TEST_F(FormatTest, ConstructorInitializers) {
@@ -3246,9 +3290,11 @@ TEST_F(FormatTest, FormatsCasts) {
   verifyFormat("int a = (int)+2;");
   verifyFormat("my_int a = (my_int)2.0f;");
   verifyFormat("my_int a = (my_int)sizeof(int);");
+  verifyFormat("return (my_int)aaa;");
 
   // FIXME: Without type knowledge, this can still fall apart miserably.
   verifyFormat("void f() { my_int a = (my_int) * b; }");
+  verifyFormat("void f() { return P ? (my_int) * P : (my_int)0; }");
   verifyFormat("my_int a = (my_int) ~0;");
   verifyFormat("my_int a = (my_int)++ a;");
   verifyFormat("my_int a = (my_int) + 2;");
@@ -3271,6 +3317,8 @@ TEST_F(FormatTest, FormatsCasts) {
   verifyFormat("void f(int i = (kA * kB) & kMask) {}");
   verifyFormat("int a = sizeof(int) * b;");
   verifyFormat("int a = alignof(int) * b;");
+  verifyFormat("template <> void f<int>(int i) SOME_ANNOTATION;");
+  verifyFormat("f(\"%\" SOME_MACRO(ll) \"d\");");
 
   // These are not casts, but at some point were confused with casts.
   verifyFormat("virtual void foo(int *) override;");
@@ -4872,6 +4920,90 @@ TEST_F(FormatTest, ConfigurationRoundTripTest) {
   EXPECT_EQ(0, parseConfiguration(YAML, &ParsedStyle).value());
   EXPECT_EQ(Style, ParsedStyle);
 }
+
+TEST_F(FormatTest, WorksFor8bitEncodings) {
+  EXPECT_EQ("\"\xce\xe4\xed\xe0\xe6\xe4\xfb \xe2 \"\n"
+            "\"\xf1\xf2\xf3\xe4\xb8\xed\xf3\xfe \"\n"
+            "\"\xe7\xe8\xec\xed\xfe\xfe \"\n"
+            "\"\xef\xee\xf0\xf3...\"",
+            format("\"\xce\xe4\xed\xe0\xe6\xe4\xfb \xe2 "
+                   "\xf1\xf2\xf3\xe4\xb8\xed\xf3\xfe \xe7\xe8\xec\xed\xfe\xfe "
+                   "\xef\xee\xf0\xf3...\"",
+                   getLLVMStyleWithColumns(12)));
+}
+
+// FIXME: Encode Cyrillic and CJK characters below to appease MS compilers.
+#if !defined(_MSC_VER)
+
+TEST_F(FormatTest, CountsUTF8CharactersProperly) {
+  verifyFormat("\"Однажды в студёную зимнюю пору...\"",
+               getLLVMStyleWithColumns(35));
+  verifyFormat("\"一 二 三 四 五 六 七 八 九 十\"",
+               getLLVMStyleWithColumns(21));
+  verifyFormat("// Однажды в студёную зимнюю пору...",
+               getLLVMStyleWithColumns(36));
+  verifyFormat("// 一 二 三 四 五 六 七 八 九 十",
+               getLLVMStyleWithColumns(22));
+  verifyFormat("/* Однажды в студёную зимнюю пору... */",
+               getLLVMStyleWithColumns(39));
+  verifyFormat("/* 一 二 三 四 五 六 七 八 九 十 */",
+               getLLVMStyleWithColumns(25));
+}
+
+TEST_F(FormatTest, SplitsUTF8Strings) {
+  EXPECT_EQ(
+      "\"Однажды, в \"\n"
+      "\"студёную \"\n"
+      "\"зимнюю \"\n"
+      "\"пору,\"",
+      format("\"Однажды, в студёную зимнюю пору,\"",
+             getLLVMStyleWithColumns(13)));
+  EXPECT_EQ("\"一 二 三 四 \"\n"
+            "\"五 六 七 八 \"\n"
+            "\"九 十\"",
+            format("\"一 二 三 四 五 六 七 八 九 十\"",
+                   getLLVMStyleWithColumns(10)));
+}
+
+TEST_F(FormatTest, SplitsUTF8LineComments) {
+  EXPECT_EQ("// Я из лесу\n"
+            "// вышел; был\n"
+            "// сильный\n"
+            "// мороз.",
+            format("// Я из лесу вышел; был сильный мороз.",
+                   getLLVMStyleWithColumns(13)));
+  EXPECT_EQ("// 一二三\n"
+            "// 四五六七\n"
+            "// 八\n"
+            "// 九 十",
+            format("// 一二三 四五六七 八  九 十", getLLVMStyleWithColumns(6)));
+}
+
+TEST_F(FormatTest, SplitsUTF8BlockComments) {
+  EXPECT_EQ("/* Гляжу,\n"
+            " * поднимается\n"
+            " * медленно в\n"
+            " * гору\n"
+            " * Лошадка,\n"
+            " * везущая\n"
+            " * хворосту\n"
+            " * воз. */",
+            format("/* Гляжу, поднимается медленно в гору\n"
+                   " * Лошадка, везущая хворосту воз. */",
+                   getLLVMStyleWithColumns(13)));
+  EXPECT_EQ("/* 一二三\n"
+            " * 四五六七\n"
+            " * 八\n"
+            " * 九 十\n"
+            " */",
+            format("/* 一二三 四五六七 八  九 十 */", getLLVMStyleWithColumns(6)));
+  EXPECT_EQ("/* 𝓣𝓮𝓼𝓽 𝔣𝔬𝔲𝔯\n"
+            " * 𝕓𝕪𝕥𝕖\n"
+            " * 𝖀𝕿𝕱-𝟠 */",
+            format("/* 𝓣𝓮𝓼𝓽 𝔣𝔬𝔲𝔯 𝕓𝕪𝕥𝕖 𝖀𝕿𝕱-𝟠 */", getLLVMStyleWithColumns(12)));
+}
+
+#endif
 
 } // end namespace tooling
 } // end namespace clang

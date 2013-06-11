@@ -5140,9 +5140,11 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
   QualType lhptee, rhptee;
 
   // Get the pointee types.
+  bool IsBlockPointer = false;
   if (const BlockPointerType *LHSBTy = LHSTy->getAs<BlockPointerType>()) {
     lhptee = LHSBTy->getPointeeType();
     rhptee = RHSTy->castAs<BlockPointerType>()->getPointeeType();
+    IsBlockPointer = true;
   } else {
     lhptee = LHSTy->castAs<PointerType>()->getPointeeType();
     rhptee = RHSTy->castAs<PointerType>()->getPointeeType();
@@ -5184,7 +5186,10 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
 
   // The pointer types are compatible.
   QualType ResultTy = CompositeTy.withCVRQualifiers(MergedCVRQual);
-  ResultTy = S.Context.getPointerType(ResultTy);
+  if (IsBlockPointer)
+    ResultTy = S.Context.getBlockPointerType(ResultTy);
+  else
+    ResultTy = S.Context.getPointerType(ResultTy);
 
   LHS = S.ImpCastExprToType(LHS.take(), ResultTy, CK_BitCast);
   RHS = S.ImpCastExprToType(RHS.take(), ResultTy, CK_BitCast);
@@ -6442,12 +6447,19 @@ QualType Sema::CheckVectorOperands(ExprResult &LHS, ExprResult &RHS,
         return LHSType;
       }
     }
-    if (EltTy->isRealFloatingType() && RHSType->isScalarType() &&
-        RHSType->isRealFloatingType()) {
-      int order = Context.getFloatingTypeOrder(EltTy, RHSType);
-      if (order > 0)
-        RHS = ImpCastExprToType(RHS.take(), EltTy, CK_FloatingCast);
-      if (order >= 0) {
+    if (EltTy->isRealFloatingType() && RHSType->isScalarType()) {
+      if (RHSType->isRealFloatingType()) {
+        int order = Context.getFloatingTypeOrder(EltTy, RHSType);
+        if (order > 0)
+          RHS = ImpCastExprToType(RHS.take(), EltTy, CK_FloatingCast);
+        if (order >= 0) {
+          RHS = ImpCastExprToType(RHS.take(), LHSType, CK_VectorSplat);
+          if (swapped) std::swap(RHS, LHS);
+          return LHSType;
+        }
+      }
+      if (RHSType->isIntegralType(Context)) {
+        RHS = ImpCastExprToType(RHS.take(), EltTy, CK_IntegralToFloating);
         RHS = ImpCastExprToType(RHS.take(), LHSType, CK_VectorSplat);
         if (swapped) std::swap(RHS, LHS);
         return LHSType;
@@ -7290,6 +7302,45 @@ static void diagnoseObjCLiteralComparison(Sema &S, SourceLocation Loc,
   }
 }
 
+static void diagnoseLogicalNotOnLHSofComparison(Sema &S, ExprResult &LHS,
+                                                ExprResult &RHS,
+                                                SourceLocation Loc,
+                                                unsigned OpaqueOpc) {
+  // This checking requires bools.
+  if (!S.getLangOpts().Bool) return;
+
+  // Check that left hand side is !something.
+  UnaryOperator *UO = dyn_cast<UnaryOperator>(LHS.get());
+  if (!UO || UO->getOpcode() != UO_LNot) return;
+
+  // Only check if the right hand side is non-bool arithmetic type.
+  if (RHS.get()->getType()->isBooleanType()) return;
+
+  // Make sure that the something in !something is not bool.
+  Expr *SubExpr = UO->getSubExpr()->IgnoreImpCasts();
+  if (SubExpr->getType()->isBooleanType()) return;
+
+  // Emit warning.
+  S.Diag(UO->getOperatorLoc(), diag::warn_logical_not_on_lhs_of_comparison)
+      << Loc;
+
+  // First note suggest !(x < y)
+  SourceLocation FirstOpen = SubExpr->getLocStart();
+  SourceLocation FirstClose = RHS.get()->getLocEnd();
+  FirstClose = S.getPreprocessor().getLocForEndOfToken(FirstClose);
+  S.Diag(UO->getOperatorLoc(), diag::note_logical_not_fix)
+      << FixItHint::CreateInsertion(FirstOpen, "(")
+      << FixItHint::CreateInsertion(FirstClose, ")");
+
+  // Second note suggests (!x) < y
+  SourceLocation SecondOpen = LHS.get()->getLocStart();
+  SourceLocation SecondClose = LHS.get()->getLocEnd();
+  SecondClose = S.getPreprocessor().getLocForEndOfToken(SecondClose);
+  S.Diag(UO->getOperatorLoc(), diag::note_logical_not_silence_with_parens)
+      << FixItHint::CreateInsertion(SecondOpen, "(")
+      << FixItHint::CreateInsertion(SecondClose, ")");
+}
+
 // C99 6.5.8, C++ [expr.rel]
 QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
                                     SourceLocation Loc, unsigned OpaqueOpc,
@@ -7310,6 +7361,7 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
   Expr *RHSStripped = RHS.get()->IgnoreParenImpCasts();
 
   checkEnumComparison(*this, Loc, LHS.get(), RHS.get());
+  diagnoseLogicalNotOnLHSofComparison(*this, LHS, RHS, Loc, OpaqueOpc);
 
   if (!LHSType->hasFloatingRepresentation() &&
       !(LHSType->isBlockPointerType() && IsRelational) &&
@@ -8405,7 +8457,7 @@ static QualType CheckAddressOfOperand(Sema &S, ExprResult &OrigOp,
       return QualType();
     // Materialize the temporary as an lvalue so that we can take its address.
     OrigOp = op = new (S.Context)
-        MaterializeTemporaryExpr(op->getType(), OrigOp.take(), true);
+        MaterializeTemporaryExpr(op->getType(), OrigOp.take(), true, 0);
   } else if (isa<ObjCSelectorExpr>(op)) {
     return S.Context.getPointerType(op->getType());
   } else if (lval == Expr::LV_MemberFunction) {
@@ -10059,11 +10111,7 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
       FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
       EPI.TypeQuals = 0; // FIXME: silently?
       EPI.ExtInfo = Ext;
-      BlockTy =
-        Context.getFunctionType(RetTy,
-                                ArrayRef<QualType>(FPT->arg_type_begin(),
-                                                   FPT->getNumArgs()),
-                                EPI);
+      BlockTy = Context.getFunctionType(RetTy, FPT->getArgTypes(), EPI);
     }
 
   // If we don't have a function type, just build one from nothing.
@@ -12232,11 +12280,8 @@ ExprResult RebuildUnknownAnyExpr::VisitCallExpr(CallExpr *E) {
 
   // Rebuild the function type, replacing the result type with DestType.
   if (const FunctionProtoType *Proto = dyn_cast<FunctionProtoType>(FnType))
-    DestType =
-      S.Context.getFunctionType(DestType,
-                                ArrayRef<QualType>(Proto->arg_type_begin(),
-                                                   Proto->getNumArgs()),
-                                Proto->getExtProtoInfo());
+    DestType = S.Context.getFunctionType(DestType, Proto->getArgTypes(),
+                                         Proto->getExtProtoInfo());
   else
     DestType = S.Context.getFunctionNoProtoType(DestType,
                                                 FnType->getExtInfo());

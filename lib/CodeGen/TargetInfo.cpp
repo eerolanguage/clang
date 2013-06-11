@@ -503,8 +503,16 @@ bool IsX86_MMXType(llvm::Type *IRType) {
 static llvm::Type* X86AdjustInlineAsmType(CodeGen::CodeGenFunction &CGF,
                                           StringRef Constraint,
                                           llvm::Type* Ty) {
-  if ((Constraint == "y" || Constraint == "&y") && Ty->isVectorTy())
+  if ((Constraint == "y" || Constraint == "&y") && Ty->isVectorTy()) {
+    if (cast<llvm::VectorType>(Ty)->getBitWidth() != 64) {
+      // Invalid MMX constraint
+      return 0;
+    }
+
     return llvm::Type::getX86_MMXTy(CGF.getLLVMContext());
+  }
+
+  // No operation needed
   return Ty;
 }
 
@@ -2476,7 +2484,8 @@ llvm::Value *X86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
     // FIXME: Cleanup.
     assert(AI.isDirect() && "Unexpected ABI info for mixed regs");
     llvm::StructType *ST = cast<llvm::StructType>(AI.getCoerceToType());
-    llvm::Value *Tmp = CGF.CreateTempAlloca(ST);
+    llvm::Value *Tmp = CGF.CreateMemTemp(Ty);
+    Tmp = CGF.Builder.CreateBitCast(Tmp, ST->getPointerTo());
     assert(ST->getNumElements() == 2 && "Unexpected ABI info for mixed regs");
     llvm::Type *TyLo = ST->getElementType(0);
     llvm::Type *TyHi = ST->getElementType(1);
@@ -2500,6 +2509,18 @@ llvm::Value *X86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
     RegAddr = CGF.Builder.CreateGEP(RegAddr, gp_offset);
     RegAddr = CGF.Builder.CreateBitCast(RegAddr,
                                         llvm::PointerType::getUnqual(LTy));
+
+    // Copy to a temporary if necessary to ensure the appropriate alignment.
+    std::pair<CharUnits, CharUnits> SizeAlign =
+        CGF.getContext().getTypeInfoInChars(Ty);
+    uint64_t TySize = SizeAlign.first.getQuantity();
+    unsigned TyAlign = SizeAlign.second.getQuantity();
+    if (TyAlign > 8) {
+      RegAddr = CGF.Builder.CreateGEP(RegAddr, gp_offset);
+      llvm::Value *Tmp = CGF.CreateMemTemp(Ty);
+      CGF.Builder.CreateMemCpy(Tmp, RegAddr, TySize, 8, false);
+      RegAddr = Tmp;
+    }
   } else if (neededSSE == 1) {
     RegAddr = CGF.Builder.CreateGEP(RegAddr, fp_offset);
     RegAddr = CGF.Builder.CreateBitCast(RegAddr,
@@ -2513,9 +2534,9 @@ llvm::Value *X86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
     llvm::Type *DoubleTy = CGF.DoubleTy;
     llvm::Type *DblPtrTy =
       llvm::PointerType::getUnqual(DoubleTy);
-    llvm::StructType *ST = llvm::StructType::get(DoubleTy,
-                                                       DoubleTy, NULL);
-    llvm::Value *V, *Tmp = CGF.CreateTempAlloca(ST);
+    llvm::StructType *ST = llvm::StructType::get(DoubleTy, DoubleTy, NULL);
+    llvm::Value *V, *Tmp = CGF.CreateMemTemp(Ty);
+    Tmp = CGF.Builder.CreateBitCast(Tmp, ST->getPointerTo());
     V = CGF.Builder.CreateLoad(CGF.Builder.CreateBitCast(RegAddrLo,
                                                          DblPtrTy));
     CGF.Builder.CreateStore(V, CGF.Builder.CreateStructGEP(Tmp, 0));
@@ -5332,8 +5353,52 @@ SparcV9ABIInfo::classifyType(QualType Ty, unsigned SizeLimit) const {
 
 llvm::Value *SparcV9ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
                                        CodeGenFunction &CGF) const {
-  // FIXME: Implement with va_arg.
-  return 0;
+  ABIArgInfo AI = classifyType(Ty, 16 * 8);
+  llvm::Type *ArgTy = CGT.ConvertType(Ty);
+  if (AI.canHaveCoerceToType() && !AI.getCoerceToType())
+    AI.setCoerceToType(ArgTy);
+
+  llvm::Type *BPP = CGF.Int8PtrPtrTy;
+  CGBuilderTy &Builder = CGF.Builder;
+  llvm::Value *VAListAddrAsBPP = Builder.CreateBitCast(VAListAddr, BPP, "ap");
+  llvm::Value *Addr = Builder.CreateLoad(VAListAddrAsBPP, "ap.cur");
+  llvm::Type *ArgPtrTy = llvm::PointerType::getUnqual(ArgTy);
+  llvm::Value *ArgAddr;
+  unsigned Stride;
+
+  switch (AI.getKind()) {
+  case ABIArgInfo::Expand:
+    llvm_unreachable("Unsupported ABI kind for va_arg");
+
+  case ABIArgInfo::Extend:
+    Stride = 8;
+    ArgAddr = Builder
+      .CreateConstGEP1_32(Addr, 8 - getDataLayout().getTypeAllocSize(ArgTy),
+                          "extend");
+    break;
+
+  case ABIArgInfo::Direct:
+    Stride = getDataLayout().getTypeAllocSize(AI.getCoerceToType());
+    ArgAddr = Addr;
+    break;
+
+  case ABIArgInfo::Indirect:
+    Stride = 8;
+    ArgAddr = Builder.CreateBitCast(Addr,
+                                    llvm::PointerType::getUnqual(ArgPtrTy),
+                                    "indirect");
+    ArgAddr = Builder.CreateLoad(ArgAddr, "indirect.arg");
+    break;
+
+  case ABIArgInfo::Ignore:
+    return llvm::UndefValue::get(ArgPtrTy);
+  }
+
+  // Update VAList.
+  Addr = Builder.CreateConstGEP1_32(Addr, Stride, "ap.next");
+  Builder.CreateStore(Addr, VAListAddrAsBPP);
+
+  return Builder.CreatePointerCast(ArgAddr, ArgPtrTy, "arg.addr");
 }
 
 void SparcV9ABIInfo::computeInfo(CGFunctionInfo &FI) const {

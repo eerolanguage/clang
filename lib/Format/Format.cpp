@@ -96,6 +96,8 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     IO.mapOptional("MaxEmptyLinesToKeep", Style.MaxEmptyLinesToKeep);
     IO.mapOptional("ObjCSpaceBeforeProtocolList",
                    Style.ObjCSpaceBeforeProtocolList);
+    IO.mapOptional("PenaltyBreakComment", Style.PenaltyBreakComment);
+    IO.mapOptional("PenaltyBreakString", Style.PenaltyBreakString);
     IO.mapOptional("PenaltyExcessCharacter", Style.PenaltyExcessCharacter);
     IO.mapOptional("PenaltyReturnTypeOnItsOwnLine",
                    Style.PenaltyReturnTypeOnItsOwnLine);
@@ -130,6 +132,8 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.IndentCaseLabels = false;
   LLVMStyle.MaxEmptyLinesToKeep = 1;
   LLVMStyle.ObjCSpaceBeforeProtocolList = true;
+  LLVMStyle.PenaltyBreakComment = 45;
+  LLVMStyle.PenaltyBreakString = 1000;
   LLVMStyle.PenaltyExcessCharacter = 1000000;
   LLVMStyle.PenaltyReturnTypeOnItsOwnLine = 75;
   LLVMStyle.PointerBindsToType = false;
@@ -157,6 +161,8 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.IndentCaseLabels = true;
   GoogleStyle.MaxEmptyLinesToKeep = 1;
   GoogleStyle.ObjCSpaceBeforeProtocolList = false;
+  GoogleStyle.PenaltyBreakComment = 45;
+  GoogleStyle.PenaltyBreakString = 1000;
   GoogleStyle.PenaltyExcessCharacter = 1000000;
   GoogleStyle.PenaltyReturnTypeOnItsOwnLine = 200;
   GoogleStyle.PointerBindsToType = true;
@@ -243,10 +249,11 @@ public:
   UnwrappedLineFormatter(const FormatStyle &Style, SourceManager &SourceMgr,
                          const AnnotatedLine &Line, unsigned FirstIndent,
                          const FormatToken *RootToken,
-                         WhitespaceManager &Whitespaces)
+                         WhitespaceManager &Whitespaces,
+                         encoding::Encoding Encoding)
       : Style(Style), SourceMgr(SourceMgr), Line(Line),
         FirstIndent(FirstIndent), RootToken(RootToken),
-        Whitespaces(Whitespaces), Count(0) {}
+        Whitespaces(Whitespaces), Count(0), Encoding(Encoding) {}
 
   /// \brief Formats an \c UnwrappedLine.
   void format(const AnnotatedLine *NextLine) {
@@ -484,7 +491,7 @@ private:
                                  State.NextToken->WhitespaceRange.getEnd()) -
                              SourceMgr.getSpellingColumnNumber(
                                  State.NextToken->WhitespaceRange.getBegin());
-      State.Column += WhitespaceLength + State.NextToken->TokenLength;
+      State.Column += WhitespaceLength + State.NextToken->CodePointCount;
       State.NextToken = State.NextToken->Next;
       return 0;
     }
@@ -520,11 +527,11 @@ private:
                   Line.StartsDefinition)) {
         State.Column = State.Stack.back().Indent;
       } else if (Current.Type == TT_ObjCSelectorName) {
-        if (State.Stack.back().ColonPos > Current.TokenLength) {
-          State.Column = State.Stack.back().ColonPos - Current.TokenLength;
+        if (State.Stack.back().ColonPos > Current.CodePointCount) {
+          State.Column = State.Stack.back().ColonPos - Current.CodePointCount;
         } else {
           State.Column = State.Stack.back().Indent;
-          State.Stack.back().ColonPos = State.Column + Current.TokenLength;
+          State.Stack.back().ColonPos = State.Column + Current.CodePointCount;
         }
       } else if (Current.Type == TT_StartOfName ||
                  Previous.isOneOf(tok::coloncolon, tok::equal) ||
@@ -560,7 +567,7 @@ private:
       State.Stack.back().LastSpace = State.Column;
       if (Current.isOneOf(tok::arrow, tok::period) &&
           Current.Type != TT_DesignatedInitializerPeriod)
-        State.Stack.back().LastSpace += Current.TokenLength;
+        State.Stack.back().LastSpace += Current.CodePointCount;
       State.StartOfLineLevel = State.ParenLevel;
       State.LowestCallLevel = State.ParenLevel;
 
@@ -595,8 +602,8 @@ private:
         State.Stack.back().VariablePos = State.Column;
         // Move over * and & if they are bound to the variable name.
         const FormatToken *Tok = &Previous;
-        while (Tok && State.Stack.back().VariablePos >= Tok->TokenLength) {
-          State.Stack.back().VariablePos -= Tok->TokenLength;
+        while (Tok && State.Stack.back().VariablePos >= Tok->CodePointCount) {
+          State.Stack.back().VariablePos -= Tok->CodePointCount;
           if (Tok->SpacesRequiredBefore != 0)
             break;
           Tok = Tok->Previous;
@@ -614,12 +621,12 @@ private:
       if (Current.Type == TT_ObjCSelectorName &&
           State.Stack.back().ColonPos == 0) {
         if (State.Stack.back().Indent + Current.LongestObjCSelectorName >
-            State.Column + Spaces + Current.TokenLength)
+            State.Column + Spaces + Current.CodePointCount)
           State.Stack.back().ColonPos =
               State.Stack.back().Indent + Current.LongestObjCSelectorName;
         else
           State.Stack.back().ColonPos =
-              State.Column + Spaces + Current.TokenLength;
+              State.Column + Spaces + Current.CodePointCount;
       }
 
       if (Previous.opensScope() && Previous.Type != TT_ObjCMethodExpr &&
@@ -671,7 +678,8 @@ private:
       State.LowestCallLevel = std::min(State.LowestCallLevel, State.ParenLevel);
       if (Line.Type == LT_BuilderTypeCall && State.ParenLevel == 0)
         State.Stack.back().StartOfFunctionCall =
-            Current.LastInChainOfCalls ? 0 : State.Column + Current.TokenLength;
+            Current.LastInChainOfCalls ? 0
+                                       : State.Column + Current.CodePointCount;
     }
     if (Current.Type == TT_CtorInitializerColon) {
       // Indent 2 from the column, so:
@@ -779,7 +787,7 @@ private:
       State.StartOfStringLiteral = 0;
     }
 
-    State.Column += Current.TokenLength;
+    State.Column += Current.CodePointCount;
 
     State.NextToken = State.NextToken->Next;
 
@@ -798,7 +806,7 @@ private:
                                 bool DryRun) {
     unsigned UnbreakableTailLength = Current.UnbreakableTailLength;
     llvm::OwningPtr<BreakableToken> Token;
-    unsigned StartColumn = State.Column - Current.TokenLength;
+    unsigned StartColumn = State.Column - Current.CodePointCount;
     unsigned OriginalStartColumn =
         SourceMgr.getSpellingColumnNumber(Current.getStartOfNonWhitespace()) -
         1;
@@ -811,15 +819,16 @@ private:
       if (!LiteralData || *LiteralData != '"')
         return 0;
 
-      Token.reset(new BreakableStringLiteral(Current, StartColumn));
+      Token.reset(new BreakableStringLiteral(Current, StartColumn, Encoding));
     } else if (Current.Type == TT_BlockComment) {
       BreakableBlockComment *BBC = new BreakableBlockComment(
-          Style, Current, StartColumn, OriginalStartColumn, !Current.Previous);
+          Style, Current, StartColumn, OriginalStartColumn, !Current.Previous,
+          Encoding);
       Token.reset(BBC);
     } else if (Current.Type == TT_LineComment &&
                (Current.Previous == NULL ||
                 Current.Previous->Type != TT_ImplicitStringLiteral)) {
-      Token.reset(new BreakableLineComment(Current, StartColumn));
+      Token.reset(new BreakableLineComment(Current, StartColumn, Encoding));
     } else {
       return 0;
     }
@@ -837,27 +846,35 @@ private:
                                        Whitespaces);
       }
       unsigned TailOffset = 0;
-      unsigned RemainingTokenLength =
-          Token->getLineLengthAfterSplit(LineIndex, TailOffset);
-      while (RemainingTokenLength > RemainingSpace) {
+      unsigned RemainingTokenColumns = Token->getLineLengthAfterSplit(
+          LineIndex, TailOffset, StringRef::npos);
+      while (RemainingTokenColumns > RemainingSpace) {
         BreakableToken::Split Split =
             Token->getSplit(LineIndex, TailOffset, getColumnLimit());
         if (Split.first == StringRef::npos)
           break;
         assert(Split.first != 0);
-        unsigned NewRemainingTokenLength = Token->getLineLengthAfterSplit(
-            LineIndex, TailOffset + Split.first + Split.second);
-        assert(NewRemainingTokenLength < RemainingTokenLength);
+        unsigned NewRemainingTokenColumns = Token->getLineLengthAfterSplit(
+            LineIndex, TailOffset + Split.first + Split.second,
+            StringRef::npos);
+        assert(NewRemainingTokenColumns < RemainingTokenColumns);
         if (!DryRun) {
           Token->insertBreak(LineIndex, TailOffset, Split, Line.InPPDirective,
                              Whitespaces);
         }
+        Penalty += Current.is(tok::string_literal) ? Style.PenaltyBreakString
+                                                   : Style.PenaltyBreakComment;
+        unsigned ColumnsUsed =
+            Token->getLineLengthAfterSplit(LineIndex, TailOffset, Split.first);
+        if (ColumnsUsed > getColumnLimit()) {
+          Penalty +=
+              Style.PenaltyExcessCharacter * (ColumnsUsed - getColumnLimit());
+        }
         TailOffset += Split.first + Split.second;
-        RemainingTokenLength = NewRemainingTokenLength;
-        Penalty += Style.PenaltyExcessCharacter;
+        RemainingTokenColumns = NewRemainingTokenColumns;
         BreakInserted = true;
       }
-      PositionAfterLastLineInToken = RemainingTokenLength;
+      PositionAfterLastLineInToken = RemainingTokenColumns;
     }
 
     if (BreakInserted) {
@@ -1080,13 +1097,16 @@ private:
   // Increasing count of \c StateNode items we have created. This is used
   // to create a deterministic order independent of the container.
   unsigned Count;
+  encoding::Encoding Encoding;
 };
 
 class FormatTokenLexer {
 public:
-  FormatTokenLexer(Lexer &Lex, SourceManager &SourceMgr)
+  FormatTokenLexer(Lexer &Lex, SourceManager &SourceMgr,
+                   encoding::Encoding Encoding)
       : FormatTok(NULL), GreaterStashed(false), TrailingWhitespace(0), Lex(Lex),
-        SourceMgr(SourceMgr), IdentTable(Lex.getLangOpts()) {
+        SourceMgr(SourceMgr), IdentTable(Lex.getLangOpts()),
+        Encoding(Encoding) {
     Lex.SetKeepWhitespaceMode(true);
   }
 
@@ -1111,7 +1131,8 @@ private:
           FormatTok->Tok.getLocation().getLocWithOffset(1);
       FormatTok->WhitespaceRange =
           SourceRange(GreaterLocation, GreaterLocation);
-      FormatTok->TokenLength = 1;
+      FormatTok->TokenText = ">";
+      FormatTok->CodePointCount = 1;
       GreaterStashed = false;
       return FormatTok;
     }
@@ -1130,28 +1151,13 @@ private:
       unsigned Newlines = Text.count('\n');
       if (Newlines > 0)
         FormatTok->LastNewlineOffset = WhitespaceLength + Text.rfind('\n') + 1;
-      unsigned EscapedNewlines = Text.count("\\\n");
       FormatTok->NewlinesBefore += Newlines;
+      unsigned EscapedNewlines = Text.count("\\\n");
       FormatTok->HasUnescapedNewline |= EscapedNewlines != Newlines;
       WhitespaceLength += FormatTok->Tok.getLength();
 
-      if (FormatTok->Tok.is(tok::eof)) {
-        FormatTok->WhitespaceRange =
-            SourceRange(WhitespaceStart,
-                        WhitespaceStart.getLocWithOffset(WhitespaceLength));
-        return FormatTok;
-      }
       Lex.LexFromRawLexer(FormatTok->Tok);
       Text = rawTokenText(FormatTok->Tok);
-    }
-
-    // Now FormatTok is the next non-whitespace token.
-    FormatTok->TokenLength = Text.size();
-
-    TrailingWhitespace = 0;
-    if (FormatTok->Tok.is(tok::comment)) {
-      TrailingWhitespace = Text.size() - Text.rtrim().size();
-      FormatTok->TokenLength -= TrailingWhitespace;
     }
 
     // In case the token starts with escaped newlines, we want to
@@ -1160,31 +1166,33 @@ private:
     // FIXME: What do we want to do with other escaped spaces, and escaped
     // spaces or newlines in the middle of tokens?
     // FIXME: Add a more explicit test.
-    unsigned i = 0;
-    while (i + 1 < Text.size() && Text[i] == '\\' && Text[i + 1] == '\n') {
+    while (Text.size() > 1 && Text[0] == '\\' && Text[1] == '\n') {
       // FIXME: ++FormatTok->NewlinesBefore is missing...
       WhitespaceLength += 2;
-      FormatTok->TokenLength -= 2;
-      i += 2;
+      Text = Text.substr(2);
     }
 
-    if (FormatTok->Tok.is(tok::raw_identifier)) {
+    TrailingWhitespace = 0;
+    if (FormatTok->Tok.is(tok::comment)) {
+      StringRef UntrimmedText = Text;
+      Text = Text.rtrim();
+      TrailingWhitespace = UntrimmedText.size() - Text.size();
+    } else if (FormatTok->Tok.is(tok::raw_identifier)) {
       IdentifierInfo &Info = IdentTable.get(Text);
       FormatTok->Tok.setIdentifierInfo(&Info);
       FormatTok->Tok.setKind(Info.getTokenID());
-    }
-
-    if (FormatTok->Tok.is(tok::greatergreater)) {
+    } else if (FormatTok->Tok.is(tok::greatergreater)) {
       FormatTok->Tok.setKind(tok::greater);
-      FormatTok->TokenLength = 1;
+      Text = Text.substr(0, 1);
       GreaterStashed = true;
     }
 
+    // Now FormatTok is the next non-whitespace token.
+    FormatTok->TokenText = Text;
+    FormatTok->CodePointCount = encoding::getCodePointCount(Text, Encoding);
+
     FormatTok->WhitespaceRange = SourceRange(
         WhitespaceStart, WhitespaceStart.getLocWithOffset(WhitespaceLength));
-    FormatTok->TokenText = StringRef(
-        SourceMgr.getCharacterData(FormatTok->getStartOfNonWhitespace()),
-        FormatTok->TokenLength);
     return FormatTok;
   }
 
@@ -1194,6 +1202,7 @@ private:
   Lexer &Lex;
   SourceManager &SourceMgr;
   IdentifierTable IdentTable;
+  encoding::Encoding Encoding;
   llvm::SpecificBumpPtrAllocator<FormatToken> Allocator;
   SmallVector<FormatToken *, 16> Tokens;
 
@@ -1209,17 +1218,22 @@ public:
   Formatter(const FormatStyle &Style, Lexer &Lex, SourceManager &SourceMgr,
             const std::vector<CharSourceRange> &Ranges)
       : Style(Style), Lex(Lex), SourceMgr(SourceMgr),
-        Whitespaces(SourceMgr, Style), Ranges(Ranges) {}
+        Whitespaces(SourceMgr, Style), Ranges(Ranges),
+        Encoding(encoding::detectEncoding(Lex.getBuffer())) {
+    DEBUG(llvm::dbgs()
+          << "File encoding: "
+          << (Encoding == encoding::Encoding_UTF8 ? "UTF8" : "unknown")
+          << "\n");
+  }
 
   virtual ~Formatter() {}
 
   tooling::Replacements format() {
-    FormatTokenLexer Tokens(Lex, SourceMgr);
+    FormatTokenLexer Tokens(Lex, SourceMgr, Encoding);
 
     UnwrappedLineParser Parser(Style, Tokens.lex(), *this);
     bool StructuralError = Parser.parse();
-    TokenAnnotator Annotator(Style, SourceMgr, Lex,
-                             Tokens.getIdentTable().get("in"));
+    TokenAnnotator Annotator(Style, Tokens.getIdentTable().get("in"));
     for (unsigned i = 0, e = AnnotatedLines.size(); i != e; ++i) {
       Annotator.annotate(AnnotatedLines[i]);
     }
@@ -1290,7 +1304,7 @@ public:
               1;
         }
         UnwrappedLineFormatter Formatter(Style, SourceMgr, TheLine, Indent,
-                                         TheLine.First, Whitespaces);
+                                         TheLine.First, Whitespaces, Encoding);
         Formatter.format(I + 1 != E ? &*(I + 1) : NULL);
         IndentForLevel[TheLine.Level] = LevelIndent;
         PreviousLineWasTouched = true;
@@ -1556,7 +1570,7 @@ private:
     CharSourceRange LineRange = CharSourceRange::getCharRange(
         First->WhitespaceRange.getBegin().getLocWithOffset(
             First->LastNewlineOffset),
-        Last->Tok.getLocation().getLocWithOffset(Last->TokenLength - 1));
+        Last->Tok.getLocation().getLocWithOffset(Last->TokenText.size() - 1));
     return touchesRanges(LineRange);
   }
 
@@ -1616,6 +1630,8 @@ private:
   WhitespaceManager Whitespaces;
   std::vector<CharSourceRange> Ranges;
   std::vector<AnnotatedLine> AnnotatedLines;
+
+  encoding::Encoding Encoding;
 };
 
 tooling::Replacements reformat(const FormatStyle &Style, Lexer &Lex,

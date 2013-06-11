@@ -1662,6 +1662,19 @@ void Sema::DefaultSynthesizeProperties(Scope *S, ObjCImplDecl* IMPDecl,
   
   for (unsigned i = 0, e = PropertyOrder.size(); i != e; i++) {
     ObjCPropertyDecl *Prop = PropertyOrder[i];
+    // Is there a matching property synthesize/dynamic?
+    if (Prop->isInvalidDecl() ||
+        Prop->getPropertyImplementation() == ObjCPropertyDecl::Optional)
+      continue;
+    // Property may have been synthesized by user.
+    if (IMPDecl->FindPropertyImplDecl(Prop->getIdentifier()))
+      continue;
+    if (IMPDecl->getInstanceMethod(Prop->getGetterName())) {
+      if (Prop->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_readonly)
+        continue;
+      if (IMPDecl->getInstanceMethod(Prop->getSetterName()))
+        continue;
+    }
     // If property to be implemented in the super class, ignore.
     if (SuperPropMap[Prop->getIdentifier()]) {
       ObjCPropertyDecl *PropInSuperClass = SuperPropMap[Prop->getIdentifier()];
@@ -1676,28 +1689,15 @@ void Sema::DefaultSynthesizeProperties(Scope *S, ObjCImplDecl* IMPDecl,
       }
       continue;
     }
-    // Is there a matching property synthesize/dynamic?
-    if (Prop->isInvalidDecl() ||
-        Prop->getPropertyImplementation() == ObjCPropertyDecl::Optional)
-      continue;
     if (ObjCPropertyImplDecl *PID =
-          IMPDecl->FindPropertyImplIvarDecl(Prop->getIdentifier())) {
+        IMPDecl->FindPropertyImplIvarDecl(Prop->getIdentifier())) {
       if (PID->getPropertyDecl() != Prop) {
         Diag(Prop->getLocation(), diag::warn_no_autosynthesis_shared_ivar_property)
-          << Prop->getIdentifier()->getName();
+        << Prop->getIdentifier()->getName();
         if (!PID->getLocation().isInvalid())
           Diag(PID->getLocation(), diag::note_property_synthesize);
       }
       continue;
-    }
-    // Property may have been synthesized by user.
-    if (IMPDecl->FindPropertyImplDecl(Prop->getIdentifier()))
-      continue;
-    if (IMPDecl->getInstanceMethod(Prop->getGetterName())) {
-      if (Prop->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_readonly)
-        continue;
-      if (IMPDecl->getInstanceMethod(Prop->getSetterName()))
-        continue;
     }
     if (isa<ObjCProtocolDecl>(Prop->getDeclContext())) {
       // We won't auto-synthesize properties declared in protocols.

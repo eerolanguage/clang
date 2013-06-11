@@ -1311,7 +1311,7 @@ Sema::CheckBaseSpecifier(CXXRecordDecl *Class,
   assert(BaseDecl && "Record type has no declaration");
   BaseDecl = BaseDecl->getDefinition();
   assert(BaseDecl && "Base type is not incomplete, but has no definition");
-  CXXRecordDecl * CXXBaseDecl = cast<CXXRecordDecl>(BaseDecl);
+  CXXRecordDecl *CXXBaseDecl = cast<CXXRecordDecl>(BaseDecl);
   assert(CXXBaseDecl && "Base type is not a C++ type");
 
   // C++ [class]p3:
@@ -3806,10 +3806,17 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
 
     CXXDestructorDecl *Dtor = LookupDestructor(BaseClassDecl);
     assert(Dtor && "No dtor found for BaseClassDecl!");
-    CheckDestructorAccess(ClassDecl->getLocation(), Dtor,
-                          PDiag(diag::err_access_dtor_vbase)
-                            << VBase->getType(),
-                          Context.getTypeDeclType(ClassDecl));
+    if (CheckDestructorAccess(
+            ClassDecl->getLocation(), Dtor,
+            PDiag(diag::err_access_dtor_vbase)
+                << Context.getTypeDeclType(ClassDecl) << VBase->getType(),
+            Context.getTypeDeclType(ClassDecl)) ==
+        AR_accessible) {
+      CheckDerivedToBaseConversion(
+          Context.getTypeDeclType(ClassDecl), VBase->getType(),
+          diag::err_access_dtor_vbase, 0, ClassDecl->getLocation(),
+          SourceRange(), DeclarationName(), 0);
+    }
 
     MarkFunctionReferenced(Location, const_cast<CXXDestructorDecl*>(Dtor));
     DiagnoseUseOfDecl(Dtor, Location);
@@ -8924,7 +8931,12 @@ void Sema::DefineImplicitCopyAssignment(SourceLocation CurrentLocation,
        Field != FieldEnd; ++Field) {
     if (Field->isUnnamedBitfield())
       continue;
-    
+
+    if (Field->isInvalidDecl()) {
+      Invalid = true;
+      continue;
+    }
+
     // Check for members of reference type; we can't copy those.
     if (Field->getType()->isReferenceType()) {
       Diag(ClassDecl->getLocation(), diag::err_uninitialized_member_for_assign)
@@ -9378,6 +9390,11 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
        Field != FieldEnd; ++Field) {
     if (Field->isUnnamedBitfield())
       continue;
+
+    if (Field->isInvalidDecl()) {
+      Invalid = true;
+      continue;
+    }
 
     // Check for members of reference type; we can't move those.
     if (Field->getType()->isReferenceType()) {

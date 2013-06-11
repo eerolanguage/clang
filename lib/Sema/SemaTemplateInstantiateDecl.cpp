@@ -142,6 +142,13 @@ void Sema::InstantiateAttrs(const MultiLevelTemplateArgumentList &TemplateArgs,
         Saved = CurrentInstantiationScope->cloneScopes(OuterMostScope);
       LateAttrs->push_back(LateInstantiatedAttribute(TmplAttr, Saved, New));
     } else {
+      // Allow 'this' within late-parsed attributes.
+      NamedDecl *ND = dyn_cast<NamedDecl>(New);
+      CXXRecordDecl *ThisContext =
+          dyn_cast_or_null<CXXRecordDecl>(ND->getDeclContext());
+      CXXThisScopeRAII ThisScope(*this, ThisContext, /*TypeQuals*/0,
+                                 ND && ND->isCXXInstanceMember());
+
       Attr *NewAttr = sema::instantiateTemplateAttribute(TmplAttr, Context,
                                                          *this, TemplateArgs);
       if (NewAttr)
@@ -1136,9 +1143,7 @@ static QualType adjustFunctionTypeForInstantiation(ASTContext &Context,
   FunctionProtoType::ExtProtoInfo NewEPI = NewFunc->getExtProtoInfo();
   NewEPI.ExtInfo = OrigFunc->getExtInfo();
   return Context.getFunctionType(NewFunc->getResultType(),
-                                 ArrayRef<QualType>(NewFunc->arg_type_begin(),
-                                                    NewFunc->getNumArgs()),
-                                 NewEPI);
+                                 NewFunc->getArgTypes(), NewEPI);
 }
 
 /// Normal class members are of more specific types and therefore
@@ -2449,7 +2454,7 @@ TemplateDeclInstantiator::SubstFunctionType(FunctionDecl *D,
   CXXRecordDecl *ThisContext = 0;
   unsigned ThisTypeQuals = 0;
   if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D)) {
-    ThisContext = Method->getParent();
+    ThisContext = cast<CXXRecordDecl>(Owner);
     ThisTypeQuals = Method->getTypeQualifiers();
   }
   
@@ -2585,8 +2590,7 @@ static void InstantiateExceptionSpec(Sema &SemaRef, FunctionDecl *New,
 
       bool Expand = false;
       bool RetainExpansion = false;
-      Optional<unsigned> NumExpansions
-                                        = PackExpansion->getNumExpansions();
+      Optional<unsigned> NumExpansions = PackExpansion->getNumExpansions();
       if (SemaRef.CheckParameterPacksForExpansion(New->getLocation(),
                                                   SourceRange(),
                                                   Unexpanded,
@@ -2674,9 +2678,7 @@ static void InstantiateExceptionSpec(Sema &SemaRef, FunctionDecl *New,
   EPI.NoexceptExpr = NoexceptExpr;
 
   New->setType(SemaRef.Context.getFunctionType(NewProto->getResultType(),
-                                  ArrayRef<QualType>(NewProto->arg_type_begin(),
-                                                     NewProto->getNumArgs()),
-                                               EPI));
+                                               NewProto->getArgTypes(), EPI));
 }
 
 void Sema::InstantiateExceptionSpec(SourceLocation PointOfInstantiation,
@@ -2693,9 +2695,7 @@ void Sema::InstantiateExceptionSpec(SourceLocation PointOfInstantiation,
     FunctionProtoType::ExtProtoInfo EPI = Proto->getExtProtoInfo();
     EPI.ExceptionSpecType = EST_None;
     Decl->setType(Context.getFunctionType(Proto->getResultType(),
-                                    ArrayRef<QualType>(Proto->arg_type_begin(),
-                                                       Proto->getNumArgs()),
-                                          EPI));
+                                          Proto->getArgTypes(), EPI));
     return;
   }
 
@@ -2774,10 +2774,8 @@ TemplateDeclInstantiator::InitFunctionInstantiation(FunctionDecl *New,
       EPI.ExceptionSpecType = NewEST;
       EPI.ExceptionSpecDecl = New;
       EPI.ExceptionSpecTemplate = ExceptionSpecTemplate;
-      New->setType(SemaRef.Context.getFunctionType(NewProto->getResultType(),
-                                  ArrayRef<QualType>(NewProto->arg_type_begin(),
-                                                     NewProto->getNumArgs()),
-                                                   EPI));
+      New->setType(SemaRef.Context.getFunctionType(
+          NewProto->getResultType(), NewProto->getArgTypes(), EPI));
     } else {
       ::InstantiateExceptionSpec(SemaRef, New, Proto, TemplateArgs);
     }

@@ -3427,7 +3427,7 @@ TreeTransform<Derived>::TransformQualifiedType(TypeLocBuilder &TLB,
       } else {
         // Otherwise, complain about the addition of a qualifier to an
         // already-qualified type.
-        SourceRange R = TLB.getTemporaryTypeLoc(Result).getSourceRange();
+        SourceRange R = T.getUnqualifiedLoc().getSourceRange();
         SemaRef.Diag(R.getBegin(), diag::err_attr_objc_ownership_redundant)
           << Result << R;
 
@@ -7265,18 +7265,7 @@ TreeTransform<Derived>::TransformCXXNullPtrLiteralExpr(
 template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCXXThisExpr(CXXThisExpr *E) {
-  DeclContext *DC = getSema().getFunctionLevelDeclContext();
-  QualType T;
-  if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(DC))
-    T = MD->getThisType(getSema().Context);
-  else if (CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(DC)) {
-    T = getSema().Context.getPointerType(
-          getSema().Context.getRecordType(Record));
-  } else {
-    assert(SemaRef.Context.getDiagnostics().hasErrorOccurred() &&
-           "this in the wrong scope?");
-    return ExprError();
-  }
+  QualType T = getSema().getCurrentThisType();
 
   if (!getDerived().AlwaysRebuild() && T == E->getType()) {
     // Make sure that we capture 'this'.
