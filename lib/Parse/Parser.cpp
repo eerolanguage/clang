@@ -729,6 +729,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
                             GetLookAheadToken(2).is(tok::colon))))
                         goto dont_know; // ugh
   case tok::at:
+  case tok::kw_import:
   case tok::kw_interface:
   case tok::kw_protocol:
   case tok::kw_implementation:

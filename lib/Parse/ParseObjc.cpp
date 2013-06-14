@@ -487,6 +487,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
     
     if (getLangOpts().Eero && !PP.isInLegacyHeader()) { // objc keywords without "@"s
       switch (Tok.getKind()) {
+        case tok::kw_import:
         case tok::kw_optional:
         case tok::kw_required:
         case tok::kw_property:
