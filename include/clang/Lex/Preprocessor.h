@@ -1483,6 +1483,9 @@ public:
   /// \brief A macro is used, update information about macros that need unused
   /// warnings.
   void markMacroAsUsed(MacroInfo *MI);
+  
+  /// For Eero, used to revert keywords to identifiers in "legacy" headers
+  void RevertKeywordToIdentifierIfNeeded(Token &Identifier) const;
 };
 
 /// \brief Abstract base class that describes a handler that will receive

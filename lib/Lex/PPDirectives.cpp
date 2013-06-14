@@ -1462,7 +1462,7 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   // do so now.
   if (SuggestedModule) {
     // Handle non-legacy eero modules
-    if (getLangOpts().Eero && !inLegacyHeader &&
+    if (getLangOpts().Eero && !inLegacyHeader && 
         std::find(SuggestedModule->Requires.begin(),
                   SuggestedModule->Requires.end(), "eero") !=
                       SuggestedModule->Requires.end()) {

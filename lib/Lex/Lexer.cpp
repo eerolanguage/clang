@@ -91,7 +91,7 @@ void Lexer::InitLexer(const char *BufStart, const char *BufPtr,
   Is_PragmaLexer = false;
   CurrentConflictMarkerState = CMK_None;
 
-  Legacy = LS_False;
+  Legacy = LS_Unknown;
 
   // Start of the file is a start of line.
   IsAtStartOfLine = true;
