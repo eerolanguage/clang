@@ -42,6 +42,7 @@
 #include "llvm/Support/Mutex.h"
 #include "llvm/Support/MutexGuard.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/PathV1.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdio>
@@ -966,16 +967,37 @@ public:
   }
 };
 
+class PrecompilePreambleAction : public ASTFrontendAction {
+  ASTUnit &Unit;
+  bool HasEmittedPreamblePCH;
+
+public:
+  explicit PrecompilePreambleAction(ASTUnit &Unit)
+      : Unit(Unit), HasEmittedPreamblePCH(false) {}
+
+  virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
+                                         StringRef InFile);
+  bool hasEmittedPreamblePCH() const { return HasEmittedPreamblePCH; }
+  void setHasEmittedPreamblePCH() { HasEmittedPreamblePCH = true; }
+  virtual bool shouldEraseOutputFiles() { return !hasEmittedPreamblePCH(); }
+
+  virtual bool hasCodeCompletionSupport() const { return false; }
+  virtual bool hasASTFileSupport() const { return false; }
+  virtual TranslationUnitKind getTranslationUnitKind() { return TU_Prefix; }
+};
+
 class PrecompilePreambleConsumer : public PCHGenerator {
   ASTUnit &Unit;
-  unsigned &Hash;                                   
+  unsigned &Hash;
   std::vector<Decl *> TopLevelDecls;
-                                     
+  PrecompilePreambleAction *Action;
+
 public:
-  PrecompilePreambleConsumer(ASTUnit &Unit, const Preprocessor &PP, 
-                             StringRef isysroot, raw_ostream *Out)
-    : PCHGenerator(PP, "", 0, isysroot, Out), Unit(Unit),
-      Hash(Unit.getCurrentTopLevelHashValue()) {
+  PrecompilePreambleConsumer(ASTUnit &Unit, PrecompilePreambleAction *Action,
+                             const Preprocessor &PP, StringRef isysroot,
+                             raw_ostream *Out)
+    : PCHGenerator(PP, "", 0, isysroot, Out, /*AllowASTWithErrors=*/true),
+      Unit(Unit), Hash(Unit.getCurrentTopLevelHashValue()), Action(Action) {
     Hash = 0;
   }
 
@@ -996,7 +1018,7 @@ public:
 
   virtual void HandleTranslationUnit(ASTContext &Ctx) {
     PCHGenerator::HandleTranslationUnit(Ctx);
-    if (!Unit.getDiagnostics().hasErrorOccurred()) {
+    if (hasEmittedPCH()) {
       // Translate the top-level declarations we captured during
       // parsing into declaration IDs in the precompiled
       // preamble. This will allow us to deserialize those top-level
@@ -1004,40 +1026,30 @@ public:
       for (unsigned I = 0, N = TopLevelDecls.size(); I != N; ++I)
         Unit.addTopLevelDeclFromPreamble(
                                       getWriter().getDeclID(TopLevelDecls[I]));
+
+      Action->setHasEmittedPreamblePCH();
     }
   }
 };
 
-class PrecompilePreambleAction : public ASTFrontendAction {
-  ASTUnit &Unit;
+}
 
-public:
-  explicit PrecompilePreambleAction(ASTUnit &Unit) : Unit(Unit) {}
+ASTConsumer *PrecompilePreambleAction::CreateASTConsumer(CompilerInstance &CI,
+                                                         StringRef InFile) {
+  std::string Sysroot;
+  std::string OutputFile;
+  raw_ostream *OS = 0;
+  if (GeneratePCHAction::ComputeASTConsumerArguments(CI, InFile, Sysroot,
+                                                     OutputFile, OS))
+    return 0;
 
-  virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         StringRef InFile) {
-    std::string Sysroot;
-    std::string OutputFile;
-    raw_ostream *OS = 0;
-    if (GeneratePCHAction::ComputeASTConsumerArguments(CI, InFile, Sysroot,
-                                                       OutputFile,
-                                                       OS))
-      return 0;
-    
-    if (!CI.getFrontendOpts().RelocatablePCH)
-      Sysroot.clear();
+  if (!CI.getFrontendOpts().RelocatablePCH)
+    Sysroot.clear();
 
-    CI.getPreprocessor().addPPCallbacks(
-     new MacroDefinitionTrackerPPCallbacks(Unit.getCurrentTopLevelHashValue()));
-    return new PrecompilePreambleConsumer(Unit, CI.getPreprocessor(), Sysroot, 
-                                          OS);
-  }
-
-  virtual bool hasCodeCompletionSupport() const { return false; }
-  virtual bool hasASTFileSupport() const { return false; }
-  virtual TranslationUnitKind getTranslationUnitKind() { return TU_Prefix; }
-};
-
+  CI.getPreprocessor().addPPCallbacks(new MacroDefinitionTrackerPPCallbacks(
+      Unit.getCurrentTopLevelHashValue()));
+  return new PrecompilePreambleConsumer(Unit, this, CI.getPreprocessor(),
+                                        Sysroot, OS);
 }
 
 static bool isNonDriverDiag(const StoredDiagnostic &StoredDiag) {
@@ -1622,9 +1634,9 @@ llvm::MemoryBuffer *ASTUnit::getMainBufferWithPrecompiledPreamble(
   Act->Execute();
   Act->EndSourceFile();
 
-  if (Diagnostics->hasErrorOccurred()) {
-    // There were errors parsing the preamble, so no precompiled header was
-    // generated. Forget that we even tried.
+  if (!Act->hasEmittedPreamblePCH()) {
+    // The preamble PCH failed (e.g. there was a module loading fatal error),
+    // so no precompiled header was generated. Forget that we even tried.
     // FIXME: Should we leave a note for ourselves to try again?
     llvm::sys::Path(FrontendOpts.OutputFile).eraseFromDisk();
     Preamble.clear();

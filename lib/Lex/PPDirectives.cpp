@@ -628,6 +628,10 @@ void Preprocessor::HandleDirective(Token &Result) {
   CurPPLexer->ParsingPreprocessorDirective = true;
   if (CurLexer) CurLexer->SetKeepWhitespaceMode(false);
 
+  bool ImmediatelyAfterTopLevelIfndef =
+      CurPPLexer->MIOpt.getImmediatelyAfterTopLevelIfndef();
+  CurPPLexer->MIOpt.resetImmediatelyAfterTopLevelIfndef();
+
   ++NumDirectives;
 
   // We are about to read a token.  For the multiple-include optimization FA to
@@ -715,7 +719,7 @@ void Preprocessor::HandleDirective(Token &Result) {
 
     // C99 6.10.3 - Macro Replacement.
     case tok::pp_define:
-      return HandleDefineDirective(Result);
+      return HandleDefineDirective(Result, ImmediatelyAfterTopLevelIfndef);
     case tok::pp_undef:
       return HandleUndefDirective(Result);
 
@@ -1785,7 +1789,8 @@ bool Preprocessor::ReadMacroDefinitionArgList(MacroInfo *MI, Token &Tok) {
 
 /// HandleDefineDirective - Implements \#define.  This consumes the entire macro
 /// line then lets the caller lex the next real token.
-void Preprocessor::HandleDefineDirective(Token &DefineTok) {
+void Preprocessor::HandleDefineDirective(Token &DefineTok,
+                                         bool ImmediatelyAfterHeaderGuard) {
   ++NumDefined;
 
   Token MacroNameTok;
@@ -1811,6 +1816,11 @@ void Preprocessor::HandleDefineDirective(Token &DefineTok) {
   // marking each of the identifiers as being used as macro arguments.  Also,
   // check other constraints on the first token of the macro body.
   if (Tok.is(tok::eod)) {
+    if (ImmediatelyAfterHeaderGuard) {
+      // Save this macro information since it may part of a header guard.
+      CurPPLexer->MIOpt.SetDefinedMacro(MacroNameTok.getIdentifierInfo(),
+                                        MacroNameTok.getLocation());
+    }
     // If there is no body to this macro, we have no special handling here.
   } else if (Tok.hasLeadingSpace()) {
     // This is a normal token with leading space.  Clear the leading space
@@ -2101,7 +2111,7 @@ void Preprocessor::HandleIfdefDirective(Token &Result, bool isIfndef,
     // handle.
     if (!ReadAnyTokensBeforeDirective && MI == 0) {
       assert(isIfndef && "#ifdef shouldn't reach here");
-      CurPPLexer->MIOpt.EnterTopLevelIFNDEF(MII);
+      CurPPLexer->MIOpt.EnterTopLevelIfndef(MII, MacroNameTok.getLocation());
     } else
       CurPPLexer->MIOpt.EnterTopLevelConditional();
   }
@@ -2147,7 +2157,8 @@ void Preprocessor::HandleIfDirective(Token &IfToken,
   // directive seen, handle it for the multiple-include optimization.
   if (CurPPLexer->getConditionalStackDepth() == 0) {
     if (!ReadAnyTokensBeforeDirective && IfNDefMacro && ConditionalTrue)
-      CurPPLexer->MIOpt.EnterTopLevelIFNDEF(IfNDefMacro);
+      // FIXME: Pass in the location of the macro name, not the 'if' token.
+      CurPPLexer->MIOpt.EnterTopLevelIfndef(IfNDefMacro, IfToken.getLocation());
     else
       CurPPLexer->MIOpt.EnterTopLevelConditional();
   }
