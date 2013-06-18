@@ -79,6 +79,11 @@ constexpr int **n6 = const_cast<int**>(&n3);
 constexpr int n7 = **n5;
 constexpr int n8 = **n6;
 
+// const_cast from prvalue to xvalue.
+struct A { int n; };
+constexpr int n9 = (const_cast<A&&>(A{123})).n;
+static_assert(n9 == 123, "");
+
 }
 
 namespace TemplateArgumentConversion {
@@ -769,15 +774,22 @@ static_assert(&ok2 == pok2, "");
 static_assert((Base2*)(Derived*)(Base*)pb1 == pok2, "");
 static_assert((Derived*)(Base*)pb1 == (Derived*)pok2, "");
 
-constexpr Base *nullB = 42 - 6 * 7; // expected-warning {{expression which evaluates to zero treated as a null pointer constant of type 'Class::Base *const'}}
+// Core issue 903: we do not perform constant evaluation when checking for a
+// null pointer in C++11. Just check for an integer literal with value 0.
+constexpr Base *nullB = 42 - 6 * 7; // expected-error {{cannot initialize a variable of type 'Class::Base *const' with an rvalue of type 'int'}}
+constexpr Base *nullB1 = 0;
 static_assert((Bottom*)nullB == 0, "");
 static_assert((Derived*)nullB == 0, "");
 static_assert((void*)(Bottom*)nullB == (void*)(Derived*)nullB, "");
-Base * nullB2 = '\0'; // expected-warning {{expression which evaluates to zero treated as a null pointer constant of type 'Class::Base *'}}
-Base * nullB3 = (0);
-// We suppress the warning in unevaluated contexts to workaround some gtest
-// behavior. Once this becomes an error this isn't a problem anymore.
-static_assert(nullB == (1 - 1), "");
+Base *nullB2 = '\0'; // expected-error {{cannot initialize a variable of type 'Class::Base *' with an rvalue of type 'char'}}
+Base *nullB3 = (0);
+Base *nullB4 = false; // expected-error {{cannot initialize a variable of type 'Class::Base *' with an rvalue of type 'bool'}}
+Base *nullB5 = ((0ULL));
+Base *nullB6 = 0.; // expected-error {{cannot initialize a variable of type 'Class::Base *' with an rvalue of type 'double'}}
+enum Null { kNull };
+Base *nullB7 = kNull; // expected-error {{cannot initialize a variable of type 'Class::Base *' with an rvalue of type 'Class::Null'}}
+static_assert(nullB1 == (1 - 1), ""); // expected-error {{comparison between pointer and integer}}
+
 
 
 namespace ConversionOperators {
@@ -1595,4 +1607,45 @@ namespace AfterError {
     return foobar; // expected-error {{undeclared identifier}}
   }
   constexpr int k = error(); // expected-error {{must be initialized by a constant expression}}
+}
+
+namespace std {
+  typedef decltype(sizeof(int)) size_t;
+
+  template <class _E>
+  class initializer_list
+  {
+    const _E* __begin_;
+    size_t    __size_;
+
+    constexpr initializer_list(const _E* __b, size_t __s)
+      : __begin_(__b),
+        __size_(__s)
+    {}
+
+  public:
+    typedef _E        value_type;
+    typedef const _E& reference;
+    typedef const _E& const_reference;
+    typedef size_t    size_type;
+
+    typedef const _E* iterator;
+    typedef const _E* const_iterator;
+
+    constexpr initializer_list() : __begin_(nullptr), __size_(0) {}
+
+    constexpr size_t    size()  const {return __size_;}
+    constexpr const _E* begin() const {return __begin_;}
+    constexpr const _E* end()   const {return __begin_ + __size_;}
+  };
+}
+
+namespace InitializerList {
+  constexpr int sum(const int *b, const int *e) {
+    return b != e ? *b + sum(b+1, e) : 0;
+  }
+  constexpr int sum(std::initializer_list<int> ints) {
+    return sum(ints.begin(), ints.end());
+  }
+  static_assert(sum({1, 2, 3, 4, 5}) == 15, "");
 }

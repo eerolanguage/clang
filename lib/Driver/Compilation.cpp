@@ -9,13 +9,14 @@
 
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Action.h"
-#include "clang/Driver/ArgList.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/Options.h"
 #include "clang/Driver/ToolChain.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Option/ArgList.h"
+#include "llvm/Support/PathV1.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 #include <errno.h>
@@ -23,6 +24,7 @@
 
 using namespace clang::driver;
 using namespace clang;
+using namespace llvm::opt;
 
 Compilation::Compilation(const Driver &D, const ToolChain &_DefaultToolChain,
                          InputArgList *_Args, DerivedArgList *_TranslatedArgs)
@@ -291,11 +293,9 @@ int Compilation::ExecuteCommand(const Command &C,
 
   std::string Error;
   bool ExecutionFailed;
-  int Res =
-    llvm::sys::Program::ExecuteAndWait(Prog, Argv,
-                                       /*env*/0, Redirects,
-                                       /*secondsToWait*/0, /*memoryLimit*/0,
-                                       &Error, &ExecutionFailed);
+  int Res = llvm::sys::ExecuteAndWait(Prog.str(), Argv, /*env*/ 0, Redirects,
+                                      /*secondsToWait*/ 0, /*memoryLimit*/ 0,
+                                      &Error, &ExecutionFailed);
   if (!Error.empty()) {
     assert(Res && "Error string set with 0 result code!");
     getDriver().Diag(clang::diag::err_drv_command_failure) << Error;
@@ -370,9 +370,10 @@ void Compilation::initCompilationForDiagnostics() {
   TranslatedArgs->ClaimAllArgs();
 
   // Redirect stdout/stderr to /dev/null.
-  Redirects = new const llvm::sys::Path*[3]();
-  Redirects[1] = new const llvm::sys::Path();
-  Redirects[2] = new const llvm::sys::Path();
+  Redirects = new const StringRef*[3]();
+  Redirects[0] = 0;
+  Redirects[1] = new const StringRef();
+  Redirects[2] = new const StringRef();
 }
 
 StringRef Compilation::getSysRoot() const {

@@ -860,10 +860,15 @@ TEST_F(FormatTest, SplitsLongCxxComments) {
   EXPECT_EQ("//    Don't_touch_leading_whitespace",
             format("//    Don't_touch_leading_whitespace",
                    getLLVMStyleWithColumns(20)));
-  EXPECT_EQ(
-      "//Don't add leading\n"
-      "//whitespace",
-      format("//Don't add leading whitespace", getLLVMStyleWithColumns(20)));
+  EXPECT_EQ("// Add leading\n"
+            "// whitespace",
+            format("//Add leading whitespace", getLLVMStyleWithColumns(20)));
+  EXPECT_EQ("// whitespace", format("//whitespace", getLLVMStyle()));
+  EXPECT_EQ("// Even if it makes the line exceed the column\n"
+            "// limit",
+            format("//Even if it makes the line exceed the column limit",
+                   getLLVMStyleWithColumns(51)));
+  EXPECT_EQ("//--But not here", format("//--But not here", getLLVMStyle()));
   EXPECT_EQ("// A comment before\n"
             "// a macro\n"
             "// definition\n"
@@ -871,6 +876,16 @@ TEST_F(FormatTest, SplitsLongCxxComments) {
             format("// A comment before a macro definition\n"
                    "#define a b",
                    getLLVMStyleWithColumns(20)));
+  EXPECT_EQ("void ffffff(int aaaaaaaaa,  // wwww\n"
+            "            int a, int bbb, // xxxxxxx\n"
+            "                            // yyyyyyyyy\n"
+            "            int c, int d, int e) {}",
+            format("void ffffff(\n"
+                   "    int aaaaaaaaa, // wwww\n"
+                   "    int a,\n"
+                   "    int bbb, // xxxxxxx yyyyyyyyy\n"
+                   "    int c, int d, int e) {}",
+                   getLLVMStyleWithColumns(40)));
 }
 
 TEST_F(FormatTest, PriorityOfCommentBreaking) {
@@ -1176,11 +1191,20 @@ TEST_F(FormatTest, CommentsInStaticInitializers) {
                    "     // Comment after empty line\n"
                    "      b\n"
                    "}"));
-  EXPECT_EQ("S s = { a, b };", format("S s = {\n"
-                                      "  a,\n"
-                                      "\n"
-                                      "  b\n"
-                                      "};"));
+  EXPECT_EQ("S s = {\n"
+            "  /* Some comment */\n"
+            "  a,\n"
+            "\n"
+            "  /* Comment after empty line */\n"
+            "  b\n"
+            "}",
+            format("S s =    {\n"
+                   "      /* Some comment */\n"
+                   "  a,\n"
+                   "  \n"
+                   "     /* Comment after empty line */\n"
+                   "      b\n"
+                   "}"));
   verifyFormat("const uint8_t aaaaaaaaaaaaaaaaaaaaaa[0] = {\n"
                "  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // comment\n"
                "  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // comment\n"
@@ -1525,6 +1549,11 @@ TEST_F(FormatTest, StaticInitializers) {
   verifyFormat("static int LooooooooooooooooooooooooongVariable[1] = {\n"
                "  100000000000000000000000\n"
                "};");
+  EXPECT_EQ("S s = { a, b };", format("S s = {\n"
+                                      "  a,\n"
+                                      "\n"
+                                      "  b\n"
+                                      "};"));
 
   // FIXME: This would fit into the column limit if we'd fit "{ {" on the first
   // line. However, the formatting looks a bit off and this probably doesn't
@@ -1942,6 +1971,10 @@ TEST_F(FormatTest, EscapedNewlineAtStartOfToken) {
   EXPECT_EQ("template <class T> f();", format("\\\ntemplate <class T> f();"));
 }
 
+TEST_F(FormatTest, NoEscapedNewlineHandlingInBlockComments) {
+  EXPECT_EQ("/* \\  \\  \\\n*/", format("\\\n/* \\  \\  \\\n*/"));
+}
+
 TEST_F(FormatTest, CalculateSpaceOnConsecutiveLinesInMacro) {
   verifyFormat("#define A \\\n"
                "  int v(  \\\n"
@@ -2117,6 +2150,13 @@ TEST_F(FormatTest, ExpressionIndentation) {
                "} else if (aaaaa && bbbbb > // break\n"
                "                        ccccc) {\n"
                "}");
+
+  // Presence of a trailing comment used to change indentation of b.
+  verifyFormat("return aaaaaaaaaaaaaaaaaaa +\n"
+               "       b;\n"
+               "return aaaaaaaaaaaaaaaaaaa +\n"
+               "       b; //",
+               getLLVMStyleWithColumns(30));
 }
 
 TEST_F(FormatTest, ConstructorInitializers) {
@@ -2433,6 +2473,14 @@ TEST_F(FormatTest, BreaksDesireably) {
                "          Line.Tokens[i - 1].Tok.isNot(tok::l_paren) &&\n"
                "          Line.Tokens[i - 1].Tok.isNot(tok::l_square);\n"
                "    }\n  }\n}");
+
+  // Break on an outer level if there was a break on an inner level.
+  EXPECT_EQ("f(g(h(a, // comment\n"
+            "      b, c),\n"
+            "    d, e),\n"
+            "  x, y);",
+            format("f(g(h(a, // comment\n"
+                   "    b, c), d, e), x, y);"));
 }
 
 TEST_F(FormatTest, FormatsOneParameterPerLineIfNecessary) {
@@ -3850,15 +3898,13 @@ TEST_F(FormatTest, BlockCommentsAtEndOfLine) {
   EXPECT_EQ("a = {\n"
             "  1111 /*    */\n"
             "};",
-            format("a = {1111\n"
-                   "/*    */\n"
+            format("a = {1111 /*    */\n"
                    "};",
                    getLLVMStyleWithColumns(15)));
   EXPECT_EQ("a = {\n"
             "  1111 /*      */\n"
             "};",
-            format("a = {1111\n"
-                   "/*      */\n"
+            format("a = {1111 /*      */\n"
                    "};",
                    getLLVMStyleWithColumns(15)));
 
@@ -3867,8 +3913,7 @@ TEST_F(FormatTest, BlockCommentsAtEndOfLine) {
             "  1111 /*      a\n"
             "          */\n"
             "};",
-            format("a = {1111\n"
-                   "/*      a */\n"
+            format("a = {1111 /*      a */\n"
                    "};",
                    getLLVMStyleWithColumns(15)));
 }
@@ -4545,6 +4590,18 @@ TEST_F(FormatTest, BreakStringLiterals) {
             format("variable = f(\"long string literal\", short, "
                    "loooooooooooooooooooong);",
                    getLLVMStyleWithColumns(20)));
+
+  EXPECT_EQ("f(g(\"long string \"\n"
+            "    \"literal\"),\n"
+            "  b);",
+            format("f(g(\"long string literal\"), b);",
+                   getLLVMStyleWithColumns(20)));
+  EXPECT_EQ("f(g(\"long string \"\n"
+            "    \"literal\",\n"
+            "    a),\n"
+            "  b);",
+            format("f(g(\"long string literal\", a), b);",
+                   getLLVMStyleWithColumns(20)));
   EXPECT_EQ(
       "f(\"one two\".split(\n"
       "    variable));",
@@ -4587,6 +4644,19 @@ TEST_F(FormatTest, BreakStringLiterals) {
       "  \"text \" \\\n"
       "  \"other\";",
       format("#define A \"some text other\";", AlignLeft));
+}
+
+TEST_F(FormatTest, SkipsUnknownStringLiterals) {
+  EXPECT_EQ("u8\"unsupported literal\";",
+            format("u8\"unsupported literal\";", getLLVMStyleWithColumns(15)));
+  EXPECT_EQ("u\"unsupported literal\";",
+            format("u\"unsupported literal\";", getLLVMStyleWithColumns(15)));
+  EXPECT_EQ("U\"unsupported literal\";",
+            format("U\"unsupported literal\";", getLLVMStyleWithColumns(15)));
+  EXPECT_EQ("L\"unsupported literal\";",
+            format("L\"unsupported literal\";", getLLVMStyleWithColumns(15)));
+  EXPECT_EQ("R\"x(raw literal)x\";",
+            format("R\"x(raw literal)x\";", getLLVMStyleWithColumns(15)));
 }
 
 TEST_F(FormatTest, BreakStringLiteralsBeforeUnbreakableTokenSequence) {

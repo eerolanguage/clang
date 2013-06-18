@@ -126,12 +126,28 @@ void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
 
     // If the function definition has some sort of weak linkage, its
     // static variables should also be weak so that they get properly
-    // uniqued.  We can't do this in C, though, because there's no
-    // standard way to agree on which variables are the same (i.e.
-    // there's no mangling).
-    if (getLangOpts().CPlusPlus)
-      if (llvm::GlobalValue::isWeakForLinker(CurFn->getLinkage()))
-        Linkage = CurFn->getLinkage();
+    // uniqued.
+    if (D.isExternallyVisible()) {
+      const Decl *D = CurCodeDecl;
+      while (true) {
+        if (isa<BlockDecl>(D)) {
+          // FIXME: Handle this case properly!  (Should be similar to the
+          // way we handle lambdas in computeLVForDecl in Decl.cpp.)
+          break;
+        } else if (isa<CapturedDecl>(D)) {
+          D = cast<Decl>(cast<CapturedDecl>(D)->getParent());
+        } else {
+          break;
+        }
+      }
+      // FIXME: Do we really only care about FunctionDecls here?
+      if (isa<FunctionDecl>(D)) {
+        llvm::GlobalValue::LinkageTypes ParentLinkage =
+            CGM.getFunctionLinkage(cast<FunctionDecl>(D));
+        if (llvm::GlobalValue::isWeakForLinker(ParentLinkage))
+          Linkage = ParentLinkage;
+      }
+    }
 
     return EmitStaticVarDecl(D, Linkage);
   }
@@ -202,8 +218,7 @@ CodeGenFunction::CreateStaticVarDecl(const VarDecl &D,
                              llvm::GlobalVariable::NotThreadLocal,
                              AddrSpace);
   GV->setAlignment(getContext().getDeclAlign(&D).getQuantity());
-  if (Linkage != llvm::GlobalValue::InternalLinkage)
-    GV->setVisibility(CurFn->getVisibility());
+  CGM.setGlobalVisibility(GV, &D);
 
   if (D.getTLSKind())
     CGM.setTLSMode(GV, D);
@@ -1160,7 +1175,7 @@ void CodeGenFunction::EmitExprAsInit(const Expr *init,
   QualType type = D->getType();
 
   if (type->isReferenceType()) {
-    RValue rvalue = EmitReferenceBindingToExpr(init, D);
+    RValue rvalue = EmitReferenceBindingToExpr(init);
     if (capturedByInit)
       drillIntoBlockVariable(*this, lvalue, cast<VarDecl>(D));
     EmitStoreThroughLValue(rvalue, lvalue, true);
@@ -1187,7 +1202,6 @@ void CodeGenFunction::EmitExprAsInit(const Expr *init,
                                          AggValueSlot::DoesNotNeedGCBarriers,
                                               AggValueSlot::IsNotAliased));
     }
-    MaybeEmitStdInitializerListCleanup(lvalue.getAddress(), init);
     return;
   }
   llvm_unreachable("bad evaluation kind");
@@ -1338,6 +1352,26 @@ void CodeGenFunction::pushDestroy(CleanupKind cleanupKind, llvm::Value *addr,
                                   bool useEHCleanupForArray) {
   pushFullExprCleanup<DestroyObject>(cleanupKind, addr, type,
                                      destroyer, useEHCleanupForArray);
+}
+
+void CodeGenFunction::pushLifetimeExtendedDestroy(
+    CleanupKind cleanupKind, llvm::Value *addr, QualType type,
+    Destroyer *destroyer, bool useEHCleanupForArray) {
+  assert(!isInConditionalBranch() &&
+         "performing lifetime extension from within conditional");
+
+  // Push an EH-only cleanup for the object now.
+  // FIXME: When popping normal cleanups, we need to keep this EH cleanup
+  // around in case a temporary's destructor throws an exception.
+  if (cleanupKind & EHCleanup)
+    EHStack.pushCleanup<DestroyObject>(
+        static_cast<CleanupKind>(cleanupKind & ~NormalCleanup), addr, type,
+        destroyer, useEHCleanupForArray);
+
+  // Remember that we need to push a full cleanup for the object at the
+  // end of the full-expression.
+  pushCleanupAfterFullExpr<DestroyObject>(
+      cleanupKind, addr, type, destroyer, useEHCleanupForArray);
 }
 
 /// emitDestroy - Immediately perform the destruction of the given

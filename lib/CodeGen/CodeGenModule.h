@@ -925,6 +925,7 @@ public:
   void AddDependentLib(StringRef Lib);
 
   llvm::GlobalVariable::LinkageTypes getFunctionLinkage(GlobalDecl GD);
+  llvm::GlobalVariable::LinkageTypes getFunctionLinkage(const FunctionDecl *D);
 
   void setFunctionLinkage(GlobalDecl GD, llvm::GlobalValue *V) {
     V->setLinkage(getFunctionLinkage(GD));
@@ -1020,8 +1021,6 @@ private:
 
   void EmitGlobalFunctionDefinition(GlobalDecl GD);
   void EmitGlobalVarDefinition(const VarDecl *D);
-  llvm::Constant *MaybeEmitGlobalStdInitializerListInitializer(const VarDecl *D,
-                                                              const Expr *init);
   void EmitAliasDefinition(GlobalDecl GD);
   void EmitObjCPropertyImplementations(const ObjCImplementationDecl *D);
   void EmitObjCIvarInitializations(ObjCImplementationDecl *D);

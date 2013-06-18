@@ -56,20 +56,22 @@ void WhitespaceManager::addUntouchableToken(const FormatToken &Tok,
              InPPDirective && !Tok.IsFirst));
 }
 
-void WhitespaceManager::breakToken(const FormatToken &Tok, unsigned Offset,
-                                   unsigned ReplaceChars,
-                                   StringRef PreviousPostfix,
-                                   StringRef CurrentPrefix, bool InPPDirective,
-                                   unsigned Spaces) {
+void WhitespaceManager::replaceWhitespaceInToken(
+    const FormatToken &Tok, unsigned Offset, unsigned ReplaceChars,
+    StringRef PreviousPostfix, StringRef CurrentPrefix, bool InPPDirective,
+    unsigned Newlines, unsigned Spaces) {
   Changes.push_back(Change(
       true, SourceRange(Tok.getStartOfNonWhitespace().getLocWithOffset(Offset),
                         Tok.getStartOfNonWhitespace().getLocWithOffset(
                             Offset + ReplaceChars)),
-      Spaces, Spaces, 1, PreviousPostfix, CurrentPrefix,
-      // FIXME: Unify token adjustment, so we don't split it between
-      // BreakableToken and the WhitespaceManager. That would also allow us to
-      // correctly store a tok::TokenKind instead of rolling our own enum.
-      tok::unknown, InPPDirective && !Tok.IsFirst));
+      Spaces, Spaces, Newlines, PreviousPostfix, CurrentPrefix,
+      // If we don't add a newline this change doesn't start a comment. Thus,
+      // when we align line comments, we don't need to treat this change as one.
+      // FIXME: We still need to take this change in account to properly
+      // calculate the new length of the comment and to calculate the changes
+      // for which to do the alignment when aligning comments.
+      Tok.Type == TT_LineComment && Newlines > 0 ? tok::comment : tok::unknown,
+      InPPDirective && !Tok.IsFirst));
 }
 
 const tooling::Replacements &WhitespaceManager::generateReplacements() {
@@ -214,10 +216,10 @@ void WhitespaceManager::generateChanges() {
       std::string ReplacementText =
           C.PreviousLinePostfix +
           (C.ContinuesPPDirective
-               ? getNewLineText(C.NewlinesBefore, C.Spaces,
+               ? getNewlineText(C.NewlinesBefore, C.Spaces,
                                 C.PreviousEndOfTokenColumn,
                                 C.EscapedNewlineColumn)
-               : getNewLineText(C.NewlinesBefore, C.Spaces)) +
+               : getNewlineText(C.NewlinesBefore, C.Spaces)) +
           C.CurrentLinePrefix;
       storeReplacement(C.OriginalWhitespaceRange, ReplacementText);
     }
@@ -237,26 +239,26 @@ void WhitespaceManager::storeReplacement(const SourceRange &Range,
       SourceMgr, CharSourceRange::getCharRange(Range), Text));
 }
 
-std::string WhitespaceManager::getNewLineText(unsigned NewLines,
+std::string WhitespaceManager::getNewlineText(unsigned Newlines,
                                               unsigned Spaces) {
-  return std::string(NewLines, '\n') + getIndentText(Spaces);
+  return std::string(Newlines, '\n') + getIndentText(Spaces);
 }
 
-std::string WhitespaceManager::getNewLineText(unsigned NewLines,
+std::string WhitespaceManager::getNewlineText(unsigned Newlines,
                                               unsigned Spaces,
                                               unsigned PreviousEndOfTokenColumn,
                                               unsigned EscapedNewlineColumn) {
-  std::string NewLineText;
-  if (NewLines > 0) {
+  std::string NewlineText;
+  if (Newlines > 0) {
     unsigned Offset =
         std::min<int>(EscapedNewlineColumn - 1, PreviousEndOfTokenColumn);
-    for (unsigned i = 0; i < NewLines; ++i) {
-      NewLineText += std::string(EscapedNewlineColumn - Offset - 1, ' ');
-      NewLineText += "\\\n";
+    for (unsigned i = 0; i < Newlines; ++i) {
+      NewlineText += std::string(EscapedNewlineColumn - Offset - 1, ' ');
+      NewlineText += "\\\n";
       Offset = 0;
     }
   }
-  return NewLineText + getIndentText(Spaces);
+  return NewlineText + getIndentText(Spaces);
 }
 
 std::string WhitespaceManager::getIndentText(unsigned Spaces) {
