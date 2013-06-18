@@ -1660,7 +1660,7 @@ QualType Sema::BuildExtVectorType(QualType T, Expr *ArraySize,
   return Context.getDependentSizedExtVectorType(T, ArraySize, AttrLoc);
 }
 
-bool Sema::CheckFunctionReturnType(QualType T, SourceLocation Loc) {
+bool Sema::CheckFunctionReturnType(QualType &T, SourceLocation Loc) {
   if (T->isArrayType() || T->isFunctionType()) {
     Diag(Loc, diag::err_func_returning_array_function)
       << T->isFunctionType() << T;
@@ -1677,6 +1677,11 @@ bool Sema::CheckFunctionReturnType(QualType T, SourceLocation Loc) {
   // Methods cannot return interface types. All ObjC objects are
   // passed by reference.
   if (T->isObjCObjectType()) {
+    // Eero class instances are always pointers
+    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+      T = Context.getObjCObjectPointerType(T);
+      return false;
+    }
     Diag(Loc, diag::err_object_cannot_be_passed_returned_by_value) << 0 << T;
     return 0;
   }
@@ -2700,6 +2705,12 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
             diag::err_parameters_retval_cannot_have_fp16_type) << 1;
           D.setInvalidType(true);
         }
+      }
+
+      // Eero class instances are always pointers
+      if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader() && 
+          T->isObjCObjectType()) {
+        T = Context.getObjCObjectPointerType(T);
       }
 
       // Methods cannot return interface types. All ObjC objects are
