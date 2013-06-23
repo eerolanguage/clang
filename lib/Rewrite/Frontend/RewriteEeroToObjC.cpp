@@ -992,14 +992,16 @@ void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
   };
 
   static const Attribute Attributes[] = {
-    {ObjCPropertyDecl::OBJC_PR_readonly,  "readonly"},
-    {ObjCPropertyDecl::OBJC_PR_assign,    "assign"},
-    {ObjCPropertyDecl::OBJC_PR_readwrite, "readwrite"},
-    {ObjCPropertyDecl::OBJC_PR_retain,    "retain"},
-    {ObjCPropertyDecl::OBJC_PR_strong,    "strong"},
-    {ObjCPropertyDecl::OBJC_PR_copy,      "copy"},
-    {ObjCPropertyDecl::OBJC_PR_nonatomic, "nonatomic"},
-    {ObjCPropertyDecl::OBJC_PR_atomic,    "atomic"},
+    {ObjCPropertyDecl::OBJC_PR_readonly,          "readonly"},
+    {ObjCPropertyDecl::OBJC_PR_assign,            "assign"},
+    {ObjCPropertyDecl::OBJC_PR_readwrite,         "readwrite"},
+    {ObjCPropertyDecl::OBJC_PR_retain,            "retain"},
+    {ObjCPropertyDecl::OBJC_PR_copy,              "copy"},
+    {ObjCPropertyDecl::OBJC_PR_nonatomic,         "nonatomic"},
+    {ObjCPropertyDecl::OBJC_PR_atomic,            "atomic"},
+    {ObjCPropertyDecl::OBJC_PR_weak,              "weak"},
+    {ObjCPropertyDecl::OBJC_PR_strong,            "strong"},
+    {ObjCPropertyDecl::OBJC_PR_unsafe_unretained, "unsafe_unretained"},
   };
 
   string str = "  @property ";
@@ -1063,6 +1065,13 @@ void TranslatorVisitor::RewriteProperty(ObjCPropertyDecl* PDecl,
   }
 
   TheRewriter.ReplaceText(GetRange(Loc, LocEnd), str);
+
+  const SourceLocation& LBraceLoc = PDecl->getLParenLoc();
+  if (LBraceLoc.isValid()) {
+    SourceLocation RBracLoc = LBraceLoc;
+    MoveLocToEndOfLine(RBracLoc);
+    TheRewriter.ReplaceText(GetRange(LBraceLoc, RBracLoc), "  ");    
+  }
 }
 
 //------------------------------------------------------------------------------------------------

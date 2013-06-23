@@ -834,7 +834,6 @@ void Preprocessor::RevertKeywordToIdentifierIfNeeded(Token &Identifier) const {
       case tok::kw_finally:
       case tok::kw_synchronized:
       case tok::kw_autoreleasepool:
-      case tok::kw_property:
       case tok::kw_package:
       case tok::kw_required:
       case tok::kw_optional:

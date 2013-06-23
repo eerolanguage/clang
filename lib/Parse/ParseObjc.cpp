@@ -153,29 +153,6 @@ void Parser::CheckNestedObjCContexts(SourceLocation AtLoc)
         << (int) ock;
 }
 
-// Eero helper function
-static bool isVisibilitySpecifier(Token token, Token nextToken) {
-  switch (token.getKind()) {
-    case tok::kw_private:
-    case tok::kw_public:
-    case tok::kw_protected:
-    case tok::kw_package:
-      return true;
-    case tok::at:
-      switch (nextToken.getObjCKeywordID()) {
-        case tok::objc_private:
-        case tok::objc_public:
-        case tok::objc_protected:
-        case tok::objc_package:
-          return true;
-        default:
-          return false;
-      }
-    default:
-      return false;
-  }
-} 
-
 ///
 ///   objc-interface:
 ///     objc-class-interface-attributes[opt] objc-class-interface
@@ -281,11 +258,14 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                         ProtocolRefs.size(),
                                         ProtocolLocs.data(),
                                         EndProtoLoc);
+
+    if (isEero && Tok.is(tok::l_brace)) {
+      Diag(Tok, diag::err_not_supported) << 
+        "instance variables in interfaces are" <<
+        "Declare them in the implementation instead (braces are optional).";
+    }
     
-    if (Tok.is(tok::l_brace) || 
-        (isEero &&
-         (isVisibilitySpecifier(Tok, NextToken()) ||
-          isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
+    if (Tok.is(tok::l_brace))
       ParseObjCClassInstanceVariables(CategoryType, tok::objc_private, AtLoc);
       
     ParseObjCInterfaceDeclList(tok::objc_not_keyword, CategoryType);
@@ -340,10 +320,13 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
                                      ProtocolLocs.data(),
                                      EndProtoLoc, attrs.getList());
 
-  if (Tok.is(tok::l_brace) || 
-      (isEero &&
-       (isVisibilitySpecifier(Tok, NextToken()) ||
-        isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
+  if (isEero && Tok.is(tok::l_brace)) {
+    Diag(Tok, diag::err_not_supported) << 
+      "instance variables in interfaces are" <<
+      "Declare them in the implementation instead (braces are optional).";
+  }
+
+  if (Tok.is(tok::l_brace))
     ParseObjCClassInstanceVariables(ClsType, tok::objc_protected, AtLoc);
 
   ParseObjCInterfaceDeclList(tok::objc_interface, ClsType);
@@ -435,12 +418,13 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
   SmallVector<DeclGroupPtrTy, 8> allTUVariables;
   tok::ObjCKeywordKind MethodImplKind = tok::objc_not_keyword;
 
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+
   SourceRange AtEnd;
     
   while (1) {
     // Check for instance method (minus is optional)
-    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-        Tok.is(tok::identifier) && 
+    if (isEero && Tok.is(tok::identifier) && 
         (NextToken().isAtStartOfLine() || 
          NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
       InsertToken(tok::minus);
@@ -467,6 +451,53 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
                           MethodImplKind, false);
       continue;
     }
+
+    // Properties in Eero are simple -- they just look like var declarations, followed by
+    // an optional attribute list surrounded in curly braces.
+    if (isEero && (isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))) {
+      ObjCDeclSpec OCDS;
+      ObjCPropertyCallback Callback(*this, allProperties,
+                                    OCDS, Tok.getLocation(), SourceLocation(),
+                                    MethodImplKind);
+
+      // Parse all the comma separated declarators.
+      ParsingDeclSpec DS(*this);
+      // Parse the common specifier-qualifiers-list piece.
+      ParseSpecifierQualifierList(DS);
+
+      SmallVector<ParsingFieldDeclarator*, 8> Declarators;
+      SourceLocation CommaLoc;
+      while (1) {
+        ParsingFieldDeclarator *DeclaratorInfo =
+            new ParsingFieldDeclarator(*this, DS);
+        Declarators.push_back(DeclaratorInfo);
+
+        DeclaratorInfo->D.setCommaLoc(CommaLoc);
+        ParseDeclarator(DeclaratorInfo->D);
+
+        // If we don't have a comma, it's the the end of the list
+        if (Tok.isNot(tok::comma)) {
+          if (Tok.is(tok::l_brace)) {
+            Callback.LParenLoc = Tok.getLocation();
+            ParseObjCPropertyAttribute(OCDS);
+          }
+          break;
+        }
+        // Consume the comma.
+        CommaLoc = ConsumeToken();
+      }
+      
+      SmallVector<ParsingFieldDeclarator*, 8>::iterator I = Declarators.begin();
+      SmallVector<ParsingFieldDeclarator*, 8>::iterator E = Declarators.end();
+      while (I != E) {
+        Callback.invoke(**I);
+        delete *I;
+        I++;
+      }
+            
+      continue;
+    }
+
     // Ignore excess semicolons.
     if (Tok.is(tok::semi)) {
       ConsumeToken();
@@ -490,7 +521,6 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
         case tok::kw_import:
         case tok::kw_optional:
         case tok::kw_required:
-        case tok::kw_property:
         case tok::kw_end:
         case tok::kw_implementation:
         case tok::kw_interface:
@@ -566,6 +596,10 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       break;
 
     case tok::objc_property:
+      if (isEero)
+        Diag(AtLoc, diag::err_not_supported) << "'@property' keyword" << 
+            "Properties are declared using "\
+            "'decl-specifiers declarator-list {attribute-list}'";
       if (!getLangOpts().ObjC2)
         Diag(AtLoc, diag::err_objc_properties_require_objc2);
 
@@ -577,20 +611,12 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
         ParseObjCPropertyAttribute(OCDS);
       }
 
-      do {
       ObjCPropertyCallback Callback(*this, allProperties,
                                     OCDS, AtLoc, LParenLoc, MethodImplKind);
 
       // Parse all the comma separated declarators.
       ParsingDeclSpec DS(*this);
       ParseStructDeclaration(DS, Callback);
-      } while (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-               Tok.isAtStartOfLine() && 
-               (isKnownToBeTypeSpecifier(Tok) || 
-                (Tok.is(tok::identifier) &&                  
-                 NextToken().isNot(tok::colon) &&   // check for instance method - 
-                 NextToken().isNot(tok::comma) &&   // (minus is optional)
-                 !NextToken().isAtStartOfLine()))); //
 
       ExpectAndConsume(tok::semi, diag::err_expected_semi_decl_list);
       break;
@@ -642,8 +668,12 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
 ///     unsafe_unretained
 ///
 void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
-  assert(Tok.getKind() == tok::l_paren);
-  BalancedDelimiterTracker T(*this, tok::l_paren);
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const tok::TokenKind OpenKind = !isEero ? tok::l_paren : tok::l_brace;
+  const tok::TokenKind CloseKind = !isEero ? tok::r_paren : tok::r_brace;
+  
+  assert(Tok.getKind() == OpenKind);
+  BalancedDelimiterTracker T(*this, OpenKind);
   T.consumeOpen();
 
   while (1) {
@@ -688,7 +718,7 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
       unsigned DiagID = IsSetter ? diag::err_objc_expected_equal_for_setter :
         diag::err_objc_expected_equal_for_getter;
 
-      if (ExpectAndConsume(tok::equal, DiagID, "", tok::r_paren))
+      if (ExpectAndConsume(tok::equal, DiagID, "", CloseKind))
         return;
 
       if (Tok.is(tok::code_completion)) {
@@ -706,7 +736,7 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
       if (!SelIdent) {
         Diag(Tok, diag::err_objc_expected_selector_for_getter_setter)
           << IsSetter;
-        SkipUntil(tok::r_paren);
+        SkipUntil(CloseKind);
         return;
       }
 
@@ -716,7 +746,7 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
 
         if (ExpectAndConsume(tok::colon, 
                              diag::err_expected_colon_after_setter_name, "",
-                             tok::r_paren))
+                             CloseKind))
           return;
       } else {
         DS.setPropertyAttributes(ObjCDeclSpec::DQ_PR_getter);
@@ -724,7 +754,7 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
       }
     } else {
       Diag(AttrName, diag::err_objc_expected_property_attr) << II;
-      SkipUntil(tok::r_paren);
+      SkipUntil(CloseKind);
       return;
     }
 
@@ -1730,12 +1760,9 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
     }
 
     if (isEero) {
-      if (isVisibilitySpecifier(Tok, NextToken())) {
-        if (Tok.isNot(tok::at)) // handle keyword versions without '@'
-          InsertToken(tok::at);
-      } else if (Tok.is(tok::identifier) && 
-                (NextToken().isAtStartOfLine() || 
-                 NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
+      if (Tok.is(tok::identifier) &&
+          (NextToken().isAtStartOfLine() ||
+           NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
         break; // exit loop, this is an instance method (minus is optional)
       } else if (Tok.isNot(tok::identifier) && !isKnownToBeTypeSpecifier(Tok)) {
         break; // exit loop, since braces are optional
@@ -2020,8 +2047,7 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
     // if we have ivars
     if (Tok.is(tok::l_brace) ||
         (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-         (isVisibilitySpecifier(Tok, NextToken()) ||
-          isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
+         (isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(ObjCImpDecl, tok::objc_private, AtLoc);
     else if (Tok.is(tok::less)) { // we have illegal '<' try to recover
       Diag(Tok, diag::err_unexpected_protocol_qualifier);
