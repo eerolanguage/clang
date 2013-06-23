@@ -3101,6 +3101,19 @@ LexNextToken:
     break;
   case '-':
     Char = getCharAndSize(CurPtr, SizeTmp);
+    // Eero recognizes five or more dashes in a row as line comments
+    if (getLangOpts().Eero && Legacy == LS_False && Char == '-') {
+      // We already have "--" at this point
+      if (BufferEnd - CurPtr >= 3 && 
+          CurPtr[1] == '-' && CurPtr[2] == '-' && CurPtr[3] == '-') {
+        if (SkipLineComment(Result, ConsumeChar(CurPtr, SizeTmp, Result)))
+          return; // There is a token to return.
+        // It is common for the tokens immediately after a // comment to be
+        // whitespace (indentation for the next line).  Instead of going through
+        // the big switch, handle it efficiently now.
+        goto SkipIgnoredUnits;
+      }
+    }
     if (Char == '-') {      // --
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
       Kind = tok::minusminus;
