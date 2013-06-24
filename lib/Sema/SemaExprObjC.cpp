@@ -1260,7 +1260,8 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
     }
 
     unsigned DiagID;
-    if (getLangOpts().ObjCAutoRefCount)
+    if (getLangOpts().ObjCAutoRefCount || 
+        (getLangOpts().Eero && !PP.isInLegacyHeader()))
       DiagID = diag::err_arc_method_not_found;
     else
       DiagID = isClassMessage ? diag::warn_class_method_not_found
@@ -2501,6 +2502,15 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
             if (OCIType->qual_empty()) {
               Method = LookupInstanceMethodInGlobalPool(Sel,
                                               SourceRange(LBracLoc, RBracLoc));
+              // Eero is more strict, regardless of whether ARC is used
+              if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+                  Method && !forwardClass) {
+                Diag(SelLoc, diag::err_arc_may_not_respond)
+                  << OCIType->getPointeeType() << Sel << RecRange
+                  << SourceRange(SelectorLocs.front(), SelectorLocs.back());
+                return ExprError();
+              }
+              
               if (Method && !forwardClass)
                 Diag(SelLoc, diag::warn_maynot_respond)
                   << OCIType->getInterfaceDecl()->getIdentifier()
