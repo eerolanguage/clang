@@ -687,6 +687,8 @@ def fpack_struct_EQ : Joined<["-"], "fpack-struct=">, Group<f_Group>, Flags<[CC1
   HelpText<"Specify the default maximum struct packing alignment">;
 def fpascal_strings : Flag<["-"], "fpascal-strings">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Recognize and construct Pascal-style string literals">;
+def fpcc_struct_return : Flag<["-"], "fpcc-struct-return">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Override the default ABI to return all structs on the stack">;
 def fpch_preprocess : Flag<["-"], "fpch-preprocess">, Group<f_Group>;
 def fpic : Flag<["-"], "fpic">, Group<f_Group>;
 def fno_pic : Flag<["-"], "fno-pic">, Group<f_Group>;
@@ -696,6 +698,8 @@ def fprofile_arcs : Flag<["-"], "fprofile-arcs">, Group<f_Group>;
 def fprofile_generate : Flag<["-"], "fprofile-generate">, Group<f_Group>;
 def framework : Separate<["-"], "framework">, Flags<[LinkerInput]>;
 def frandom_seed_EQ : Joined<["-"], "frandom-seed=">, Group<clang_ignored_f_Group>;
+def freg_struct_return : Flag<["-"], "freg-struct-return">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Override the default ABI to return small structs in registers">;
 def frtti : Flag<["-"], "frtti">, Group<f_Group>;
 def fsched_interblock : Flag<["-"], "fsched-interblock">, Group<clang_ignored_f_Group>;
 def fshort_enums : Flag<["-"], "fshort-enums">, Group<f_Group>, Flags<[CC1Option]>,
@@ -806,9 +810,12 @@ def ggdb0 : Flag<["-"], "ggdb0">, Group<g_Group>;
 def ggdb1 : Flag<["-"], "ggdb1">, Group<g_Group>;
 def ggdb2 : Flag<["-"], "ggdb2">, Group<g_Group>;
 def ggdb3 : Flag<["-"], "ggdb3">, Group<g_Group>;
-def gdwarf_2 : Flag<["-"], "gdwarf-2">, Group<g_Group>;
-def gdwarf_3 : Flag<["-"], "gdwarf-3">, Group<g_Group>;
-def gdwarf_4 : Flag<["-"], "gdwarf-4">, Group<g_Group>;
+def gdwarf_2 : Flag<["-"], "gdwarf-2">, Group<g_Group>,
+  HelpText<"Generate source level debug information with dwarf version 2">, Flags<[CC1Option]>;
+def gdwarf_3 : Flag<["-"], "gdwarf-3">, Group<g_Group>,
+  HelpText<"Generate source level debug information with dwarf version 3">, Flags<[CC1Option]>;
+def gdwarf_4 : Flag<["-"], "gdwarf-4">, Group<g_Group>,
+  HelpText<"Generate source level debug information with dwarf version 4">, Flags<[CC1Option]>;
 def gfull : Flag<["-"], "gfull">, Group<g_Group>;
 def gused : Flag<["-"], "gused">, Group<g_Group>;
 def gstabs : Joined<["-"], "gstabs">, Group<g_Group>, Flags<[Unsupported]>;
@@ -1127,9 +1134,9 @@ def stdlib_EQ : Joined<["-", "--"], "stdlib=">, Flags<[CC1Option]>,
 def sub__library : JoinedOrSeparate<["-"], "sub_library">;
 def sub__umbrella : JoinedOrSeparate<["-"], "sub_umbrella">;
 def s : Flag<["-"], "s">;
-def target : Separate<["-"], "target">, Flags<[DriverOption]>,
+def target : Joined<["--"], "target=">, Flags<[DriverOption]>,
   HelpText<"Generate code for the given target">;
-def gcc_toolchain : Separate<["-"], "gcc-toolchain">, Flags<[DriverOption]>,
+def gcc_toolchain : Joined<["--"], "gcc-toolchain=">, Flags<[DriverOption]>,
   HelpText<"Use the gcc toolchain at the given directory">;
 def time : Flag<["-"], "time">,
   HelpText<"Time individual commands">;
@@ -1279,6 +1286,12 @@ def _write_dependencies : Flag<["--"], "write-dependencies">, Alias<MD>;
 def _write_user_dependencies : Flag<["--"], "write-user-dependencies">, Alias<MMD>;
 def _ : Joined<["--"], "">, Flags<[Unsupported]>;
 def mieee_rnd_near : Flag<["-"], "mieee-rnd-near">, Group<m_hexagon_Features_Group>;
+
+// These are legacy user-facing driver-level option spellings. They are always
+// aliases for options that are spelled using the more common Unix / GNU flag
+// style of double-dash and equals-joined flags.
+def gcc_toolchain_legacy_spelling : Separate<["-"], "gcc-toolchain">, Alias<gcc_toolchain>;
+def target_legacy_spelling : Separate<["-"], "target">, Alias<target>;
 
 // Special internal option to handle -Xlinker --no-demangle.
 def Z_Xlinker__no_demangle : Flag<["-"], "Z-Xlinker-no-demangle">,

@@ -931,10 +931,6 @@ public:
     return const_cast<VarDecl*>(this)->getActingDefinition();
   }
 
-  /// \brief Determine whether this is a tentative definition of a
-  /// variable in C.
-  bool isTentativeDefinitionNow() const;
-
   /// \brief Get the real (not just tentative) definition for this declaration.
   VarDecl *getDefinition(ASTContext &);
   const VarDecl *getDefinition(ASTContext &C) const {
@@ -1022,20 +1018,6 @@ public:
   }
 
   void setInit(Expr *I);
-
-  /// \brief Determine whether this variable is a reference that
-  /// extends the lifetime of its temporary initializer.
-  ///
-  /// A reference extends the lifetime of its temporary initializer if
-  /// it's initializer is an rvalue that would normally go out of scope
-  /// at the end of the initializer (a full expression). In such cases,
-  /// the reference itself takes ownership of the temporary, which will
-  /// be destroyed when the reference goes out of scope. For example:
-  ///
-  /// \code
-  /// const int &r = 1.0; // creates a temporary of type 'int'
-  /// \endcode
-  bool extendsLifetimeOfTemporary() const;
 
   /// \brief Determine whether this variable's value can be used in a
   /// constant expression, according to the relevant language standard.
@@ -1337,11 +1319,7 @@ public:
     ParmVarDeclBits.HasInheritedDefaultArg = I;
   }
 
-  QualType getOriginalType() const {
-    if (getTypeSourceInfo())
-      return getTypeSourceInfo()->getType();
-    return getType();
-  }
+  QualType getOriginalType() const;
 
   /// \brief Determine whether this parameter is actually a function
   /// parameter pack.
@@ -2312,14 +2290,14 @@ public:
 /// Base class for declarations which introduce a typedef-name.
 class TypedefNameDecl : public TypeDecl, public Redeclarable<TypedefNameDecl> {
   virtual void anchor();
-  /// UnderlyingType - This is the type the typedef is set to.
-  TypeSourceInfo *TInfo;
+  typedef std::pair<TypeSourceInfo*, QualType> ModedTInfo;
+  llvm::PointerUnion<TypeSourceInfo*, ModedTInfo*> MaybeModedTInfo;
 
 protected:
   TypedefNameDecl(Kind DK, DeclContext *DC, SourceLocation StartLoc,
                   SourceLocation IdLoc, IdentifierInfo *Id,
                   TypeSourceInfo *TInfo)
-    : TypeDecl(DK, DC, IdLoc, Id, StartLoc), TInfo(TInfo) {}
+    : TypeDecl(DK, DC, IdLoc, Id, StartLoc), MaybeModedTInfo(TInfo) {}
 
   typedef Redeclarable<TypedefNameDecl> redeclarable_base;
   virtual TypedefNameDecl *getNextRedeclaration() {
@@ -2339,8 +2317,23 @@ public:
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
 
+  bool isModed() const { return MaybeModedTInfo.is<ModedTInfo*>(); }
+
   TypeSourceInfo *getTypeSourceInfo() const {
-    return TInfo;
+    return isModed()
+      ? MaybeModedTInfo.get<ModedTInfo*>()->first
+      : MaybeModedTInfo.get<TypeSourceInfo*>();
+  }
+  QualType getUnderlyingType() const {
+    return isModed()
+      ? MaybeModedTInfo.get<ModedTInfo*>()->second
+      : MaybeModedTInfo.get<TypeSourceInfo*>()->getType();
+  }
+  void setTypeSourceInfo(TypeSourceInfo *newType) {
+    MaybeModedTInfo = newType;
+  }
+  void setModedTypeSourceInfo(TypeSourceInfo *unmodedTSI, QualType modedTy) {
+    MaybeModedTInfo = new (getASTContext()) ModedTInfo(unmodedTSI, modedTy);
   }
 
   /// Retrieves the canonical declaration of this typedef-name.
@@ -2349,13 +2342,6 @@ public:
   }
   const TypedefNameDecl *getCanonicalDecl() const {
     return getFirstDeclaration();
-  }
-
-  QualType getUnderlyingType() const {
-    return TInfo->getType();
-  }
-  void setTypeSourceInfo(TypeSourceInfo *newType) {
-    TInfo = newType;
   }
 
   // Implement isa/cast/dyncast/etc.

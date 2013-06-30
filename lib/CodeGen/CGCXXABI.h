@@ -227,7 +227,8 @@ public:
                                          CanQualType &ResTy,
                                SmallVectorImpl<CanQualType> &ArgTys) = 0;
 
-  virtual llvm::BasicBlock *EmitCtorCompleteObjectHandler(CodeGenFunction &CGF);
+  virtual llvm::BasicBlock *EmitCtorCompleteObjectHandler(CodeGenFunction &CGF,
+                                                          const CXXRecordDecl *RD);
 
   /// Build the signature of the given destructor variant by adding
   /// any required parameters.  For convenience, ResTy has been
@@ -267,6 +268,13 @@ public:
                                            SourceLocation CallLoc,
                                            ReturnValueSlot ReturnValue,
                                            llvm::Value *This) = 0;
+
+  /// Emit any tables needed to implement virtual inheritance.  For Itanium,
+  /// this emits virtual table tables.  For the MSVC++ ABI, this emits virtual
+  /// base tables.
+  virtual void
+      EmitVirtualInheritanceTables(llvm::GlobalVariable::LinkageTypes Linkage,
+                                   const CXXRecordDecl *RD) = 0;
 
   virtual void EmitReturnFromThunk(CodeGenFunction &CGF,
                                    RValue RV, QualType ResultType);
@@ -322,6 +330,9 @@ public:
                                const CXXDeleteExpr *expr,
                                QualType ElementType, llvm::Value *&NumElements,
                                llvm::Value *&AllocPtr, CharUnits &CookieSize);
+
+  /// Return whether the given global decl needs a VTT parameter.
+  virtual bool NeedsVTTParameter(GlobalDecl GD);
 
 protected:
   /// Returns the extra size required in order to store the array

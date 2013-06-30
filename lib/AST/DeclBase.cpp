@@ -595,32 +595,6 @@ const AttrVec &Decl::getAttrs() const {
   return getASTContext().getDeclAttrs(this);
 }
 
-void Decl::swapAttrs(Decl *RHS) {
-  bool HasLHSAttr = this->HasAttrs;
-  bool HasRHSAttr = RHS->HasAttrs;
-
-  // Usually, neither decl has attrs, nothing to do.
-  if (!HasLHSAttr && !HasRHSAttr) return;
-
-  // If 'this' has no attrs, swap the other way.
-  if (!HasLHSAttr)
-    return RHS->swapAttrs(this);
-
-  ASTContext &Context = getASTContext();
-
-  // Handle the case when both decls have attrs.
-  if (HasRHSAttr) {
-    std::swap(Context.getDeclAttrs(this), Context.getDeclAttrs(RHS));
-    return;
-  }
-
-  // Otherwise, LHS has an attr and RHS doesn't.
-  Context.getDeclAttrs(RHS) = Context.getDeclAttrs(this);
-  Context.eraseDeclAttrs(this);
-  this->HasAttrs = false;
-  RHS->HasAttrs = true;
-}
-
 Decl *Decl::castFromDeclContext (const DeclContext *D) {
   Decl::Kind DK = D->getDeclKind();
   switch(DK) {
@@ -1012,13 +986,38 @@ ExternalASTSource::SetExternalVisibleDeclsForName(const DeclContext *DC,
     Map = DC->CreateStoredDeclsMap(Context);
 
   StoredDeclsList &List = (*Map)[Name];
-  for (ArrayRef<NamedDecl*>::iterator
-         I = Decls.begin(), E = Decls.end(); I != E; ++I) {
-    if (List.isNull())
-      List.setOnlyValue(*I);
-    else
-      // FIXME: Need declarationReplaces handling for redeclarations in modules.
-      List.AddSubsequentDecl(*I);
+
+  // Clear out any old external visible declarations, to avoid quadratic
+  // performance in the redeclaration checks below.
+  List.removeExternalDecls();
+
+  if (!List.isNull()) {
+    // We have both existing declarations and new declarations for this name.
+    // Some of the declarations may simply replace existing ones. Handle those
+    // first.
+    llvm::SmallVector<unsigned, 8> Skip;
+    for (unsigned I = 0, N = Decls.size(); I != N; ++I)
+      if (List.HandleRedeclaration(Decls[I]))
+        Skip.push_back(I);
+    Skip.push_back(Decls.size());
+
+    // Add in any new declarations.
+    unsigned SkipPos = 0;
+    for (unsigned I = 0, N = Decls.size(); I != N; ++I) {
+      if (I == Skip[SkipPos])
+        ++SkipPos;
+      else
+        List.AddSubsequentDecl(Decls[I]);
+    }
+  } else {
+    // Convert the array to a StoredDeclsList.
+    for (ArrayRef<NamedDecl*>::iterator
+           I = Decls.begin(), E = Decls.end(); I != E; ++I) {
+      if (List.isNull())
+        List.setOnlyValue(*I);
+      else
+        List.AddSubsequentDecl(*I);
+    }
   }
 
   return List.getLookupResult();
@@ -1191,8 +1190,16 @@ void DeclContext::buildLookupImpl(DeclContext *DCtx) {
     // Insert this declaration into the lookup structure, but only if
     // it's semantically within its decl context. Any other decls which
     // should be found in this context are added eagerly.
+    //
+    // If it's from an AST file, don't add it now. It'll get handled by
+    // FindExternalVisibleDeclsByName if needed. Exception: if we're not
+    // in C++, we do not track external visible decls for the TU, so in
+    // that case we need to collect them all here.
     if (NamedDecl *ND = dyn_cast<NamedDecl>(D))
-      if (ND->getDeclContext() == DCtx && !shouldBeHidden(ND))
+      if (ND->getDeclContext() == DCtx && !shouldBeHidden(ND) &&
+          (!ND->isFromASTFile() ||
+           (isTranslationUnit() &&
+            !getParentASTContext().getLangOpts().CPlusPlus)))
         makeDeclVisibleInContextImpl(ND, false);
 
     // If this declaration is itself a transparent declaration context

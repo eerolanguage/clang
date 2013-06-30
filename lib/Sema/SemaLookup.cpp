@@ -512,6 +512,14 @@ static bool LookupBuiltin(Sema &S, LookupResult &R) {
       NameKind == Sema::LookupRedeclarationWithLinkage) {
     IdentifierInfo *II = R.getLookupName().getAsIdentifierInfo();
     if (II) {
+      if (S.getLangOpts().CPlusPlus11 && S.getLangOpts().GNUMode &&
+          II == S.getFloat128Identifier()) {
+        // libstdc++4.7's type_traits expects type __float128 to exist, so
+        // insert a dummy type to make that header build in gnu++11 mode.
+        R.addDecl(S.getASTContext().getFloat128StubType());
+        return true;
+      }
+
       // If this is a builtin on this (or all) targets, create the decl.
       if (unsigned BuiltinID = II->getBuiltinID()) {
         // In C++, we don't have any predefined library functions like
@@ -3444,7 +3452,7 @@ class NamespaceSpecifierSet {
   NamespaceSpecifierSet(ASTContext &Context, DeclContext *CurContext,
                         CXXScopeSpec *CurScopeSpec)
       : Context(Context), CurContextChain(BuildContextChain(CurContext)),
-        isSorted(true) {
+        isSorted(false) {
     if (CurScopeSpec && CurScopeSpec->getScopeRep())
       getNestedNameSpecifierIdentifiers(CurScopeSpec->getScopeRep(),
                                         CurNameSpecifierIdentifiers);
@@ -3457,6 +3465,12 @@ class NamespaceSpecifierSet {
       if (NamespaceDecl *ND = dyn_cast_or_null<NamespaceDecl>(*C))
         CurContextIdentifiers.push_back(ND->getIdentifier());
     }
+
+    // Add the global context as a NestedNameSpecifier
+    Distances.insert(1);
+    DistanceMap[1].push_back(
+        SpecifierInfo(cast<DeclContext>(Context.getTranslationUnitDecl()),
+                      NestedNameSpecifier::GlobalSpecifier(Context), 1));
   }
 
   /// \brief Add the namespace to the set, computing the corresponding

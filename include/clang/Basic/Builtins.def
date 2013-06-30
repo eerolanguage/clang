@@ -928,14 +928,36 @@ LIBBUILTIN(_Block_object_dispose, "vvC*iC", "f", "Blocks.h", ALL_LANGUAGES)
 BUILTIN(__builtin_annotation, "v.", "tn")
 
 // Multiprecision Arithmetic Builtins.
+BUILTIN(__builtin_addcb, "UcUcCUcCUcCUc*", "n")
 BUILTIN(__builtin_addcs, "UsUsCUsCUsCUs*", "n")
 BUILTIN(__builtin_addc, "UiUiCUiCUiCUi*", "n")
 BUILTIN(__builtin_addcl, "ULiULiCULiCULiCULi*", "n")
 BUILTIN(__builtin_addcll, "ULLiULLiCULLiCULLiCULLi*", "n")
+BUILTIN(__builtin_subcb, "UcUcCUcCUcCUc*", "n")
 BUILTIN(__builtin_subcs, "UsUsCUsCUsCUs*", "n")
 BUILTIN(__builtin_subc, "UiUiCUiCUiCUi*", "n")
 BUILTIN(__builtin_subcl, "ULiULiCULiCULiCULi*", "n")
 BUILTIN(__builtin_subcll, "ULLiULLiCULLiCULLiCULLi*", "n")
+
+// Checked Arithmetic Builtins for Security.
+BUILTIN(__builtin_uadd_overflow, "bUiCUiCUi*", "n")
+BUILTIN(__builtin_uaddl_overflow, "bULiCULiCULi*", "n")
+BUILTIN(__builtin_uaddll_overflow, "bULLiCULLiCULLi*", "n")
+BUILTIN(__builtin_usub_overflow, "bUiCUiCUi*", "n")
+BUILTIN(__builtin_usubl_overflow, "bULiCULiCULi*", "n")
+BUILTIN(__builtin_usubll_overflow, "bULLiCULLiCULLi*", "n")
+BUILTIN(__builtin_umul_overflow, "bUiCUiCUi*", "n")
+BUILTIN(__builtin_umull_overflow, "bULiCULiCULi*", "n")
+BUILTIN(__builtin_umulll_overflow, "bULLiCULLiCULLi*", "n")
+BUILTIN(__builtin_sadd_overflow, "bSiCSiCSi*", "n")
+BUILTIN(__builtin_saddl_overflow, "bSLiCSLiCSLi*", "n")
+BUILTIN(__builtin_saddll_overflow, "bSLLiCSLLiCSLLi*", "n")
+BUILTIN(__builtin_ssub_overflow, "bSiCSiCSi*", "n")
+BUILTIN(__builtin_ssubl_overflow, "bSLiCSLiCSLi*", "n")
+BUILTIN(__builtin_ssubll_overflow, "bSLLiCSLLiCSLLi*", "n")
+BUILTIN(__builtin_smul_overflow, "bSiCSiCSi*", "n")
+BUILTIN(__builtin_smull_overflow, "bSLiCSLiCSLi*", "n")
+BUILTIN(__builtin_smulll_overflow, "bSLLiCSLLiCSLLi*", "n")
 
 #undef BUILTIN
 #undef LIBBUILTIN

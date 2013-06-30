@@ -1649,3 +1649,63 @@ namespace InitializerList {
   }
   static_assert(sum({1, 2, 3, 4, 5}) == 15, "");
 }
+
+namespace StmtExpr {
+  struct A { int k; };
+  void f() {
+    static_assert(({ const int x = 5; x * 3; }) == 15, ""); // expected-warning {{extension}}
+    constexpr auto a = ({ A(); }); // expected-warning {{extension}}
+  }
+  constexpr int g(int k) {
+    return ({ // expected-warning {{extension}}
+      const int x = k;
+      x * x;
+    });
+  }
+  static_assert(g(123) == 15129, "");
+  constexpr int h() { // expected-error {{never produces a constant}}
+    return ({ // expected-warning {{extension}}
+      return 0; // expected-note {{not supported}}
+      1;
+    });
+  }
+}
+
+namespace VirtualFromBase {
+  struct S1 {
+    virtual int f() const;
+  };
+  struct S2 {
+    virtual int f();
+  };
+  template <typename T> struct X : T {
+    constexpr X() {}
+    double d = 0.0;
+    constexpr int f() { return sizeof(T); } // expected-warning {{will not be implicitly 'const' in C++1y}}
+  };
+
+  // Virtual f(), not OK.
+  constexpr X<X<S1>> xxs1;
+  constexpr X<S1> *p = const_cast<X<X<S1>>*>(&xxs1);
+  static_assert(p->f() == sizeof(X<S1>), ""); // expected-error {{constant expression}} expected-note {{virtual function call}}
+
+  // Non-virtual f(), OK.
+  constexpr X<X<S2>> xxs2;
+  constexpr X<S2> *q = const_cast<X<X<S2>>*>(&xxs2);
+  static_assert(q->f() == sizeof(S2), "");
+}
+
+namespace ConstexprConstructorRecovery {
+  class X { 
+  public: 
+      enum E : short { 
+          headers = 0x1, 
+          middlefile = 0x2, 
+          choices = 0x4 
+      }; 
+      constexpr X() noexcept {}; 
+  protected: 
+      E val{0}; // expected-error {{cannot initialize a member subobject of type 'ConstexprConstructorRecovery::X::E' with an rvalue of type 'int'}}
+  }; 
+  constexpr X x{};
+}

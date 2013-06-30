@@ -2859,10 +2859,6 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
           QualType ArgTy = Param->getType();
           assert(!ArgTy.isNull() && "Couldn't parse type?");
 
-          // Adjust the parameter type.
-          assert((ArgTy == Context.getAdjustedParameterType(ArgTy)) &&
-                 "Unadjusted type?");
-
           // Look for 'void'.  void is allowed only as a single argument to a
           // function with no other parameters (C99 6.7.5.3p10).  We record
           // int(void) as a FunctionProtoType with an empty argument list.
@@ -3592,6 +3588,9 @@ namespace {
     void VisitQualifiedTypeLoc(QualifiedTypeLoc TL) {
       llvm_unreachable("qualified type locs not expected here!");
     }
+    void VisitDecayedTypeLoc(DecayedTypeLoc TL) {
+      llvm_unreachable("decayed type locs not expected here!");
+    }
 
     void VisitAttributedTypeLoc(AttributedTypeLoc TL) {
       fillAttributedTypeLoc(TL, Chunk.getAttrs());
@@ -3880,7 +3879,7 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
   max = Qualifiers::MaxAddressSpace;
   if (addrSpace > max) {
     S.Diag(Attr.getLoc(), diag::err_attribute_address_space_too_high)
-      << Qualifiers::MaxAddressSpace << ASArgExpr->getSourceRange();
+      << int(Qualifiers::MaxAddressSpace) << ASArgExpr->getSourceRange();
     Attr.setInvalid();
     return;
   }
@@ -4954,6 +4953,12 @@ bool Sema::RequireCompleteType(SourceLocation Loc, QualType T,
     return true;
 
   // We have an incomplete type. Produce a diagnostic.
+  if (Ident___float128 &&
+      T == Context.getTypeDeclType(Context.getFloat128StubType())) {
+    Diag(Loc, diag::err_typecheck_decl_incomplete_type___float128);
+    return true;
+  }
+
   Diagnoser.diagnose(*this, Loc, T);
 
   // If the type was a forward declaration of a class/struct/union

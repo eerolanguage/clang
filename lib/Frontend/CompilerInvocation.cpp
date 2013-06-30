@@ -29,9 +29,9 @@
 #include "llvm/Option/OptTable.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/PathV1.h"
 #include "llvm/Support/system_error.h"
 #include <sys/stat.h>
 using namespace clang;
@@ -318,7 +318,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
 
   if (Args.hasArg(OPT_gline_tables_only)) {
     Opts.setDebugInfo(CodeGenOptions::DebugLineTablesOnly);
-  } else if (Args.hasArg(OPT_g_Flag)) {
+  } else if (Args.hasArg(OPT_g_Flag) || Args.hasArg(OPT_gdwarf_2) ||
+             Args.hasArg(OPT_gdwarf_3) || Args.hasArg(OPT_gdwarf_4)) {
     if (Args.hasFlag(OPT_flimit_debug_info, OPT_fno_limit_debug_info, true))
       Opts.setDebugInfo(CodeGenOptions::LimitedDebugInfo);
     else
@@ -326,6 +327,15 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   }
   Opts.DebugColumnInfo = Args.hasArg(OPT_dwarf_column_info);
   Opts.SplitDwarfFile = Args.getLastArgValue(OPT_split_dwarf_file);
+  if (Args.hasArg(OPT_gdwarf_2))
+    Opts.DwarfVersion = 2;
+  else if (Args.hasArg(OPT_gdwarf_3))
+    Opts.DwarfVersion = 3;
+  else if (Args.hasArg(OPT_gdwarf_4))
+    Opts.DwarfVersion = 4;
+  else if (Opts.getDebugInfo() != CodeGenOptions::NoDebugInfo)
+    // Default Dwarf version is 3 if we are generating debug information.
+    Opts.DwarfVersion = 3;
 
   Opts.DisableLLVMOpts = Args.hasArg(OPT_disable_llvm_optzns);
   Opts.DisableRedZone = Args.hasArg(OPT_disable_red_zone);
@@ -353,6 +363,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.CodeModel = Args.getLastArgValue(OPT_mcode_model);
   Opts.DebugPass = Args.getLastArgValue(OPT_mdebug_pass);
   Opts.DisableFPElim = Args.hasArg(OPT_mdisable_fp_elim);
+  Opts.DisableFree = Args.hasArg(OPT_disable_free);
   Opts.DisableTailCalls = Args.hasArg(OPT_mdisable_tail_calls);
   Opts.FloatABI = Args.getLastArgValue(OPT_mfloat_abi);
   Opts.HiddenWeakVTables = Args.hasArg(OPT_fhidden_weak_vtables);
@@ -387,6 +398,10 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
 
   Opts.FunctionSections = Args.hasArg(OPT_ffunction_sections);
   Opts.DataSections = Args.hasArg(OPT_fdata_sections);
+
+  Opts.VectorizeBB = Args.hasArg(OPT_vectorize_slp_aggressive);
+  Opts.VectorizeLoop = Args.hasArg(OPT_vectorize_loops);
+  Opts.VectorizeSLP = Args.hasArg(OPT_vectorize_slp);
 
   Opts.MainFileName = Args.getLastArgValue(OPT_main_file_name);
   Opts.VerifyModule = !Args.hasArg(OPT_disable_llvm_verifier);
@@ -476,6 +491,15 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       Opts.setFPContractMode(CodeGenOptions::FPC_Off);
     else
       Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << Val;
+  }
+
+  if (Arg *A = Args.getLastArg(OPT_fpcc_struct_return, OPT_freg_struct_return)) {
+    if (A->getOption().matches(OPT_fpcc_struct_return)) {
+      Opts.setStructReturnConvention(CodeGenOptions::SRCK_OnStack);
+    } else {
+      assert(A->getOption().matches(OPT_freg_struct_return));
+      Opts.setStructReturnConvention(CodeGenOptions::SRCK_InRegs);
+    }
   }
 
   return Success;
@@ -723,6 +747,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   Opts.FixAndRecompile = Args.hasArg(OPT_fixit_recompile);
   Opts.FixToTemporaries = Args.hasArg(OPT_fixit_to_temp);
   Opts.ASTDumpFilter = Args.getLastArgValue(OPT_ast_dump_filter);
+  Opts.ASTDumpLookups = Args.hasArg(OPT_ast_dump_lookups);
   Opts.UseGlobalModuleIndex = !Args.hasArg(OPT_fno_modules_global_index);
   Opts.GenerateGlobalModuleIndex = Opts.UseGlobalModuleIndex;
   
@@ -824,16 +849,14 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
 
 std::string CompilerInvocation::GetResourcesPath(const char *Argv0,
                                                  void *MainAddr) {
-  llvm::sys::Path P = llvm::sys::Path::GetMainExecutable(Argv0, MainAddr);
+  SmallString<128> P(llvm::sys::fs::getMainExecutable(Argv0, MainAddr));
 
-  if (!P.isEmpty()) {
-    P.eraseComponent();  // Remove /clang from foo/bin/clang
-    P.eraseComponent();  // Remove /bin   from foo/bin
+  if (!P.empty()) {
+    llvm::sys::path::remove_filename(P); // Remove /clang from foo/bin/clang
+    llvm::sys::path::remove_filename(P); // Remove /bin   from foo/bin
 
     // Get foo/lib/clang/<version>/include
-    P.appendComponent("lib");
-    P.appendComponent("clang");
-    P.appendComponent(CLANG_VERSION_STRING);
+    llvm::sys::path::append(P, "lib", "clang", CLANG_VERSION_STRING);
   }
 
   return P.str();

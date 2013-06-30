@@ -130,6 +130,9 @@ public:
                        raw_ostream &);
   void mangleCXXVTT(const CXXRecordDecl *RD,
                     raw_ostream &);
+  void mangleCXXVBTable(const CXXRecordDecl *Derived,
+                        ArrayRef<const CXXRecordDecl *> BasePath,
+                        raw_ostream &Out);
   void mangleCXXCtorVTable(const CXXRecordDecl *RD, int64_t Offset,
                            const CXXRecordDecl *Type,
                            raw_ostream &);
@@ -825,6 +828,7 @@ void CXXNameMangler::mangleUnresolvedPrefix(NestedNameSpecifier *qualifier,
     switch (type->getTypeClass()) {
     case Type::Builtin:
     case Type::Complex:
+    case Type::Decayed:
     case Type::Pointer:
     case Type::BlockPointer:
     case Type::LValueReference:
@@ -1412,12 +1416,15 @@ void CXXNameMangler::manglePrefix(const DeclContext *DC, bool NoFunction) {
     return;
 
   if (const BlockDecl *Block = dyn_cast<BlockDecl>(DC)) {
-    manglePrefix(getEffectiveParentContext(DC), NoFunction);    
-    SmallString<64> Name;
-    llvm::raw_svector_ostream NameStream(Name);
-    Context.mangleBlock(Block, NameStream);
-    NameStream.flush();
-    Out << Name.size() << Name;
+    // The symbol we're adding a prefix for isn't externally
+    // visible; make up something sane.
+    // FIXME: This isn't always true!
+    SmallString<16> BlockPrefix;
+    BlockPrefix += "__block_prefix_internal";
+    unsigned Number = Context.getBlockId(Block, false);
+    if (Number > 1)
+      BlockPrefix += llvm::utostr_32(Number - 2);
+    Out << BlockPrefix.size() << BlockPrefix;
     return;
   } else if (isa<CapturedDecl>(DC)) {
     // Skip CapturedDecl context.
@@ -2164,8 +2171,19 @@ void CXXNameMangler::mangleType(const ObjCInterfaceType *T) {
 }
 
 void CXXNameMangler::mangleType(const ObjCObjectType *T) {
-  // We don't allow overloading by different protocol qualification,
-  // so mangling them isn't necessary.
+  if (!T->qual_empty()) {
+    // Mangle protocol qualifiers.
+    SmallString<64> QualStr;
+    llvm::raw_svector_ostream QualOS(QualStr);
+    QualOS << "objcproto";
+    ObjCObjectType::qual_iterator i = T->qual_begin(), e = T->qual_end();
+    for ( ; i != e; ++i) {
+      StringRef name = (*i)->getName();
+      QualOS << name.size() << name;
+    }
+    QualOS.flush();
+    Out << 'U' << QualStr.size() << QualStr;
+  }
   mangleType(T->getBaseType());
 }
 
@@ -3584,6 +3602,13 @@ void ItaniumMangleContext::mangleCXXVTT(const CXXRecordDecl *RD,
   CXXNameMangler Mangler(*this, Out);
   Mangler.getStream() << "_ZTT";
   Mangler.mangleNameOrStandardSubstitution(RD);
+}
+
+void
+ItaniumMangleContext::mangleCXXVBTable(const CXXRecordDecl *Derived,
+                                       ArrayRef<const CXXRecordDecl *> BasePath,
+                                       raw_ostream &Out) {
+  llvm_unreachable("The Itanium C++ ABI does not have virtual base tables!");
 }
 
 void ItaniumMangleContext::mangleCXXCtorVTable(const CXXRecordDecl *RD,

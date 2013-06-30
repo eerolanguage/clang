@@ -499,11 +499,13 @@ void Sema::checkCall(NamedDecl *FDecl,
 
   // Printf and scanf checking.
   bool HandledFormatString = false;
-  for (specific_attr_iterator<FormatAttr>
-         I = FDecl->specific_attr_begin<FormatAttr>(),
-         E = FDecl->specific_attr_end<FormatAttr>(); I != E ; ++I)
-    if (CheckFormatArguments(*I, Args, IsMemberFunction, CallType, Loc, Range))
-        HandledFormatString = true;
+  if (FDecl)
+    for (specific_attr_iterator<FormatAttr>
+           I = FDecl->specific_attr_begin<FormatAttr>(),
+           E = FDecl->specific_attr_end<FormatAttr>(); I != E ; ++I)
+      if (CheckFormatArguments(*I, Args, IsMemberFunction, CallType, Loc,
+                               Range))
+          HandledFormatString = true;
 
   // Refuse POD arguments that weren't caught by the format string
   // checks above.
@@ -514,16 +516,19 @@ void Sema::checkCall(NamedDecl *FDecl,
         variadicArgumentPODCheck(Arg, CallType);
     }
 
-  for (specific_attr_iterator<NonNullAttr>
-         I = FDecl->specific_attr_begin<NonNullAttr>(),
-         E = FDecl->specific_attr_end<NonNullAttr>(); I != E; ++I)
-    CheckNonNullArguments(*I, Args.data(), Loc);
+  if (FDecl) {
+    for (specific_attr_iterator<NonNullAttr>
+           I = FDecl->specific_attr_begin<NonNullAttr>(),
+           E = FDecl->specific_attr_end<NonNullAttr>(); I != E; ++I)
+      CheckNonNullArguments(*I, Args.data(), Loc);
 
-  // Type safety checking.
-  for (specific_attr_iterator<ArgumentWithTypeTagAttr>
-         i = FDecl->specific_attr_begin<ArgumentWithTypeTagAttr>(),
-         e = FDecl->specific_attr_end<ArgumentWithTypeTagAttr>(); i != e; ++i) {
-    CheckArgumentWithTypeTag(*i, Args.data());
+    // Type safety checking.
+    for (specific_attr_iterator<ArgumentWithTypeTagAttr>
+           i = FDecl->specific_attr_begin<ArgumentWithTypeTagAttr>(),
+           e = FDecl->specific_attr_end<ArgumentWithTypeTagAttr>();
+         i != e; ++i) {
+      CheckArgumentWithTypeTag(*i, Args.data());
+    }
   }
 }
 
@@ -597,18 +602,24 @@ bool Sema::CheckObjCMethodCall(ObjCMethodDecl *Method, SourceLocation lbrac,
   return false;
 }
 
-bool Sema::CheckBlockCall(NamedDecl *NDecl, CallExpr *TheCall,
-                          const FunctionProtoType *Proto) {
+bool Sema::CheckPointerCall(NamedDecl *NDecl, CallExpr *TheCall,
+                            const FunctionProtoType *Proto) {
   const VarDecl *V = dyn_cast<VarDecl>(NDecl);
   if (!V)
     return false;
 
   QualType Ty = V->getType();
-  if (!Ty->isBlockPointerType())
+  if (!Ty->isBlockPointerType() && !Ty->isFunctionPointerType())
     return false;
 
-  VariadicCallType CallType = 
-      Proto && Proto->isVariadic() ? VariadicBlock : VariadicDoesNotApply ;
+  VariadicCallType CallType;
+  if (!Proto || !Proto->isVariadic()) {
+    CallType = VariadicDoesNotApply;
+  } else if (Ty->isBlockPointerType()) {
+    CallType = VariadicBlock;
+  } else { // Ty->isFunctionPointerType()
+    CallType = VariadicFunction;
+  }
   unsigned NumProtoArgs = Proto ? Proto->getNumArgs() : 0;
 
   checkCall(NDecl,
@@ -618,6 +629,23 @@ bool Sema::CheckBlockCall(NamedDecl *NDecl, CallExpr *TheCall,
             TheCall->getRParenLoc(),
             TheCall->getCallee()->getSourceRange(), CallType);
   
+  return false;
+}
+
+/// Checks function calls when a FunctionDecl or a NamedDecl is not available,
+/// such as function pointers returned from functions.
+bool Sema::CheckOtherCall(CallExpr *TheCall, const FunctionProtoType *Proto) {
+  VariadicCallType CallType = getVariadicCallType(/*FDecl=*/0, Proto,
+                                                  TheCall->getCallee());
+  unsigned NumProtoArgs = Proto ? Proto->getNumArgs() : 0;
+
+  checkCall(/*FDecl=*/0,
+            llvm::makeArrayRef<const Expr *>(TheCall->getArgs(),
+                                             TheCall->getNumArgs()),
+            NumProtoArgs, /*IsMemberFunction=*/false,
+            TheCall->getRParenLoc(),
+            TheCall->getCallee()->getSourceRange(), CallType);
+
   return false;
 }
 
@@ -1951,7 +1979,7 @@ bool Sema::CheckFormatArguments(ArrayRef<const Expr *> Args,
 
   // If there are no arguments specified, warn with -Wformat-security, otherwise
   // warn only with -Wformat-nonliteral.
-  if (Args.size() == format_idx+1)
+  if (Args.size() == firstDataArg)
     Diag(Args[format_idx]->getLocStart(),
          diag::warn_format_nonliteral_noargs)
       << OrigFormatExpr->getSourceRange();
@@ -4865,7 +4893,7 @@ void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
             << FixItHint::CreateInsertion(E->getExprLoc(), "&");
           QualType ReturnType;
           UnresolvedSet<4> NonTemplateOverloads;
-          S.isExprCallable(*E, ReturnType, NonTemplateOverloads);
+          S.tryExprAsCall(*E, ReturnType, NonTemplateOverloads);
           if (!ReturnType.isNull() 
               && ReturnType->isSpecificBuiltinType(BuiltinType::Bool))
             S.Diag(E->getExprLoc(), diag::note_function_to_bool_call)
@@ -5319,7 +5347,7 @@ class SequenceChecker : public EvaluatedExprVisitor<SequenceChecker> {
     /// A read of an object. Multiple unsequenced reads are OK.
     UK_Use,
     /// A modification of an object which is sequenced before the value
-    /// computation of the expression, such as ++n.
+    /// computation of the expression, such as ++n in C++.
     UK_ModAsValue,
     /// A modification of an object which is not sequenced before the value
     /// computation of the expression, such as n++.
@@ -5380,6 +5408,35 @@ class SequenceChecker : public EvaluatedExprVisitor<SequenceChecker> {
     llvm::SmallVector<std::pair<Object, Usage>, 4> ModAsSideEffect;
     llvm::SmallVectorImpl<std::pair<Object, Usage> > *OldModAsSideEffect;
   };
+
+  /// RAII object wrapping the visitation of a subexpression which we might
+  /// choose to evaluate as a constant. If any subexpression is evaluated and
+  /// found to be non-constant, this allows us to suppress the evaluation of
+  /// the outer expression.
+  class EvaluationTracker {
+  public:
+    EvaluationTracker(SequenceChecker &Self)
+        : Self(Self), Prev(Self.EvalTracker), EvalOK(true) {
+      Self.EvalTracker = this;
+    }
+    ~EvaluationTracker() {
+      Self.EvalTracker = Prev;
+      if (Prev)
+        Prev->EvalOK &= EvalOK;
+    }
+
+    bool evaluate(const Expr *E, bool &Result) {
+      if (!EvalOK || E->isValueDependent())
+        return false;
+      EvalOK = E->EvaluateAsBooleanCondition(Result, Self.SemaRef.Context);
+      return EvalOK;
+    }
+
+  private:
+    SequenceChecker &Self;
+    EvaluationTracker *Prev;
+    bool EvalOK;
+  } *EvalTracker;
 
   /// \brief Find the object which is produced by the specified expression,
   /// if any.
@@ -5462,7 +5519,8 @@ public:
   SequenceChecker(Sema &S, Expr *E,
                   llvm::SmallVectorImpl<Expr*> &WorkList)
     : EvaluatedExprVisitor<SequenceChecker>(S.Context), SemaRef(S),
-      Region(Tree.root()), ModAsSideEffect(0), WorkList(WorkList) {
+      Region(Tree.root()), ModAsSideEffect(0), WorkList(WorkList),
+      EvalTracker(0) {
     Visit(E);
   }
 
@@ -5539,7 +5597,12 @@ public:
 
     Visit(BO->getRHS());
 
-    notePostMod(O, BO, UK_ModAsValue);
+    // C++11 [expr.ass]p1:
+    //   the assignment is sequenced [...] before the value computation of the
+    //   assignment expression.
+    // C11 6.5.16/3 has no such rule.
+    notePostMod(O, BO, SemaRef.getLangOpts().CPlusPlus ? UK_ModAsValue
+                                                       : UK_ModAsSideEffect);
   }
   void VisitCompoundAssignOperator(CompoundAssignOperator *CAO) {
     VisitBinAssign(CAO);
@@ -5554,7 +5617,10 @@ public:
 
     notePreMod(O, UO);
     Visit(UO->getSubExpr());
-    notePostMod(O, UO, UK_ModAsValue);
+    // C++11 [expr.pre.incr]p1:
+    //   the expression ++x is equivalent to x+=1
+    notePostMod(O, UO, SemaRef.getLangOpts().CPlusPlus ? UK_ModAsValue
+                                                       : UK_ModAsSideEffect);
   }
 
   void VisitUnaryPostInc(UnaryOperator *UO) { VisitUnaryPostIncDec(UO); }
@@ -5575,14 +5641,14 @@ public:
     // value computation of the RHS, and hence before the value computation
     // of the '&&' itself, unless the LHS evaluates to zero. We treat them
     // as if they were unconditionally sequenced.
+    EvaluationTracker Eval(*this);
     {
       SequencedSubexpression Sequenced(*this);
       Visit(BO->getLHS());
     }
 
     bool Result;
-    if (!BO->getLHS()->isValueDependent() &&
-        BO->getLHS()->EvaluateAsBooleanCondition(Result, SemaRef.Context)) {
+    if (Eval.evaluate(BO->getLHS(), Result)) {
       if (!Result)
         Visit(BO->getRHS());
     } else {
@@ -5596,14 +5662,14 @@ public:
     }
   }
   void VisitBinLAnd(BinaryOperator *BO) {
+    EvaluationTracker Eval(*this);
     {
       SequencedSubexpression Sequenced(*this);
       Visit(BO->getLHS());
     }
 
     bool Result;
-    if (!BO->getLHS()->isValueDependent() &&
-        BO->getLHS()->EvaluateAsBooleanCondition(Result, SemaRef.Context)) {
+    if (Eval.evaluate(BO->getLHS(), Result)) {
       if (Result)
         Visit(BO->getRHS());
     } else {
@@ -5614,12 +5680,14 @@ public:
   // Only visit the condition, unless we can be sure which subexpression will
   // be chosen.
   void VisitAbstractConditionalOperator(AbstractConditionalOperator *CO) {
-    SequencedSubexpression Sequenced(*this);
-    Visit(CO->getCond());
+    EvaluationTracker Eval(*this);
+    {
+      SequencedSubexpression Sequenced(*this);
+      Visit(CO->getCond());
+    }
 
     bool Result;
-    if (!CO->getCond()->isValueDependent() &&
-        CO->getCond()->EvaluateAsBooleanCondition(Result, SemaRef.Context))
+    if (Eval.evaluate(CO->getCond(), Result))
       Visit(Result ? CO->getTrueExpr() : CO->getFalseExpr());
     else {
       WorkList.push_back(CO->getTrueExpr());
@@ -5700,7 +5768,8 @@ void Sema::CheckBitFieldInitialization(SourceLocation InitLoc,
 /// takes care of any checks that cannot be performed on the
 /// declaration itself, e.g., that the types of each of the function
 /// parameters are complete.
-bool Sema::CheckParmsForFunctionDef(ParmVarDecl **P, ParmVarDecl **PEnd,
+bool Sema::CheckParmsForFunctionDef(ParmVarDecl *const *P,
+                                    ParmVarDecl *const *PEnd,
                                     bool CheckParameterNames) {
   bool HasInvalidParm = false;
   for (; P != PEnd; ++P) {
@@ -5740,6 +5809,15 @@ bool Sema::CheckParmsForFunctionDef(ParmVarDecl **P, ParmVarDecl **PEnd,
         break;
       }
       PType= AT->getElementType();
+    }
+
+    // MSVC destroys objects passed by value in the callee.  Therefore a
+    // function definition which takes such a parameter must be able to call the
+    // object's destructor.
+    if (getLangOpts().CPlusPlus &&
+        Context.getTargetInfo().getCXXABI().isArgumentDestroyedByCallee()) {
+      if (const RecordType *RT = Param->getType()->getAs<RecordType>())
+        FinalizeVarWithDestructor(Param, RT);
     }
   }
 

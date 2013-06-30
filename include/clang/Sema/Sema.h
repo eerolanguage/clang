@@ -341,8 +341,7 @@ public:
   llvm::DenseMap<DeclarationName, NamedDecl *> LocallyScopedExternCDecls;
 
   /// \brief Look for a locally scoped extern "C" declaration by the given name.
-  llvm::DenseMap<DeclarationName, NamedDecl *>::iterator
-  findLocallyScopedExternCDecl(DeclarationName Name);
+  NamedDecl *findLocallyScopedExternCDecl(DeclarationName Name);
 
   typedef LazyVector<VarDecl *, ExternalSemaSource,
                      &ExternalSemaSource::ReadTentativeDefinitions, 2, 2>
@@ -1408,9 +1407,7 @@ public:
 
   NamedDecl *HandleDeclarator(Scope *S, Declarator &D,
                               MultiTemplateParamsArg TemplateParameterLists);
-  void RegisterLocallyScopedExternCDecl(NamedDecl *ND,
-                                        const LookupResult &Previous,
-                                        Scope *S);
+  void RegisterLocallyScopedExternCDecl(NamedDecl *ND, Scope *S);
   bool DiagnoseClassNameShadow(DeclContext *DC, DeclarationNameInfo Info);
   bool diagnoseQualifiedDeclaration(CXXScopeSpec &SS, DeclContext *DC,
                                     DeclarationName Name,
@@ -2255,7 +2252,8 @@ public:
                            CallExpr *CE, FunctionDecl *FD);
 
   /// Helpers for dealing with blocks and functions.
-  bool CheckParmsForFunctionDef(ParmVarDecl **Param, ParmVarDecl **ParamEnd,
+  bool CheckParmsForFunctionDef(ParmVarDecl *const *Param,
+                                ParmVarDecl *const *ParamEnd,
                                 bool CheckParameterNames);
   void CheckCXXDefaultArguments(FunctionDecl *FD);
   void CheckExtraCXXDefaultArguments(Declarator &D);
@@ -2509,9 +2507,6 @@ public:
   void WarnExactTypedMethods(ObjCMethodDecl *Method,
                              ObjCMethodDecl *MethodDecl,
                              bool IsProtocolMethodDecl);
-
-  bool isPropertyReadonly(ObjCPropertyDecl *PropertyDecl,
-                          ObjCInterfaceDecl *IDecl);
 
   typedef llvm::SmallPtrSet<Selector, 8> SelectorSet;
   typedef llvm::DenseMap<Selector, ObjCMethodDecl*> ProtocolsMethodsMap;
@@ -3110,8 +3105,8 @@ public:
                             bool (*IsPlausibleResult)(QualType) = 0);
 
   /// \brief Figure out if an expression could be turned into a call.
-  bool isExprCallable(const Expr &E, QualType &ZeroArgCallReturnTy,
-                      UnresolvedSetImpl &NonTemplateOverloads);
+  bool tryExprAsCall(Expr &E, QualType &ZeroArgCallReturnTy,
+                     UnresolvedSetImpl &NonTemplateOverloads);
 
   /// \brief Conditionally issue a diagnostic based on the current
   /// evaluation context.
@@ -4255,7 +4250,6 @@ public:
                                   bool EnteringContext = false);
   bool isDependentScopeSpecifier(const CXXScopeSpec &SS);
   CXXRecordDecl *getCurrentInstantiationOf(NestedNameSpecifier *NNS);
-  bool isUnknownSpecialization(const CXXScopeSpec &SS);
 
   /// \brief The parser has parsed a global nested-name-specifier '::'.
   ///
@@ -5007,12 +5001,12 @@ public:
                              Decl **Params, unsigned NumParams,
                              SourceLocation RAngleLoc);
 
-  /// \brief The context in which we are checking a template parameter
-  /// list.
+  /// \brief The context in which we are checking a template parameter list.
   enum TemplateParamListContext {
     TPC_ClassTemplate,
     TPC_FunctionTemplate,
     TPC_ClassTemplateMember,
+    TPC_FriendClassTemplate,
     TPC_FriendFunctionTemplate,
     TPC_FriendFunctionTemplateDefinition,
     TPC_TypeAliasTemplate
@@ -5666,6 +5660,19 @@ public:
   /// \returns true if the declarator contains any unexpanded parameter packs,
   /// false otherwise.
   bool containsUnexpandedParameterPacks(Declarator &D);
+
+  /// \brief Returns the pattern of the pack expansion for a template argument.
+  ///
+  /// \param OrigLoc The template argument to expand.
+  ///
+  /// \param Ellipsis Will be set to the location of the ellipsis.
+  ///
+  /// \param NumExpansions Will be set to the number of expansions that will
+  /// be generated from this pack expansion, if known a priori.
+  TemplateArgumentLoc getTemplateArgumentPackExpansionPattern(
+      TemplateArgumentLoc OrigLoc,
+      SourceLocation &Ellipsis,
+      Optional<unsigned> &NumExpansions) const;
 
   //===--------------------------------------------------------------------===//
   // C++ Template Argument Deduction (C++ [temp.deduct])
@@ -6489,9 +6496,6 @@ public:
 
   void DiagnoseClassExtensionDupMethods(ObjCCategoryDecl *CAT,
                                         ObjCInterfaceDecl *ID);
-
-  void MatchOneProtocolPropertiesInClass(Decl *CDecl,
-                                         ObjCProtocolDecl *PDecl);
 
   Decl *ActOnAtEnd(Scope *S, SourceRange AtEnd,
                    Decl **allMethods = 0, unsigned allNum = 0,
@@ -7430,9 +7434,10 @@ public:
   void CodeCompleteNamespaceDecl(Scope *S);
   void CodeCompleteNamespaceAliasDecl(Scope *S);
   void CodeCompleteOperatorName(Scope *S);
-  void CodeCompleteConstructorInitializer(Decl *Constructor,
-                                          CXXCtorInitializer** Initializers,
-                                          unsigned NumInitializers);
+  void CodeCompleteConstructorInitializer(
+                                Decl *Constructor,
+                                ArrayRef<CXXCtorInitializer *> Initializers);
+
   void CodeCompleteLambdaIntroducer(Scope *S, LambdaIntroducer &Intro,
                                     bool AfterAmpersand);
 
@@ -7526,8 +7531,9 @@ private:
                          const FunctionProtoType *Proto);
   bool CheckObjCMethodCall(ObjCMethodDecl *Method, SourceLocation loc,
                            ArrayRef<const Expr *> Args);
-  bool CheckBlockCall(NamedDecl *NDecl, CallExpr *TheCall,
-                      const FunctionProtoType *Proto);
+  bool CheckPointerCall(NamedDecl *NDecl, CallExpr *TheCall,
+                        const FunctionProtoType *Proto);
+  bool CheckOtherCall(CallExpr *TheCall, const FunctionProtoType *Proto);
   void CheckConstructorCall(FunctionDecl *FDecl,
                             ArrayRef<const Expr *> Args,
                             const FunctionProtoType *Proto,
@@ -7677,6 +7683,7 @@ private:
   Scope *CurScope;
 
   mutable IdentifierInfo *Ident_super;
+  mutable IdentifierInfo *Ident___float128;
 
 protected:
   friend class Parser;
@@ -7696,6 +7703,7 @@ public:
   Scope *getCurScope() const { return CurScope; }
 
   IdentifierInfo *getSuperIdentifier() const;
+  IdentifierInfo *getFloat128Identifier() const;
 
   Decl *getObjCDeclContext() const;
 

@@ -765,3 +765,52 @@ namespace InitializerList {
   }
   static_assert(sum({1, 2, 3, 4, 5}) == 15, "");
 }
+
+namespace StmtExpr {
+  constexpr int f(int k) {
+    switch (k) {
+    case 0:
+      return 0;
+
+      ({
+        case 1: // expected-note {{not supported}}
+          return 1;
+      });
+    }
+  }
+  static_assert(f(1) == 1, ""); // expected-error {{constant expression}} expected-note {{in call}}
+
+  constexpr int g() { // expected-error {{never produces a constant}}
+    return ({ int n; n; }); // expected-note {{object of type 'int' is not initialized}}
+  }
+
+  // FIXME: We should handle the void statement expression case.
+  constexpr int h() { // expected-error {{never produces a constant}}
+    ({ if (true) {} }); // expected-note {{not supported}}
+    return 0;
+  }
+}
+
+namespace VirtualFromBase {
+  struct S1 {
+    virtual int f() const;
+  };
+  struct S2 {
+    virtual int f();
+  };
+  template <typename T> struct X : T {
+    constexpr X() {}
+    double d = 0.0;
+    constexpr int f() { return sizeof(T); }
+  };
+
+  // Non-virtual f(), OK.
+  constexpr X<X<S1>> xxs1;
+  constexpr X<S1> *p = const_cast<X<X<S1>>*>(&xxs1);
+  static_assert(p->f() == sizeof(S1), "");
+
+  // Virtual f(), not OK.
+  constexpr X<X<S2>> xxs2;
+  constexpr X<S2> *q = const_cast<X<X<S2>>*>(&xxs2);
+  static_assert(q->f() == sizeof(X<S2>), ""); // expected-error {{constant expression}} expected-note {{virtual function call}}
+}

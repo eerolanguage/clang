@@ -26,6 +26,19 @@ namespace clang {
 namespace format {
 namespace {
 
+static const char *Blanks = " \t\v\f";
+static bool IsBlank(char C) {
+  switch (C) {
+    case ' ':
+    case '\t':
+    case '\v':
+    case '\f':
+      return true;
+    default:
+      return false;
+  }
+}
+
 BreakableToken::Split getCommentSplit(StringRef Text,
                                       unsigned ContentStartColumn,
                                       unsigned ColumnLimit,
@@ -41,22 +54,22 @@ BreakableToken::Split getCommentSplit(StringRef Text,
     MaxSplitBytes +=
         encoding::getCodePointNumBytes(Text[MaxSplitBytes], Encoding);
 
-  StringRef::size_type SpaceOffset = Text.rfind(' ', MaxSplitBytes);
+  StringRef::size_type SpaceOffset = Text.find_last_of(Blanks, MaxSplitBytes);
   if (SpaceOffset == StringRef::npos ||
       // Don't break at leading whitespace.
-      Text.find_last_not_of(' ', SpaceOffset) == StringRef::npos) {
+      Text.find_last_not_of(Blanks, SpaceOffset) == StringRef::npos) {
     // Make sure that we don't break at leading whitespace that
     // reaches past MaxSplit.
-    StringRef::size_type FirstNonWhitespace = Text.find_first_not_of(" ");
+    StringRef::size_type FirstNonWhitespace = Text.find_first_not_of(Blanks);
     if (FirstNonWhitespace == StringRef::npos)
       // If the comment is only whitespace, we cannot split.
       return BreakableToken::Split(StringRef::npos, 0);
-    SpaceOffset =
-        Text.find(' ', std::max<unsigned>(MaxSplitBytes, FirstNonWhitespace));
+    SpaceOffset = Text.find_first_of(
+        Blanks, std::max<unsigned>(MaxSplitBytes, FirstNonWhitespace));
   }
   if (SpaceOffset != StringRef::npos && SpaceOffset != 0) {
-    StringRef BeforeCut = Text.substr(0, SpaceOffset).rtrim();
-    StringRef AfterCut = Text.substr(SpaceOffset).ltrim();
+    StringRef BeforeCut = Text.substr(0, SpaceOffset).rtrim(Blanks);
+    StringRef AfterCut = Text.substr(SpaceOffset).ltrim(Blanks);
     return BreakableToken::Split(BeforeCut.size(),
                                  AfterCut.begin() - BeforeCut.end());
   }
@@ -77,6 +90,7 @@ BreakableToken::Split getStringSplit(StringRef Text,
                          encoding::getCodePointCount(Text, Encoding) - 1);
   StringRef::size_type SpaceOffset = 0;
   StringRef::size_type SlashOffset = 0;
+  StringRef::size_type WordStartOffset = 0;
   StringRef::size_type SplitPoint = 0;
   for (unsigned Chars = 0;;) {
     unsigned Advance;
@@ -91,10 +105,12 @@ BreakableToken::Split getStringSplit(StringRef Text,
     if (Chars > MaxSplit)
       break;
 
-    if (Text[0] == ' ')
+    if (IsBlank(Text[0]))
       SpaceOffset = SplitPoint;
     if (Text[0] == '/')
       SlashOffset = SplitPoint;
+    if (Advance == 1 && !isAlphanumeric(Text[0]))
+      WordStartOffset = SplitPoint;
 
     SplitPoint += Advance;
     Text = Text.substr(Advance);
@@ -104,6 +120,8 @@ BreakableToken::Split getStringSplit(StringRef Text,
     return BreakableToken::Split(SpaceOffset + 1, 0);
   if (SlashOffset != 0)
     return BreakableToken::Split(SlashOffset + 1, 0);
+  if (WordStartOffset != 0)
+    return BreakableToken::Split(WordStartOffset + 1, 0);
   if (SplitPoint != 0)
     return BreakableToken::Split(SplitPoint, 0);
   return BreakableToken::Split(StringRef::npos, 0);
@@ -275,13 +293,13 @@ void BreakableBlockComment::adjustWhitespace(const FormatStyle &Style,
 
   // Calculate the end of the non-whitespace text in the previous line.
   EndOfPreviousLine =
-      Lines[LineIndex - 1].find_last_not_of(" \t", EndOfPreviousLine);
+      Lines[LineIndex - 1].find_last_not_of(Blanks, EndOfPreviousLine);
   if (EndOfPreviousLine == StringRef::npos)
     EndOfPreviousLine = 0;
   else
     ++EndOfPreviousLine;
   // Calculate the start of the non-whitespace text in the current line.
-  size_t StartOfLine = Lines[LineIndex].find_first_not_of(" \t");
+  size_t StartOfLine = Lines[LineIndex].find_first_not_of(Blanks);
   if (StartOfLine == StringRef::npos)
     StartOfLine = Lines[LineIndex].size();
 

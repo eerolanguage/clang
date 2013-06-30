@@ -15,9 +15,9 @@
 #define CLANG_CODEGEN_CODEGENFUNCTION_H
 
 #include "CGBuilder.h"
-#include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGValue.h"
+#include "EHScopeStack.h"
 #include "CodeGenModule.h"
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/ExprCXX.h"
@@ -1991,7 +1991,6 @@ public:
   LValue EmitInitListLValue(const InitListExpr *E);
   LValue EmitConditionalOperatorLValue(const AbstractConditionalOperator *E);
   LValue EmitCastLValue(const CastExpr *E);
-  LValue EmitNullInitializationLValue(const CXXScalarValueInitExpr *E);
   LValue EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *E);
   LValue EmitOpaqueValueLValue(const OpaqueValueExpr *e);
 

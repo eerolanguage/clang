@@ -134,6 +134,9 @@ public:
                                    ReturnValueSlot ReturnValue,
                                    llvm::Value *This);
 
+  void EmitVirtualInheritanceTables(llvm::GlobalVariable::LinkageTypes Linkage,
+                                    const CXXRecordDecl *RD);
+
   StringRef GetPureVirtualCallName() { return "__cxa_pure_virtual"; }
   StringRef GetDeletedVirtualCallName() { return "__cxa_deleted_virtual"; }
 
@@ -159,6 +162,8 @@ public:
       llvm::Function *InitFunc);
   LValue EmitThreadLocalDeclRefExpr(CodeGenFunction &CGF,
                                     const DeclRefExpr *DRE);
+
+  bool NeedsVTTParameter(GlobalDecl GD);
 };
 
 class ARMCXXABI : public ItaniumCXXABI {
@@ -807,7 +812,7 @@ void ItaniumCXXABI::BuildInstanceFunctionParams(CodeGenFunction &CGF,
   assert(MD->isInstance());
 
   // Check if we need a VTT parameter as well.
-  if (CodeGenVTables::needsVTTParameter(CGF.CurGD)) {
+  if (NeedsVTTParameter(CGF.CurGD)) {
     ASTContext &Context = getContext();
 
     // FIXME: avoid the fake decl
@@ -884,6 +889,13 @@ RValue ItaniumCXXABI::EmitVirtualDestructorCall(CodeGenFunction &CGF,
 
   return CGF.EmitCXXMemberCall(Dtor, CallLoc, Callee, ReturnValue, This,
                                /*ImplicitParam=*/0, QualType(), 0, 0);
+}
+
+void ItaniumCXXABI::EmitVirtualInheritanceTables(
+    llvm::GlobalVariable::LinkageTypes Linkage, const CXXRecordDecl *RD) {
+  CodeGenVTables &VTables = CGM.getVTables();
+  llvm::GlobalVariable *VTT = VTables.GetAddrOfVTT(RD);
+  VTables.EmitVTTDefinition(VTT, Linkage, RD);
 }
 
 void ARMCXXABI::EmitReturnFromThunk(CodeGenFunction &CGF,
@@ -1406,4 +1418,24 @@ LValue ItaniumCXXABI::EmitThreadLocalDeclRefExpr(CodeGenFunction &CGF,
                             CGF.getContext().getDeclAlign(VD));
   // FIXME: need setObjCGCLValueClass?
   return LV;
+}
+
+/// Return whether the given global decl needs a VTT parameter, which it does
+/// if it's a base constructor or destructor with virtual bases.
+bool ItaniumCXXABI::NeedsVTTParameter(GlobalDecl GD) {
+  const CXXMethodDecl *MD = cast<CXXMethodDecl>(GD.getDecl());
+  
+  // We don't have any virtual bases, just return early.
+  if (!MD->getParent()->getNumVBases())
+    return false;
+  
+  // Check if we have a base constructor.
+  if (isa<CXXConstructorDecl>(MD) && GD.getCtorType() == Ctor_Base)
+    return true;
+
+  // Check if we have a base destructor.
+  if (isa<CXXDestructorDecl>(MD) && GD.getDtorType() == Dtor_Base)
+    return true;
+  
+  return false;
 }

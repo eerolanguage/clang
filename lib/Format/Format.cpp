@@ -109,6 +109,8 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     IO.mapOptional("IndentWidth", Style.IndentWidth);
     IO.mapOptional("UseTab", Style.UseTab);
     IO.mapOptional("BreakBeforeBraces", Style.BreakBeforeBraces);
+    IO.mapOptional("IndentFunctionDeclarationAfterType",
+                   Style.IndentFunctionDeclarationAfterType);
   }
 };
 }
@@ -143,6 +145,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.IndentWidth = 2;
   LLVMStyle.UseTab = false;
   LLVMStyle.BreakBeforeBraces = FormatStyle::BS_Attach;
+  LLVMStyle.IndentFunctionDeclarationAfterType = false;
   return LLVMStyle;
 }
 
@@ -172,6 +175,7 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.IndentWidth = 2;
   GoogleStyle.UseTab = false;
   GoogleStyle.BreakBeforeBraces = FormatStyle::BS_Attach;
+  GoogleStyle.IndentFunctionDeclarationAfterType = true;
   return GoogleStyle;
 }
 
@@ -262,8 +266,8 @@ public:
     State.Column = FirstIndent;
     State.NextToken = RootToken;
     State.Stack.push_back(
-        ParenState(FirstIndent, FirstIndent, /*AvoidBinPacking=*/ false,
-                   /*NoLineBreak=*/ false));
+        ParenState(FirstIndent, FirstIndent, /*AvoidBinPacking=*/false,
+                   /*NoLineBreak=*/false));
     State.LineContainsContinuedForLoopSection = false;
     State.ParenLevel = 0;
     State.StartOfStringLiteral = 0;
@@ -272,7 +276,7 @@ public:
     State.IgnoreStackForComparison = false;
 
     // The first token has already been indented and thus consumed.
-    moveStateToNextToken(State, /*DryRun=*/ false);
+    moveStateToNextToken(State, /*DryRun=*/false);
 
     // If everything fits on a single line, just put it there.
     unsigned ColumnLimit = Style.ColumnLimit;
@@ -476,7 +480,7 @@ private:
   /// \brief Appends the next token to \p State and updates information
   /// necessary for indentation.
   ///
-  /// Puts the token on the current line if \p Newline is \c true and adds a
+  /// Puts the token on the current line if \p Newline is \c false and adds a
   /// line break and necessary indentation otherwise.
   ///
   /// If \p DryRun is \c false, also creates and stores the required
@@ -524,7 +528,8 @@ private:
         State.Column = State.Stack.back().VariablePos;
       } else if (Previous.ClosesTemplateDeclaration ||
                  (Current.Type == TT_StartOfName && State.ParenLevel == 0 &&
-                  Line.StartsDefinition)) {
+                  (!Style.IndentFunctionDeclarationAfterType ||
+                   Line.StartsDefinition))) {
         State.Column = State.Stack.back().Indent;
       } else if (Current.Type == TT_ObjCSelectorName) {
         if (State.Stack.back().ColonPos > Current.CodePointCount) {
@@ -832,17 +837,17 @@ private:
     }
     if (Current.UnbreakableTailLength >= getColumnLimit())
       return 0;
-    unsigned RemainingSpace = getColumnLimit() - Current.UnbreakableTailLength;
 
+    unsigned RemainingSpace = getColumnLimit() - Current.UnbreakableTailLength;
     bool BreakInserted = false;
     unsigned Penalty = 0;
-    unsigned PositionAfterLastLineInToken = 0;
+    unsigned RemainingTokenColumns = 0;
     for (unsigned LineIndex = 0, EndIndex = Token->getLineCount();
          LineIndex != EndIndex; ++LineIndex) {
       if (!DryRun)
         Token->replaceWhitespaceBefore(LineIndex, Whitespaces);
       unsigned TailOffset = 0;
-      unsigned RemainingTokenColumns = Token->getLineLengthAfterSplit(
+      RemainingTokenColumns = Token->getLineLengthAfterSplit(
           LineIndex, TailOffset, StringRef::npos);
       while (RemainingTokenColumns > RemainingSpace) {
         BreakableToken::Split Split =
@@ -868,11 +873,11 @@ private:
         RemainingTokenColumns = NewRemainingTokenColumns;
         BreakInserted = true;
       }
-      PositionAfterLastLineInToken = RemainingTokenColumns;
     }
 
+    State.Column = RemainingTokenColumns;
+
     if (BreakInserted) {
-      State.Column = PositionAfterLastLineInToken;
       // If we break the token inside a parameter list, we need to break before
       // the next parameter on all levels, so that the next parameter is clearly
       // visible. Line comments already introduce a break.
@@ -950,8 +955,8 @@ private:
         // State already examined with lower penalty.
         continue;
 
-      addNextStateToQueue(Penalty, Node, /*NewLine=*/ false);
-      addNextStateToQueue(Penalty, Node, /*NewLine=*/ true);
+      addNextStateToQueue(Penalty, Node, /*NewLine=*/false);
+      addNextStateToQueue(Penalty, Node, /*NewLine=*/true);
     }
 
     if (Queue.empty())
@@ -1655,7 +1660,8 @@ tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
   SourceMgr.overrideFileContents(Entry, Buf);
   FileID ID =
       SourceMgr.createFileID(Entry, SourceLocation(), clang::SrcMgr::C_User);
-  Lexer Lex(ID, SourceMgr.getBuffer(ID), SourceMgr, getFormattingLangOpts());
+  Lexer Lex(ID, SourceMgr.getBuffer(ID), SourceMgr,
+            getFormattingLangOpts(Style.Standard));
   SourceLocation StartOfFile = SourceMgr.getLocForStartOfFile(ID);
   std::vector<CharSourceRange> CharRanges;
   for (unsigned i = 0, e = Ranges.size(); i != e; ++i) {
@@ -1666,10 +1672,10 @@ tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
   return reformat(Style, Lex, SourceMgr, CharRanges);
 }
 
-LangOptions getFormattingLangOpts() {
+LangOptions getFormattingLangOpts(FormatStyle::LanguageStandard Standard) {
   LangOptions LangOpts;
   LangOpts.CPlusPlus = 1;
-  LangOpts.CPlusPlus11 = 1;
+  LangOpts.CPlusPlus11 = Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
   LangOpts.LineComment = 1;
   LangOpts.Bool = 1;
   LangOpts.ObjC1 = 1;

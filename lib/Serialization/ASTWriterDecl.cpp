@@ -184,7 +184,10 @@ void ASTDeclWriter::VisitTypeDecl(TypeDecl *D) {
 void ASTDeclWriter::VisitTypedefNameDecl(TypedefNameDecl *D) {
   VisitRedeclarable(D);
   VisitTypeDecl(D);
-  Writer.AddTypeSourceInfo(D->getTypeSourceInfo(), Record);  
+  Writer.AddTypeSourceInfo(D->getTypeSourceInfo(), Record);
+  Record.push_back(D->isModed());
+  if (D->isModed())
+    Writer.AddTypeRef(D->getUnderlyingType(), Record);
 }
 
 void ASTDeclWriter::VisitTypedefDecl(TypedefDecl *D) {
@@ -1170,8 +1173,6 @@ void ASTDeclWriter::VisitClassTemplatePartialSpecializationDecl(
   Record.push_back(D->getNumTemplateArgsAsWritten());
   for (int i = 0, e = D->getNumTemplateArgsAsWritten(); i != e; ++i)
     Writer.AddTemplateArgumentLoc(D->getTemplateArgsAsWritten()[i], Record);
-
-  Record.push_back(D->getSequenceNumber());
 
   // These are read/set from/to the first declaration.
   if (D->getPreviousDecl() == 0) {

@@ -82,6 +82,7 @@ class ASTContext : public RefCountedBase<ASTContext> {
   mutable llvm::FoldingSet<ExtQuals> ExtQualNodes;
   mutable llvm::FoldingSet<ComplexType> ComplexTypes;
   mutable llvm::FoldingSet<PointerType> PointerTypes;
+  mutable llvm::FoldingSet<DecayedType> DecayedTypes;
   mutable llvm::FoldingSet<BlockPointerType> BlockPointerTypes;
   mutable llvm::FoldingSet<LValueReferenceType> LValueReferenceTypes;
   mutable llvm::FoldingSet<RValueReferenceType> RValueReferenceTypes;
@@ -196,6 +197,9 @@ class ASTContext : public RefCountedBase<ASTContext> {
 
   /// \brief The typedef for the __uint128_t type.
   mutable TypedefDecl *UInt128Decl;
+
+  /// \brief The typedef for the __float128 stub type.
+  mutable TypeDecl *Float128StubDecl;
   
   /// \brief The typedef for the target specific predefined
   /// __builtin_va_list type.
@@ -630,31 +634,6 @@ public:
 
   void setInstantiatedFromUnnamedFieldDecl(FieldDecl *Inst, FieldDecl *Tmpl);
   
-  /// \brief Return \c true if \p FD is a zero-length bitfield which follows
-  /// the non-bitfield \p LastFD.
-  bool ZeroBitfieldFollowsNonBitfield(const FieldDecl *FD, 
-                                      const FieldDecl *LastFD) const;
-
-  /// \brief Return \c true if \p FD is a zero-length bitfield which follows
-  /// the bitfield \p LastFD.
-  bool ZeroBitfieldFollowsBitfield(const FieldDecl *FD,
-                                   const FieldDecl *LastFD) const;
-  
-  /// \brief Return \c true if \p FD is a bitfield which follows the bitfield
-  /// \p LastFD.
-  bool BitfieldFollowsBitfield(const FieldDecl *FD,
-                               const FieldDecl *LastFD) const;
-  
-  /// \brief Return \c true if \p FD is not a bitfield which follows the
-  /// bitfield \p LastFD.
-  bool NonBitfieldFollowsBitfield(const FieldDecl *FD,
-                                  const FieldDecl *LastFD) const;
-  
-  /// \brief Return \c true if \p FD is a bitfield which follows the
-  /// non-bitfield \p LastFD.
-  bool BitfieldFollowsNonBitfield(const FieldDecl *FD,
-                                  const FieldDecl *LastFD) const;
-
   // Access to the set of methods overridden by the given C++ method.
   typedef CXXMethodVector::const_iterator overridden_cxx_method_iterator;
   overridden_cxx_method_iterator
@@ -808,6 +787,9 @@ public:
 
   /// \brief Retrieve the declaration for the 128-bit unsigned integer type.
   TypedefDecl *getUInt128Decl() const;
+
+  /// \brief Retrieve the declaration for a 128-bit float stub type.
+  TypeDecl *getFloat128StubType() const;
   
   //===--------------------------------------------------------------------===//
   //                           Type Constructors
@@ -881,6 +863,14 @@ public:
   QualType getPointerType(QualType T) const;
   CanQualType getPointerType(CanQualType T) const {
     return CanQualType::CreateUnsafe(getPointerType((QualType) T));
+  }
+
+  /// \brief Return the uniqued reference to the decayed version of the given
+  /// type.  Can only be called on array and function types which decay to
+  /// pointer types.
+  QualType getDecayedType(QualType T) const;
+  CanQualType getDecayedType(CanQualType T) const {
+    return CanQualType::CreateUnsafe(getDecayedType((QualType) T));
   }
 
   /// \brief Return the uniqued reference to the atomic type for the specified
@@ -1928,7 +1918,6 @@ public:
   bool isObjCSelType(QualType T) const {
     return T == getObjCSelType();
   }
-  bool QualifiedIdConformsQualifiedId(QualType LHS, QualType RHS);
   bool ObjCQualifiedIdTypesAreCompatible(QualType LHS, QualType RHS,
                                          bool ForCompare);
 

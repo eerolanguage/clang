@@ -4135,6 +4135,24 @@ static void TryUserDefinedConversion(Sema &S,
   }
 }
 
+/// An egregious hack for compatibility with libstdc++-4.2: in <tr1/hashtable>,
+/// a function with a pointer return type contains a 'return false;' statement.
+/// In C++11, 'false' is not a null pointer, so this breaks the build of any
+/// code using that header.
+///
+/// Work around this by treating 'return false;' as zero-initializing the result
+/// if it's used in a pointer-returning function in a system header.
+static bool isLibstdcxxPointerReturnFalseHack(Sema &S,
+                                              const InitializedEntity &Entity,
+                                              const Expr *Init) {
+  return S.getLangOpts().CPlusPlus11 &&
+         Entity.getKind() == InitializedEntity::EK_Result &&
+         Entity.getType()->isPointerType() &&
+         isa<CXXBoolLiteralExpr>(Init) &&
+         !cast<CXXBoolLiteralExpr>(Init)->getValue() &&
+         S.getSourceManager().isInSystemHeader(Init->getExprLoc());
+}
+
 /// The non-zero enum values here are indexes into diagnostic alternatives.
 enum InvalidICRKind { IIK_okay, IIK_nonlocal, IIK_nonscalar };
 
@@ -4571,9 +4589,11 @@ InitializationSequence::InitializationSequence(Sema &S,
     AddPassByIndirectCopyRestoreStep(Entity.getType(), ShouldCopy);
   } else if (ICS.isBad()) {
     DeclAccessPair dap;
-    if (Initializer->getType() == Context.OverloadTy && 
-          !S.ResolveAddressOfOverloadedFunction(Initializer
-                      , DestType, false, dap))
+    if (isLibstdcxxPointerReturnFalseHack(S, Entity, Initializer)) {
+      AddZeroInitializationStep(Entity.getType());
+    } else if (Initializer->getType() == Context.OverloadTy &&
+               !S.ResolveAddressOfOverloadedFunction(Initializer, DestType,
+                                                     false, dap))
       SetFailed(InitializationSequence::FK_AddressOfOverloadFailed);
     else
       SetFailed(InitializationSequence::FK_ConversionFailed);
@@ -5328,13 +5348,15 @@ static void performLifetimeExtension(Expr *Init, const ValueDecl *ExtendingD) {
              I != E; ++I) {
           if (I->isUnnamedBitfield())
             continue;
+          Expr *SubInit = ILE->getInit(Index);
           if (I->getType()->isReferenceType())
-            performReferenceExtension(ILE->getInit(Index), ExtendingD);
-          else if (isa<InitListExpr>(ILE->getInit(Index)))
+            performReferenceExtension(SubInit, ExtendingD);
+          else if (isa<InitListExpr>(SubInit) ||
+                   isa<CXXStdInitializerListExpr>(SubInit))
             // This may be either aggregate-initialization of a member or
             // initialization of a std::initializer_list object. Either way,
             // we should recursively lifetime-extend that initializer.
-            performLifetimeExtension(ILE->getInit(Index), ExtendingD);
+            performLifetimeExtension(SubInit, ExtendingD);
           ++Index;
         }
       }
@@ -6231,9 +6253,14 @@ bool InitializationSequence::Diagnose(Sema &S,
       break;
 
     case OR_No_Viable_Function:
-      S.Diag(Kind.getLocation(), diag::err_typecheck_nonviable_condition)
-        << Args[0]->getType() << DestType.getNonReferenceType()
-        << Args[0]->getSourceRange();
+      if (!S.RequireCompleteType(Kind.getLocation(),
+                                 DestType.getNonReferenceType(),
+                          diag::err_typecheck_nonviable_condition_incomplete,
+                               Args[0]->getType(), Args[0]->getSourceRange()))
+        S.Diag(Kind.getLocation(), diag::err_typecheck_nonviable_condition)
+          << Args[0]->getType() << Args[0]->getSourceRange()
+          << DestType.getNonReferenceType();
+
       FailedCandidateSet.NoteCandidates(S, OCD_AllCandidates, Args);
       break;
 

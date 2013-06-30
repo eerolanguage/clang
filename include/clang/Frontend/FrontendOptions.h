@@ -144,6 +144,8 @@ public:
                                            ///< global module index if available.
   unsigned GenerateGlobalModuleIndex : 1;  ///< Whether we can generate the
                                            ///< global module index if needed.
+  unsigned ASTDumpLookups : 1;             ///< Whether we include lookup table
+                                           ///< dumps in AST dumps.
 
   CodeCompleteOptions CodeCompleteOpts;
 
@@ -217,7 +219,7 @@ public:
     FixWhatYouCan(false), FixOnlyWarnings(false), FixAndRecompile(false),
     FixToTemporaries(false), ARCMTMigrateEmitARCErrors(false),
     SkipFunctionBodies(false), UseGlobalModuleIndex(true),
-    GenerateGlobalModuleIndex(true),
+    GenerateGlobalModuleIndex(true), ASTDumpLookups(false),
     ARCMTAction(ARCMT_None), ObjCMTAction(ObjCMT_None),
     ProgramAction(frontend::ParseSyntaxOnly)
   {}

@@ -3,19 +3,19 @@
 // RUN: %clang_cc1 -std=c++1y %s -verify -fexceptions -fcxx-exceptions -pedantic-errors
 
 namespace dr1 { // dr1: no
-  namespace X { extern "C" void dr1_f(int a = 1); } // expected-note 2{{candidate}} expected-note {{conflicting}}
-  namespace Y { extern "C" void dr1_f(int a = 2); } // expected-note 2{{candidate}} expected-note {{target}}
+  namespace X { extern "C" void dr1_f(int a = 1); }
+  namespace Y { extern "C" void dr1_f(int a = 2); }
   using X::dr1_f; using Y::dr1_f;
   void g() {
-    // FIXME: The first of these two should be accepted.
-    dr1_f(0); // expected-error {{ambiguous}}
-    dr1_f(); // expected-error {{ambiguous}}
+    dr1_f(0);
+    // FIXME: This should be rejected, due to the ambiguous default argument.
+    dr1_f();
   }
   namespace X {
-    using Y::dr1_f; // expected-error {{conflicts with declaration already in scope}}
+    using Y::dr1_f;
     void h() {
-      // FIXME: The second of these two should be rejected.
       dr1_f(0);
+      // FIXME: This should be rejected, due to the ambiguous default argument.
       dr1_f();
     }
   }
@@ -69,6 +69,18 @@ namespace dr7 { // dr7: yes
 
   class X { ~X(); }; // expected-note {{here}}
   class Y : X { ~Y() {} }; // expected-error {{private destructor}}
+
+  namespace PR16370 { // This regressed the first time DR7 was fixed.
+    struct S1 { virtual ~S1(); };
+    struct S2 : S1 {};
+    struct S3 : S2 {};
+    struct S4 : virtual S2 {};
+    struct S5 : S3, S4 {
+      S5();
+      ~S5();
+    };
+    S5::S5() {}
+  }
 }
 
 namespace dr8 { // dr8: dup 45
@@ -129,22 +141,19 @@ namespace dr12 { // dr12: sup 239
   }
 }
 
-namespace dr14 { // dr14: no
-  namespace X { extern "C" int dr14_f(); } // expected-note {{candidate}}
-  namespace Y { extern "C" int dr14_f(); } // expected-note {{candidate}}
+namespace dr14 { // dr14: yes
+  namespace X { extern "C" int dr14_f(); }
+  namespace Y { extern "C" int dr14_f(); }
   using namespace X;
   using namespace Y;
-  // FIXME: This should be accepted, name lookup only finds one function (in two
-  // different namespaces).
-  int k = dr14_f(); // expected-error {{ambiguous}}
+  int k = dr14_f();
 
   class C {
-    int k; // expected-note {{here}}
+    int k;
     friend int Y::dr14_f();
   } c;
   namespace Z {
-    // FIXME: This should be accepted, this function is a friend.
-    extern "C" int dr14_f() { return c.k; } // expected-error {{private}}
+    extern "C" int dr14_f() { return c.k; }
   }
 
   namespace X { typedef int T; typedef int U; } // expected-note {{candidate}}
@@ -214,12 +223,11 @@ namespace dr20 { // dr20: yes
   X x = f(); // expected-error {{private}}
 }
 
-namespace dr21 { // dr21: no
+namespace dr21 { // dr21: yes
   template<typename T> struct A;
   struct X {
-    // FIXME: We should reject these, per [temp.param]p9.
-    template<typename T = int> friend struct A;
-    template<typename T = int> friend struct B;
+    template<typename T = int> friend struct A; // expected-error {{default template argument not permitted on a friend template}}
+    template<typename T = int> friend struct B; // expected-error {{default template argument not permitted on a friend template}}
   };
 }
 

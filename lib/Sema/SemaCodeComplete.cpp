@@ -4241,9 +4241,9 @@ void Sema::CodeCompleteOperatorName(Scope *S) {
                             Results.data(),Results.size());
 }
 
-void Sema::CodeCompleteConstructorInitializer(Decl *ConstructorD,
-                                              CXXCtorInitializer** Initializers,
-                                              unsigned NumInitializers) {
+void Sema::CodeCompleteConstructorInitializer(
+                              Decl *ConstructorD,
+                              ArrayRef <CXXCtorInitializer *> Initializers) {
   PrintingPolicy Policy = getCompletionPrintingPolicy(*this);
   CXXConstructorDecl *Constructor
     = static_cast<CXXConstructorDecl *>(ConstructorD);
@@ -4258,7 +4258,7 @@ void Sema::CodeCompleteConstructorInitializer(Decl *ConstructorD,
   // Fill in any already-initialized fields or base classes.
   llvm::SmallPtrSet<FieldDecl *, 4> InitializedFields;
   llvm::SmallPtrSet<CanQualType, 4> InitializedBases;
-  for (unsigned I = 0; I != NumInitializers; ++I) {
+  for (unsigned I = 0, E = Initializers.size(); I != E; ++I) {
     if (Initializers[I]->isBaseInitializer())
       InitializedBases.insert(
         Context.getCanonicalType(QualType(Initializers[I]->getBaseClass(), 0)));
@@ -4270,17 +4270,17 @@ void Sema::CodeCompleteConstructorInitializer(Decl *ConstructorD,
   // Add completions for base classes.
   CodeCompletionBuilder Builder(Results.getAllocator(),
                                 Results.getCodeCompletionTUInfo());
-  bool SawLastInitializer = (NumInitializers == 0);
+  bool SawLastInitializer = Initializers.empty();
   CXXRecordDecl *ClassDecl = Constructor->getParent();
   for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
                                        BaseEnd = ClassDecl->bases_end();
        Base != BaseEnd; ++Base) {
     if (!InitializedBases.insert(Context.getCanonicalType(Base->getType()))) {
       SawLastInitializer
-        = NumInitializers > 0 && 
-          Initializers[NumInitializers - 1]->isBaseInitializer() &&
+        = !Initializers.empty() && 
+          Initializers.back()->isBaseInitializer() &&
           Context.hasSameUnqualifiedType(Base->getType(),
-               QualType(Initializers[NumInitializers - 1]->getBaseClass(), 0));
+               QualType(Initializers.back()->getBaseClass(), 0));
       continue;
     }
     
@@ -4302,10 +4302,10 @@ void Sema::CodeCompleteConstructorInitializer(Decl *ConstructorD,
        Base != BaseEnd; ++Base) {
     if (!InitializedBases.insert(Context.getCanonicalType(Base->getType()))) {
       SawLastInitializer
-        = NumInitializers > 0 && 
-          Initializers[NumInitializers - 1]->isBaseInitializer() &&
+        = !Initializers.empty() && 
+          Initializers.back()->isBaseInitializer() &&
           Context.hasSameUnqualifiedType(Base->getType(),
-               QualType(Initializers[NumInitializers - 1]->getBaseClass(), 0));
+               QualType(Initializers.back()->getBaseClass(), 0));
       continue;
     }
     
@@ -4327,9 +4327,9 @@ void Sema::CodeCompleteConstructorInitializer(Decl *ConstructorD,
        Field != FieldEnd; ++Field) {
     if (!InitializedFields.insert(cast<FieldDecl>(Field->getCanonicalDecl()))) {
       SawLastInitializer
-        = NumInitializers > 0 && 
-          Initializers[NumInitializers - 1]->isAnyMemberInitializer() &&
-          Initializers[NumInitializers - 1]->getAnyMember() == *Field;
+        = !Initializers.empty() && 
+          Initializers.back()->isAnyMemberInitializer() &&
+          Initializers.back()->getAnyMember() == *Field;
       continue;
     }
     
@@ -6112,8 +6112,8 @@ void Sema::CodeCompleteObjCPropertySynthesizeIvar(Scope *S,
 
 // Mapping from selectors to the methods that implement that selector, along
 // with the "in original class" flag.
-typedef llvm::DenseMap<Selector, std::pair<ObjCMethodDecl *, bool> > 
-  KnownMethodsMap;
+typedef llvm::DenseMap<
+    Selector, llvm::PointerIntPair<ObjCMethodDecl *, 1, bool> > KnownMethodsMap;
 
 /// \brief Find all of the methods that reside in the given container
 /// (and its superclasses, protocols, etc.) that meet the given
@@ -6202,7 +6202,8 @@ static void FindImplementableMethods(ASTContext &Context,
           !Context.hasSameUnqualifiedType(ReturnType, M->getResultType()))
         continue;
 
-      KnownMethods[M->getSelector()] = std::make_pair(*M, InOriginalClass);
+      KnownMethods[M->getSelector()] =
+          KnownMethodsMap::mapped_type(*M, InOriginalClass);
     }
   }
 }
@@ -6916,7 +6917,7 @@ void Sema::CodeCompleteObjCMethodDecl(Scope *S,
   for (KnownMethodsMap::iterator M = KnownMethods.begin(), 
                               MEnd = KnownMethods.end();
        M != MEnd; ++M) {
-    ObjCMethodDecl *Method = M->second.first;
+    ObjCMethodDecl *Method = M->second.getPointer();
     CodeCompletionBuilder Builder(Results.getAllocator(),
                                   Results.getCodeCompletionTUInfo());
     
@@ -6984,7 +6985,7 @@ void Sema::CodeCompleteObjCMethodDecl(Scope *S,
     }
 
     unsigned Priority = CCP_CodePattern;
-    if (!M->second.second)
+    if (!M->second.getInt())
       Priority += CCD_InBaseClass;
     
     Results.AddResult(Result(Builder.TakeString(), Method, Priority));

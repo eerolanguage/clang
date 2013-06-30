@@ -1512,7 +1512,6 @@ public:
   bool isRealType() const;         // C99 6.2.5p17 (real floating + integer)
   bool isArithmeticType() const;   // C99 6.2.5p18 (integer + floating)
   bool isVoidType() const;         // C99 6.2.5p19
-  bool isDerivedType() const;      // C99 6.2.5p20
   bool isScalarType() const;       // C99 6.2.5p21 (arithmetic + pointers)
   bool isAggregateType() const;
   bool isFundamentalType() const;
@@ -1989,6 +1988,44 @@ public:
   }
 
   static bool classof(const Type *T) { return T->getTypeClass() == Pointer; }
+};
+
+/// \brief Represents a pointer type decayed from an array or function type.
+class DecayedType : public Type, public llvm::FoldingSetNode {
+  QualType OriginalType;
+  QualType DecayedPointer;
+
+  DecayedType(QualType OriginalType, QualType DecayedPointer,
+              QualType CanonicalPtr)
+      : Type(Decayed, CanonicalPtr, OriginalType->isDependentType(),
+             OriginalType->isInstantiationDependentType(),
+             OriginalType->isVariablyModifiedType(),
+             OriginalType->containsUnexpandedParameterPack()),
+        OriginalType(OriginalType), DecayedPointer(DecayedPointer) {
+    assert(isa<PointerType>(DecayedPointer));
+  }
+
+  friend class ASTContext;  // ASTContext creates these.
+
+public:
+  QualType getDecayedType() const { return DecayedPointer; }
+  QualType getOriginalType() const { return OriginalType; }
+
+  QualType getPointeeType() const {
+    return cast<PointerType>(DecayedPointer)->getPointeeType();
+  }
+
+  bool isSugared() const { return true; }
+  QualType desugar() const { return DecayedPointer; }
+
+  void Profile(llvm::FoldingSetNodeID &ID) {
+    Profile(ID, OriginalType);
+  }
+  static void Profile(llvm::FoldingSetNodeID &ID, QualType OriginalType) {
+    ID.AddPointer(OriginalType.getAsOpaquePtr());
+  }
+
+  static bool classof(const Type *T) { return T->getTypeClass() == Decayed; }
 };
 
 /// BlockPointerType - pointer to a block type.
@@ -3669,10 +3706,6 @@ class TemplateSpecializationType
 public:
   /// \brief Determine whether any of the given template arguments are
   /// dependent.
-  static bool anyDependentTemplateArguments(const TemplateArgument *Args,
-                                            unsigned NumArgs,
-                                            bool &InstantiationDependent);
-
   static bool anyDependentTemplateArguments(const TemplateArgumentLoc *Args,
                                             unsigned NumArgs,
                                             bool &InstantiationDependent);

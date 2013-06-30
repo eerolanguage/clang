@@ -623,7 +623,9 @@ namespace clang {
       /// \brief Specifies a configuration macro for this module.
       SUBMODULE_CONFIG_MACRO = 11,
       /// \brief Specifies a conflict with another module.
-      SUBMODULE_CONFLICT = 12
+      SUBMODULE_CONFLICT = 12,
+      /// \brief Specifies a header that is private to this submodule.
+      SUBMODULE_PRIVATE_HEADER = 13
     };
 
     /// \brief Record types used within a comments block.
@@ -834,7 +836,9 @@ namespace clang {
       /// \brief A UnaryTransformType record.
       TYPE_UNARY_TRANSFORM       = 39,
       /// \brief An AtomicType record.
-      TYPE_ATOMIC                = 40
+      TYPE_ATOMIC                = 40,
+      /// \brief A DecayedType record.
+      TYPE_DECAYED               = 41
     };
 
     /// \brief The type IDs for special types constructed by semantic

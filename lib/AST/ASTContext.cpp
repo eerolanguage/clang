@@ -698,7 +698,7 @@ ASTContext::ASTContext(LangOptions& LOpts, SourceManager &SM,
     DependentTemplateSpecializationTypes(this_()),
     SubstTemplateTemplateParmPacks(this_()),
     GlobalNestedNameSpecifier(0), 
-    Int128Decl(0), UInt128Decl(0),
+    Int128Decl(0), UInt128Decl(0), Float128StubDecl(0),
     BuiltinVaListDecl(0),
     ObjCIdDecl(0), ObjCSelDecl(0), ObjCClassDecl(0), ObjCProtocolClassDecl(0),
     BOOLDecl(0),
@@ -855,6 +855,20 @@ TypedefDecl *ASTContext::getUInt128Decl() const {
   }
   
   return UInt128Decl;
+}
+
+TypeDecl *ASTContext::getFloat128StubType() const {
+  assert(LangOpts.CPlusPlus && "should only be called for c++");
+  if (!Float128StubDecl) {
+    Float128StubDecl = CXXRecordDecl::Create(const_cast<ASTContext &>(*this), 
+                                             TTK_Struct,
+                                             getTranslationUnitDecl(),
+                                             SourceLocation(),
+                                             SourceLocation(),
+                                             &Idents.get("__float128"));
+  }
+  
+  return Float128StubDecl;
 }
 
 void ASTContext::InitBuiltinType(CanQualType &R, BuiltinType::Kind K) {
@@ -1118,38 +1132,6 @@ void ASTContext::setInstantiatedFromUnnamedFieldDecl(FieldDecl *Inst,
   InstantiatedFromUnnamedFieldDecl[Inst] = Tmpl;
 }
 
-bool ASTContext::ZeroBitfieldFollowsNonBitfield(const FieldDecl *FD, 
-                                    const FieldDecl *LastFD) const {
-  return (FD->isBitField() && LastFD && !LastFD->isBitField() &&
-          FD->getBitWidthValue(*this) == 0);
-}
-
-bool ASTContext::ZeroBitfieldFollowsBitfield(const FieldDecl *FD,
-                                             const FieldDecl *LastFD) const {
-  return (FD->isBitField() && LastFD && LastFD->isBitField() &&
-          FD->getBitWidthValue(*this) == 0 &&
-          LastFD->getBitWidthValue(*this) != 0);
-}
-
-bool ASTContext::BitfieldFollowsBitfield(const FieldDecl *FD,
-                                         const FieldDecl *LastFD) const {
-  return (FD->isBitField() && LastFD && LastFD->isBitField() &&
-          FD->getBitWidthValue(*this) &&
-          LastFD->getBitWidthValue(*this));
-}
-
-bool ASTContext::NonBitfieldFollowsBitfield(const FieldDecl *FD,
-                                         const FieldDecl *LastFD) const {
-  return (!FD->isBitField() && LastFD && LastFD->isBitField() &&
-          LastFD->getBitWidthValue(*this));
-}
-
-bool ASTContext::BitfieldFollowsNonBitfield(const FieldDecl *FD,
-                                             const FieldDecl *LastFD) const {
-  return (FD->isBitField() && LastFD && !LastFD->isBitField() &&
-          FD->getBitWidthValue(*this));
-}
-
 ASTContext::overridden_cxx_method_iterator
 ASTContext::overridden_methods_begin(const CXXMethodDecl *Method) const {
   llvm::DenseMap<const CXXMethodDecl *, CXXMethodVector>::const_iterator Pos
@@ -1307,24 +1289,27 @@ CharUnits ASTContext::getDeclAlign(const Decl *D, bool RefAsPointee) const {
     // a max-field-alignment constraint (#pragma pack).  So calculate
     // the actual alignment of the field within the struct, and then
     // (as we're expected to) constrain that by the alignment of the type.
-    if (const FieldDecl *field = dyn_cast<FieldDecl>(VD)) {
-      // So calculate the alignment of the field.
-      const ASTRecordLayout &layout = getASTRecordLayout(field->getParent());
+    if (const FieldDecl *Field = dyn_cast<FieldDecl>(VD)) {
+      const RecordDecl *Parent = Field->getParent();
+      // We can only produce a sensible answer if the record is valid.
+      if (!Parent->isInvalidDecl()) {
+        const ASTRecordLayout &Layout = getASTRecordLayout(Parent);
 
-      // Start with the record's overall alignment.
-      unsigned fieldAlign = toBits(layout.getAlignment());
+        // Start with the record's overall alignment.
+        unsigned FieldAlign = toBits(Layout.getAlignment());
 
-      // Use the GCD of that and the offset within the record.
-      uint64_t offset = layout.getFieldOffset(field->getFieldIndex());
-      if (offset > 0) {
-        // Alignment is always a power of 2, so the GCD will be a power of 2,
-        // which means we get to do this crazy thing instead of Euclid's.
-        uint64_t lowBitOfOffset = offset & (~offset + 1);
-        if (lowBitOfOffset < fieldAlign)
-          fieldAlign = static_cast<unsigned>(lowBitOfOffset);
+        // Use the GCD of that and the offset within the record.
+        uint64_t Offset = Layout.getFieldOffset(Field->getFieldIndex());
+        if (Offset > 0) {
+          // Alignment is always a power of 2, so the GCD will be a power of 2,
+          // which means we get to do this crazy thing instead of Euclid's.
+          uint64_t LowBitOfOffset = Offset & (~Offset + 1);
+          if (LowBitOfOffset < FieldAlign)
+            FieldAlign = static_cast<unsigned>(LowBitOfOffset);
+        }
+
+        Align = std::min(Align, FieldAlign);
       }
-
-      Align = std::min(Align, fieldAlign);
     }
   }
 
@@ -1601,6 +1586,8 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
   }
   case Type::ObjCObject:
     return getTypeInfo(cast<ObjCObjectType>(T)->getBaseType().getTypePtr());
+  case Type::Decayed:
+    return getTypeInfo(cast<DecayedType>(T)->getDecayedType().getTypePtr());
   case Type::ObjCInterface: {
     const ObjCInterfaceType *ObjCI = cast<ObjCInterfaceType>(T);
     const ASTRecordLayout &Layout = getASTObjCInterfaceLayout(ObjCI->getDecl());
@@ -2150,6 +2137,45 @@ QualType ASTContext::getPointerType(QualType T) const {
   PointerType *New = new (*this, TypeAlignment) PointerType(T, Canonical);
   Types.push_back(New);
   PointerTypes.InsertNode(New, InsertPos);
+  return QualType(New, 0);
+}
+
+QualType ASTContext::getDecayedType(QualType T) const {
+  assert((T->isArrayType() || T->isFunctionType()) && "T does not decay");
+
+  llvm::FoldingSetNodeID ID;
+  DecayedType::Profile(ID, T);
+  void *InsertPos = 0;
+  if (DecayedType *DT = DecayedTypes.FindNodeOrInsertPos(ID, InsertPos))
+    return QualType(DT, 0);
+
+  QualType Decayed;
+
+  // C99 6.7.5.3p7:
+  //   A declaration of a parameter as "array of type" shall be
+  //   adjusted to "qualified pointer to type", where the type
+  //   qualifiers (if any) are those specified within the [ and ] of
+  //   the array type derivation.
+  if (T->isArrayType())
+    Decayed = getArrayDecayedType(T);
+
+  // C99 6.7.5.3p8:
+  //   A declaration of a parameter as "function returning type"
+  //   shall be adjusted to "pointer to function returning type", as
+  //   in 6.3.2.1.
+  if (T->isFunctionType())
+    Decayed = getPointerType(T);
+
+  QualType Canonical = getCanonicalType(Decayed);
+
+  // Get the new insert position for the node we care about.
+  DecayedType *NewIP = DecayedTypes.FindNodeOrInsertPos(ID, InsertPos);
+  assert(NewIP == 0 && "Shouldn't be in the map!"); (void)NewIP;
+
+  DecayedType *New =
+      new (*this, TypeAlignment) DecayedType(T, Decayed, Canonical);
+  Types.push_back(New);
+  DecayedTypes.InsertNode(New, InsertPos);
   return QualType(New, 0);
 }
 
@@ -4140,22 +4166,9 @@ const ArrayType *ASTContext::getAsArrayType(QualType T) const {
 }
 
 QualType ASTContext::getAdjustedParameterType(QualType T) const {
-  // C99 6.7.5.3p7:
-  //   A declaration of a parameter as "array of type" shall be
-  //   adjusted to "qualified pointer to type", where the type
-  //   qualifiers (if any) are those specified within the [ and ] of
-  //   the array type derivation.
-  if (T->isArrayType())
-    return getArrayDecayedType(T);
-  
-  // C99 6.7.5.3p8:
-  //   A declaration of a parameter as "function returning type"
-  //   shall be adjusted to "pointer to function returning type", as
-  //   in 6.3.2.1.
-  if (T->isFunctionType())
-    return getPointerType(T);
-  
-  return T;  
+  if (T->isArrayType() || T->isFunctionType())
+    return getDecayedType(T);
+  return T;
 }
 
 QualType ASTContext::getSignatureParameterType(QualType T) const {
@@ -6403,15 +6416,6 @@ ASTContext::ProtocolCompatibleWithProtocol(ObjCProtocolDecl *lProto,
        E = rProto->protocol_end(); PI != E; ++PI)
     if (ProtocolCompatibleWithProtocol(lProto, *PI))
       return true;
-  return false;
-}
-
-/// QualifiedIdConformsQualifiedId - compare id<pr,...> with id<pr1,...>
-/// return true if lhs's protocols conform to rhs's protocol; false
-/// otherwise.
-bool ASTContext::QualifiedIdConformsQualifiedId(QualType lhs, QualType rhs) {
-  if (lhs->isObjCQualifiedIdType() && rhs->isObjCQualifiedIdType())
-    return ObjCQualifiedIdTypesAreCompatible(lhs, rhs, false);
   return false;
 }
 

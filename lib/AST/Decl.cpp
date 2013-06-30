@@ -1715,18 +1715,6 @@ VarDecl *VarDecl::getActingDefinition() {
   return LastTentative;
 }
 
-bool VarDecl::isTentativeDefinitionNow() const {
-  DefinitionKind Kind = isThisDeclarationADefinition();
-  if (Kind != TentativeDefinition)
-    return false;
-
-  for (redecl_iterator I = redecls_begin(), E = redecls_end(); I != E; ++I) {
-    if ((*I)->isThisDeclarationADefinition() == Definition)
-      return false;
-  }
-  return true;
-}
-
 VarDecl *VarDecl::getDefinition(ASTContext &C) {
   VarDecl *First = getFirstDeclaration();
   for (redecl_iterator I = First->redecls_begin(), E = First->redecls_end();
@@ -1940,19 +1928,6 @@ bool VarDecl::checkInitIsICE() const {
   return Eval->IsICE;
 }
 
-bool VarDecl::extendsLifetimeOfTemporary() const {
-  assert(getType()->isReferenceType() &&"Non-references never extend lifetime");
-  
-  const Expr *E = getInit();
-  if (!E)
-    return false;
-  
-  if (const ExprWithCleanups *Cleanups = dyn_cast<ExprWithCleanups>(E))
-    E = Cleanups->getSubExpr();
-  
-  return isa<MaterializeTemporaryExpr>(E);
-}
-
 VarDecl *VarDecl::getInstantiatedFromStaticDataMember() const {
   if (MemberSpecializationInfo *MSI = getMemberSpecializationInfo())
     return cast<VarDecl>(MSI->getInstantiatedFrom());
@@ -1993,6 +1968,14 @@ ParmVarDecl *ParmVarDecl::Create(ASTContext &C, DeclContext *DC,
                                  StorageClass S, Expr *DefArg) {
   return new (C) ParmVarDecl(ParmVar, DC, StartLoc, IdLoc, Id, T, TInfo,
                              S, DefArg);
+}
+
+QualType ParmVarDecl::getOriginalType() const {
+  TypeSourceInfo *TSI = getTypeSourceInfo();
+  QualType T = TSI ? TSI->getType() : getType();
+  if (const DecayedType *DT = dyn_cast<DecayedType>(T))
+    return DT->getOriginalType();
+  return T;
 }
 
 ParmVarDecl *ParmVarDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
@@ -2909,22 +2892,10 @@ unsigned FieldDecl::getFieldIndex() const {
 
   unsigned Index = 0;
   const RecordDecl *RD = getParent();
-  const FieldDecl *LastFD = 0;
-  bool IsMsStruct = RD->isMsStruct(getASTContext());
 
   for (RecordDecl::field_iterator I = RD->field_begin(), E = RD->field_end();
-       I != E; ++I, ++Index) {
+       I != E; ++I, ++Index)
     I->CachedFieldIndex = Index + 1;
-
-    if (IsMsStruct) {
-      // Zero-length bitfields following non-bitfield members are ignored.
-      if (getASTContext().ZeroBitfieldFollowsNonBitfield(*I, LastFD)) {
-        --Index;
-        continue;
-      }
-      LastFD = *I;
-    }
-  }
 
   assert(CachedFieldIndex && "failed to find field in parent");
   return CachedFieldIndex - 1;

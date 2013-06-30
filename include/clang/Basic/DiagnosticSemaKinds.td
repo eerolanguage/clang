@@ -492,7 +492,6 @@ def err_no_nsconstant_string_class : Error<
   "cannot find interface declaration for %0">;
 def err_recursive_superclass : Error<
   "trying to recursively use %0 as superclass of %1">;
-def warn_previous_alias_decl : Warning<"previously declared alias is ignored">;
 def err_conflicting_aliasing_type : Error<"conflicting types for alias %0">;
 def warn_undef_interface : Warning<"cannot find interface declaration for %0">;
 def warn_duplicate_protocol_def : Warning<"duplicate protocol definition of %0 is ignored">;
@@ -670,7 +669,9 @@ def warn_objc_isa_assign : Warning<
 def warn_objc_pointer_masking : Warning<
   "bitmasking for introspection of Objective-C object pointers is strongly "
   "discouraged">,
-  InGroup<DiagGroup<"deprecated-objc-pointer-introspection">>;
+  InGroup<ObjCPointerIntrospect>;
+def warn_objc_pointer_masking_performSelector : Warning<warn_objc_pointer_masking.Text>,
+  InGroup<ObjCPointerIntrospectPerformSelector>;
 def warn_objc_property_default_assign_on_object : Warning<
   "default property attribute 'assign' not appropriate for non-GC object">,
   InGroup<ObjCPropertyNoAttribute>;
@@ -1118,6 +1119,8 @@ def err_explicit_non_ctor_or_conv_function : Error<
 def err_static_not_bitfield : Error<"static member %0 cannot be a bit-field">;
 def err_static_out_of_line : Error<
   "'static' can only be specified inside the class definition">;
+def err_storage_class_for_static_member : Error<
+  "static data member definition cannot specify a storage class">;
 def err_typedef_not_bitfield : Error<"typedef member %0 cannot be a bit-field">;
 def err_not_integral_type_bitfield : Error<
   "bit-field %0 has non-integral type %1">;
@@ -1832,6 +1835,8 @@ def err_format_attribute_result_not : Error<"function does not return %0">;
 def err_format_attribute_implicit_this_format_string : Error<
   "format attribute cannot specify the implicit this argument as the format "
   "string">;
+def err_common_not_supported_cplusplus : Error<
+  "common attribute is not supported in C++">;
 def warn_unknown_method_family : Warning<"unrecognized method family">;
 def err_init_method_bad_return_type : Error<
   "init methods must return an object pointer type, not %0">;
@@ -2348,8 +2353,11 @@ def err_iboutletcollection_type : Error<
   "invalid type %0 as argument of iboutletcollection attribute">;
 def warn_iboutlet_object_type : Warning<
   "%select{instance variable|property}2 with %0 attribute must "
-  "be an object type (invalid %1)">,
-  InGroup<DiagGroup<"invalid-iboutlet">>;
+  "be an object type (invalid %1)">, InGroup<ObjCInvalidIBOutletProperty>;
+def warn_iboutletcollection_property_assign : Warning<
+  "IBOutletCollection properties should be copy/strong and not assign">,
+  InGroup<ObjCInvalidIBOutletProperty>;
+  
 def err_attribute_overloadable_not_function : Error<
   "'overloadable' attribute can only be applied to a function">;
 def err_attribute_overloadable_missing : Error<
@@ -4270,6 +4278,10 @@ def err_member_def_undefined_record : Error<
   "out-of-line definition of %0 from class %1 without definition">;
 def err_member_def_does_not_match : Error<
   "out-of-line definition of %0 does not match any declaration in %1">;
+def err_friend_decl_with_def_arg_must_be_def : Error<
+  "friend declaration specifying a default argument must be a definition">;
+def err_friend_decl_with_def_arg_redeclared : Error<
+  "friend declaration specifying a default argument must be the only declaration">;
 def err_friend_decl_does_not_match : Error<
   "friend declaration of %0 does not match any declaration in %1">;
 def err_member_def_does_not_match_suggest : Error<
@@ -4314,13 +4326,13 @@ def err_typecheck_pointer_arith_void_type : Error<
   "arithmetic on%select{ a|}0 pointer%select{|s}0 to void">;
 def err_typecheck_decl_incomplete_type : Error<
   "variable has incomplete type %0">;
+def err_typecheck_decl_incomplete_type___float128 : Error<
+  "support for type '__float128' is not yet implemented">;
 def ext_typecheck_decl_incomplete_type : ExtWarn<
   "tentative definition of variable with internal linkage has incomplete non-array type %0">,
   InGroup<DiagGroup<"tentative-definition-incomplete-type">>;
 def err_tentative_def_incomplete_type : Error<
   "tentative definition has type %0 that is never completed">;
-def err_tentative_def_incomplete_type_arr : Error<
-  "tentative definition has array of type %0 that is never completed">;
 def warn_tentative_incomplete_array : Warning<
   "tentative array definition assumed to have one element">;
 def err_typecheck_incomplete_array_needs_initializer : Error<
@@ -4609,9 +4621,15 @@ def warn_instance_method_on_class_found : Warning<
 def warn_inst_method_not_found : Warning<
   "instance method %objcinstance0 not found (return type defaults to 'id')">,
   InGroup<MethodAccess>;
-def warn_method_not_found_with_typo : Warning<
-  "%select{instance|class}0 method %1 not found (return type defaults to 'id')"
-  "; did you mean %2?">, InGroup<MethodAccess>;
+def warn_instance_method_not_found_with_typo : Warning<
+  "instance method %objcinstance0 not found (return type defaults to 'id')"
+  "; did you mean %objcinstance2?">, InGroup<MethodAccess>;
+def warn_class_method_not_found_with_typo : Warning<
+  "class method %objcclass0 not found (return type defaults to 'id')"
+  "; did you mean %objcclass2?">, InGroup<MethodAccess>;
+def error_method_not_found_with_typo : Error<
+  "%select{instance|class}1 method %0 not found "
+  "; did you mean %2?">;
 def error_no_super_class_message : Error<
   "no @interface declaration found in class messaging of %0">;
 def error_root_class_cannot_use_super : Error<
@@ -5008,6 +5026,8 @@ def err_typecheck_ambiguous_condition : Error<
   "conversion %diff{from $ to $|between types}0,1 is ambiguous">;
 def err_typecheck_nonviable_condition : Error<
   "no viable conversion%diff{ from $ to $|}0,1">;
+def err_typecheck_nonviable_condition_incomplete : Error<
+  "no viable conversion%diff{ from $ to incomplete type $|}0,1">;
 def err_typecheck_deleted_function : Error<
   "conversion function %diff{from $ to $|between types}0,1 "
   "invokes a deleted function">;

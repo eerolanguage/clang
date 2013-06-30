@@ -384,11 +384,6 @@ static bool tryDiagnoseOverloadedCast(Sema &S, CastType CT,
 static void diagnoseBadCast(Sema &S, unsigned msg, CastType castType,
                             SourceRange opRange, Expr *src, QualType destType,
                             bool listInitialization) {
-  if (src->getType() == S.Context.BoundMemberTy) {
-    (void) S.CheckPlaceholderExpr(src); // will always fail
-    return;
-  }
-
   if (msg == diag::err_bad_cxx_cast_generic &&
       tryDiagnoseOverloadedCast(S, castType, opRange, src, destType,
                                 listInitialization))
@@ -759,6 +754,7 @@ static void DiagnoseReinterpretUpDownCast(Sema &Self, const Expr *SrcExpr,
     VirtualBase = VirtualBase && IsVirtual;
   }
 
+  (void) NonZeroOffset; // Silence set but not used warning.
   assert((VirtualBase || NonZeroOffset) &&
          "Should have returned if has non-virtual base with zero offset");
 
@@ -769,10 +765,10 @@ static void DiagnoseReinterpretUpDownCast(Sema &Self, const Expr *SrcExpr,
 
   SourceLocation BeginLoc = OpRange.getBegin();
   Self.Diag(BeginLoc, diag::warn_reinterpret_different_from_static)
-    << DerivedType << BaseType << !VirtualBase << ReinterpretKind
+    << DerivedType << BaseType << !VirtualBase << int(ReinterpretKind)
     << OpRange;
   Self.Diag(BeginLoc, diag::note_reinterpret_updowncast_use_static)
-    << ReinterpretKind
+    << int(ReinterpretKind)
     << FixItHint::CreateReplacement(BeginLoc, "static_cast");
 }
 

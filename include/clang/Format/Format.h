@@ -131,6 +131,10 @@ struct FormatStyle {
   /// \brief If \c true, format { 1 }, otherwise {1}.
   bool SpacesInBracedLists;
 
+  /// \brief If \c true, indent when breaking function declarations which
+  /// are not also definitions after the type.
+  bool IndentFunctionDeclarationAfterType;
+
   bool operator==(const FormatStyle &R) const {
     return AccessModifierOffset == R.AccessModifierOffset &&
            AlignEscapedNewlinesLeft == R.AlignEscapedNewlinesLeft &&
@@ -157,9 +161,10 @@ struct FormatStyle {
            PointerBindsToType == R.PointerBindsToType &&
            SpacesBeforeTrailingComments == R.SpacesBeforeTrailingComments &&
            SpacesInBracedLists == R.SpacesInBracedLists &&
-           Standard == R.Standard && UseTab == R.UseTab;
+           Standard == R.Standard && UseTab == R.UseTab &&
+           IndentFunctionDeclarationAfterType ==
+               R.IndentFunctionDeclarationAfterType;
   }
-
 };
 
 /// \brief Returns a format style complying with the LLVM coding standards:
@@ -213,7 +218,11 @@ tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
                                StringRef FileName = "<stdin>");
 
 /// \brief Returns the \c LangOpts that the formatter expects you to set.
-LangOptions getFormattingLangOpts();
+///
+/// \param Standard determines lexing mode: LC_Cpp11 and LS_Auto turn on C++11
+/// lexing mode, LS_Cpp03 - C++03 mode.
+LangOptions getFormattingLangOpts(FormatStyle::LanguageStandard Standard =
+                                      FormatStyle::LS_Cpp11);
 
 } // end namespace format
 } // end namespace clang

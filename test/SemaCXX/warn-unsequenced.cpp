@@ -58,6 +58,8 @@ void test() {
   (xs[4] ? a : ++a) + a; // ok
   (0 ? a : ++a) + a; // expected-warning {{unsequenced modification and access}}
   (1 ? a : ++a) + a; // ok
+  (0 ? a : a++) + a; // expected-warning {{unsequenced modification and access}}
+  (1 ? a : a++) + a; // ok
   (xs[5] ? ++a : ++a) + a; // FIXME: warn here
 
   (++a, xs[6] ? ++a : 0) + a; // expected-warning {{unsequenced modification and access}}

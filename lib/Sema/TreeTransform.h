@@ -3233,8 +3233,8 @@ bool TreeTransform<Derived>::TransformTemplateArguments(InputIterator First,
       SourceLocation Ellipsis;
       Optional<unsigned> OrigNumExpansions;
       TemplateArgumentLoc Pattern
-        = In.getPackExpansionPattern(Ellipsis, OrigNumExpansions,
-                                     getSema().Context);
+        = getSema().getTemplateArgumentPackExpansionPattern(
+              In, Ellipsis, OrigNumExpansions);
 
       SmallVector<UnexpandedParameterPack, 2> Unexpanded;
       getSema().collectUnexpandedParameterPacks(Pattern, Unexpanded);
@@ -3583,6 +3583,22 @@ QualType TreeTransform<Derived>::TransformComplexType(TypeLocBuilder &TLB,
                                                       ComplexTypeLoc T) {
   // FIXME: recurse?
   return TransformTypeSpecType(TLB, T);
+}
+
+template<typename Derived>
+QualType TreeTransform<Derived>::TransformDecayedType(TypeLocBuilder &TLB,
+                                                      DecayedTypeLoc TL) {
+  QualType OriginalType = getDerived().TransformType(TLB, TL.getOriginalLoc());
+  if (OriginalType.isNull())
+    return QualType();
+
+  QualType Result = TL.getType();
+  if (getDerived().AlwaysRebuild() ||
+      OriginalType != TL.getOriginalLoc().getType())
+    Result = SemaRef.Context.getDecayedType(OriginalType);
+  TLB.push<DecayedTypeLoc>(Result);
+  // Nothing to set for DecayedTypeLoc.
+  return Result;
 }
 
 template<typename Derived>

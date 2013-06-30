@@ -14,6 +14,7 @@
 #include "clang/Parse/Parser.h"
 #include "RAIIObjectsForParser.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/Basic/AddressSpaces.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/OpenCL.h"

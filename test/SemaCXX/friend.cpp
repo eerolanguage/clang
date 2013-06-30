@@ -44,7 +44,7 @@ namespace test2 {
 // PR5134
 namespace test3 {
   class Foo {
-    friend const int getInt(int inInt = 0);
+    friend const int getInt(int inInt = 0) {}
 
   };
 }
@@ -152,5 +152,14 @@ namespace test8 {
   struct X {
     template<class T> friend void ns1::f(T t); // expected-error {{cannot befriend target of using declaration}}
     friend void B::f(); // expected-error {{cannot befriend target of using declaration}}
+  };
+}
+
+// PR16423
+namespace test9 {
+  class C {
+  };
+  struct A {
+    friend void C::f(int, int, int) {}  // expected-error {{no function named 'f' with type 'void (int, int, int)' was found in the specified scope}}
   };
 }

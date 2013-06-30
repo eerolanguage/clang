@@ -166,7 +166,7 @@ class CGDebugInfo {
 
   llvm::DIArray
   CollectTemplateParams(const TemplateParameterList *TPList,
-                        const TemplateArgumentList &TAList,
+                        ArrayRef<TemplateArgument> TAList,
                         llvm::DIFile Unit);
   llvm::DIArray
   CollectFunctionTemplateParams(const FunctionDecl *FD, llvm::DIFile Unit);
@@ -288,6 +288,8 @@ public:
   /// debug info.
   llvm::DIType getOrCreateInterfaceType(QualType Ty,
                                         SourceLocation Loc);
+
+  void completeFwdDecl(const RecordDecl &TD);
 
 private:
   /// EmitDeclare - Emit call to llvm.dbg.declare for a variable declaration.
