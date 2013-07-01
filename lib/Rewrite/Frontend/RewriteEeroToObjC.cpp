@@ -246,6 +246,10 @@ class TranslatorPrinterHelper : public PrinterHelper {
   protected:
     virtual bool handledStmt(Stmt* E, raw_ostream& OS) {
 
+      if (DeclStmt* DS = dyn_cast_or_null<DeclStmt>(E)) {
+        return HandleDeclStmt(DS, OS);
+      }
+
       if (PseudoObjectExpr* P =
               dyn_cast_or_null<PseudoObjectExpr>(E)) {
         return HandlePseudoObjectExpr(P, OS);
@@ -275,6 +279,49 @@ class TranslatorPrinterHelper : public PrinterHelper {
       
       return false;
     }
+
+  bool HandleDeclStmt(DeclStmt* DS, raw_ostream& OS) {
+    
+    DeclGroupRef::iterator I = DS->getDeclGroup().begin();
+    DeclGroupRef::iterator E = DS->getDeclGroup().end();
+   
+    bool oneOrMoreFound = false;
+   
+    do {
+      if (VarDecl* VD = dyn_cast_or_null<VarDecl>(*I)) {
+        string TypeStr = VD->getType().getAsString(Policy);
+        string NameStr = " " + VD->getName().str();
+
+        size_t pos = TypeStr.find("^");
+        if (pos != string::npos) {
+          pos = TypeStr.find(")", pos);
+          TypeStr.insert(pos, NameStr);
+          NameStr.clear();
+        }
+      
+        if (oneOrMoreFound) {
+          OS << "; ";
+        }
+
+        OS << TypeStr;
+        OS << NameStr;
+        
+        if (Stmt* InitStmt = VD->getInit()) {
+          OS << " = ";
+          if (!handledStmt(InitStmt, OS)) {
+            InitStmt->printPretty(OS, this, Policy);
+            OS << ";";
+          }
+        }
+        oneOrMoreFound = true;
+      }
+    } while (!DS->isSingleDecl() && (++I != E));
+    
+    if (oneOrMoreFound) {
+      return true;
+    }
+    return false;
+  }
 
   bool HandlePseudoObjectExpr(PseudoObjectExpr* E, raw_ostream& OS) {
 
@@ -1206,19 +1253,52 @@ void TranslatorVisitor::RewriteTopLevelDecl(Decl* D) {
   string stringBuf;
   llvm::raw_string_ostream stringStream(stringBuf);
   D->print(stringStream, *Policy);
-  string str = stringStream.str();
 
+  string str;
+
+  if (isa<VarDecl>(D) && !isa<ParmVarDecl>(D)) {
+    VarDecl* VD = dyn_cast_or_null<VarDecl>(D);
+    str += VD->getType().getAsString(*Policy);
+    str += " ";
+    str += VD->getName();
+    
+    if (Stmt* InitStmt = VD->getInit()) {
+      str += " = ";
+      str += GetStatementString(InitStmt, REMOVE_TRAILING_SEMICOLON);
+    }
+  } else {
+    str = stringStream.str();
+  }
   // Make sure we don't lose embedded tag definitions when rewriting
   //
   TagDecl* tag = dyn_cast_or_null<TagDecl>(D);
 
   if (tag && !tag->isFreeStanding()) {
-      str = " " + str.substr(str.find('{'));
-      DeferredInsertText(tag->getLocEnd(), str);
+    string tagStr = stringStream.str();
+    tagStr = " " + tagStr.substr(tagStr.find('{'));
+    DeferredInsertText(tag->getLocEnd(), tagStr);
 
   } else if (!isa<ParmVarDecl>(D)) { // ignore params that show up here
     str += ';';
-    TheRewriter.ReplaceText(D->getSourceRange(), str);
+
+    // For handling multiple declarators as well as possible
+    //
+    static SourceLocation PrevLocStart;
+    static SourceLocation PrevLocEnd;
+
+    SourceRange DeclRange;
+    if (D->getLocStart() != PrevLocStart) { // single declarator
+      DeclRange = GetRange(D->getLocStart(), D->getLocEnd());
+    } else {
+      SourceLocation End = Lexer::getLocForEndOfToken(PrevLocEnd, 0, *SM, LangOpts);
+      DeclRange = GetRange(End, D->getLocEnd());
+      str.insert(0, " ");
+    }
+
+    PrevLocStart = D->getLocStart();
+    PrevLocEnd = D->getLocEnd();
+
+    TheRewriter.ReplaceText(DeclRange, str);
   }
 }
 
