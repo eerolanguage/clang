@@ -1260,7 +1260,8 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
     }
 
     unsigned DiagID;
-    if (getLangOpts().ObjCAutoRefCount)
+    if (getLangOpts().ObjCAutoRefCount || 
+        (getLangOpts().Eero && !PP.isInLegacyHeader()))
       DiagID = diag::err_arc_method_not_found;
     else
       DiagID = isClassMessage ? diag::warn_class_method_not_found
@@ -1733,6 +1734,17 @@ ActOnClassPropertyRefExpr(IdentifierInfo &receiverName,
           }
           QualType T = Context.getObjCInterfaceType(Super);
           T = Context.getObjCObjectPointerType(T);
+
+          // For Eero global dot notation, make sure that
+          // unnecessary attribute "objc_requires_super" 
+          // warnings are avoided.
+          if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+            Selector Sel = 
+              PP.getSelectorTable().getNullarySelector(&propertyName);
+            if (CurMethod->getSelector() == Sel) {
+              getCurFunction()->ObjCShouldCallSuper = false;
+            }
+          }
         
           return HandleExprPropertyRefExpr(T->getAsObjCInterfacePointerType(),
                                            /*BaseExpr*/0, 
@@ -2090,6 +2102,11 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
   SourceLocation Loc = SuperLoc.isValid()? SuperLoc
     : ReceiverTypeInfo->getTypeLoc().getSourceRange().getBegin();
   if (LBracLoc.isInvalid()) {
+    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+      SourceLocation MissingPeriodLoc = PP.getLocForEndOfToken(Loc);
+      Diag(MissingPeriodLoc, diag::err_expected) << "'.' after class for message send"
+        << FixItHint::CreateReplacement(MissingPeriodLoc, ".");
+    } else
     Diag(Loc, diag::err_missing_open_square_message_send)
       << FixItHint::CreateInsertion(Loc, "[");
     LBracLoc = Loc;
@@ -2275,6 +2292,11 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
     SelLoc = Loc;
 
   if (LBracLoc.isInvalid()) {
+    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+      SourceLocation MissingPeriodLoc = PP.getLocForEndOfToken(Loc);
+      Diag(MissingPeriodLoc, diag::err_expected) << "'.' after instance for message send"
+        << FixItHint::CreateReplacement(MissingPeriodLoc, ".");
+    } else
     Diag(Loc, diag::err_missing_open_square_message_send)
       << FixItHint::CreateInsertion(Loc, "[");
     LBracLoc = Loc;
@@ -2480,6 +2502,15 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
             if (OCIType->qual_empty()) {
               Method = LookupInstanceMethodInGlobalPool(Sel,
                                               SourceRange(LBracLoc, RBracLoc));
+              // Eero is more strict, regardless of whether ARC is used
+              if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+                  Method && !forwardClass) {
+                Diag(SelLoc, diag::err_arc_may_not_respond)
+                  << OCIType->getPointeeType() << Sel << RecRange
+                  << SourceRange(SelectorLocs.front(), SelectorLocs.back());
+                return ExprError();
+              }
+              
               if (Method && !forwardClass)
                 Diag(SelLoc, diag::warn_maynot_respond)
                   << OCIType->getInterfaceDecl()->getIdentifier()

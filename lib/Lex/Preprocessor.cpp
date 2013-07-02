@@ -67,7 +67,8 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
       CodeComplete(0), CodeCompletionFile(0), CodeCompletionOffset(0),
       CodeCompletionReached(0), SkipMainFilePreamble(0, true), CurPPLexer(0),
       CurDirLookup(0), CurLexerKind(CLK_Lexer), Callbacks(0),
-      MacroArgCache(0), Record(0), MIChainHead(0), MICache(0),
+      MacroArgCache(0), Record(0), inLegacyHeader(true),
+      MIChainHead(0), MICache(0),
       DeserialMIChainHead(0) {
   OwnsHeaderSearch = OwnsHeaders;
   
@@ -575,33 +576,8 @@ IdentifierInfo *Preprocessor::LookUpIdentifierInfo(Token &Identifier) const {
   Identifier.setKind(II->getTokenID());
 
   // For legacy headers, revert the keywords eero introduced
-  if (getLangOpts().Eero && isInLegacyHeader()) {
-    switch (Identifier.getKind()) {
-      case tok::kw_compatibility_alias:
-      case tok::kw_defs:
-      case tok::kw_encode:
-      case tok::kw_end:
-      case tok::kw_implementation:
-      case tok::kw_interface:
-      case tok::kw_protocol:
-      case tok::kw_selector:
-      case tok::kw_finally:
-      case tok::kw_synchronized:
-      case tok::kw_autoreleasepool:
-      case tok::kw_property:
-      case tok::kw_package:
-      case tok::kw_required:
-      case tok::kw_optional:
-      case tok::kw_synthesize:
-      case tok::kw_dynamic:
-      case tok::kw_import:
-        Identifier.setKind(tok::identifier);
-        break;
-      default:
-        break;
-    }
-  }
-
+  RevertKeywordToIdentifierIfNeeded(Identifier);
+  
   return II;
 }
 
@@ -660,6 +636,8 @@ void Preprocessor::HandleIdentifier(Token &Identifier) {
 
     ExternalSource->updateOutOfDateIdentifier(II);
     Identifier.setKind(II.getTokenID());
+
+    RevertKeywordToIdentifierIfNeeded(Identifier);
 
     if (&II == Ident__VA_ARGS__)
       II.setIsPoisoned(CurrentIsPoisoned);
@@ -839,6 +817,35 @@ bool Preprocessor::HandleComment(Token &result, SourceRange Comment) {
     return false;
   Lex(result);
   return true;
+}
+
+/// For Eero, used to revert keywords to identifiers in "legacy" headers
+void Preprocessor::RevertKeywordToIdentifierIfNeeded(Token &Identifier) const {
+  if (isInLegacyHeader()) {
+    switch (Identifier.getKind()) {
+      case tok::kw_compatibility_alias:
+      case tok::kw_defs:
+      case tok::kw_encode:
+      case tok::kw_end:
+      case tok::kw_implementation:
+      case tok::kw_interface:
+      case tok::kw_protocol:
+      case tok::kw_selector:
+      case tok::kw_finally:
+      case tok::kw_synchronized:
+      case tok::kw_autoreleasepool:
+      case tok::kw_package:
+      case tok::kw_required:
+      case tok::kw_optional:
+      case tok::kw_synthesize:
+      case tok::kw_dynamic:
+      case tok::kw_import:
+        Identifier.setKind(tok::identifier);
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 ModuleLoader::~ModuleLoader() { }

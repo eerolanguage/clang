@@ -504,33 +504,9 @@ void TokenLexer::Lex(Token &Tok) {
       PP.HandleIdentifier(Tok);
   }
 
-  // For legacy headers, revert the keywords eero introduced
-  if (!Macro && PP.getLangOpts().Eero && PP.isInLegacyHeader()) {
-    switch (Tok.getKind()) {
-      case tok::kw_compatibility_alias:
-      case tok::kw_defs:
-      case tok::kw_encode:
-      case tok::kw_end:
-      case tok::kw_implementation:
-      case tok::kw_interface:
-      case tok::kw_protocol:
-      case tok::kw_selector:
-      case tok::kw_finally:
-      case tok::kw_synchronized:
-      case tok::kw_autoreleasepool:
-      case tok::kw_property:
-      case tok::kw_package:
-      case tok::kw_required:
-      case tok::kw_optional:
-      case tok::kw_synthesize:
-      case tok::kw_dynamic:
-      case tok::kw_import:
-        Tok.setKind(tok::identifier);
-        break;
-      default:
-        break;
-    }
-  }
+  // For "legacy" headers, revert the keywords eero introduced
+  PP.RevertKeywordToIdentifierIfNeeded(Tok);
+
   // Otherwise, return a normal token.
 }
 

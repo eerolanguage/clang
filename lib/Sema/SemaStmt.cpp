@@ -251,6 +251,8 @@ void Sema::DiagnoseUnusedExprResult(const Stmt *S) {
     const Expr *Source = POE->getSyntacticForm();
     if (isa<ObjCSubscriptRefExpr>(Source))
       DiagID = diag::warn_unused_container_subscript_expr;
+    else if (getLangOpts().Eero)
+      return;
     else
       DiagID = diag::warn_unused_property_expr;
   } else if (const CXXFunctionalCastExpr *FC

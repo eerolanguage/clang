@@ -161,7 +161,9 @@ void Preprocessor::ReadMacroName(Token &MacroNameTok, char isDefineUndef) {
     const IdentifierInfo &Info = Identifiers.get(Spelling);
 
     // Allow #defining |and| and friends in microsoft mode.
-    if (Info.isCPlusPlusOperatorKeyword() && getLangOpts().MicrosoftMode) {
+    if (Info.isCPlusPlusOperatorKeyword() &&
+        (getLangOpts().MicrosoftMode ||
+         (getLangOpts().Eero && inLegacyHeader))) { // same for eero legacy headers
       MacroNameTok.setIdentifierInfo(getIdentifierInfo(Spelling));
       return;
     }
@@ -1492,6 +1494,14 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   // If we are supposed to import a module rather than including the header,
   // do so now.
   if (SuggestedModule) {
+    // Handle non-legacy eero modules
+    if (getLangOpts().Eero && !inLegacyHeader && 
+        std::find(SuggestedModule->Requires.begin(),
+                  SuggestedModule->Requires.end(), "eero") !=
+                      SuggestedModule->Requires.end()) {
+      Legacy = Lexer::LS_False;
+    }
+  
     // Compute the module access path corresponding to this module.
     // FIXME: Should we have a second loadModule() overload to avoid this
     // extra lookup step?

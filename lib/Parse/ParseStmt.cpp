@@ -147,11 +147,12 @@ Retry:
   case tok::identifier: {
     Token Next = NextToken();
 
-    if (isEero) { // look for message sends (including unnamed selector case)
-      if ((Next.is(tok::identifier) && GetLookAheadToken(2).is(tok::colon)) ||
-          Next.is(tok::colon)) {
-        return ParseExprStatement();
-      }
+    if (isEero && Next.is(tok::colon)) {
+      // identifier ':' statement - no goto or labels in eero
+      Diag(Tok, diag::err_expected_statement);
+      ConsumeToken(); // the identifier
+      ConsumeToken(); // the colon
+      return StmtError();
     }
 
     if (Next.is(tok::colon)) { // C99 6.8.1: labeled-statement

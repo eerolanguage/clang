@@ -92,6 +92,7 @@ def err_enum_template : Error<"enumeration cannot be a template">;
 // Eero common diagnostics
 def err_expected : Error<"expected %0">;
 def err_not_allowed : Error<"%0 not allowed here">;
+def err_not_supported : Error<"%0 not supported in Eero. %1">;
 
 // Sema && Lex
 def ext_c99_longlong : Extension<
