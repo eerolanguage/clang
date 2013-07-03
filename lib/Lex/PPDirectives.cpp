@@ -1496,9 +1496,9 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   if (SuggestedModule) {
     // Handle non-legacy eero modules
     if (getLangOpts().Eero && !inLegacyHeader && 
-        std::find(SuggestedModule->Requires.begin(),
-                  SuggestedModule->Requires.end(), "eero") !=
-                      SuggestedModule->Requires.end()) {
+        std::find(SuggestedModule.getModule()->Requires.begin(),
+                  SuggestedModule.getModule()->Requires.end(), "eero") !=
+                      SuggestedModule.getModule()->Requires.end()) {
       Legacy = Lexer::LS_False;
     }
   
