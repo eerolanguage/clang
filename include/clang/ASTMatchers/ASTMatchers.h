@@ -640,6 +640,18 @@ const internal::VariadicDynCastAllOfMatcher<
   Stmt,
   CXXConstructExpr> constructExpr;
 
+/// \brief Matches unresolved constructor call expressions.
+///
+/// Example matches T(t) in return statement of f
+///     (matcher = unresolvedConstructExpr())
+/// \code
+///   template <typename T>
+///   void f(const T& t) { return T(t); }
+/// \endcode
+const internal::VariadicDynCastAllOfMatcher<
+  Stmt,
+  CXXUnresolvedConstructExpr> unresolvedConstructExpr;
+
 /// \brief Matches implicit and explicit this expressions.
 ///
 /// Example matches the implicit this expression in "return i".
@@ -3185,6 +3197,16 @@ AST_TYPE_MATCHER(TypedefType, typedefType);
 /// \c templateSpecializationType() matches the type of the explicit
 /// instantiation in \c A and the type of the variable declaration in \c B.
 AST_TYPE_MATCHER(TemplateSpecializationType, templateSpecializationType);
+
+/// \brief Matches types nodes representing unary type transformations.
+///
+/// Given:
+/// \code
+///   typedef __underlying_type(T) type;
+/// \endcode
+/// unaryTransformType()
+///   matches "__underlying_type(T)"
+AST_TYPE_MATCHER(UnaryTransformType, unaryTransformType);
 
 /// \brief Matches record types (e.g. structs, classes).
 ///

@@ -180,5 +180,49 @@ TEST(CXXNewExpr, TypeParenRange) {
   EXPECT_TRUE(Verifier.match("int* a = new (int);", newExpr()));
 }
 
+class UnaryTransformTypeLocParensRangeVerifier : public RangeVerifier<TypeLoc> {
+protected:
+  virtual SourceRange getRange(const TypeLoc &Node) {
+    UnaryTransformTypeLoc T =
+        Node.getUnqualifiedLoc().castAs<UnaryTransformTypeLoc>();
+    assert(!T.isNull());
+    return SourceRange(T.getLParenLoc(), T.getRParenLoc());
+  }
+};
+
+TEST(UnaryTransformTypeLoc, ParensRange) {
+  UnaryTransformTypeLocParensRangeVerifier Verifier;
+  Verifier.expectRange(3, 26, 3, 28);
+  EXPECT_TRUE(Verifier.match(
+      "template <typename T>\n"
+      "struct S {\n"
+      "typedef __underlying_type(T) type;\n"
+      "};",
+      loc(unaryTransformType())));
+}
+
+TEST(CXXFunctionalCastExpr, SourceRange) {
+  RangeVerifier<CXXFunctionalCastExpr> Verifier;
+  Verifier.expectRange(2, 10, 2, 14);
+  EXPECT_TRUE(Verifier.match(
+      "int foo() {\n"
+      "  return int{};\n"
+      "}",
+      functionalCastExpr(), Lang_CXX11));
+}
+
+TEST(CXXUnresolvedConstructExpr, SourceRange) {
+  RangeVerifier<CXXUnresolvedConstructExpr> Verifier;
+  Verifier.expectRange(3, 10, 3, 12);
+  std::vector<std::string> Args;
+  Args.push_back("-fno-delayed-template-parsing");
+  EXPECT_TRUE(Verifier.match(
+      "template <typename U>\n"
+      "U foo() {\n"
+      "  return U{};\n"
+      "}",
+      unresolvedConstructExpr(), Args, Lang_CXX11));
+}
+
 } // end namespace ast_matchers
 } // end namespace clang

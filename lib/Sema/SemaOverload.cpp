@@ -977,21 +977,12 @@ Sema::CheckOverload(Scope *S, FunctionDecl *New, const LookupResult &Old,
   return Ovl_Overload;
 }
 
-static bool canBeOverloaded(const FunctionDecl &D) {
-  if (D.getAttr<OverloadableAttr>())
-    return true;
-  if (D.isExternC())
+bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
+                      bool UseUsingDeclRules) {
+  // C++ [basic.start.main]p2: This function shall not be overloaded.
+  if (New->isMain())
     return false;
 
-  // Main cannot be overloaded (basic.start.main).
-  if (D.isMain())
-    return false;
-
-  return true;
-}
-
-static bool shouldTryToOverload(Sema &S, FunctionDecl *New, FunctionDecl *Old,
-                                bool UseUsingDeclRules) {
   FunctionTemplateDecl *OldTemplate = Old->getDescribedFunctionTemplate();
   FunctionTemplateDecl *NewTemplate = New->getDescribedFunctionTemplate();
 
@@ -1002,8 +993,8 @@ static bool shouldTryToOverload(Sema &S, FunctionDecl *New, FunctionDecl *Old,
     return true;
 
   // Is the function New an overload of the function Old?
-  QualType OldQType = S.Context.getCanonicalType(Old->getType());
-  QualType NewQType = S.Context.getCanonicalType(New->getType());
+  QualType OldQType = Context.getCanonicalType(Old->getType());
+  QualType NewQType = Context.getCanonicalType(New->getType());
 
   // Compare the signatures (C++ 1.3.10) of the two functions to
   // determine whether they are overloads. If we find any mismatch
@@ -1024,7 +1015,7 @@ static bool shouldTryToOverload(Sema &S, FunctionDecl *New, FunctionDecl *Old,
   if (OldQType != NewQType &&
       (OldType->getNumArgs() != NewType->getNumArgs() ||
        OldType->isVariadic() != NewType->isVariadic() ||
-       !S.FunctionArgTypesAreEqual(OldType, NewType)))
+       !FunctionArgTypesAreEqual(OldType, NewType)))
     return true;
 
   // C++ [temp.over.link]p4:
@@ -1040,9 +1031,9 @@ static bool shouldTryToOverload(Sema &S, FunctionDecl *New, FunctionDecl *Old,
   // However, we don't consider either of these when deciding whether
   // a member introduced by a shadow declaration is hidden.
   if (!UseUsingDeclRules && NewTemplate &&
-      (!S.TemplateParameterListsAreEqual(NewTemplate->getTemplateParameters(),
-                                         OldTemplate->getTemplateParameters(),
-                                         false, S.TPL_TemplateMatch) ||
+      (!TemplateParameterListsAreEqual(NewTemplate->getTemplateParameters(),
+                                       OldTemplate->getTemplateParameters(),
+                                       false, TPL_TemplateMatch) ||
        OldType->getResultType() != NewType->getResultType()))
     return true;
 
@@ -1068,9 +1059,9 @@ static bool shouldTryToOverload(Sema &S, FunctionDecl *New, FunctionDecl *Old,
         //     declarations with the same name, the same parameter-type-list, and
         //     the same template parameter lists cannot be overloaded if any of
         //     them, but not all, have a ref-qualifier (8.3.5).
-        S.Diag(NewMethod->getLocation(), diag::err_ref_qualifier_overload)
+        Diag(NewMethod->getLocation(), diag::err_ref_qualifier_overload)
           << NewMethod->getRefQualifier() << OldMethod->getRefQualifier();
-        S.Diag(OldMethod->getLocation(), diag::note_previous_declaration);
+        Diag(OldMethod->getLocation(), diag::note_previous_declaration);
       }
       return true;
     }
@@ -1080,7 +1071,7 @@ static bool shouldTryToOverload(Sema &S, FunctionDecl *New, FunctionDecl *Old,
     // or non-static member function). Add it now, on the assumption that this
     // is a redeclaration of OldMethod.
     unsigned NewQuals = NewMethod->getTypeQualifiers();
-    if (!S.getLangOpts().CPlusPlus1y && NewMethod->isConstexpr() &&
+    if (!getLangOpts().CPlusPlus1y && NewMethod->isConstexpr() &&
         !isa<CXXConstructorDecl>(NewMethod))
       NewQuals |= Qualifiers::Const;
     if (OldMethod->getTypeQualifiers() != NewQuals)
@@ -1089,19 +1080,6 @@ static bool shouldTryToOverload(Sema &S, FunctionDecl *New, FunctionDecl *Old,
 
   // The signatures match; this is not an overload.
   return false;
-}
-
-bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
-                      bool UseUsingDeclRules) {
-  if (!shouldTryToOverload(*this, New, Old, UseUsingDeclRules))
-    return false;
-
-  // If both of the functions are extern "C", then they are not
-  // overloads.
-  if (!canBeOverloaded(*Old) && !canBeOverloaded(*New))
-    return false;
-
-  return true;
 }
 
 /// \brief Checks availability of the function depending on the current
@@ -6241,6 +6219,8 @@ void Sema::AddBuiltinCandidate(QualType ResultTy, QualType *ParamTys,
   }
 }
 
+namespace {
+
 /// BuiltinCandidateTypeSet - A set of types that will be used for the
 /// candidate operator functions for built-in operators (C++
 /// [over.built]). The types are separated into pointer types and
@@ -6329,6 +6309,8 @@ public:
   bool hasArithmeticOrEnumeralTypes() { return HasArithmeticOrEnumeralTypes; }
   bool hasNullPtrType() const { return HasNullPtrType; }
 };
+
+} // end anonymous namespace
 
 /// AddPointerWithMoreQualifiedTypeVariants - Add the pointer type @p Ty to
 /// the set of pointer types along with any more-qualified variants of
@@ -9876,67 +9858,6 @@ DiagnoseTwoPhaseOperatorLookup(Sema &SemaRef, OverloadedOperatorKind Op,
 }
 
 namespace {
-// Callback to limit the allowed keywords and to only accept typo corrections
-// that are keywords or whose decls refer to functions (or template functions)
-// that accept the given number of arguments.
-class RecoveryCallCCC : public CorrectionCandidateCallback {
- public:
-  RecoveryCallCCC(Sema &SemaRef, unsigned NumArgs, bool HasExplicitTemplateArgs)
-      : NumArgs(NumArgs), HasExplicitTemplateArgs(HasExplicitTemplateArgs) {
-    WantTypeSpecifiers = SemaRef.getLangOpts().CPlusPlus;
-    WantRemainingKeywords = false;
-  }
-
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
-    if (!candidate.getCorrectionDecl())
-      return candidate.isKeyword();
-
-    for (TypoCorrection::const_decl_iterator DI = candidate.begin(),
-           DIEnd = candidate.end(); DI != DIEnd; ++DI) {
-      FunctionDecl *FD = 0;
-      NamedDecl *ND = (*DI)->getUnderlyingDecl();
-      if (FunctionTemplateDecl *FTD = dyn_cast<FunctionTemplateDecl>(ND))
-        FD = FTD->getTemplatedDecl();
-      if (!HasExplicitTemplateArgs && !FD) {
-        if (!(FD = dyn_cast<FunctionDecl>(ND)) && isa<ValueDecl>(ND)) {
-          // If the Decl is neither a function nor a template function,
-          // determine if it is a pointer or reference to a function. If so,
-          // check against the number of arguments expected for the pointee.
-          QualType ValType = cast<ValueDecl>(ND)->getType();
-          if (ValType->isAnyPointerType() || ValType->isReferenceType())
-            ValType = ValType->getPointeeType();
-          if (const FunctionProtoType *FPT = ValType->getAs<FunctionProtoType>())
-            if (FPT->getNumArgs() == NumArgs)
-              return true;
-        }
-      }
-      if (FD && FD->getNumParams() >= NumArgs &&
-          FD->getMinRequiredArguments() <= NumArgs)
-        return true;
-    }
-    return false;
-  }
-
- private:
-  unsigned NumArgs;
-  bool HasExplicitTemplateArgs;
-};
-
-// Callback that effectively disabled typo correction
-class NoTypoCorrectionCCC : public CorrectionCandidateCallback {
- public:
-  NoTypoCorrectionCCC() {
-    WantTypeSpecifiers = false;
-    WantExpressionKeywords = false;
-    WantCXXNamedCasts = false;
-    WantRemainingKeywords = false;
-  }
-
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
-    return false;
-  }
-};
-
 class BuildRecoveryCallExprRAII {
   Sema &SemaRef;
 public:
@@ -9985,7 +9906,8 @@ BuildRecoveryCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
 
   LookupResult R(SemaRef, ULE->getName(), ULE->getNameLoc(),
                  Sema::LookupOrdinaryName);
-  RecoveryCallCCC Validator(SemaRef, Args.size(), ExplicitTemplateArgs != 0);
+  FunctionCallFilterCCC Validator(SemaRef, Args.size(),
+                                  ExplicitTemplateArgs != 0);
   NoTypoCorrectionCCC RejectAll;
   CorrectionCandidateCallback *CCC = AllowTypoCorrection ?
       (CorrectionCandidateCallback*)&Validator :

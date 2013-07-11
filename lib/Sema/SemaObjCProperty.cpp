@@ -529,15 +529,22 @@ ObjCPropertyDecl *Sema::CreatePropertyDecl(Scope *S,
           if (IDecl->ClassImplementsProtocol(PNSCopying, true))
             Diag(AtLoc, diag::warn_implements_nscopying) << PropertyId;
     }
-  if (T->isObjCObjectType())
-   if (!getLangOpts().Eero || PP.isInLegacyHeader()) // eero objects are always pointers
-    Diag(FD.D.getIdentifierLoc(), diag::err_statically_allocated_object);
+
+  if (T->isObjCObjectType() && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
+    SourceLocation StarLoc = TInfo->getTypeLoc().getLocEnd();
+    StarLoc = PP.getLocForEndOfToken(StarLoc);
+    Diag(FD.D.getIdentifierLoc(), diag::err_statically_allocated_object)
+      << FixItHint::CreateInsertion(StarLoc, "*");
+    T = Context.getObjCObjectPointerType(T);
+    SourceLocation TLoc = TInfo->getTypeLoc().getLocStart();
+    TInfo = Context.getTrivialTypeSourceInfo(T, TLoc);
+  }
 
   DeclContext *DC = cast<DeclContext>(CDecl);
   ObjCPropertyDecl *PDecl = ObjCPropertyDecl::Create(Context, DC,
                                                      FD.D.getIdentifierLoc(),
                                                      PropertyId, AtLoc, LParenLoc, TInfo);
-
+  // Eero class types are implicitly pointers
   if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
       T->isObjCObjectType()) { // make it a pointer
     T = Context.getObjCObjectPointerType(PDecl->getType());
@@ -1089,8 +1096,14 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
                                   PropertyIvarType, /*Dinfo=*/0,
                                   ObjCIvarDecl::Private,
                                   (Expr *)0, true);
-      if (CompleteTypeErr)
+      if (RequireNonAbstractType(PropertyIvarLoc,
+                                 PropertyIvarType,
+                                 diag::err_abstract_type_in_decl,
+                                 AbstractSynthesizedIvarType)) {
+        Diag(property->getLocation(), diag::note_property_declare);
         Ivar->setInvalidDecl();
+      } else if (CompleteTypeErr)
+          Ivar->setInvalidDecl();
       ClassImpDecl->addDecl(Ivar);
       IDecl->makeDeclVisibleInContext(Ivar);
 

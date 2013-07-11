@@ -798,10 +798,6 @@ private:
   CGDebugInfo *DebugInfo;
   bool DisableDebugInfo;
 
-  /// If the current function returns 'this', use the field to keep track of
-  /// the callee that returns 'this'.
-  llvm::Value *CalleeWithThisReturn;
-
   /// DidCallStackSave - Whether llvm.stacksave has been called. Used to avoid
   /// calling llvm.stacksave for multiple VLAs in the same scope.
   bool DidCallStackSave;
@@ -2473,7 +2469,7 @@ private:
   /// Ty, into individual arguments on the provided vector \arg Args. See
   /// ABIArgInfo::Expand.
   void ExpandTypeToArgs(QualType Ty, RValue Src,
-                        SmallVector<llvm::Value*, 16> &Args,
+                        SmallVectorImpl<llvm::Value *> &Args,
                         llvm::FunctionType *IRFuncTy);
 
   llvm::Value* EmitAsmInput(const TargetInfo::ConstraintInfo &Info,

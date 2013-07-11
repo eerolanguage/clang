@@ -31,8 +31,7 @@ namespace format {
 /// \c UnwrappedLineFormatter. The key property is that changing the formatting
 /// within an unwrapped line does not affect any other unwrapped lines.
 struct UnwrappedLine {
-  UnwrappedLine() : Level(0), InPPDirective(false), MustBeDeclaration(false) {
-  }
+  UnwrappedLine() : Level(0), InPPDirective(false), MustBeDeclaration(false) {}
 
   // FIXME: Don't use std::list here.
   /// \brief The \c Tokens comprising this \c UnwrappedLine.
@@ -49,8 +48,7 @@ struct UnwrappedLine {
 
 class UnwrappedLineConsumer {
 public:
-  virtual ~UnwrappedLineConsumer() {
-  }
+  virtual ~UnwrappedLineConsumer() {}
   virtual void consumeUnwrappedLine(const UnwrappedLine &Line) = 0;
 };
 
@@ -104,13 +102,6 @@ private:
   void calculateBraceTypes();
   void pushPPConditional();
 
-  // Represents what type of block a left brace opens.
-  enum LBraceState {
-    BS_Unknown,
-    BS_Block,
-    BS_BracedInit
-  };
-
   // FIXME: We are constantly running into bugs where Line.Level is incorrectly
   // subtracted from beyond 0. Introduce a method to subtract from Line.Level
   // and use that everywhere in the Parser.
@@ -155,16 +146,11 @@ private:
   // owned outside of and handed into the UnwrappedLineParser.
   ArrayRef<FormatToken *> AllTokens;
 
-  // FIXME: Currently we cannot store attributes with tokens, as we treat
-  // them as read-only; thus, we now store the brace state indexed by the
-  // position of the token in the stream (see \c AllTokens).
-  SmallVector<LBraceState, 16> LBraces;
-
   // Represents preprocessor branch type, so we can find matching
   // #if/#else/#endif directives.
   enum PPBranchKind {
-    PP_Conditional,  // Any #if, #ifdef, #ifndef, #elif, block outside #if 0
-    PP_Unreachable   // #if 0 or a conditional preprocessor block inside #if 0
+    PP_Conditional, // Any #if, #ifdef, #ifndef, #elif, block outside #if 0
+    PP_Unreachable  // #if 0 or a conditional preprocessor block inside #if 0
   };
 
   // Keeps a stack of currently active preprocessor branching directives.

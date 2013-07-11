@@ -1,9 +1,9 @@
 // RUN: %clang_cc1 -std=c++11 -triple x86_64-apple-macosx10.7.0 -emit-llvm -o - %s | FileCheck %s
 
 // CHECK: @_ZZNK7PR12917IJiiEE1nMUlvE_clEvE1n = linkonce_odr global i32 0
-// CHECK: @_ZZN7PR12917IJicdEEC1EicdEd_N1nE = linkonce_odr global i32 0
-// CHECK: @_ZZN7PR12917IJicdEEC1EicdEd0_N1nE = linkonce_odr global i32 0
-// CHECK: @_ZZN7PR12917IJicdEEC1EicdEd1_N1nE = linkonce_odr global i32 0
+// CHECK: @_ZZZN7PR12917IJicdEEC1EicdEd_NKUlvE_clEvE1n = linkonce_odr global i32 0
+// CHECK: @_ZZZN7PR12917IJicdEEC1EicdEd0_NKUlvE_clEvE1n = linkonce_odr global i32 0
+// CHECK: @_ZZZN7PR12917IJicdEEC1EicdEd1_NKUlvE_clEvE1n = linkonce_odr global i32 0
 
 // CHECK: define linkonce_odr void @_Z11inline_funci
 inline void inline_func(int n) {
@@ -160,7 +160,7 @@ void func_template(T = []{ return T(); }());
 
 // CHECK: define void @_Z17use_func_templatev()
 void use_func_template() {
-  // CHECK: call i32 @"_ZZ13func_templateIiEvT_ENKS_IiE3$_3clEv"
+  // CHECK: call i32 @"_ZZ13func_templateIiEvT_ENK3$_3clEv"
   func_template<int>();
 }
 
@@ -205,8 +205,8 @@ namespace PR12808 {
   void f() {
     b<int>(1);
   }
-  // CHECK: define linkonce_odr void @_ZZN7PR128081bIiEEviENKS0_IiEUlvE_clEv
-  // CHECK: define linkonce_odr i32 @_ZZZN7PR128081bIiEEviENKS0_IiEUlvE_clEvENKUlvE_clEv
+  // CHECK: define linkonce_odr void @_ZZN7PR128081bIiEEviENKUlvE_clEv
+  // CHECK: define linkonce_odr i32 @_ZZZN7PR128081bIiEEviENKUlvE_clEvENKUlvE_clEv
 }
 
 // CHECK: define linkonce_odr void @_Z1fIZZNK23TestNestedInstantiationclEvENKUlvE_clEvEUlvE_EvT_

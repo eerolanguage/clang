@@ -406,7 +406,9 @@ void Sema::ActOnStartOfObjCMethodDef(Scope *FnBodyScope, Decl *D) {
         if (Context.getLangOpts().getGC() != LangOptions::NonGC)
           getCurFunction()->ObjCShouldCallSuper = true;
         
-      } else {
+      } else if (MDecl->hasAttr<ObjCRequiresSuperAttr>())
+        getCurFunction()->ObjCShouldCallSuper = true;
+      else {
         const ObjCMethodDecl *SuperMethod =
           SuperClass->lookupMethod(MDecl->getSelector(),
                                    MDecl->isInstanceMethod());
@@ -833,7 +835,7 @@ Sema::ActOnForwardProtocolDeclaration(SourceLocation AtProtocolLoc,
     DeclsInGroup.push_back(PDecl);
   }
 
-  return BuildDeclaratorGroup(DeclsInGroup.data(), DeclsInGroup.size(), false);
+  return BuildDeclaratorGroup(DeclsInGroup, false);
 }
 
 Decl *Sema::
@@ -1100,7 +1102,7 @@ Sema::ActOnFinishObjCImplementation(Decl *ObjCImpDecl, ArrayRef<Decl *> Decls) {
 
   DeclsInGroup.push_back(ObjCImpDecl);
 
-  return BuildDeclaratorGroup(DeclsInGroup.data(), DeclsInGroup.size(), false);
+  return BuildDeclaratorGroup(DeclsInGroup, false);
 }
 
 void Sema::CheckImplementationIvars(ObjCImplementationDecl *ImpDecl,
@@ -1985,8 +1987,8 @@ Sema::ActOnForwardClassDeclaration(SourceLocation AtClassLoc,
     CheckObjCDeclScope(IDecl);
     DeclsInGroup.push_back(IDecl);
   }
-  
-  return BuildDeclaratorGroup(DeclsInGroup.data(), DeclsInGroup.size(), false);
+
+  return BuildDeclaratorGroup(DeclsInGroup, false);
 }
 
 static bool tryMatchRecordTypes(ASTContext &Context,
@@ -2333,7 +2335,6 @@ HelperSelectorsForTypoCorrection(
   else if (EditDistance < BestEditDistance) {
     BestMethod.clear();
     BestMethod.push_back(Method);
-    BestEditDistance = EditDistance;
   }
 }
 
@@ -3201,6 +3202,12 @@ Decl *Sema::ActOnMethodDeclaration(
     if (ObjCInterfaceDecl *IDecl = ImpDecl->getClassInterface())
       IMD = IDecl->lookupMethod(ObjCMethod->getSelector(), 
                                 ObjCMethod->isInstanceMethod());
+    if (IMD && IMD->hasAttr<ObjCRequiresSuperAttr>() &&
+        !ObjCMethod->hasAttr<ObjCRequiresSuperAttr>()) {
+      // merge the attribute into implementation.
+      ObjCMethod->addAttr(
+        new (Context) ObjCRequiresSuperAttr(ObjCMethod->getLocation(), Context));
+    }
     if (ObjCMethod->hasAttrs() &&
         containsInvalidMethodImplAttribute(IMD, ObjCMethod->getAttrs())) {
       SourceLocation MethodLoc = IMD->getLocation();

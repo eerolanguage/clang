@@ -51,9 +51,17 @@ enum TokenType {
   TT_StartOfName,
   TT_TemplateCloser,
   TT_TemplateOpener,
+  TT_TrailingReturnArrow,
   TT_TrailingUnaryOperator,
   TT_UnaryOperator,
   TT_Unknown
+};
+
+// Represents what type of block a set of braces open.
+enum BraceBlockKind {
+  BK_Unknown,
+  BK_Block,
+  BK_BracedInit
 };
 
 /// \brief A wrapper around a \c Token storing information about the
@@ -62,10 +70,11 @@ struct FormatToken {
   FormatToken()
       : NewlinesBefore(0), HasUnescapedNewline(false), LastNewlineOffset(0),
         CodePointCount(0), IsFirst(false), MustBreakBefore(false),
-        Type(TT_Unknown), SpacesRequiredBefore(0), CanBreakBefore(false),
-        ClosesTemplateDeclaration(false), ParameterCount(0), TotalLength(0),
-        UnbreakableTailLength(0), BindingStrength(0), SplitPenalty(0),
-        LongestObjCSelectorName(0), FakeRParens(0), LastInChainOfCalls(false),
+        BlockKind(BK_Unknown), Type(TT_Unknown), SpacesRequiredBefore(0),
+        CanBreakBefore(false), ClosesTemplateDeclaration(false),
+        ParameterCount(0), TotalLength(0), UnbreakableTailLength(0),
+        BindingStrength(0), SplitPenalty(0), LongestObjCSelectorName(0),
+        FakeRParens(0), LastInChainOfCalls(false),
         PartOfMultiVariableDeclStmt(false), MatchingParen(NULL), Previous(NULL),
         Next(NULL) {}
 
@@ -116,6 +125,9 @@ struct FormatToken {
   /// Contains the raw token text without leading whitespace and without leading
   /// escaped newlines.
   StringRef TokenText;
+
+  /// \brief Contains the kind of block if this token is a brace.
+  BraceBlockKind BlockKind;
 
   TokenType Type;
 
@@ -212,7 +224,6 @@ struct FormatToken {
   bool opensScope() const {
     return isOneOf(tok::l_paren, tok::l_brace, tok::l_square) ||
            Type == TT_TemplateOpener;
-
   }
   /// \brief Returns whether \p Tok is )]} or a template closing >.
   bool closesScope() const {
@@ -248,7 +259,7 @@ struct FormatToken {
   }
 
   /// \brief Returns the previous token ignoring comments.
-  FormatToken *getPreviousNoneComment() const {
+  FormatToken *getPreviousNonComment() const {
     FormatToken *Tok = Previous;
     while (Tok != NULL && Tok->is(tok::comment))
       Tok = Tok->Previous;
@@ -256,7 +267,7 @@ struct FormatToken {
   }
 
   /// \brief Returns the next token ignoring comments.
-  const FormatToken *getNextNoneComment() const {
+  const FormatToken *getNextNonComment() const {
     const FormatToken *Tok = Next;
     while (Tok != NULL && Tok->is(tok::comment))
       Tok = Tok->Next;
@@ -270,8 +281,8 @@ struct FormatToken {
 
 private:
   // Disallow copying.
-  FormatToken(const FormatToken &);
-  void operator=(const FormatToken &);
+  FormatToken(const FormatToken &) LLVM_DELETED_FUNCTION;
+  void operator=(const FormatToken &) LLVM_DELETED_FUNCTION;
 };
 
 } // namespace format

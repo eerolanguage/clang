@@ -124,29 +124,14 @@ void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
     llvm::GlobalValue::LinkageTypes Linkage =
       llvm::GlobalValue::InternalLinkage;
 
-    // If the function definition has some sort of weak linkage, its
-    // static variables should also be weak so that they get properly
-    // uniqued.
+    // If the variable is externally visible, it must have weak linkage so it
+    // can be uniqued.
     if (D.isExternallyVisible()) {
-      const Decl *D = CurCodeDecl;
-      while (true) {
-        if (isa<BlockDecl>(D)) {
-          // FIXME: Handle this case properly!  (Should be similar to the
-          // way we handle lambdas in computeLVForDecl in Decl.cpp.)
-          break;
-        } else if (isa<CapturedDecl>(D)) {
-          D = cast<Decl>(cast<CapturedDecl>(D)->getParent());
-        } else {
-          break;
-        }
-      }
-      // FIXME: Do we really only care about FunctionDecls here?
-      if (isa<FunctionDecl>(D)) {
-        llvm::GlobalValue::LinkageTypes ParentLinkage =
-            CGM.getFunctionLinkage(cast<FunctionDecl>(D));
-        if (llvm::GlobalValue::isWeakForLinker(ParentLinkage))
-          Linkage = ParentLinkage;
-      }
+      Linkage = llvm::GlobalValue::LinkOnceODRLinkage;
+
+      // FIXME: We need to force the emission/use of a guard variable for
+      // some variables even if we can constant-evaluate them because
+      // we can't guarantee every translation unit will constant-evaluate them.
     }
 
     return EmitStaticVarDecl(D, Linkage);

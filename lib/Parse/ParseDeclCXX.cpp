@@ -827,6 +827,7 @@ void Parser::ParseUnderlyingTypeSpecifier(DeclSpec &DS) {
   if (DS.SetTypeSpecType(DeclSpec::TST_underlyingType, StartLoc, PrevSpec,
                          DiagID, Result.release()))
     Diag(StartLoc, DiagID) << PrevSpec;
+  DS.setTypeofParensRange(T.getRange());
 }
 
 /// ParseBaseTypeSpecifier - Parse a C++ base-type-specifier which is either a
@@ -2243,7 +2244,7 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
       SmallVector<SourceRange, 4> Ranges;
       DeclaratorInfo.getCXX11AttributeRanges(Ranges);
       if (!Ranges.empty()) {
-        for (SmallVector<SourceRange, 4>::iterator I = Ranges.begin(), 
+        for (SmallVectorImpl<SourceRange>::iterator I = Ranges.begin(),
              E = Ranges.end(); I != E; ++I) {
           Diag((*I).getBegin(), diag::err_attributes_not_allowed) 
             << *I;
@@ -2367,8 +2368,7 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
     return;
   }
 
-  Actions.FinalizeDeclaratorGroup(getCurScope(), DS, DeclsInGroup.data(),
-                                  DeclsInGroup.size());
+  Actions.FinalizeDeclaratorGroup(getCurScope(), DS, DeclsInGroup);
 }
 
 /// ParseCXXMemberInitializer - Parse the brace-or-equal-initializer or

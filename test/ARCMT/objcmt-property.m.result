@@ -1,0 +1,49 @@
+// RUN: rm -rf %t
+// RUN: %clang_cc1 -objcmt-migrate-property -mt-migrate-directory %t %s -x objective-c -fobjc-runtime-has-weak -fobjc-arc -fobjc-default-synthesize-properties -triple x86_64-apple-darwin11
+// RUN: c-arcmt-test -mt-migrate-directory %t | arcmt-test -verify-transformed-files %s.result
+// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -fsyntax-only -x objective-c -fobjc-runtime-has-weak -fobjc-arc -fobjc-default-synthesize-properties %s.result
+
+@class NSString;
+@interface NSObject @end
+
+@interface I : NSObject {
+  int ivarVal;
+}
+
+@property(weak) NSString *__weak WeakProp;
+
+@property(copy) NSString * StrongProp;
+
+
+- (NSString *) UnavailProp  __attribute__((unavailable));
+- (void) setUnavailProp  : (NSString *)Val;
+
+- (NSString *) UnavailProp1  __attribute__((unavailable));
+- (void) setUnavailProp1  : (NSString *)Val  __attribute__((unavailable));
+
+- (NSString *) UnavailProp2;
+- (void) setUnavailProp2  : (NSString *)Val  __attribute__((unavailable));
+
+@end
+
+@implementation I
+@end
+
+@class NSArray;
+
+@interface MyClass2  {
+@private
+    NSArray *_names1;
+    NSArray *_names2;
+    NSArray *_names3;
+    NSArray *_names4;
+}
+
+
+
+
+@property(copy) NSArray * names2;
+@property(copy) NSArray * names3;
+@property(copy) NSArray *__strong names4;
+@property(copy) NSArray * names1;
+@end

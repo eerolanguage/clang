@@ -331,15 +331,19 @@ void Sema::LookupTemplateName(LookupResult &Found,
       if (!Found.empty()) {
         std::string CorrectedStr(Corrected.getAsString(getLangOpts()));
         std::string CorrectedQuotedStr(Corrected.getQuoted(getLangOpts()));
-        if (LookupCtx)
+        if (LookupCtx) {
+          bool droppedSpecifier = Corrected.WillReplaceSpecifier() &&
+                                  Name.getAsString() == CorrectedStr;
           Diag(Found.getNameLoc(), diag::err_no_member_template_suggest)
-            << Name << LookupCtx << CorrectedQuotedStr << SS.getRange()
+            << Name << LookupCtx << droppedSpecifier << CorrectedQuotedStr
+            << SS.getRange()
             << FixItHint::CreateReplacement(Corrected.getCorrectionRange(),
                                             CorrectedStr);
-        else
+        } else {
           Diag(Found.getNameLoc(), diag::err_no_template_suggest)
             << Name << CorrectedQuotedStr
             << FixItHint::CreateReplacement(Found.getNameLoc(), CorrectedStr);
+        }
         if (TemplateDecl *Template = Found.getAsSingle<TemplateDecl>())
           Diag(Template->getLocation(), diag::note_previous_decl)
             << CorrectedQuotedStr;
@@ -2699,11 +2703,16 @@ Sema::SubstDefaultTemplateArgumentIfAvailable(TemplateDecl *Template,
                                               SourceLocation TemplateLoc,
                                               SourceLocation RAngleLoc,
                                               Decl *Param,
-                      SmallVectorImpl<TemplateArgument> &Converted) {
-   if (TemplateTypeParmDecl *TypeParm = dyn_cast<TemplateTypeParmDecl>(Param)) {
+                                              SmallVectorImpl<TemplateArgument>
+                                                &Converted,
+                                              bool &HasDefaultArg) {
+  HasDefaultArg = false;
+
+  if (TemplateTypeParmDecl *TypeParm = dyn_cast<TemplateTypeParmDecl>(Param)) {
     if (!TypeParm->hasDefaultArgument())
       return TemplateArgumentLoc();
 
+    HasDefaultArg = true;
     TypeSourceInfo *DI = SubstDefaultTemplateArgument(*this, Template,
                                                       TemplateLoc,
                                                       RAngleLoc,
@@ -2720,6 +2729,7 @@ Sema::SubstDefaultTemplateArgumentIfAvailable(TemplateDecl *Template,
     if (!NonTypeParm->hasDefaultArgument())
       return TemplateArgumentLoc();
 
+    HasDefaultArg = true;
     ExprResult Arg = SubstDefaultTemplateArgument(*this, Template,
                                                   TemplateLoc,
                                                   RAngleLoc,
@@ -2737,7 +2747,7 @@ Sema::SubstDefaultTemplateArgumentIfAvailable(TemplateDecl *Template,
   if (!TempTempParm->hasDefaultArgument())
     return TemplateArgumentLoc();
 
-
+  HasDefaultArg = true;
   NestedNameSpecifierLoc QualifierLoc;
   TemplateName TName = SubstDefaultTemplateArgument(*this, Template,
                                                     TemplateLoc,

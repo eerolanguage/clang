@@ -48,8 +48,8 @@ public:
   /// specified from the start of the (original) line.
   /// \p Length can be set to StringRef::npos, which means "to the end of line".
   virtual unsigned
-      getLineLengthAfterSplit(unsigned LineIndex, unsigned Offset,
-                              StringRef::size_type Length) const = 0;
+  getLineLengthAfterSplit(unsigned LineIndex, unsigned Offset,
+                          StringRef::size_type Length) const = 0;
 
   /// \brief Returns a range (offset, length) at which to break the line at
   /// \p LineIndex, if previously broken at \p TailOffset. If possible, do not
@@ -207,6 +207,10 @@ private:
   // We could also support such patterns by special casing the first line
   // instead.
   unsigned IndentAtLineBreak;
+
+  // This is to distinguish between the case when the last line was empty and
+  // the case when it started with a decoration ("*" or "* ").
+  bool LastLineNeedsDecoration;
 
   // Either "* " if all lines begin with a "*", or empty.
   StringRef Decoration;

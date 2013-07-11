@@ -19,7 +19,7 @@
 #include "clang/AST/CanonicalType.h"
 #include "clang/AST/CommentCommandTraits.h"
 #include "clang/AST/Decl.h"
-#include "clang/AST/LambdaMangleContext.h"
+#include "clang/AST/MangleNumberingContext.h"
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/RawCommentList.h"
@@ -338,12 +338,15 @@ class ASTContext : public RefCountedBase<ASTContext> {
   typedef llvm::TinyPtrVector<const CXXMethodDecl*> CXXMethodVector;
   llvm::DenseMap<const CXXMethodDecl *, CXXMethodVector> OverriddenMethods;
 
-  /// \brief Mapping from each declaration context to its corresponding lambda 
-  /// mangling context.
-  llvm::DenseMap<const DeclContext *, LambdaMangleContext> LambdaMangleContexts;
+  /// \brief Mapping from each declaration context to its corresponding
+  /// mangling numbering context (used for constructs like lambdas which
+  /// need to be consistently numbered for the mangler).
+  llvm::DenseMap<const DeclContext *, MangleNumberingContext>
+      MangleNumberingContexts;
 
-  llvm::DenseMap<const DeclContext *, unsigned> UnnamedMangleContexts;
-  llvm::DenseMap<const TagDecl *, unsigned> UnnamedMangleNumbers;
+  /// \brief Side-table of mangling numbers for declarations which rarely
+  /// need them (like static local vars).
+  llvm::DenseMap<const NamedDecl *, unsigned> MangleNumbers;
 
   /// \brief Mapping that stores parameterIndex values for ParmVarDecls when
   /// that value exceeds the bitfield size of ParmVarDeclBits.ParameterIndex.
@@ -2084,12 +2087,13 @@ public:
   /// it is not used.
   bool DeclMustBeEmitted(const Decl *D);
 
-  void addUnnamedTag(const TagDecl *Tag);
-  int getUnnamedTagManglingNumber(const TagDecl *Tag) const;
+  void setManglingNumber(const NamedDecl *ND, unsigned Number);
+  unsigned getManglingNumber(const NamedDecl *ND) const;
 
-  /// \brief Retrieve the lambda mangling number for a lambda expression.
-  unsigned getLambdaManglingNumber(CXXMethodDecl *CallOperator);
-  
+  /// \brief Retrieve the context for computing mangling numbers in the given
+  /// DeclContext.
+  MangleNumberingContext &getManglingNumberContext(const DeclContext *DC);
+
   /// \brief Used by ParmVarDecl to store on the side the
   /// index of the parameter when it exceeds the size of the normal bitfield.
   void setParameterIndex(const ParmVarDecl *D, unsigned index);

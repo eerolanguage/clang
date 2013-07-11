@@ -31,7 +31,7 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ValueHandle.h"
-#include "llvm/Transforms/Utils/BlackList.h"
+#include "llvm/Transforms/Utils/SpecialCaseList.h"
 
 namespace llvm {
   class Module;
@@ -412,7 +412,7 @@ class CodeGenModule : public CodeGenTypeCache {
 
   GlobalDecl initializedGlobalDecl;
 
-  llvm::BlackList SanitizerBlacklist;
+  llvm::SpecialCaseList SanitizerBlacklist;
 
   const SanitizerOptions &SanOpts;
 
@@ -925,7 +925,6 @@ public:
   void AddDependentLib(StringRef Lib);
 
   llvm::GlobalVariable::LinkageTypes getFunctionLinkage(GlobalDecl GD);
-  llvm::GlobalVariable::LinkageTypes getFunctionLinkage(const FunctionDecl *D);
 
   void setFunctionLinkage(GlobalDecl GD, llvm::GlobalValue *V) {
     V->setLinkage(getFunctionLinkage(GD));
@@ -942,8 +941,7 @@ public:
   /// GetLLVMLinkageVarDefinition - Returns LLVM linkage for a global 
   /// variable.
   llvm::GlobalValue::LinkageTypes 
-  GetLLVMLinkageVarDefinition(const VarDecl *D,
-                              llvm::GlobalVariable *GV);
+  GetLLVMLinkageVarDefinition(const VarDecl *D, bool isConstant);
   
   /// Emit all the global annotations.
   void EmitGlobalAnnotations();
@@ -972,7 +970,7 @@ public:
   /// annotations are emitted during finalization of the LLVM code.
   void AddGlobalAnnotations(const ValueDecl *D, llvm::GlobalValue *GV);
 
-  const llvm::BlackList &getSanitizerBlacklist() const {
+  const llvm::SpecialCaseList &getSanitizerBlacklist() const {
     return SanitizerBlacklist;
   }
 

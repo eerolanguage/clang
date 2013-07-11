@@ -32,29 +32,35 @@ namespace {
 
 class ObjCMigrateASTConsumer : public ASTConsumer {
   void migrateDecl(Decl *D);
+  void migrateObjCInterfaceDecl(ASTContext &Ctx, ObjCInterfaceDecl *D);
 
 public:
   std::string MigrateDir;
   bool MigrateLiterals;
   bool MigrateSubscripting;
+  bool MigrateProperty;
   OwningPtr<NSAPI> NSAPIObj;
   OwningPtr<edit::EditedSource> Editor;
   FileRemapper &Remapper;
   FileManager &FileMgr;
   const PPConditionalDirectiveRecord *PPRec;
+  Preprocessor &PP;
   bool IsOutputFile;
 
   ObjCMigrateASTConsumer(StringRef migrateDir,
                          bool migrateLiterals,
                          bool migrateSubscripting,
+                         bool migrateProperty,
                          FileRemapper &remapper,
                          FileManager &fileMgr,
                          const PPConditionalDirectiveRecord *PPRec,
+                         Preprocessor &PP,
                          bool isOutputFile = false)
   : MigrateDir(migrateDir),
     MigrateLiterals(migrateLiterals),
     MigrateSubscripting(migrateSubscripting),
-    Remapper(remapper), FileMgr(fileMgr), PPRec(PPRec),
+    MigrateProperty(migrateProperty),
+    Remapper(remapper), FileMgr(fileMgr), PPRec(PPRec), PP(PP),
     IsOutputFile(isOutputFile) { }
 
 protected:
@@ -85,9 +91,11 @@ protected:
 ObjCMigrateAction::ObjCMigrateAction(FrontendAction *WrappedAction,
                              StringRef migrateDir,
                              bool migrateLiterals,
-                             bool migrateSubscripting)
+                             bool migrateSubscripting,
+                             bool migrateProperty)
   : WrapperFrontendAction(WrappedAction), MigrateDir(migrateDir),
     MigrateLiterals(migrateLiterals), MigrateSubscripting(migrateSubscripting),
+    MigrateProperty(migrateProperty),
     CompInst(0) {
   if (MigrateDir.empty())
     MigrateDir = "."; // user current directory if none is given.
@@ -103,9 +111,11 @@ ASTConsumer *ObjCMigrateAction::CreateASTConsumer(CompilerInstance &CI,
   ASTConsumer *MTConsumer = new ObjCMigrateASTConsumer(MigrateDir,
                                                        MigrateLiterals,
                                                        MigrateSubscripting,
+                                                       MigrateProperty,
                                                        Remapper,
                                                     CompInst->getFileManager(),
-                                                       PPRec);
+                                                       PPRec,
+                                                       CompInst->getPreprocessor());
   ASTConsumer *Consumers[] = { MTConsumer, WrappedConsumer };
   return new MultiplexConsumer(Consumers);
 }
@@ -184,6 +194,44 @@ void ObjCMigrateASTConsumer::migrateDecl(Decl *D) {
   BodyMigrator(*this).TraverseDecl(D);
 }
 
+void ObjCMigrateASTConsumer::migrateObjCInterfaceDecl(ASTContext &Ctx,
+                                                      ObjCInterfaceDecl *D) {
+  for (ObjCContainerDecl::method_iterator M = D->meth_begin(), MEnd = D->meth_end();
+       M != MEnd; ++M) {
+    ObjCMethodDecl *Method = (*M);
+    if (Method->isPropertyAccessor() ||  Method->param_size() != 0)
+      continue;
+    // Is this method candidate to be a getter?
+    QualType GRT = Method->getResultType();
+    if (GRT->isVoidType())
+      continue;
+    // FIXME. Don't know what todo with attributes, skip for now.
+    if (Method->hasAttrs())
+      continue;
+    
+    Selector GetterSelector = Method->getSelector();
+    IdentifierInfo *getterName = GetterSelector.getIdentifierInfoForSlot(0);
+    Selector SetterSelector =
+      SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
+                                             PP.getSelectorTable(),
+                                             getterName);
+    if (ObjCMethodDecl *SetterMethod = D->lookupMethod(SetterSelector, true)) {
+      // Is this a valid setter, matching the target getter?
+      QualType SRT = SetterMethod->getResultType();
+      if (!SRT->isVoidType())
+        continue;
+      const ParmVarDecl *argDecl = *SetterMethod->param_begin();
+      QualType ArgType = argDecl->getType();
+      if (!Ctx.hasSameUnqualifiedType(ArgType, GRT) ||
+          SetterMethod->hasAttrs())
+          continue;
+        edit::Commit commit(*Editor);
+        edit::rewriteToObjCProperty(Method, SetterMethod, *NSAPIObj, commit);
+        Editor->commit(commit);
+      }
+  }
+}
+
 namespace {
 
 class RewritesReceiver : public edit::EditsReceiver {
@@ -203,6 +251,15 @@ public:
 }
 
 void ObjCMigrateASTConsumer::HandleTranslationUnit(ASTContext &Ctx) {
+  
+  TranslationUnitDecl *TU = Ctx.getTranslationUnitDecl();
+  if (MigrateProperty)
+    for (DeclContext::decl_iterator D = TU->decls_begin(), DEnd = TU->decls_end();
+         D != DEnd; ++D) {
+      if (ObjCInterfaceDecl *CDecl = dyn_cast<ObjCInterfaceDecl>(*D))
+        migrateObjCInterfaceDecl(Ctx, CDecl);
+    }
+  
   Rewriter rewriter(Ctx.getSourceManager(), Ctx.getLangOpts());
   RewritesReceiver Rec(rewriter);
   Editor->applyRewrites(Rec);
@@ -244,8 +301,10 @@ ASTConsumer *MigrateSourceAction::CreateASTConsumer(CompilerInstance &CI,
   return new ObjCMigrateASTConsumer(CI.getFrontendOpts().OutputFile,
                                     /*MigrateLiterals=*/true,
                                     /*MigrateSubscripting=*/true,
+                                    /*MigrateProperty*/true,
                                     Remapper,
                                     CI.getFileManager(),
                                     PPRec,
+                                    CI.getPreprocessor(),
                                     /*isOutputFile=*/true); 
 }

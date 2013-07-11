@@ -30,6 +30,8 @@ public:
   virtual FormatToken *setPosition(unsigned Position) = 0;
 };
 
+namespace {
+
 class ScopedDeclarationState {
 public:
   ScopedDeclarationState(UnwrappedLine &Line, std::vector<bool> &Stack,
@@ -114,6 +116,8 @@ private:
   FormatToken *Token;
 };
 
+} // end anonymous namespace
+
 class ScopedLineState {
 public:
   ScopedLineState(UnwrappedLineParser &Parser,
@@ -145,6 +149,8 @@ private:
   UnwrappedLine *PreBlockLine;
 };
 
+namespace {
+
 class IndexedTokenSource : public FormatTokenSource {
 public:
   IndexedTokenSource(ArrayRef<FormatToken *> Tokens)
@@ -170,14 +176,14 @@ private:
   int Position;
 };
 
+} // end anonymous namespace
+
 UnwrappedLineParser::UnwrappedLineParser(const FormatStyle &Style,
                                          ArrayRef<FormatToken *> Tokens,
                                          UnwrappedLineConsumer &Callback)
     : Line(new UnwrappedLine), MustBreakBeforeNextToken(false),
       CurrentLines(&Lines), StructuralError(false), Style(Style), Tokens(NULL),
-      Callback(Callback), AllTokens(Tokens) {
-  LBraces.resize(Tokens.size(), BS_Unknown);
-}
+      Callback(Callback), AllTokens(Tokens) {}
 
 bool UnwrappedLineParser::parse() {
   DEBUG(llvm::dbgs() << "----\n");
@@ -244,17 +250,24 @@ void UnwrappedLineParser::calculateBraceTypes() {
   // Keep a stack of positions of lbrace tokens. We will
   // update information about whether an lbrace starts a
   // braced init list or a different block during the loop.
-  SmallVector<unsigned, 8> LBraceStack;
+  SmallVector<FormatToken *, 8> LBraceStack;
   assert(Tok->Tok.is(tok::l_brace));
   do {
-    FormatToken *NextTok = Tokens->getNextToken();
+    // Get next none-comment token.
+    FormatToken *NextTok;
+    unsigned ReadTokens = 0;
+    do {
+      NextTok = Tokens->getNextToken();
+      ++ReadTokens;
+    } while (NextTok->is(tok::comment));
+
     switch (Tok->Tok.getKind()) {
     case tok::l_brace:
-      LBraceStack.push_back(Position);
+      LBraceStack.push_back(Tok);
       break;
     case tok::r_brace:
       if (!LBraceStack.empty()) {
-        if (LBraces[LBraceStack.back()] == BS_Unknown) {
+        if (LBraceStack.back()->BlockKind == BK_Unknown) {
           // If there is a comma, semicolon or right paren after the closing
           // brace, we assume this is a braced initializer list.
 
@@ -264,10 +277,13 @@ void UnwrappedLineParser::calculateBraceTypes() {
           // brace blocks inside it braced init list. That works good enough
           // for now, but we will need to fix it to correctly handle lambdas.
           if (NextTok->isOneOf(tok::comma, tok::semi, tok::r_paren,
-                               tok::l_brace, tok::colon))
-            LBraces[LBraceStack.back()] = BS_BracedInit;
-          else
-            LBraces[LBraceStack.back()] = BS_Block;
+                               tok::l_brace, tok::colon)) {
+            Tok->BlockKind = BK_BracedInit;
+            LBraceStack.back()->BlockKind = BK_BracedInit;
+          } else {
+            Tok->BlockKind = BK_Block;
+            LBraceStack.back()->BlockKind = BK_Block;
+          }
         }
         LBraceStack.pop_back();
       }
@@ -279,18 +295,18 @@ void UnwrappedLineParser::calculateBraceTypes() {
     case tok::kw_switch:
     case tok::kw_try:
       if (!LBraceStack.empty())
-        LBraces[LBraceStack.back()] = BS_Block;
+        LBraceStack.back()->BlockKind = BK_Block;
       break;
     default:
       break;
     }
     Tok = NextTok;
-    ++Position;
+    Position += ReadTokens;
   } while (Tok->Tok.isNot(tok::eof));
   // Assume other blocks for all unclosed opening braces.
   for (unsigned i = 0, e = LBraceStack.size(); i != e; ++i) {
-    if (LBraces[LBraceStack[i]] == BS_Unknown)
-      LBraces[LBraceStack[i]] = BS_Block;
+    if (LBraceStack[i]->BlockKind == BK_Unknown)
+      LBraceStack[i]->BlockKind = BK_Block;
   }
   FormatTok = Tokens->setPosition(StoredPosition);
 }
@@ -617,10 +633,10 @@ void UnwrappedLineParser::parseStructuralElement() {
 }
 
 bool UnwrappedLineParser::tryToParseBracedList() {
-  if (LBraces[Tokens->getPosition()] == BS_Unknown)
+  if (FormatTok->BlockKind == BK_Unknown)
     calculateBraceTypes();
-  assert(LBraces[Tokens->getPosition()] != BS_Unknown);
-  if (LBraces[Tokens->getPosition()] == BS_Block)
+  assert(FormatTok->BlockKind != BK_Unknown);
+  if (FormatTok->BlockKind == BK_Block)
     return false;
   parseBracedList();
   return true;

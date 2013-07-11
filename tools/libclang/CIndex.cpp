@@ -308,8 +308,8 @@ bool CursorVisitor::visitDeclsFromFileRegion(FileID File,
 
   bool VisitedAtLeastOnce = false;
   DeclContext *CurDC = 0;
-  SmallVector<Decl *, 16>::iterator DIt = Decls.begin();
-  for (SmallVector<Decl *, 16>::iterator DE = Decls.end(); DIt != DE; ++DIt) {
+  SmallVectorImpl<Decl *>::iterator DIt = Decls.begin();
+  for (SmallVectorImpl<Decl *>::iterator DE = Decls.end(); DIt != DE; ++DIt) {
     Decl *D = *DIt;
     if (D->getSourceRange().isInvalid())
       continue;
@@ -5990,6 +5990,19 @@ unsigned clang_Cursor_getObjCDeclQualifiers(CXCursor C) {
   if (QT & Decl::OBJC_TQ_Oneway) Result |= CXObjCDeclQualifier_Oneway;
 
   return Result;
+}
+
+unsigned clang_Cursor_isObjCOptional(CXCursor C) {
+  if (!clang_isDeclaration(C.kind))
+    return 0;
+
+  const Decl *D = getCursorDecl(C);
+  if (const ObjCPropertyDecl *PD = dyn_cast<ObjCPropertyDecl>(D))
+    return PD->getPropertyImplementation() == ObjCPropertyDecl::Optional;
+  if (const ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(D))
+    return MD->getImplementationControl() == ObjCMethodDecl::Optional;
+
+  return 0;
 }
 
 unsigned clang_Cursor_isVariadic(CXCursor C) {

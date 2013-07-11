@@ -255,7 +255,7 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
   if (getLangOpts().CPlusPlus && isa<FunctionDecl>(D)) {
     // If there were any diagnostics suppressed by template argument deduction,
     // emit them now.
-    llvm::DenseMap<Decl *, SmallVector<PartialDiagnosticAt, 1> >::iterator
+    SuppressedDiagnosticsMap::iterator
       Pos = SuppressedDiagnostics.find(D->getCanonicalDecl());
     if (Pos != SuppressedDiagnostics.end()) {
       SmallVectorImpl<PartialDiagnosticAt> &Suppressed = Pos->second;
@@ -1350,7 +1350,7 @@ Sema::CreateGenericSelectionExpr(SourceLocation KeyLoc,
     Diag(ControllingExpr->getLocStart(), diag::err_generic_sel_multi_match)
       << ControllingExpr->getSourceRange() << ControllingExpr->getType()
       << (unsigned) CompatIndices.size();
-    for (SmallVector<unsigned, 1>::iterator I = CompatIndices.begin(),
+    for (SmallVectorImpl<unsigned>::iterator I = CompatIndices.begin(),
          E = CompatIndices.end(); I != E; ++I) {
       Diag(Types[*I]->getTypeLoc().getBeginLoc(),
            diag::note_compat_assoc)
@@ -1720,6 +1720,8 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
                                     S, &SS, CCC))) {
     std::string CorrectedStr(Corrected.getAsString(getLangOpts()));
     std::string CorrectedQuotedStr(Corrected.getQuoted(getLangOpts()));
+    bool droppedSpecifier =
+        Corrected.WillReplaceSpecifier() && Name.getAsString() == CorrectedStr;
     R.setLookupName(Corrected.getCorrection());
 
     if (NamedDecl *ND = Corrected.getCorrectionDecl()) {
@@ -1754,8 +1756,8 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
             << FixItHint::CreateReplacement(R.getNameLoc(), CorrectedStr);
         else
           Diag(R.getNameLoc(), diag::err_no_member_suggest)
-            << Name << computeDeclContext(SS, false) << CorrectedQuotedStr
-            << SS.getRange()
+            << Name << computeDeclContext(SS, false) << droppedSpecifier
+            << CorrectedQuotedStr << SS.getRange()
             << FixItHint::CreateReplacement(Corrected.getCorrectionRange(),
                                             CorrectedStr);
 
@@ -1781,8 +1783,8 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
             << Name << CorrectedQuotedStr;
         else
           Diag(R.getNameLoc(), diag::err_no_member_suggest)
-            << Name << computeDeclContext(SS, false) << CorrectedQuotedStr
-            << SS.getRange();
+            << Name << computeDeclContext(SS, false) << droppedSpecifier
+            << CorrectedQuotedStr << SS.getRange();
 
         // Don't try to recover; it won't work.
         return true;
@@ -1794,8 +1796,8 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
         Diag(R.getNameLoc(), diagnostic_suggest) << Name << CorrectedQuotedStr;
       else
         Diag(R.getNameLoc(), diag::err_no_member_suggest)
-        << Name << computeDeclContext(SS, false) << CorrectedQuotedStr
-        << SS.getRange();
+          << Name << computeDeclContext(SS, false) << droppedSpecifier
+          << CorrectedQuotedStr << SS.getRange();
       return true;
     }
   }
@@ -3810,6 +3812,64 @@ Sema::getVariadicCallType(FunctionDecl *FDecl, const FunctionProtoType *Proto,
   return VariadicDoesNotApply;
 }
 
+namespace {
+class FunctionCallCCC : public FunctionCallFilterCCC {
+public:
+  FunctionCallCCC(Sema &SemaRef, const IdentifierInfo *FuncName,
+                  unsigned NumArgs, bool HasExplicitTemplateArgs)
+      : FunctionCallFilterCCC(SemaRef, NumArgs, HasExplicitTemplateArgs),
+        FunctionName(FuncName) {}
+
+  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
+    if (!candidate.getCorrectionSpecifier() ||
+        candidate.getCorrectionAsIdentifierInfo() != FunctionName) {
+      return false;
+    }
+
+    return FunctionCallFilterCCC::ValidateCandidate(candidate);
+  }
+
+private:
+  const IdentifierInfo *const FunctionName;
+};
+}
+
+static TypoCorrection TryTypoCorrectionForCall(Sema &S,
+                                               DeclarationNameInfo FuncName,
+                                               ArrayRef<Expr *> Args) {
+  FunctionCallCCC CCC(S, FuncName.getName().getAsIdentifierInfo(),
+                      Args.size(), false);
+  if (TypoCorrection Corrected =
+          S.CorrectTypo(FuncName, Sema::LookupOrdinaryName,
+                        S.getScopeForContext(S.CurContext), NULL, CCC)) {
+    if (NamedDecl *ND = Corrected.getCorrectionDecl()) {
+      if (Corrected.isOverloaded()) {
+        OverloadCandidateSet OCS(FuncName.getLoc());
+        OverloadCandidateSet::iterator Best;
+        for (TypoCorrection::decl_iterator CD = Corrected.begin(),
+                                           CDEnd = Corrected.end();
+             CD != CDEnd; ++CD) {
+          if (FunctionDecl *FD = dyn_cast<FunctionDecl>(*CD))
+            S.AddOverloadCandidate(FD, DeclAccessPair::make(FD, AS_none), Args,
+                                   OCS);
+        }
+        switch (OCS.BestViableFunction(S, FuncName.getLoc(), Best)) {
+        case OR_Success:
+          ND = Best->Function;
+          Corrected.setCorrectionDecl(ND);
+          break;
+        default:
+          break;
+        }
+      }
+      if (isa<ValueDecl>(ND) || isa<FunctionTemplateDecl>(ND)) {
+        return Corrected;
+      }
+    }
+  }
+  return TypoCorrection();
+}
+
 /// ConvertArgumentsForCall - Converts the arguments specified in
 /// Args/NumArgs to the parameter types of the function FDecl with
 /// function prototype Proto. Call is the call expression itself, and
@@ -3844,7 +3904,25 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   // arguments for the remaining parameters), don't make the call.
   if (Args.size() < NumArgsInProto) {
     if (Args.size() < MinArgs) {
-      if (MinArgs == 1 && FDecl && FDecl->getParamDecl(0)->getDeclName())
+      TypoCorrection TC;
+      if (FDecl && (TC = TryTypoCorrectionForCall(
+                        *this, DeclarationNameInfo(FDecl->getDeclName(),
+                                                   Fn->getLocStart()),
+                        Args))) {
+        std::string CorrectedStr(TC.getAsString(getLangOpts()));
+        std::string CorrectedQuotedStr(TC.getQuoted(getLangOpts()));
+        unsigned diag_id =
+            MinArgs == NumArgsInProto && !Proto->isVariadic()
+                ? diag::err_typecheck_call_too_few_args_suggest
+                : diag::err_typecheck_call_too_few_args_at_least_suggest;
+        Diag(RParenLoc, diag_id)
+            << FnKind << MinArgs << static_cast<unsigned>(Args.size())
+            << Fn->getSourceRange() << CorrectedQuotedStr
+            << FixItHint::CreateReplacement(TC.getCorrectionRange(),
+                                            CorrectedStr);
+        Diag(TC.getCorrectionDeclAs<FunctionDecl>()->getLocStart(),
+             diag::note_previous_decl) << CorrectedQuotedStr;
+      } else if (MinArgs == 1 && FDecl && FDecl->getParamDecl(0)->getDeclName())
         Diag(RParenLoc, MinArgs == NumArgsInProto && !Proto->isVariadic()
                           ? diag::err_typecheck_call_too_few_args_one
                           : diag::err_typecheck_call_too_few_args_at_least_one)
@@ -3859,7 +3937,7 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
           << Fn->getSourceRange();
 
       // Emit the location of the prototype.
-      if (FDecl && !FDecl->getBuiltinID() && !IsExecConfig)
+      if (!TC && FDecl && !FDecl->getBuiltinID() && !IsExecConfig)
         Diag(FDecl->getLocStart(), diag::note_callee_decl)
           << FDecl;
 
@@ -3872,7 +3950,25 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   // them.
   if (Args.size() > NumArgsInProto) {
     if (!Proto->isVariadic()) {
-      if (NumArgsInProto == 1 && FDecl && FDecl->getParamDecl(0)->getDeclName())
+      TypoCorrection TC;
+      if (FDecl && (TC = TryTypoCorrectionForCall(
+                        *this, DeclarationNameInfo(FDecl->getDeclName(),
+                                                   Fn->getLocStart()),
+                        Args))) {
+        std::string CorrectedStr(TC.getAsString(getLangOpts()));
+        std::string CorrectedQuotedStr(TC.getQuoted(getLangOpts()));
+        unsigned diag_id =
+            MinArgs == NumArgsInProto && !Proto->isVariadic()
+                ? diag::err_typecheck_call_too_many_args_suggest
+                : diag::err_typecheck_call_too_many_args_at_most_suggest;
+        Diag(Args[NumArgsInProto]->getLocStart(), diag_id)
+            << FnKind << NumArgsInProto << static_cast<unsigned>(Args.size())
+            << Fn->getSourceRange() << CorrectedQuotedStr
+            << FixItHint::CreateReplacement(TC.getCorrectionRange(),
+                                            CorrectedStr);
+        Diag(TC.getCorrectionDeclAs<FunctionDecl>()->getLocStart(),
+             diag::note_previous_decl) << CorrectedQuotedStr;
+      } else if (NumArgsInProto == 1 && FDecl && FDecl->getParamDecl(0)->getDeclName())
         Diag(Args[NumArgsInProto]->getLocStart(),
              MinArgs == NumArgsInProto
                ? diag::err_typecheck_call_too_many_args_one
@@ -3894,7 +3990,7 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
                          Args.back()->getLocEnd());
 
       // Emit the location of the prototype.
-      if (FDecl && !FDecl->getBuiltinID() && !IsExecConfig)
+      if (!TC && FDecl && !FDecl->getBuiltinID() && !IsExecConfig)
         Diag(FDecl->getLocStart(), diag::note_callee_decl)
           << FDecl;
       
@@ -3922,7 +4018,7 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
                                   const FunctionProtoType *Proto,
                                   unsigned FirstProtoArg,
                                   ArrayRef<Expr *> Args,
-                                  SmallVector<Expr *, 8> &AllArgs,
+                                  SmallVectorImpl<Expr *> &AllArgs,
                                   VariadicCallType CallType,
                                   bool AllowExplicit,
                                   bool IsListInitialization) {
@@ -5313,11 +5409,8 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   Cond = UsualUnaryConversions(Cond.take());
   if (Cond.isInvalid())
     return QualType();
-  LHS = UsualUnaryConversions(LHS.take());
-  if (LHS.isInvalid())
-    return QualType();
-  RHS = UsualUnaryConversions(RHS.take());
-  if (RHS.isInvalid())
+  UsualArithmeticConversions(LHS, RHS);
+  if (LHS.isInvalid() || RHS.isInvalid())
     return QualType();
 
   QualType CondTy = Cond.get()->getType();
@@ -5341,12 +5434,8 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   
   // If both operands have arithmetic type, do the usual arithmetic conversions
   // to find a common type: C99 6.5.15p3,5.
-  if (LHSTy->isArithmeticType() && RHSTy->isArithmeticType()) {
-    UsualArithmeticConversions(LHS, RHS);
-    if (LHS.isInvalid() || RHS.isInvalid())
-      return QualType();
+  if (LHSTy->isArithmeticType() && RHSTy->isArithmeticType())
     return LHS.get()->getType();
-  }
 
   // If both operands are the same structure or union type, the result is that
   // type.
@@ -7320,7 +7409,7 @@ static void diagnoseLogicalNotOnLHSofComparison(Sema &S, ExprResult &LHS,
   if (!S.getLangOpts().Bool) return;
 
   // Check that left hand side is !something.
-  UnaryOperator *UO = dyn_cast<UnaryOperator>(LHS.get());
+  UnaryOperator *UO = dyn_cast<UnaryOperator>(LHS.get()->IgnoreImpCasts());
   if (!UO || UO->getOpcode() != UO_LNot) return;
 
   // Only check if the right hand side is non-bool arithmetic type.
@@ -7451,21 +7540,9 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
   }
 
   // C99 6.5.8p3 / C99 6.5.9p4
-  if (LHS.get()->getType()->isArithmeticType() &&
-      RHS.get()->getType()->isArithmeticType()) {
-    UsualArithmeticConversions(LHS, RHS);
-    if (LHS.isInvalid() || RHS.isInvalid())
-      return QualType();
-  }
-  else {
-    LHS = UsualUnaryConversions(LHS.take());
-    if (LHS.isInvalid())
-      return QualType();
-
-    RHS = UsualUnaryConversions(RHS.take());
-    if (RHS.isInvalid())
-      return QualType();
-  }
+  UsualArithmeticConversions(LHS, RHS);
+  if (LHS.isInvalid() || RHS.isInvalid())
+    return QualType();
 
   LHSType = LHS.get()->getType();
   RHSType = RHS.get()->getType();
@@ -8386,15 +8463,15 @@ static QualType CheckAddressOfOperand(Sema &S, ExprResult &OrigOp,
                                       SourceLocation OpLoc) {
   if (const BuiltinType *PTy = OrigOp.get()->getType()->getAsPlaceholderType()){
     if (PTy->getKind() == BuiltinType::Overload) {
-      if (!isa<OverloadExpr>(OrigOp.get()->IgnoreParens())) {
-        assert(cast<UnaryOperator>(OrigOp.get()->IgnoreParens())->getOpcode()
-                 == UO_AddrOf);
+      Expr *E = OrigOp.get()->IgnoreParens();
+      if (!isa<OverloadExpr>(E)) {
+        assert(cast<UnaryOperator>(E)->getOpcode() == UO_AddrOf);
         S.Diag(OpLoc, diag::err_typecheck_invalid_lvalue_addrof_addrof_function)
           << OrigOp.get()->getSourceRange();
         return QualType();
       }
 
-      OverloadExpr *Ovl = cast<OverloadExpr>(OrigOp.get()->IgnoreParens());
+      OverloadExpr *Ovl = cast<OverloadExpr>(E);
       if (isa<UnresolvedMemberExpr>(Ovl))
         if (!S.ResolveSingleFunctionTemplateSpecialization(Ovl)) {
           S.Diag(OpLoc, diag::err_invalid_form_pointer_member_function)
@@ -9894,6 +9971,17 @@ ExprResult Sema::ActOnChooseExpr(SourceLocation BuiltinLoc,
 /// ActOnBlockStart - This callback is invoked when a block literal is started.
 void Sema::ActOnBlockStart(SourceLocation CaretLoc, Scope *CurScope) {
   BlockDecl *Block = BlockDecl::Create(Context, CurContext, CaretLoc);
+
+  {
+    Decl *ManglingContextDecl;
+    if (MangleNumberingContext *MCtx =
+            getCurrentMangleNumberContext(Block->getDeclContext(),
+                                          ManglingContextDecl)) {
+      unsigned ManglingNumber = MCtx->getManglingNumber(Block);
+      Block->setBlockMangling(ManglingNumber, ManglingContextDecl);
+    }
+  }
+
   PushBlockScope(CurScope, Block);
   CurContext->addDecl(Block);
   if (CurScope)
@@ -10013,11 +10101,7 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
   // Finally we can process decl attributes.
   ProcessDeclAttributes(CurScope, CurBlock->TheDecl, ParamInfo);
 
-  // Put the parameter variables in scope.  We can bail out immediately
-  // if we don't have any.
-  if (Params.empty())
-    return;
-
+  // Put the parameter variables in scope.
   for (BlockDecl::param_iterator AI = CurBlock->TheDecl->param_begin(),
          E = CurBlock->TheDecl->param_end(); AI != E; ++AI) {
     (*AI)->setOwningFunction(CurBlock->TheDecl);
@@ -10725,8 +10809,8 @@ void
 Sema::PushExpressionEvaluationContext(ExpressionEvaluationContext NewContext,
                                       ReuseLambdaContextDecl_t,
                                       bool IsDecltype) {
-  Decl *LambdaContextDecl = ExprEvalContexts.back().LambdaContextDecl;
-  PushExpressionEvaluationContext(NewContext, LambdaContextDecl, IsDecltype);
+  Decl *ClosureContextDecl = ExprEvalContexts.back().ManglingContextDecl;
+  PushExpressionEvaluationContext(NewContext, ClosureContextDecl, IsDecltype);
 }
 
 void Sema::PopExpressionEvaluationContext() {

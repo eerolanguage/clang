@@ -42,9 +42,9 @@ void WhitespaceManager::replaceWhitespace(const FormatToken &Tok,
                                           unsigned Newlines, unsigned Spaces,
                                           unsigned StartOfTokenColumn,
                                           bool InPPDirective) {
-  Changes.push_back(
-      Change(true, Tok.WhitespaceRange, Spaces, StartOfTokenColumn, Newlines,
-             "", "", Tok.Tok.getKind(), InPPDirective && !Tok.IsFirst));
+  Changes.push_back(Change(true, Tok.WhitespaceRange, Spaces,
+                           StartOfTokenColumn, Newlines, "", "",
+                           Tok.Tok.getKind(), InPPDirective && !Tok.IsFirst));
 }
 
 void WhitespaceManager::addUntouchableToken(const FormatToken &Tok,
@@ -94,10 +94,10 @@ void WhitespaceManager::calculateLineBreakInformation() {
         SourceMgr.getFileOffset(Changes[i].OriginalWhitespaceRange.getBegin());
     unsigned PreviousOriginalWhitespaceEnd = SourceMgr.getFileOffset(
         Changes[i - 1].OriginalWhitespaceRange.getEnd());
-    Changes[i - 1].TokenLength =
-        OriginalWhitespaceStart - PreviousOriginalWhitespaceEnd +
-        Changes[i].PreviousLinePostfix.size() +
-        Changes[i - 1].CurrentLinePrefix.size();
+    Changes[i - 1].TokenLength = OriginalWhitespaceStart -
+                                 PreviousOriginalWhitespaceEnd +
+                                 Changes[i].PreviousLinePostfix.size() +
+                                 Changes[i - 1].CurrentLinePrefix.size();
 
     Changes[i].PreviousEndOfTokenColumn =
         Changes[i - 1].StartOfTokenColumn + Changes[i - 1].TokenLength;
@@ -124,6 +124,9 @@ void WhitespaceManager::alignTrailingComments() {
     unsigned ChangeMaxColumn = Style.ColumnLimit - Changes[i].TokenLength;
     Newlines += Changes[i].NewlinesBefore;
     if (Changes[i].IsTrailingComment) {
+      bool FollowsRBraceInColumn0 = i > 0 && Changes[i].NewlinesBefore == 0 &&
+                                    Changes[i - 1].Kind == tok::r_brace &&
+                                    Changes[i - 1].StartOfTokenColumn == 0;
       bool WasAlignedWithStartOfNextLine =
           // A comment on its own line.
           Changes[i].NewlinesBefore == 1 &&
@@ -137,13 +140,20 @@ void WhitespaceManager::alignTrailingComments() {
                Changes[i + 1].OriginalWhitespaceRange.getEnd())) &&
           // Which is not a comment itself.
           Changes[i + 1].Kind != tok::comment;
-      if (BreakBeforeNext || Newlines > 1 ||
-          (ChangeMinColumn > MaxColumn || ChangeMaxColumn < MinColumn) ||
-          // Break the comment sequence if the previous line did not end
-          // in a trailing comment.
-          (Changes[i].NewlinesBefore == 1 && i > 0 &&
-           !Changes[i - 1].IsTrailingComment) ||
-          WasAlignedWithStartOfNextLine) {
+      if (FollowsRBraceInColumn0) {
+        // If this comment follows an } in column 0, it probably documents the
+        // closing of a namespace and we don't want to align it.
+        alignTrailingComments(StartOfSequence, i, MinColumn);
+        MinColumn = ChangeMinColumn;
+        MaxColumn = ChangeMinColumn;
+        StartOfSequence = i;
+      } else if (BreakBeforeNext || Newlines > 1 ||
+                 (ChangeMinColumn > MaxColumn || ChangeMaxColumn < MinColumn) ||
+                 // Break the comment sequence if the previous line did not end
+                 // in a trailing comment.
+                 (Changes[i].NewlinesBefore == 1 && i > 0 &&
+                  !Changes[i - 1].IsTrailingComment) ||
+                 WasAlignedWithStartOfNextLine) {
         alignTrailingComments(StartOfSequence, i, MinColumn);
         MinColumn = ChangeMinColumn;
         MaxColumn = ChangeMaxColumn;
@@ -232,8 +242,7 @@ void WhitespaceManager::storeReplacement(const SourceRange &Range,
                               SourceMgr.getFileOffset(Range.getBegin());
   // Don't create a replacement, if it does not change anything.
   if (StringRef(SourceMgr.getCharacterData(Range.getBegin()),
-                WhitespaceLength) ==
-      Text)
+                WhitespaceLength) == Text)
     return;
   Replaces.insert(tooling::Replacement(
       SourceMgr, CharSourceRange::getCharRange(Range), Text));

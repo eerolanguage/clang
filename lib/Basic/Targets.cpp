@@ -877,7 +877,8 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
   Builder.defineMacro("__REGISTER_PREFIX__", "");
 
   // FIXME: Should be controlled by command line option.
-  Builder.defineMacro("__LONG_DOUBLE_128__");
+  if (LongDoubleWidth == 128)
+    Builder.defineMacro("__LONG_DOUBLE_128__");
 
   if (Opts.AltiVec) {
     Builder.defineMacro("__VEC__", "10206");
@@ -1179,7 +1180,7 @@ public:
       LongDoubleWidth = LongDoubleAlign = 64;
       LongDoubleFormat = &llvm::APFloat::IEEEdouble;
       DescriptionString = "E-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-"
-                          "i64:64:64-f32:32:32-f64:64:64-f128:64:64-"
+                          "i64:64:64-f32:32:32-f64:64:64-"
                           "v128:128:128-n32:64";
     } else
       DescriptionString = "E-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-"
@@ -4453,9 +4454,9 @@ namespace {
       PointerWidth = 16; PointerAlign = 16;
       SuitableAlign = 16;
       SizeType = UnsignedInt;
-      IntMaxType = SignedLong;
-      UIntMaxType = UnsignedLong;
-      IntPtrType = SignedShort;
+      IntMaxType = SignedLongLong;
+      UIntMaxType = UnsignedLongLong;
+      IntPtrType = SignedInt;
       PtrDiffType = SignedInt;
       SigAtomicType = SignedLong;
       DescriptionString = "e-p:16:16:16-i8:8:8-i16:16:16-i32:16:32-n8:16";

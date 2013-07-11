@@ -355,6 +355,38 @@ bool edit::rewriteToObjCLiteralSyntax(const ObjCMessageExpr *Msg,
   return false;
 }
 
+bool edit::rewriteToObjCProperty(const ObjCMethodDecl *Getter,
+                                 const ObjCMethodDecl *Setter,
+                                 const NSAPI &NS, Commit &commit) {
+  std::string PropertyString = "@property";
+  const ParmVarDecl *argDecl = *Setter->param_begin();
+  QualType ArgType = argDecl->getType();
+  Qualifiers::ObjCLifetime propertyLifetime = ArgType.getObjCLifetime();
+  
+  if (ArgType->isObjCRetainableType() &&
+      propertyLifetime == Qualifiers::OCL_Strong) {
+    PropertyString += "(copy)";
+  }
+  else if (propertyLifetime == Qualifiers::OCL_Weak)
+    PropertyString += "(weak)";
+  else
+    PropertyString += "(unsafe_unretained)";
+  
+  QualType PropQT = Getter->getResultType();
+  PropertyString += " ";
+  PropertyString += PropQT.getAsString(NS.getASTContext().getPrintingPolicy());
+  PropertyString += " ";
+  PropertyString += Getter->getNameAsString();
+  commit.replace(CharSourceRange::getCharRange(Getter->getLocStart(),
+                                               Getter->getDeclaratorEndLoc()),
+                 PropertyString);
+  SourceLocation EndLoc = Setter->getDeclaratorEndLoc();
+  // Get location past ';'
+  EndLoc = EndLoc.getLocWithOffset(1);
+  commit.remove(CharSourceRange::getCharRange(Setter->getLocStart(), EndLoc));
+  return true;
+}
+
 /// \brief Returns true if the immediate message arguments of \c Msg should not
 /// be rewritten because it will interfere with the rewrite of the parent
 /// message expression. e.g.

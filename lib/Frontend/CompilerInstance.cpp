@@ -545,18 +545,15 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
     TempPath = OutFile;
     TempPath += "-%%%%%%%%";
     int fd;
-    llvm::error_code EC = llvm::sys::fs::unique_file(
-        TempPath.str(), fd, TempPath, /*makeAbsolute=*/ false, 0664);
+    llvm::error_code EC =
+        llvm::sys::fs::createUniqueFile(TempPath.str(), fd, TempPath);
 
     if (CreateMissingDirectories &&
-        (EC == llvm::errc::no_such_file_or_directory ||
-         EC == llvm::windows_error::file_not_found ||
-         EC == llvm::windows_error::path_not_found)) {
+        EC == llvm::errc::no_such_file_or_directory) {
       StringRef Parent = llvm::sys::path::parent_path(OutputPath);
       EC = llvm::sys::fs::create_directories(Parent);
       if (!EC) {
-        EC = llvm::sys::fs::unique_file(TempPath.str(), fd, TempPath,
-                                        /*makeAbsolute=*/ false, 0664);
+        EC = llvm::sys::fs::createUniqueFile(TempPath.str(), fd, TempPath);
       }
     }
 
@@ -910,13 +907,9 @@ static void compileModule(CompilerInstance &ImportingInstance,
                                                     IK));
   } else {
     // Create a temporary module map file.
-    TempModuleMapFileName = Module->Name;
-    TempModuleMapFileName += "-%%%%%%%%.map";
     int FD;
-    if (llvm::sys::fs::unique_file(TempModuleMapFileName.str(), FD, 
-                                   TempModuleMapFileName,
-                                   /*makeAbsolute=*/true)
-          != llvm::errc::success) {
+    if (llvm::sys::fs::createTemporaryFile(Module->Name, "map", FD,
+                                           TempModuleMapFileName)) {
       ImportingInstance.getDiagnostics().Report(diag::err_module_map_temp_file)
         << TempModuleMapFileName;
       return;
