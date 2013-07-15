@@ -99,6 +99,8 @@ private:
     }
 
     bool MightBeFunctionType = CurrentToken->is(tok::star);
+    bool HasMultipleLines = false;
+    bool HasMultipleParametersOnALine = false;
     while (CurrentToken != NULL) {
       // LookForDecls is set when "if (" has been seen. Check for
       // 'identifier' '*' 'identifier' followed by not '=' -- this
@@ -133,6 +135,13 @@ private:
           }
         }
 
+        if (!HasMultipleLines)
+          Left->PackingKind = PPK_Inconclusive;
+        else if (HasMultipleParametersOnALine)
+          Left->PackingKind = PPK_BinPacked;
+        else
+          Left->PackingKind = PPK_OnePerLine;
+
         next();
         return true;
       }
@@ -143,8 +152,14 @@ private:
                                                     tok::coloncolon))
         MightBeFunctionType = true;
       updateParameterCount(Left, CurrentToken);
+      if (CurrentToken->is(tok::comma) && CurrentToken->Next &&
+          !CurrentToken->Next->HasUnescapedNewline &&
+          !CurrentToken->Next->isTrailingComment())
+        HasMultipleParametersOnALine = true;
       if (!consumeToken())
         return false;
+      if (CurrentToken && CurrentToken->HasUnescapedNewline)
+        HasMultipleLines = true;
     }
     return false;
   }
@@ -245,10 +260,11 @@ private:
   }
 
   void updateParameterCount(FormatToken *Left, FormatToken *Current) {
-    if (Current->is(tok::comma))
+    if (Current->is(tok::comma)) {
       ++Left->ParameterCount;
-    else if (Left->ParameterCount == 0 && Current->isNot(tok::comment))
+    } else if (Left->ParameterCount == 0 && Current->isNot(tok::comment)) {
       Left->ParameterCount = 1;
+    }
   }
 
   bool parseConditional() {
@@ -591,7 +607,8 @@ private:
         NameFound = true;
       } else if (Current.is(tok::kw_auto)) {
         AutoFound = true;
-      } else if (Current.is(tok::arrow) && AutoFound) {
+      } else if (Current.is(tok::arrow) && AutoFound &&
+                 Line.MustBeDeclaration) {
         Current.Type = TT_TrailingReturnArrow;
       } else if (Current.isOneOf(tok::star, tok::amp, tok::ampamp)) {
         Current.Type =
@@ -627,7 +644,8 @@ private:
             LeftOfParens &&
             LeftOfParens->isOneOf(tok::kw_sizeof, tok::kw_alignof);
         if (ParensAreType && !ParensCouldEndDecl && !IsSizeOfOrAlignOf &&
-            Contexts.back().IsExpression)
+            (Contexts.back().IsExpression ||
+             (Current.Next && Current.Next->isBinaryOperator())))
           IsCast = true;
         if (Current.Next && Current.Next->isNot(tok::string_literal) &&
             (Current.Next->Tok.isLiteral() ||
@@ -1000,10 +1018,14 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 0;
   if (Left.is(tok::comma))
     return 1;
+  if (Right.is(tok::l_square))
+    return 150;
 
   if (Right.Type == TT_StartOfName || Right.is(tok::kw_operator)) {
     if (Line.First->is(tok::kw_for) && Right.PartOfMultiVariableDeclStmt)
       return 3;
+    if (Left.Type == TT_StartOfName)
+      return 20;
     else if (Line.MightBeFunctionDecl && Right.BindingStrength == 1)
       // FIXME: Clean up hack of using BindingStrength to find top-level names.
       return Style.PenaltyReturnTypeOnItsOwnLine;
@@ -1033,8 +1055,10 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 150;
   }
 
-  // Breaking before a trailing 'const' is bad.
-  if (Left.is(tok::r_paren) && Right.is(tok::kw_const))
+  // Breaking before a trailing 'const' or not-function-like annotation is bad.
+  if (Left.is(tok::r_paren) &&
+      (Right.is(tok::kw_const) || (Right.is(tok::identifier) && Right.Next &&
+                                   Right.Next->isNot(tok::l_paren))))
     return 150;
 
   // In for-loops, prefer breaking at ',' and ';'.
@@ -1059,9 +1083,9 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
       Content = Content.drop_back(1).drop_front(1).trim();
       if (Content.size() > 1 &&
           (Content.back() == ':' || Content.back() == '='))
-        return 20;
+        return 25;
     }
-    return prec::Shift;
+    return 1; // Breaking at a << is really cheap.
   }
   if (Left.Type == TT_ConditionalExpr)
     return prec::Conditional;
@@ -1275,7 +1299,7 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
          (Left.is(tok::r_paren) &&
           Right.isOneOf(tok::identifier, tok::kw_const, tok::kw___attribute)) ||
          (Left.is(tok::l_paren) && !Right.is(tok::r_paren)) ||
-         (Left.is(tok::l_square) && !Right.is(tok::r_square));
+         Right.is(tok::l_square);
 }
 
 void TokenAnnotator::printDebugInfo(const AnnotatedLine &Line) {
@@ -1283,9 +1307,10 @@ void TokenAnnotator::printDebugInfo(const AnnotatedLine &Line) {
   const FormatToken *Tok = Line.First;
   while (Tok) {
     llvm::errs() << " M=" << Tok->MustBreakBefore
-                 << " C=" << Tok->CanBreakBefore << " T=" << Tok->Type << " S="
-                 << Tok->SpacesRequiredBefore << " P=" << Tok->SplitPenalty
-                 << " Name=" << Tok->Tok.getName() << " FakeLParens=";
+                 << " C=" << Tok->CanBreakBefore << " T=" << Tok->Type
+                 << " S=" << Tok->SpacesRequiredBefore
+                 << " P=" << Tok->SplitPenalty << " Name=" << Tok->Tok.getName()
+                 << " PPK=" << Tok->PackingKind << " FakeLParens=";
     for (unsigned i = 0, e = Tok->FakeLParens.size(); i != e; ++i)
       llvm::errs() << Tok->FakeLParens[i] << "/";
     llvm::errs() << " FakeRParens=" << Tok->FakeRParens << "\n";

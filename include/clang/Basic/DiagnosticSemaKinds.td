@@ -4691,6 +4691,8 @@ def note_parameter_named_here : Note<
   "passing argument to parameter %0 here">;
 def note_parameter_here : Note<
   "passing argument to parameter here">;
+def note_method_return_type_change : Note<
+  "compiler has implicitly changed method %0 return type">;
 
 // Eero casts object to/from primitive data types
 def err_unsupported_class_or_object_cast : Error<

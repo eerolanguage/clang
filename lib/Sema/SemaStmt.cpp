@@ -1255,13 +1255,13 @@ namespace {
   // of the excluded constructs are used.
   class DeclExtractor : public EvaluatedExprVisitor<DeclExtractor> {
     llvm::SmallPtrSet<VarDecl*, 8> &Decls;
-    SmallVector<SourceRange, 10> &Ranges;
+    SmallVectorImpl<SourceRange> &Ranges;
     bool Simple;
   public:
     typedef EvaluatedExprVisitor<DeclExtractor> Inherited;
 
     DeclExtractor(Sema &S, llvm::SmallPtrSet<VarDecl*, 8> &Decls,
-                  SmallVector<SourceRange, 10> &Ranges) :
+                  SmallVectorImpl<SourceRange> &Ranges) :
         Inherited(S.Context),
         Decls(Decls),
         Ranges(Ranges),
@@ -2939,11 +2939,10 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
       // If we have a related result type, we need to implicitly
       // convert back to the formal result type.  We can't pretend to
       // initialize the result again --- we might end double-retaining
-      // --- so instead we initialize a notional temporary; this can
-      // lead to less-than-great diagnostics, but this stage is much
-      // less likely to fail than the previous stage.
+      // --- so instead we initialize a notional temporary.
       if (!RelatedRetType.isNull()) {
-        Entity = InitializedEntity::InitializeTemporary(FnRetType);
+        Entity = InitializedEntity::InitializeRelatedResult(getCurMethodDecl(),
+                                                            FnRetType);
         Res = PerformCopyInitialization(Entity, ReturnLoc, RetValExp);
         if (Res.isInvalid()) {
           // FIXME: Clean up temporaries here anyway?

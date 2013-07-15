@@ -189,10 +189,13 @@ public:
 
   using Decl::isModulePrivate;
   using Decl::setModulePrivate;
-  
+
   /// \brief Determine whether this declaration is hidden from name lookup.
   bool isHidden() const { return Hidden; }
-  
+
+  /// \brief Set whether this declaration is hidden from name lookup.
+  void setHidden(bool Hide) { Hidden = Hide; }
+
   /// \brief Determine whether this declaration is a C++ class member.
   bool isCXXClassMember() const {
     const DeclContext *DC = getDeclContext();
@@ -2445,6 +2448,9 @@ protected:
   /// This option is only enabled when modules are enabled.
   bool MayHaveOutOfDateDef : 1;
 
+  /// Has the full definition of this type been required by a use somewhere in
+  /// the TU.
+  bool IsCompleteDefinitionRequired : 1;
 private:
   SourceLocation RBraceLoc;
 
@@ -2466,18 +2472,15 @@ private:
   }
 
 protected:
-  TagDecl(Kind DK, TagKind TK, DeclContext *DC,
-          SourceLocation L, IdentifierInfo *Id,
-          TagDecl *PrevDecl, SourceLocation StartL)
-    : TypeDecl(DK, DC, L, Id, StartL), DeclContext(DK),
-      TypedefNameDeclOrQualifier((TypedefNameDecl*) 0) {
+  TagDecl(Kind DK, TagKind TK, DeclContext *DC, SourceLocation L,
+          IdentifierInfo *Id, TagDecl *PrevDecl, SourceLocation StartL)
+      : TypeDecl(DK, DC, L, Id, StartL), DeclContext(DK), TagDeclKind(TK),
+        IsCompleteDefinition(false), IsBeingDefined(false),
+        IsEmbeddedInDeclarator(false), IsFreeStanding(false),
+        IsCompleteDefinitionRequired(false),
+        TypedefNameDeclOrQualifier((TypedefNameDecl *)0) {
     assert((DK != Enum || TK == TTK_Enum) &&
            "EnumDecl not matched with TTK_Enum");
-    TagDeclKind = TK;
-    IsCompleteDefinition = false;
-    IsBeingDefined = false;
-    IsEmbeddedInDeclarator = false;
-    IsFreeStanding = false;
     setPreviousDeclaration(PrevDecl);
   }
 
@@ -2531,6 +2534,12 @@ public:
     return IsCompleteDefinition;
   }
 
+  /// \brief Return true if this complete decl is
+  /// required to be complete for some existing use.
+  bool isCompleteDefinitionRequired() const {
+    return IsCompleteDefinitionRequired;
+  }
+
   /// isBeingDefined - Return true if this decl is currently being defined.
   bool isBeingDefined() const {
     return IsBeingDefined;
@@ -2571,6 +2580,10 @@ public:
   TagDecl *getDefinition() const;
 
   void setCompleteDefinition(bool V) { IsCompleteDefinition = V; }
+
+  void setCompleteDefinitionRequired(bool V = true) {
+    IsCompleteDefinitionRequired = V;
+  }
 
   // FIXME: Return StringRef;
   const char *getKindName() const {
@@ -3402,6 +3415,12 @@ void Redeclarable<decl_type>::setPreviousDeclaration(decl_type *PrevDecl) {
   First->RedeclLink = LatestDeclLink(static_cast<decl_type*>(this));
   assert(!isa<NamedDecl>(static_cast<decl_type*>(this)) ||
          cast<NamedDecl>(static_cast<decl_type*>(this))->isLinkageValid());
+
+  // If the declaration was previously visible, a redeclaration of it remains
+  // visible even if it wouldn't be visible by itself.
+  static_cast<decl_type*>(this)->IdentifierNamespace |=
+    First->getIdentifierNamespace() &
+    (Decl::IDNS_Ordinary | Decl::IDNS_Tag | Decl::IDNS_Type);
 }
 
 // Inline function definitions.

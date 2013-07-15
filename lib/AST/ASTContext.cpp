@@ -1394,6 +1394,10 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
 #define ABSTRACT_TYPE(Class, Base)
 #define NON_CANONICAL_TYPE(Class, Base)
 #define DEPENDENT_TYPE(Class, Base) case Type::Class:
+#define NON_CANONICAL_UNLESS_DEPENDENT_TYPE(Class, Base)                       \
+  case Type::Class:                                                            \
+  assert(!T->isDependentType() && "should not see dependent types here");      \
+  return getTypeInfo(cast<Class##Type>(T)->desugar().getTypePtr());
 #include "clang/AST/TypeNodes.def"
     llvm_unreachable("Should not see dependent types");
 
@@ -1644,38 +1648,12 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
     break;
   }
 
-  case Type::TypeOfExpr:
-    return getTypeInfo(cast<TypeOfExprType>(T)->getUnderlyingExpr()->getType()
-                         .getTypePtr());
-
-  case Type::TypeOf:
-    return getTypeInfo(cast<TypeOfType>(T)->getUnderlyingType().getTypePtr());
-
-  case Type::Decltype:
-    return getTypeInfo(cast<DecltypeType>(T)->getUnderlyingExpr()->getType()
-                        .getTypePtr());
-
-  case Type::UnaryTransform:
-    return getTypeInfo(cast<UnaryTransformType>(T)->getUnderlyingType());
-
   case Type::Elaborated:
     return getTypeInfo(cast<ElaboratedType>(T)->getNamedType().getTypePtr());
 
   case Type::Attributed:
     return getTypeInfo(
                   cast<AttributedType>(T)->getEquivalentType().getTypePtr());
-
-  case Type::TemplateSpecialization: {
-    assert(getCanonicalType(T) != T &&
-           "Cannot request the size of a dependent type");
-    const TemplateSpecializationType *TST = cast<TemplateSpecializationType>(T);
-    // A type alias template specialization may refer to a typedef with the
-    // aligned attribute on it.
-    if (TST->isTypeAlias())
-      return getTypeInfo(TST->getAliasedType().getTypePtr());
-    else
-      return getTypeInfo(getCanonicalType(T));
-  }
 
   case Type::Atomic: {
     // Start with the base type information.
@@ -4533,7 +4511,7 @@ QualType ASTContext::getBlockDescriptorType() const {
     UnsignedLongTy,
   };
 
-  const char *FieldNames[] = {
+  static const char *const FieldNames[] = {
     "reserved",
     "Size"
   };
@@ -4574,7 +4552,7 @@ QualType ASTContext::getBlockDescriptorExtendedType() const {
     getPointerType(VoidPtrTy)
   };
 
-  const char *FieldNames[] = {
+  static const char *const FieldNames[] = {
     "reserved",
     "Size",
     "CopyFuncPtr",
@@ -5434,6 +5412,20 @@ void ASTContext::getObjCEncodingForTypeImpl(QualType T, std::string& S,
       // We encode the underlying type which comes out as
       // {...};
       S += '^';
+      if (FD && OPT->getInterfaceDecl()) {
+        // Prevent recursive encoding of fields in some rare cases.
+        ObjCInterfaceDecl *OI = OPT->getInterfaceDecl();
+        SmallVector<const ObjCIvarDecl*, 32> Ivars;
+        DeepCollectObjCIvars(OI, true, Ivars);
+        for (unsigned i = 0, e = Ivars.size(); i != e; ++i) {
+          if (cast<FieldDecl>(Ivars[i]) == FD) {
+            S += '{';
+            S += OI->getIdentifier()->getName();
+            S += '}';
+            return;
+          }
+        }
+      }
       getObjCEncodingForTypeImpl(PointeeTy, S,
                                  false, ExpandPointedToStructures,
                                  NULL,

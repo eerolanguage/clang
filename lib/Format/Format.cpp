@@ -94,12 +94,16 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     IO.mapOptional("ConstructorInitializerAllOnOneLineOrOnePerLine",
                    Style.ConstructorInitializerAllOnOneLineOrOnePerLine);
     IO.mapOptional("DerivePointerBinding", Style.DerivePointerBinding);
+    IO.mapOptional("ExperimentalAutoDetectBinPacking",
+                   Style.ExperimentalAutoDetectBinPacking);
     IO.mapOptional("IndentCaseLabels", Style.IndentCaseLabels);
     IO.mapOptional("MaxEmptyLinesToKeep", Style.MaxEmptyLinesToKeep);
     IO.mapOptional("ObjCSpaceBeforeProtocolList",
                    Style.ObjCSpaceBeforeProtocolList);
     IO.mapOptional("PenaltyBreakComment", Style.PenaltyBreakComment);
     IO.mapOptional("PenaltyBreakString", Style.PenaltyBreakString);
+    IO.mapOptional("PenaltyBreakFirstLessLess",
+                   Style.PenaltyBreakFirstLessLess);
     IO.mapOptional("PenaltyExcessCharacter", Style.PenaltyExcessCharacter);
     IO.mapOptional("PenaltyReturnTypeOnItsOwnLine",
                    Style.PenaltyReturnTypeOnItsOwnLine);
@@ -121,6 +125,13 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
 namespace clang {
 namespace format {
 
+void setDefaultPenalties(FormatStyle &Style) {
+  Style.PenaltyBreakComment = 45;
+  Style.PenaltyBreakFirstLessLess = 120;
+  Style.PenaltyBreakString = 1000;
+  Style.PenaltyExcessCharacter = 1000000;
+}
+
 FormatStyle getLLVMStyle() {
   FormatStyle LLVMStyle;
   LLVMStyle.AccessModifierOffset = -2;
@@ -134,13 +145,10 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.ColumnLimit = 80;
   LLVMStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = false;
   LLVMStyle.DerivePointerBinding = false;
+  LLVMStyle.ExperimentalAutoDetectBinPacking = false;
   LLVMStyle.IndentCaseLabels = false;
   LLVMStyle.MaxEmptyLinesToKeep = 1;
   LLVMStyle.ObjCSpaceBeforeProtocolList = true;
-  LLVMStyle.PenaltyBreakComment = 45;
-  LLVMStyle.PenaltyBreakString = 1000;
-  LLVMStyle.PenaltyExcessCharacter = 1000000;
-  LLVMStyle.PenaltyReturnTypeOnItsOwnLine = 60;
   LLVMStyle.PointerBindsToType = false;
   LLVMStyle.SpacesBeforeTrailingComments = 1;
   LLVMStyle.SpacesInBracedLists = true;
@@ -149,6 +157,10 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.UseTab = false;
   LLVMStyle.BreakBeforeBraces = FormatStyle::BS_Attach;
   LLVMStyle.IndentFunctionDeclarationAfterType = false;
+
+  setDefaultPenalties(LLVMStyle);
+  LLVMStyle.PenaltyReturnTypeOnItsOwnLine = 60;
+
   return LLVMStyle;
 }
 
@@ -165,13 +177,10 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.ColumnLimit = 80;
   GoogleStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = true;
   GoogleStyle.DerivePointerBinding = true;
+  GoogleStyle.ExperimentalAutoDetectBinPacking = false;
   GoogleStyle.IndentCaseLabels = true;
   GoogleStyle.MaxEmptyLinesToKeep = 1;
   GoogleStyle.ObjCSpaceBeforeProtocolList = false;
-  GoogleStyle.PenaltyBreakComment = 45;
-  GoogleStyle.PenaltyBreakString = 1000;
-  GoogleStyle.PenaltyExcessCharacter = 1000000;
-  GoogleStyle.PenaltyReturnTypeOnItsOwnLine = 200;
   GoogleStyle.PointerBindsToType = true;
   GoogleStyle.SpacesBeforeTrailingComments = 2;
   GoogleStyle.SpacesInBracedLists = false;
@@ -180,6 +189,10 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.UseTab = false;
   GoogleStyle.BreakBeforeBraces = FormatStyle::BS_Attach;
   GoogleStyle.IndentFunctionDeclarationAfterType = true;
+
+  setDefaultPenalties(GoogleStyle);
+  GoogleStyle.PenaltyReturnTypeOnItsOwnLine = 200;
+
   return GoogleStyle;
 }
 
@@ -260,10 +273,12 @@ public:
                          const AnnotatedLine &Line, unsigned FirstIndent,
                          const FormatToken *RootToken,
                          WhitespaceManager &Whitespaces,
-                         encoding::Encoding Encoding)
+                         encoding::Encoding Encoding,
+                         bool BinPackInconclusiveFunctions)
       : Style(Style), SourceMgr(SourceMgr), Line(Line),
         FirstIndent(FirstIndent), RootToken(RootToken),
-        Whitespaces(Whitespaces), Count(0), Encoding(Encoding) {}
+        Whitespaces(Whitespaces), Count(0), Encoding(Encoding),
+        BinPackInconclusiveFunctions(BinPackInconclusiveFunctions) {}
 
   /// \brief Formats an \c UnwrappedLine.
   void format(const AnnotatedLine *NextLine) {
@@ -282,7 +297,7 @@ public:
     State.IgnoreStackForComparison = false;
 
     // The first token has already been indented and thus consumed.
-    moveStateToNextToken(State, /*DryRun=*/false);
+    moveStateToNextToken(State, /*DryRun=*/false, /*Newline=*/false);
 
     // If everything fits on a single line, just put it there.
     unsigned ColumnLimit = Style.ColumnLimit;
@@ -319,8 +334,8 @@ private:
           BreakBeforeClosingBrace(false), QuestionColumn(0),
           AvoidBinPacking(AvoidBinPacking), BreakBeforeParameter(false),
           NoLineBreak(NoLineBreak), ColonPos(0), StartOfFunctionCall(0),
-          NestedNameSpecifierContinuation(0), CallContinuation(0),
-          VariablePos(0), ContainsLineBreak(false) {}
+          StartOfArraySubscripts(0), NestedNameSpecifierContinuation(0),
+          CallContinuation(0), VariablePos(0), ContainsLineBreak(false) {}
 
     /// \brief The position to which a specific parenthesis level needs to be
     /// indented.
@@ -366,6 +381,10 @@ private:
     /// \brief The start of the most recent function in a builder-type call.
     unsigned StartOfFunctionCall;
 
+    /// \brief Contains the start of array subscript expressions, so that they
+    /// can be aligned.
+    unsigned StartOfArraySubscripts;
+
     /// \brief If a nested name specifier was broken over multiple lines, this
     /// contains the start column of the second line. Otherwise 0.
     unsigned NestedNameSpecifierContinuation;
@@ -407,6 +426,8 @@ private:
         return ColonPos < Other.ColonPos;
       if (StartOfFunctionCall != Other.StartOfFunctionCall)
         return StartOfFunctionCall < Other.StartOfFunctionCall;
+      if (StartOfArraySubscripts != Other.StartOfArraySubscripts)
+        return StartOfArraySubscripts < Other.StartOfArraySubscripts;
       if (CallContinuation != Other.CallContinuation)
         return CallContinuation < Other.CallContinuation;
       if (VariablePos != Other.VariablePos)
@@ -497,6 +518,10 @@ private:
     const FormatToken &Current = *State.NextToken;
     const FormatToken &Previous = *State.NextToken->Previous;
 
+    // Extra penalty that needs to be added because of the way certain line
+    // breaks are chosen.
+    unsigned ExtraPenalty = 0;
+
     if (State.Stack.size() == 0 || Current.Type == TT_ImplicitStringLiteral) {
       // FIXME: Is this correct?
       int WhitespaceLength = SourceMgr.getSpellingColumnNumber(
@@ -517,7 +542,7 @@ private:
         if (Current.BlockKind == BK_BracedInit)
           State.Column = State.Stack[State.Stack.size() - 2].LastSpace;
         else
-          State.Column = Line.Level * Style.IndentWidth;
+          State.Column = FirstIndent;
       } else if (Current.is(tok::string_literal) &&
                  State.StartOfStringLiteral != 0) {
         State.Column = State.StartOfStringLiteral;
@@ -552,6 +577,12 @@ private:
           State.Column = State.Stack.back().Indent;
           State.Stack.back().ColonPos = State.Column + Current.CodePointCount;
         }
+      } else if (Current.is(tok::l_square) &&
+                 Current.Type != TT_ObjCMethodExpr) {
+        if (State.Stack.back().StartOfArraySubscripts != 0)
+          State.Column = State.Stack.back().StartOfArraySubscripts;
+        else
+          State.Column = ContinuationIndent;
       } else if (Current.Type == TT_StartOfName ||
                  Previous.isOneOf(tok::coloncolon, tok::equal) ||
                  Previous.Type == TT_ObjCMethodExpr) {
@@ -583,7 +614,8 @@ private:
                                       State.Column, Line.InPPDirective);
       }
 
-      State.Stack.back().LastSpace = State.Column;
+      if (!Current.isTrailingComment())
+        State.Stack.back().LastSpace = State.Column;
       if (Current.isOneOf(tok::arrow, tok::period) &&
           Current.Type != TT_DesignatedInitializerPeriod)
         State.Stack.back().LastSpace += Current.CodePointCount;
@@ -614,6 +646,11 @@ private:
              Line.MustBeDeclaration))
           State.Stack.back().BreakBeforeParameter = true;
       }
+
+      // Breaking before the first "<<" is generally not desirable.
+      if (Current.is(tok::lessless) && State.Stack.back().FirstLessLess == 0)
+        ExtraPenalty += Style.PenaltyBreakFirstLessLess;
+
     } else {
       if (Current.is(tok::equal) &&
           (RootToken->is(tok::kw_for) || State.ParenLevel == 0) &&
@@ -692,12 +729,12 @@ private:
       }
     }
 
-    return moveStateToNextToken(State, DryRun);
+    return moveStateToNextToken(State, DryRun, Newline) + ExtraPenalty;
   }
 
   /// \brief Mark the next token as consumed in \p State and modify its stacks
   /// accordingly.
-  unsigned moveStateToNextToken(LineState &State, bool DryRun) {
+  unsigned moveStateToNextToken(LineState &State, bool DryRun, bool Newline) {
     const FormatToken &Current = *State.NextToken;
     assert(State.Stack.size());
 
@@ -705,6 +742,9 @@ private:
       State.Stack.back().AvoidBinPacking = true;
     if (Current.is(tok::lessless) && State.Stack.back().FirstLessLess == 0)
       State.Stack.back().FirstLessLess = State.Column;
+    if (Current.is(tok::l_square) &&
+        State.Stack.back().StartOfArraySubscripts == 0)
+      State.Stack.back().StartOfArraySubscripts = State.Column;
     if (Current.is(tok::question))
       State.Stack.back().QuestionColumn = State.Column;
     if (!Current.opensScope() && !Current.closesScope())
@@ -782,7 +822,11 @@ private:
       } else {
         NewIndent =
             4 + std::max(LastSpace, State.Stack.back().StartOfFunctionCall);
-        AvoidBinPacking = !Style.BinPackParameters;
+        AvoidBinPacking = !Style.BinPackParameters ||
+                          (Style.ExperimentalAutoDetectBinPacking &&
+                           (Current.PackingKind == PPK_OnePerLine ||
+                            (!BinPackInconclusiveFunctions &&
+                             Current.PackingKind == PPK_Inconclusive)));
       }
 
       State.Stack.push_back(ParenState(NewIndent, LastSpace, AvoidBinPacking,
@@ -806,6 +850,12 @@ private:
       State.Stack.pop_back();
       --State.ParenLevel;
     }
+    if (Current.is(tok::r_square)) {
+      // If this ends the array subscript expr, reset the corresponding value.
+      const FormatToken *NextNonComment = Current.getNextNonComment();
+      if (NextNonComment && NextNonComment->isNot(tok::l_square))
+        State.Stack.back().StartOfArraySubscripts = 0;
+    }
 
     // Remove scopes created by fake parenthesis.
     for (unsigned i = 0, e = Current.FakeRParens; i != e; ++i) {
@@ -824,6 +874,10 @@ private:
     State.Column += Current.CodePointCount;
 
     State.NextToken = State.NextToken->Next;
+
+    if (!Newline && Style.AlwaysBreakBeforeMultilineStrings &&
+        Current.is(tok::string_literal))
+      return 0;
 
     return breakProtrudingToken(Current, State, DryRun);
   }
@@ -1120,6 +1174,11 @@ private:
         State.Stack.back().BreakBeforeParameter)
       return true;
 
+    // Same as above, but for the first "<<" operator.
+    if (Current.is(tok::lessless) && State.Stack.back().BreakBeforeParameter &&
+        State.Stack.back().FirstLessLess == 0)
+      return true;
+
     // FIXME: Comparing LongestObjCSelectorName to 0 is a hacky way of finding
     // out whether it is the first parameter. Clean this up.
     if (Current.Type == TT_ObjCSelectorName &&
@@ -1157,6 +1216,7 @@ private:
   // to create a deterministic order independent of the container.
   unsigned Count;
   encoding::Encoding Encoding;
+  bool BinPackInconclusiveFunctions;
 };
 
 class FormatTokenLexer {
@@ -1279,10 +1339,10 @@ public:
       : Style(Style), Lex(Lex), SourceMgr(SourceMgr),
         Whitespaces(SourceMgr, Style), Ranges(Ranges),
         Encoding(encoding::detectEncoding(Lex.getBuffer())) {
-    DEBUG(llvm::dbgs()
-          << "File encoding: "
-          << (Encoding == encoding::Encoding_UTF8 ? "UTF8" : "unknown")
-          << "\n");
+    DEBUG(llvm::dbgs() << "File encoding: "
+                       << (Encoding == encoding::Encoding_UTF8 ? "UTF8"
+                                                               : "unknown")
+                       << "\n");
   }
 
   virtual ~Formatter() {}
@@ -1363,7 +1423,8 @@ public:
               1;
         }
         UnwrappedLineFormatter Formatter(Style, SourceMgr, TheLine, Indent,
-                                         TheLine.First, Whitespaces, Encoding);
+                                         TheLine.First, Whitespaces, Encoding,
+                                         BinPackInconclusiveFunctions);
         Formatter.format(I + 1 != E ? &*(I + 1) : NULL);
         IndentForLevel[TheLine.Level] = LevelIndent;
         PreviousLineWasTouched = true;
@@ -1408,6 +1469,8 @@ private:
     unsigned CountBoundToVariable = 0;
     unsigned CountBoundToType = 0;
     bool HasCpp03IncompatibleFormat = false;
+    bool HasBinPackedFunction = false;
+    bool HasOnePerLineFunction = false;
     for (unsigned i = 0, e = AnnotatedLines.size(); i != e; ++i) {
       if (!AnnotatedLines[i].First->Next)
         continue;
@@ -1428,6 +1491,12 @@ private:
             Tok->Previous->Type == TT_TemplateCloser &&
             Tok->WhitespaceRange.getBegin() == Tok->WhitespaceRange.getEnd())
           HasCpp03IncompatibleFormat = true;
+
+        if (Tok->PackingKind == PPK_BinPacked)
+          HasBinPackedFunction = true;
+        if (Tok->PackingKind == PPK_OnePerLine)
+          HasOnePerLineFunction = true;
+
         Tok = Tok->Next;
       }
     }
@@ -1441,6 +1510,8 @@ private:
       Style.Standard = HasCpp03IncompatibleFormat ? FormatStyle::LS_Cpp11
                                                   : FormatStyle::LS_Cpp03;
     }
+    BinPackInconclusiveFunctions =
+        HasBinPackedFunction || !HasOnePerLineFunction;
   }
 
   /// \brief Get the indent of \p Level from \p IndentForLevel.
@@ -1691,6 +1762,7 @@ private:
   std::vector<AnnotatedLine> AnnotatedLines;
 
   encoding::Encoding Encoding;
+  bool BinPackInconclusiveFunctions;
 };
 
 } // end anonymous namespace

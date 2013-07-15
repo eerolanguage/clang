@@ -159,12 +159,16 @@ include paths, or 0 otherwise:
   # include "myinclude.h"
   #endif
 
+To test for this feature, use ``#if defined(__has_include)``:
+
+.. code-block:: c++
+
   // To avoid problem with non-clang compilers not having this macro.
-  #if defined(__has_include) && __has_include("myinclude.h")
+  #if defined(__has_include)
+  #if __has_include("myinclude.h")
   # include "myinclude.h"
   #endif
-
-To test for this feature, use ``#if defined(__has_include)``.
+  #endif
 
 .. _langext-__has_include_next:
 
@@ -185,8 +189,10 @@ or 0 otherwise:
   #endif
 
   // To avoid problem with non-clang compilers not having this macro.
-  #if defined(__has_include_next) && __has_include_next("myinclude.h")
+  #if defined(__has_include_next)
+  #if __has_include_next("myinclude.h")
   # include_next "myinclude.h"
+  #endif
   #endif
 
 Note that ``__has_include_next``, like the GNU extension ``#include_next``
@@ -1527,6 +1533,22 @@ correct code by avoiding expensive loops around
 implementation details of ``__sync_lock_test_and_set()``.  The
 ``__sync_swap()`` builtin is a full barrier.
 
+``__builtin_addressof``
+-----------------------
+
+``__builtin_addressof`` performs the functionality of the built-in ``&``
+operator, ignoring any ``operator&`` overload.  This is useful in constant
+expressions in C++11, where there is no other way to take the address of an
+object that overloads ``operator&``.
+
+**Example of use**:
+
+.. code-block:: c++
+
+  template<typename T> constexpr T *addressof(T &value) {
+    return __builtin_addressof(value);
+  }
+
 Multiprecision Arithmetic Builtins
 ----------------------------------
 
@@ -1695,7 +1717,7 @@ are accepted with the ``__attribute__((foo))`` syntax are also accepted as
 <http://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html>`_, `GCC variable
 attributes <http://gcc.gnu.org/onlinedocs/gcc/Variable-Attributes.html>`_, and
 `GCC type attributes
-<http://gcc.gnu.org/onlinedocs/gcc/Type-Attributes.html>`_. As with the GCC
+<http://gcc.gnu.org/onlinedocs/gcc/Type-Attributes.html>`_). As with the GCC
 implementation, these attributes must appertain to the *declarator-id* in a
 declaration, which means they must go either at the start of the declaration or
 immediately after the name being declared.
@@ -1955,11 +1977,11 @@ Type Safety Checking
 ====================
 
 Clang supports additional attributes to enable checking type safety properties
-that can't be enforced by C type system.  Usecases include:
+that can't be enforced by the C type system.  Use cases include:
 
 * MPI library implementations, where these attributes enable checking that
-  buffer type matches the passed ``MPI_Datatype``;
-* for HDF5 library there is a similar usecase as MPI;
+  the buffer type matches the passed ``MPI_Datatype``;
+* for HDF5 library there is a similar use case to MPI;
 * checking types of variadic functions' arguments for functions like
   ``fcntl()`` and ``ioctl()``.
 
@@ -1994,7 +2016,7 @@ accepts a type tag that determines the type of some other argument.
 applicable type tags.
 
 This attribute is primarily useful for checking arguments of variadic functions
-(``pointer_with_type_tag`` can be used in most of non-variadic cases).
+(``pointer_with_type_tag`` can be used in most non-variadic cases).
 
 For example:
 

@@ -307,3 +307,34 @@ namespace dtor_fixit {
     // CHECK: fix-it:"{{.*}}":{[[@LINE-1]]:6-[[@LINE-1]]:9}:"foo"
   };
 }
+
+namespace PR5066 {
+  template<typename T> struct X {};
+  X<int *p> x; // expected-error {{type-id cannot have a name}}
+}
+
+namespace PR15045 {
+  class Cl0 {
+  public:
+    int a;
+  };
+
+  int f() {
+    Cl0 c;
+    return c->a;  // expected-error {{member reference type 'PR15045::Cl0' is not a pointer; maybe you meant to use '.'?}}
+  }
+}
+
+namespace PR5898 {
+  class A {
+  public:
+    const char *str();
+  };
+  const char* foo(A &x)
+  {
+    return x.str.();  // expected-error {{unexpected '.' in function call; perhaps remove the '.'?}}
+  }
+  bool bar(A x, const char *y) {
+    return foo->(x) == y;  // expected-error {{unexpected '->' in function call; perhaps remove the '->'?}}
+  }
+}
