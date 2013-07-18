@@ -819,7 +819,8 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
         // value being declared, poison it as invalid so we don't get chains of
         // errors.
         declarator.setInvalidType(true);
-      } else if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader()) {
+      } else if (S.getLangOpts().Eero && 
+                 (!S.PP.isInLegacyHeader() || S.PP.isInPrimaryFile())) {
         S.Diag(DeclLoc, diag::err_eero_missing_type_specifier)
           << DS.getSourceRange();
         declarator.setInvalidType(true);
@@ -1679,7 +1680,8 @@ bool Sema::CheckFunctionReturnType(QualType &T, SourceLocation Loc) {
   // passed by reference.
   if (T->isObjCObjectType()) {
     // Eero class instances are always pointers
-    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
+    if (getLangOpts().Eero && 
+        (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
       T = Context.getObjCObjectPointerType(T);
       return false;
     }
@@ -2709,7 +2711,8 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
       }
 
       // Eero class instances are always pointers
-      if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader() && 
+      if (S.getLangOpts().Eero &&
+          (!S.PP.isInLegacyHeader() || S.PP.isInPrimaryFile()) && 
           T->isObjCObjectType()) {
         T = Context.getObjCObjectPointerType(T);
       }
