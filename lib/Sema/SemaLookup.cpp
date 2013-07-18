@@ -1277,8 +1277,7 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
 
   // For Eero, check for namepace-like prefixes
   static bool inPrefixSearch = false;
-  if (getLangOpts().Eero &&
-      (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) &&
+  if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
       !found && !inPrefixSearch) {
     inPrefixSearch = true;
     found = LookupNameWithPrefixes(R, S);
