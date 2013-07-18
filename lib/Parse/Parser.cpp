@@ -165,7 +165,8 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
     return false;
   }
 
-  if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && 
+  if (getLangOpts().OptionalSemicolons && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) && 
       (ExpectedTok == tok::semi)) {
     if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
       return false;
@@ -211,7 +212,8 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
     return false;
   }
 
-  if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OptionalSemicolons && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
     if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
       return false;
     } else {
@@ -655,7 +657,8 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     return DeclGroupPtrTy();
   }
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = 
+      getLangOpts().Eero && (!PP.isInLegacyHeader() || PP.isInPrimaryFile());
 
   Decl *SingleDecl = 0;
   switch (Tok.getKind()) {
@@ -891,7 +894,8 @@ bool Parser::isDeclarationAfterDeclarator() {
 bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   assert(Declarator.isFunctionDeclarator() && "Isn't a function declarator");
   // Check for function definition or declaration when using off-side rule
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
     if (!Tok.isAtStartOfLine()) {
       Diag(Tok, diag::err_expected) << "newline";
       while (Tok.isNot(tok::eof) && !Tok.isAtStartOfLine()) // flush the rest
@@ -1052,7 +1056,8 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   if (FTI.isKNRPrototype())
     ParseKNRParamDeclarations(D);
 
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
     if (Tok.isAtStartOfLine()) {
       SourceLocation FuncStartLoc = D.getDeclSpec().getSourceRange().getBegin();
       indentationPositions.push_back(Column(FuncStartLoc));

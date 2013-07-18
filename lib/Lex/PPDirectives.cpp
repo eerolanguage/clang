@@ -77,6 +77,9 @@ DefMacroDirective *
 Preprocessor::AllocateDefMacroDirective(MacroInfo *MI, SourceLocation Loc,
                                         bool isImported) {
   DefMacroDirective *MD = BP.Allocate<DefMacroDirective>();
+  if (inLegacyHeader) {
+    MI->setIsFromLegacyFile();
+  }
   new (MD) DefMacroDirective(MI, Loc, isImported);
   return MD;
 }
@@ -1367,7 +1370,7 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
     break;
 
   case tok::char_constant:
-    if (getLangOpts().Eero && !inLegacyHeader) {
+    if (getLangOpts().Eero && !isInLegacyHeader()) {
       Legacy = Lexer::LS_False;
       FilenameBuffer = getSpelling(FilenameTok);
       FilenameBuffer[0] = '"';

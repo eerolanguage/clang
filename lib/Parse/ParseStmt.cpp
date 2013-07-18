@@ -882,7 +882,8 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
   InMessageExpressionRAIIObject InMessage(*this, false);
   BalancedDelimiterTracker T(*this, tok::l_brace);
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
     if (Tok.isAtStartOfLine()) {
       T.setIgnored(BalancedDelimiterTracker::UseSplitLineTokLocs);
     } else {
@@ -946,7 +947,8 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       continue;
     }
 
-    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() && 
+    if (getLangOpts().OffSideRule && 
+        (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) && 
         Tok.isAtStartOfLine()) { // main off-side rule logic
       unsigned column = Column(Tok.getLocation());      
       if (!indentationPositions.empty()) {
@@ -1215,7 +1217,8 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
     ParseScope InnerScope(this, Scope::DeclScope,
                           C99orCXX && Tok.isNot(tok::l_brace));
 
-    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+    if (getLangOpts().OffSideRule && 
+        (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
       if (Tok.isAtStartOfLine()) { // line break after "else"
         ElseStmt = ParseCompoundStatement();
         ProcessElseStatement = false;

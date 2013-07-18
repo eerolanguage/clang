@@ -236,7 +236,8 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
     // Catches cases where the next line looks like the RHS of a bin op,
     // but it really isn't, e.g. after some (non-decl) assignments.
-    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
+    if (getLangOpts().OptionalSemicolons && 
+        (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) &&
         Tok.isAtStartOfLine() && 
         (ParenCount == 0) && (BracketCount == 0)) {
       return LHS;
@@ -1373,7 +1374,8 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
   SourceLocation Loc;
   const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
   while (1) {
-    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
+    if (getLangOpts().OptionalSemicolons && 
+        (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) &&
         Tok.isAtStartOfLine() &&
         (ParenCount == 0) && (BracketCount == 0)) {
       return LHS;

@@ -2400,7 +2400,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 
     SourceLocation Loc = Tok.getLocation();
 
-    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
+    if (getLangOpts().OptionalSemicolons && 
+        (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) &&
         Tok.isNot(tok::semi) &&
         !firstPass && 
         Tok.isAtStartOfLine()) {
@@ -3403,7 +3404,8 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   Actions.ActOnTagFinishDefinition(getCurScope(), TagDecl,
                                    T.getCloseLocation());
 
-  if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && 
+  if (getLangOpts().OptionalSemicolons && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) && 
       Tok.isAtStartOfLine())
     InsertTokenAndIgnoreNewline(tok::semi); // TODO: revisit this, should avoid inserting semi
 }
@@ -3658,7 +3660,8 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
       PP.EnterToken(Tok);
       Tok.setKind(tok::semi);
     }
-  } else if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
+  } else if (getLangOpts().OptionalSemicolons && 
+             (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) &&
              Tok.isAtStartOfLine()) {
     TUK = (DS.isFriendSpecified() ? Sema::TUK_Friend : Sema::TUK_Declaration);
     InsertTokenAndIgnoreNewline(tok::semi); // TODO: is there a way to avoid inserting a semi?
@@ -4860,6 +4863,7 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
     MaybeParseCXX11Attributes(D);
 
   while (!getLangOpts().OptionalSemicolons || PP.isInLegacyHeader() ||
+//         (PP.isInLegacyHeader() && !PP.isInPrimaryFile()) ||
          !Tok.isAtStartOfLine()) { 
     if (Tok.is(tok::l_paren)) {
       // Enter function-declaration scope, limiting any declarators to the

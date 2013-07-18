@@ -505,7 +505,13 @@ void TokenLexer::Lex(Token &Tok) {
   }
 
   // For "legacy" headers, revert the keywords eero introduced
-  PP.RevertKeywordToIdentifierIfNeeded(Tok);
+  if (!Macro) {
+    PP.RevertKeywordToIdentifierIfNeeded(Tok);
+  }
+
+  if (Macro) {
+    LexingMacroArgs = SM.isMacroArgExpansion(Tok.getLocation());
+  }
 
   // Otherwise, return a normal token.
 }

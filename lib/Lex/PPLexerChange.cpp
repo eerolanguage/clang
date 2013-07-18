@@ -61,6 +61,23 @@ PreprocessorLexer *Preprocessor::getCurrentFileLexer() const {
   return 0;
 }
 
+/// isInLegacyHeader - Return true if currently in a legacy header 
+/// (standard C/ObjC/etc), or macro defined in one.
+bool Preprocessor::isInLegacyHeader() const { 
+  // When expanding a legacy macro in an eero source file,
+  // make sure to parse the arguments using eero syntax.
+//   if (getLangOpts().Eero && 
+//       !inLegacyHeader && inLegacyMacro &&
+//       CurTokenLexer && CurTokenLexer->isLexingMacroArgs()) {
+//     return false;
+//   }
+
+  if (getLangOpts().Eero && !inLegacyHeader && inLegacyMacro) {
+    return (!CurTokenLexer || !CurTokenLexer->isLexingMacroArgs());
+  }
+
+  return inLegacyHeader; // || inLegacyMacro;
+}
 
 //===----------------------------------------------------------------------===//
 // Methods for Entering and Callbacks for leaving various contexts
@@ -185,6 +202,8 @@ void Preprocessor::EnterMacro(Token &Tok, SourceLocation ILEnd,
   CurTokenLexer.reset(TokLexer);
   if (CurLexerKind != CLK_LexAfterModuleImport)
     CurLexerKind = CLK_TokenLexer;
+
+  inLegacyMacro = Macro->isFromLegacyFile();
 }
 
 /// EnterTokenStream - Add a "macro" context to the top of the include stack,
@@ -251,6 +270,10 @@ static void computeRelativePath(FileManager &FM, const DirectoryEntry *Dir,
 bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
   assert(!CurTokenLexer &&
          "Ending a file when currently in a macro!");
+
+  if (isEndOfMacro) {
+    inLegacyMacro = false;
+  }
 
   // See if this file had a controlling macro.
   if (CurPPLexer) {  // Not ending a macro, ignore it.

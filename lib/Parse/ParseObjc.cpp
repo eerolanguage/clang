@@ -1145,7 +1145,8 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
                                   bool MethodDefinition) {
   ParsingDeclRAIIObject PD(*this, ParsingDeclRAIIObject::NoParent);
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = 
+      getLangOpts().Eero && (!PP.isInLegacyHeader() || PP.isInPrimaryFile());
 
   if (Tok.is(tok::code_completion)) {
     Actions.CodeCompleteObjCMethodDecl(getCurScope(), mType == tok::minus, 
@@ -2524,7 +2525,8 @@ void Parser::StashAwayMethodOrFunctionBodyTokens(Decl *MDecl) {
 ///   objc-method-def: objc-method-proto ';'[opt] '{' body '}'
 ///
 Decl *Parser::ParseObjCMethodDefinition() {
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
     indentationPositions.push_back(Column(Tok.getLocation()));
   }
   Decl *MDecl = ParseObjCMethodPrototype();
@@ -2533,7 +2535,8 @@ Decl *Parser::ParseObjCMethodDefinition() {
                                       "parsing Objective-C method");
 
   // Do this the old way, since we can't defer
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && 
+      (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
     SourceLocation BodyStartLoc = Tok.getLocation();
 
     // Allow the rest of sema to find private method decl implementations.

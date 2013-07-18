@@ -369,6 +369,9 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// Whether currently in a legacy header (standard C/ObjC/etc)
   bool inLegacyHeader;
 
+  /// Whether currently in a legacy macro expansion (defined in legacy header)
+  bool inLegacyMacro;
+
 private:  // Cached tokens state.
   typedef SmallVector<Token, 1> CachedTokensTy;
 
@@ -1249,7 +1252,7 @@ public:
   bool isInPrimaryFile() const;
 
   /// isInSystemHeader - Return true if we're in a legacy header (standard C/ObjC/etc)
-  bool isInLegacyHeader() const { return inLegacyHeader; }
+  bool isInLegacyHeader() const;
 
   /// ConcatenateIncludeName - Handle cases where the \#include name is expanded
   /// from a macro as multiple tokens, which need to be glued together.  This
