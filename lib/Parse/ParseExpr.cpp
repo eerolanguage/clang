@@ -219,7 +219,7 @@ bool Parser::isNotExpressionStart() {
 /// precedence of at least \p MinPrec.
 ExprResult
 Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
 
   prec::Level NextTokPrec = getBinOpPrecedence(Tok.getKind(),
                                                GreaterThanIsOperator,
@@ -236,8 +236,7 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
     // Catches cases where the next line looks like the RHS of a bin op,
     // but it really isn't, e.g. after some (non-decl) assignments.
-    if (getLangOpts().OptionalSemicolons && 
-        (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) &&
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
         Tok.isAtStartOfLine() && 
         (ParenCount == 0) && (BracketCount == 0)) {
       return LHS;
@@ -431,7 +430,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
                                        isTypeCast);
   if (NotCastExpr) {
     Diag(Tok, diag::err_expected_expression);
-    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyMode())
       Tok.setKind(tok::eof); // TODO: do something less harsh?
   }
   return Res;
@@ -634,7 +633,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
   NotCastExpr = false;
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
 
   // This handles all of cast-expression, unary-expression, postfix-expression,
   // and primary-expression.  We handle them together like this for efficiency
@@ -1083,7 +1082,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     }  
     if (!getLangOpts().CPlusPlus) {
       Diag(Tok, diag::err_expected_expression);
-      if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
+      if (getLangOpts().OptionalSemicolons && !PP.isInLegacyMode())
         Tok.setKind(tok::eof); // TODO: do something less harsh?
       return ExprError();
     }
@@ -1372,10 +1371,9 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
   // Now that the primary-expression piece of the postfix-expression has been
   // parsed, see if there are any postfix-expression pieces here.
   SourceLocation Loc;
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
   while (1) {
-    if (getLangOpts().OptionalSemicolons && 
-        (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) &&
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
         Tok.isAtStartOfLine() &&
         (ParenCount == 0) && (BracketCount == 0)) {
       return LHS;
@@ -2095,7 +2093,7 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
     return ExprError();
   SourceLocation OpenLoc = T.getOpenLocation();
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
 
   // Support blocks with forms:
   //   "()", "(| expr)", and "(return expr)"
@@ -2583,7 +2581,7 @@ void Parser::ParseBlockId(SourceLocation CaretLoc) {
 /// [clang]   '(' parameter-list ')'
 /// \endverbatim
 ExprResult Parser::ParseBlockLiteralExpression() {
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
   assert((Tok.is(tok::caret) || isEero) && "block literal starts with ^");
   SourceLocation CaretLoc = !isEero ? ConsumeToken() : Tok.getLocation();
 
@@ -2667,7 +2665,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
   ExprResult Result(true);
   if (!Tok.is(tok::l_brace) &&
-      (!getLangOpts().OffSideRule || PP.isInLegacyHeader())) {
+      (!getLangOpts().OffSideRule || PP.isInLegacyMode())) {
     // Saw something like: ^expr
     Diag(Tok, diag::err_expected_expression);
     Actions.ActOnBlockError(CaretLoc, getCurScope());
@@ -2702,7 +2700,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
                                        Stmt.get()->getLocEnd(),
                                        Stmts, false);
     }
-  } else if (!getLangOpts().OffSideRule || PP.isInLegacyHeader() ||
+  } else if (!getLangOpts().OffSideRule || PP.isInLegacyMode() ||
              Tok.isAtStartOfLine()) {
     Stmt = ParseCompoundStatementBody();
   } else {

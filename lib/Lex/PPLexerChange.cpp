@@ -61,22 +61,20 @@ PreprocessorLexer *Preprocessor::getCurrentFileLexer() const {
   return 0;
 }
 
-/// isInLegacyHeader - Return true if currently in a legacy header 
-/// (standard C/ObjC/etc), or macro defined in one.
+/// isInLegacyHeader - Return true if currently in a legacy header.
 bool Preprocessor::isInLegacyHeader() const { 
+  return inLegacyHeader;
+}
+
+/// isInLegacyMode - Return true if currently in a legacy header 
+/// (standard C/ObjC/etc), or macro defined in one.
+bool Preprocessor::isInLegacyMode() const { 
   // When expanding a legacy macro in an eero source file,
   // make sure to parse the arguments using eero syntax.
-//   if (getLangOpts().Eero && 
-//       !inLegacyHeader && inLegacyMacro &&
-//       CurTokenLexer && CurTokenLexer->isLexingMacroArgs()) {
-//     return false;
-//   }
-
   if (getLangOpts().Eero && !inLegacyHeader && inLegacyMacro) {
     return (!CurTokenLexer || !CurTokenLexer->isLexingMacroArgs());
   }
-
-  return inLegacyHeader; // || inLegacyMacro;
+  return inLegacyHeader;
 }
 
 //===----------------------------------------------------------------------===//

@@ -117,7 +117,7 @@ Parser::ParseStatementOrDeclarationAfterAttributes(StmtVector &Stmts,
           ParsedAttributesWithRange &Attrs) {
   const char *SemiError = 0;
   StmtResult Res;
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
 
   // Cases in this switch statement should fall through if the parser expects
   // the token to end in a semicolon (in which case SemiError should be set),
@@ -244,7 +244,7 @@ Retry:
     return ParseDefaultStatement();
 
   case tok::l_brace:                // C99 6.8.2: compound-statement
-    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
+    if (getLangOpts().OffSideRule && !PP.isInLegacyMode() &&
         Tok.getLength() != 0) { // if not an inserted left brace
       Diag(Tok, diag::err_not_allowed) << "'{'";
       ConsumeAnyToken(); // eat it and move on
@@ -371,7 +371,7 @@ Retry:
   // If we reached this code, the statement must end in a semicolon.
   if (Tok.is(tok::semi)) {
     ConsumeToken();
-  } else if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader()) {
+  } else if (getLangOpts().OptionalSemicolons && !PP.isInLegacyMode()) {
     // do nothing here, since semicolons are optional
   } else if (!Res.isInvalid()) {
     // If the result was valid, then we do want to diagnose this.  Use
@@ -568,7 +568,7 @@ StmtResult Parser::ParseLabeledStatement(ParsedAttributesWithRange &attrs) {
 StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
   assert((MissingCase || Tok.is(tok::kw_case)) && "Not a case stmt!");
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
 
   // It is very very common for code to contain many case statements recursively
   // nested, as in (but usually without indentation):
@@ -686,7 +686,7 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
   // If we found a non-case statement, start by parsing it.
   StmtResult SubStmt;
 
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyMode()) {
     SubStmt = ParseCompoundStatement();
     if (!SubStmt.isInvalid() && isEero)
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
@@ -721,7 +721,7 @@ StmtResult Parser::ParseDefaultStatement() {
   assert(Tok.is(tok::kw_default) && "Not a default stmt!");
   SourceLocation DefaultLoc = ConsumeToken();  // eat the 'default'.
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
 
   SourceLocation ColonLoc;
   if (Tok.is(tok::colon)) {
@@ -743,7 +743,7 @@ StmtResult Parser::ParseDefaultStatement() {
 
   StmtResult SubStmt;
 
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyMode()) {
     SubStmt = ParseCompoundStatement();
     if (!SubStmt.isInvalid() && isEero)
       SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
@@ -800,7 +800,7 @@ StmtResult Parser::ParseCompoundStatement(bool isStmtExpr) {
 StmtResult Parser::ParseCompoundStatement(bool isStmtExpr,
                                           unsigned ScopeFlags) {
   assert((Tok.is(tok::l_brace) ||
-          (getLangOpts().OffSideRule && !PP.isInLegacyHeader())) &&
+          (getLangOpts().OffSideRule && !PP.isInLegacyMode())) &&
          "Not a compount stmt!");
 
   // Enter a scope to hold everything within the compound stmt.  Compound
@@ -882,8 +882,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
   InMessageExpressionRAIIObject InMessage(*this, false);
   BalancedDelimiterTracker T(*this, tok::l_brace);
-  if (getLangOpts().OffSideRule && 
-      (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     if (Tok.isAtStartOfLine()) {
       T.setIgnored(BalancedDelimiterTracker::UseSplitLineTokLocs);
     } else {
@@ -947,8 +946,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       continue;
     }
 
-    if (getLangOpts().OffSideRule && 
-        (!PP.isInLegacyHeader() || PP.isInPrimaryFile()) && 
+    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) && 
         Tok.isAtStartOfLine()) { // main off-side rule logic
       unsigned column = Column(Tok.getLocation());      
       if (!indentationPositions.empty()) {
@@ -1025,7 +1023,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   SourceLocation CloseLoc = Tok.getLocation();
 
   // We broke out of the while loop because we found a '}' or EOF.
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
+  if (getLangOpts().OffSideRule && !PP.isInLegacyMode() &&
       !indentationPositions.empty()) {
     indentationPositions.pop_back();
     if (Tok.is(tok::r_brace)) {
@@ -1062,7 +1060,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
                                        SourceLocation Loc,
                                        bool ConvertToBoolean) {
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (getLangOpts().Eero && !PP.isInLegacyHeader()) 
+  if (getLangOpts().Eero && !PP.isInLegacyMode()) 
     T.setIgnored();
   T.consumeOpen();
 
@@ -1082,7 +1080,7 @@ bool Parser::ParseParenExprOrCondition(ExprResult &ExprResult,
   // recover by skipping ahead to a semi and bailing out.  If condexp is
   // semantically invalid but we have well formed code, keep going.
   if (ExprResult.isInvalid() && !DeclResult && Tok.isNot(tok::r_paren)) {
-    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && T.isIgnored())
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyMode() && T.isIgnored())
       return true; // just bail out right here
     SkipUntil(tok::semi);
     // Skipping may have stopped if it found the containing ')'.  If so, we can
@@ -1118,7 +1116,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
   assert(Tok.is(tok::kw_if) && "Not an if stmt!");
   SourceLocation IfLoc = ConsumeToken();  // eat the 'if'.
 
-  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyMode())) {
     Diag(Tok, diag::err_expected_lparen_after) << "if";
     SkipUntil(tok::semi);
     return StmtError();
@@ -1174,7 +1172,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
 
   SourceLocation InnerStatementTrailingElseLoc;
   StmtResult ThenStmt;
-  if (!getLangOpts().OffSideRule || PP.isInLegacyHeader())
+  if (!getLangOpts().OffSideRule || PP.isInLegacyMode())
     ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc);
   else
     ThenStmt = ParseCompoundStatement();
@@ -1191,7 +1189,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
   // Otherwise, process all of them.
   bool ProcessElseStatement;
   if (Tok.is(tok::kw_else) &&
-      ((!getLangOpts().OffSideRule || PP.isInLegacyHeader()) || 
+      ((!getLangOpts().OffSideRule || PP.isInLegacyMode()) || 
        Column(Tok.getLocation()) == indentationPositions.back())) {
     ProcessElseStatement = true;
   } else {
@@ -1217,8 +1215,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
     ParseScope InnerScope(this, Scope::DeclScope,
                           C99orCXX && Tok.isNot(tok::l_brace));
 
-    if (getLangOpts().OffSideRule && 
-        (!PP.isInLegacyHeader() || PP.isInPrimaryFile())) {
+    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
       if (Tok.isAtStartOfLine()) { // line break after "else"
         ElseStmt = ParseCompoundStatement();
         ProcessElseStatement = false;
@@ -1271,7 +1268,7 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc) {
   assert(Tok.is(tok::kw_switch) && "Not a switch stmt!");
   SourceLocation SwitchLoc = ConsumeToken();  // eat the 'switch'.
 
-  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyMode())) {
     Diag(Tok, diag::err_expected_lparen_after) << "switch";
     SkipUntil(tok::semi);
     return StmtError();
@@ -1334,7 +1331,7 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc) {
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLangOpts().OffSideRule || PP.isInLegacyHeader()) {
+  if (!getLangOpts().OffSideRule || PP.isInLegacyMode()) {
     Body = ParseStatement(TrailingElseLoc);
   } else {
     Body = ParseCompoundStatement();
@@ -1365,7 +1362,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc) {
   SourceLocation WhileLoc = Tok.getLocation();
   ConsumeToken();  // eat the 'while'.
 
-  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyMode())) {
     Diag(Tok, diag::err_expected_lparen_after) << "while";
     SkipUntil(tok::semi);
     return StmtError();
@@ -1417,7 +1414,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc) {
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLangOpts().OffSideRule || PP.isInLegacyHeader())
+  if (!getLangOpts().OffSideRule || PP.isInLegacyMode())
     Body = ParseStatement(TrailingElseLoc);
   else
     Body = ParseCompoundStatement();
@@ -1464,7 +1461,7 @@ StmtResult Parser::ParseDoStatement() {
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLangOpts().OffSideRule || PP.isInLegacyHeader())
+  if (!getLangOpts().OffSideRule || PP.isInLegacyMode())
     Body = ParseStatement();
   else
     Body = ParseCompoundStatement();
@@ -1482,7 +1479,7 @@ StmtResult Parser::ParseDoStatement() {
   }
   SourceLocation WhileLoc = ConsumeToken();
 
-  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyMode())) {
     Diag(Tok, diag::err_expected_lparen_after) << "do/while";
     SkipUntil(tok::semi, false, true);
     return StmtError();
@@ -1490,7 +1487,7 @@ StmtResult Parser::ParseDoStatement() {
 
   // Parse the parenthesized condition.
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (getLangOpts().Eero && !PP.isInLegacyHeader()) 
+  if (getLangOpts().Eero && !PP.isInLegacyMode()) 
     T.setOptional();
   T.consumeOpen();
 
@@ -1533,7 +1530,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   assert(Tok.is(tok::kw_for) && "Not a for stmt!");
   SourceLocation ForLoc = ConsumeToken();  // eat the 'for'.
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
   SourceLocation InLoc;
 
   if (Tok.isNot(tok::l_paren) && !isEero) {
@@ -1857,7 +1854,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
 
   // Read the body statement.
   StmtResult Body;
-  if (!getLangOpts().OffSideRule || PP.isInLegacyHeader())
+  if (!getLangOpts().OffSideRule || PP.isInLegacyMode())
     Body = ParseStatement(TrailingElseLoc);
   else
     Body = ParseCompoundStatement();
@@ -2012,7 +2009,7 @@ StmtResult Parser::ParseReturnStatement() {
 
   ExprResult R;
   if (Tok.isNot(tok::semi) && 
-      (!getLangOpts().OptionalSemicolons || PP.isInLegacyHeader() ||
+      (!getLangOpts().OptionalSemicolons || PP.isInLegacyMode() ||
         !Tok.isAtStartOfLine()) && 
       Tok.isNot(tok::eof)) {
     if (Tok.is(tok::code_completion)) {
@@ -2738,7 +2735,7 @@ bool Parser::ParseAsmOperandsOpt(SmallVectorImpl<IdentifierInfo *> &Names,
 
 Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
   assert(Tok.is(tok::l_brace) ||
-         (getLangOpts().OffSideRule && !PP.isInLegacyHeader()));
+         (getLangOpts().OffSideRule && !PP.isInLegacyMode()));
   SourceLocation LBraceLoc = Tok.getLocation();
 
   if (SkipFunctionBodies && (!Decl || Actions.canSkipFunctionBody(Decl)) &&
