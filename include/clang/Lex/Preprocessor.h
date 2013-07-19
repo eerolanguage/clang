@@ -1255,7 +1255,7 @@ public:
   bool isInLegacyHeader() const;
 
   /// isInLegacyMode - Return true if we're in legacy (standard C/ObjC/etc) mode
-  bool isInLegacyMode() const;
+  bool isInLegacyMode(const SourceLocation &Loc) const;
 
   /// ConcatenateIncludeName - Handle cases where the \#include name is expanded
   /// from a macro as multiple tokens, which need to be glued together.  This

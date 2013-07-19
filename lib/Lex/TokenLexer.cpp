@@ -509,10 +509,6 @@ void TokenLexer::Lex(Token &Tok) {
     PP.RevertKeywordToIdentifierIfNeeded(Tok);
   }
 
-  if (Macro) {
-    LexingMacroArgs = SM.isMacroArgExpansion(Tok.getLocation());
-  }
-
   // Otherwise, return a normal token.
 }
 

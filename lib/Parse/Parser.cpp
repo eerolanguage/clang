@@ -909,7 +909,7 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   
   // Handle K&R C argument lists: int X(f) int f; {}
   if (!getLangOpts().CPlusPlus &&
-      (!getLangOpts().Eero || PP.isInLegacyMode()) &&
+      (!getLangOpts().Eero || PP.isInLegacyHeader()) &&
       Declarator.getFunctionTypeInfo().isKNRPrototype()) 
     return isDeclarationSpecifier();
 

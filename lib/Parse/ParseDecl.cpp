@@ -1587,7 +1587,8 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
                                               SourceLocation *DeclEnd,
                                               ForRangeInit *FRI) {
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
 
   // Parse the first declarator.
   ParsingDeclarator D(*this, DS, static_cast<Declarator::TheContext>(Context));
@@ -1647,8 +1648,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   }
 
   // Eero "nested functions" (const blocks, really)
-  if (getLangOpts().Eero && !PP.isInLegacyMode() &&
-      Context == Declarator::BlockContext &&
+  if (isEero && Context == Declarator::BlockContext &&
       !AllowFunctionDefinitions &&
        D.isFunctionDeclarator() && isStartOfFunctionDefinition(D)) {
 
@@ -1849,7 +1849,8 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
 
   bool TypeContainsAuto = D.getDeclSpec().containsPlaceholderType();
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyMode();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
   const bool isColonEqual = isEero && Tok.is(tok::colonequal);
 
   if (isColonEqual && !TypeContainsAuto) {
@@ -2675,7 +2676,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw_decltype:
     case tok::identifier: {
       // Check for Eero ':=' local type infererence
-      if (getLangOpts().Eero && !PP.isInLegacyMode() &&
+      if (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
           Tok.is(tok::identifier) && NextToken().is(tok::colonequal)) {
         isInvalid = DS.SetTypeSpecType(DeclSpec::TST_auto, Loc, PrevSpec,
                                        DiagID);
@@ -3944,7 +3945,9 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyMode()) return false;
+  case tok::kw_class: if (getLangOpts().Eero && 
+                          !PP.isInLegacyMode(Tok.getLocation())) 
+                        return false;
   case tok::kw_struct:
   case tok::kw___interface:
   case tok::kw_union:
@@ -4027,7 +4030,9 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyMode()) return false;
+  case tok::kw_class: if (getLangOpts().Eero && 
+                          !PP.isInLegacyMode(Tok.getLocation())) 
+                        return false;
   case tok::kw_struct:
   case tok::kw___interface:
   case tok::kw_union:
@@ -4097,7 +4102,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
       return false;
     if (TryAltiVecVectorToken())
       return true;
-    if (getLangOpts().Eero && !PP.isInLegacyMode() &&
+    if (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
         NextToken().is(tok::colonequal))
       return true;
     // Fall through.
@@ -4187,7 +4192,9 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyMode()) return false;
+  case tok::kw_class: if (getLangOpts().Eero && 
+                          !PP.isInLegacyMode(Tok.getLocation())) 
+                        return false;
   case tok::kw_struct:
   case tok::kw_union:
   case tok::kw___interface:
@@ -4850,7 +4857,8 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
       Diag(Tok, diag::err_expected_ident_lparen);
     D.SetIdentifier(0, Tok.getLocation());
     D.setInvalidType(true);
-    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyMode())
+    if (getLangOpts().OptionalSemicolons && 
+        !PP.isInLegacyMode(Tok.getLocation()))
       Tok.setKind(tok::eof); // gets stuck otherwise
   }
 
@@ -5111,7 +5119,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
     EndLoc = RParenLoc;
 
     if (getLangOpts().CPlusPlus &&
-        (!getLangOpts().OffSideRule || PP.isInLegacyMode() ||
+        (!getLangOpts().OffSideRule || PP.isInLegacyHeader() ||
          !Tok.isAtStartOfLine())) {
       // FIXME: Accept these components in any order, and produce fixits to
       // correct the order if the user gets it wrong. Ideally we should deal
@@ -5216,7 +5224,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 /// Note that identifier-lists are only allowed for normal declarators, not for
 /// abstract-declarators.
 bool Parser::isFunctionDeclaratorIdentifierList() {
-  return !getLangOpts().CPlusPlus && (!getLangOpts().Eero || PP.isInLegacyMode())
+  return !getLangOpts().CPlusPlus && (!getLangOpts().Eero || PP.isInLegacyHeader())
          && Tok.is(tok::identifier)
          && !TryAltiVecVectorToken()
          // K&R identifier lists can't have typedefs as identifiers, per C99

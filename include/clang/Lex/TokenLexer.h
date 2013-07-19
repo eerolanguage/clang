@@ -91,10 +91,6 @@ class TokenLexer {
   /// should not be subject to further macro expansion.
   bool DisableMacroExpansion : 1;
 
-  /// LexingMacroArgs - This is true when we are in the middle of lexing the
-  /// argument tokens
-  bool LexingMacroArgs : 1;
-
   TokenLexer(const TokenLexer &) LLVM_DELETED_FUNCTION;
   void operator=(const TokenLexer &) LLVM_DELETED_FUNCTION;
 public:
@@ -104,7 +100,7 @@ public:
   /// identifier for an object-like macro.
   TokenLexer(Token &Tok, SourceLocation ILEnd, MacroInfo *MI,
              MacroArgs *ActualArgs, Preprocessor &pp)
-    : Macro(0), ActualArgs(0), PP(pp), OwnsTokens(false), LexingMacroArgs(false) {
+    : Macro(0), ActualArgs(0), PP(pp), OwnsTokens(false) {
     Init(Tok, ILEnd, MI, ActualArgs);
   }
 
@@ -145,10 +141,6 @@ public:
   /// isParsingPreprocessorDirective - Return true if we are in the middle of a
   /// preprocessor directive.
   bool isParsingPreprocessorDirective() const;
-
-  /// isLexingMacroArgs - Return true if we are in the middle of lexing
-  /// a macro's arguments.
-  bool isLexingMacroArgs() const { return LexingMacroArgs; }
 
 private:
   void destroy();
