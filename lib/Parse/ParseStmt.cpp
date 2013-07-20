@@ -886,7 +886,9 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
   InMessageExpressionRAIIObject InMessage(*this, false);
   BalancedDelimiterTracker T(*this, tok::l_brace);
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
+      (!PP.isInLegacyMacro() ||
+       PP.isStartOfLegacyMacro(Tok.getLocation()))) {
     if (Tok.isAtStartOfLine()) {
       T.setIgnored(BalancedDelimiterTracker::UseSplitLineTokLocs);
     } else {
@@ -950,9 +952,12 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       continue;
     }
 
-    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() && 
-        Tok.isAtStartOfLine()) { // main off-side rule logic
-      unsigned column = Column(Tok.getLocation());      
+    // Main off-side rule logic
+    if (getLangOpts().OffSideRule && Tok.isAtStartOfLine() &&
+        !PP.isInLegacyHeader() &&
+        (!PP.isInLegacyMacro() ||
+         PP.isStartOfLegacyMacro(Tok.getLocation()))) {
+      unsigned column = Column(Tok.getLocation());
       if (!indentationPositions.empty()) {
         if (newScope && column > indentationPositions.back()) {
           // do nothing since block has been indented further to the right
@@ -1028,6 +1033,8 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
   // We broke out of the while loop because we found a '}' or EOF.
   if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
+      (!PP.isInLegacyMacro() ||
+       PP.isStartOfLegacyMacro(Tok.getLocation())) &&
       !indentationPositions.empty()) {
     indentationPositions.pop_back();
     if (Tok.is(tok::r_brace)) {

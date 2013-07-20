@@ -66,14 +66,27 @@ bool Preprocessor::isInLegacyHeader() const {
   return inLegacyHeader;
 }
 
+/// isInLegacyMacro - Return true if currently in a legacy macro.
+bool Preprocessor::isInLegacyMacro() const { 
+  return inLegacyMacro;
+}
+
 /// isInLegacyMode - Return true if currently in a legacy header 
 /// (standard C/ObjC/etc), or macro defined in one.
 bool Preprocessor::isInLegacyMode(const SourceLocation &Loc) const {
   // When expanding a legacy macro in an eero source file,
-  // make sure to parse the arguments using eero syntax.
+  // make sure to parse the arguments (found in the main source
+  // file) using eero syntax.
   return (inLegacyHeader || 
           (inLegacyMacro && 
            !SourceMgr.isFromMainFile(SourceMgr.getSpellingLoc(Loc))));
+}
+
+/// isStartOfLegacyMacro - Return true if we're at the beginning of a legacy
+/// macro
+bool Preprocessor::isStartOfLegacyMacro(const SourceLocation &Loc) const {
+  return (inLegacyMacro && 
+          SourceMgr.isAtStartOfImmediateMacroExpansion(Loc));
 }
 
 //===----------------------------------------------------------------------===//
