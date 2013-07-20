@@ -590,7 +590,7 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
   }
 
   // C++11 [dcl.fct.default]p4: If a friend declaration specifies a default
-  // argument expression, that declaration shall be a deﬁnition and shall be
+  // argument expression, that declaration shall be a definition and shall be
   // the only declaration of the function or function template in the
   // translation unit.
   if (Old->getFriendObjectKind() == Decl::FOK_Undeclared &&
@@ -6770,13 +6770,8 @@ Decl *Sema::ActOnUsingDeclaration(Scope *S,
     return 0;
 
   // Warn about access declarations.
-  // TODO: store that the declaration was written without 'using' and
-  // talk about access decls instead of using decls in the
-  // diagnostics.
   if (!HasUsingKeyword) {
-    UsingLoc = Name.getLocStart();
-
-    Diag(UsingLoc,
+    Diag(Name.getLocStart(),
          getLangOpts().CPlusPlus11 ? diag::err_access_decl
                                    : diag::warn_access_decl_deprecated)
       << FixItHint::CreateInsertion(SS.getRange().getBegin(), "using ");
@@ -9996,9 +9991,7 @@ void Sema::DefineImplicitMoveConstructor(SourceLocation CurrentLocation,
 }
 
 bool Sema::isImplicitlyDeleted(FunctionDecl *FD) {
-  return FD->isDeleted() && 
-         (FD->isDefaulted() || FD->isImplicit()) &&
-         isa<CXXMethodDecl>(FD);
+  return FD->isDeleted() && FD->isDefaulted() && isa<CXXMethodDecl>(FD);
 }
 
 /// \brief Mark the call operator of the given lambda closure type as "used".

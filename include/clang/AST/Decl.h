@@ -3406,6 +3406,12 @@ void Redeclarable<decl_type>::setPreviousDeclaration(decl_type *PrevDecl) {
     assert(First->RedeclLink.NextIsLatest() && "Expected first");
     decl_type *MostRecent = First->RedeclLink.getNext();
     RedeclLink = PreviousDeclLink(cast<decl_type>(MostRecent));
+
+    // If the declaration was previously visible, a redeclaration of it remains
+    // visible even if it wouldn't be visible by itself.
+    static_cast<decl_type*>(this)->IdentifierNamespace |=
+      PrevDecl->getIdentifierNamespace() &
+      (Decl::IDNS_Ordinary | Decl::IDNS_Tag | Decl::IDNS_Type);
   } else {
     // Make this first.
     First = static_cast<decl_type*>(this);
@@ -3415,12 +3421,6 @@ void Redeclarable<decl_type>::setPreviousDeclaration(decl_type *PrevDecl) {
   First->RedeclLink = LatestDeclLink(static_cast<decl_type*>(this));
   assert(!isa<NamedDecl>(static_cast<decl_type*>(this)) ||
          cast<NamedDecl>(static_cast<decl_type*>(this))->isLinkageValid());
-
-  // If the declaration was previously visible, a redeclaration of it remains
-  // visible even if it wouldn't be visible by itself.
-  static_cast<decl_type*>(this)->IdentifierNamespace |=
-    First->getIdentifierNamespace() &
-    (Decl::IDNS_Ordinary | Decl::IDNS_Tag | Decl::IDNS_Type);
 }
 
 // Inline function definitions.

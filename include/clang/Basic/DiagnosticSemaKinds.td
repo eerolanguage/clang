@@ -1813,8 +1813,6 @@ def err_attribute_argument_n_not_identifier : Error<
   "'%0' attribute requires parameter %1 to be an identifier">;
 def err_attribute_argument_out_of_bounds : Error<
   "'%0' attribute parameter %1 is out of bounds">;
-def err_attribute_requires_objc_interface : Error<
-  "attribute may only be applied to an Objective-C interface">;
 def err_attribute_uuid_malformed_guid : Error<
   "uuid attribute contains a malformed GUID">;
 def warn_nonnull_pointers_only : Warning<
@@ -2014,7 +2012,7 @@ def warn_attribute_wrong_decl_type : Warning<
   "variables, functions and labels|fields and global variables|structs|"
   "variables, functions and tag types|thread-local variables|"
   "variables and fields|variables, data members and tag types|"
-  "types and namespaces}1">,
+  "types and namespaces|Objective-C interfaces}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<
   "%0 attribute only applies to %select{functions|unions|"
@@ -2024,15 +2022,10 @@ def err_attribute_wrong_decl_type : Error<
   "variables, functions and labels|fields and global variables|structs|"
   "variables, functions and tag types|thread-local variables|"
   "variables and fields|variables, data members and tag types|"
-  "types and namespaces}1">;
-def warn_function_attribute_wrong_type : Warning<
-  "'%0' only applies to function types; type here is %1">,
-  InGroup<IgnoredAttributes>;
-def warn_pointer_attribute_wrong_type : Warning<
-  "'%0' only applies to pointer types; type here is %1">,
-  InGroup<IgnoredAttributes>;
-def warn_objc_object_attribute_wrong_type : Warning<
-  "'%0' only applies to Objective-C object or block pointer types; type here is %1">,
+  "types and namespaces|Objective-C interfaces}1">;
+def warn_type_attribute_wrong_type : Warning<
+  "'%0' only applies to %select{function|pointer|"
+  "Objective-C object or block pointer}1 types; type here is %2">,
   InGroup<IgnoredAttributes>;
 def warn_attribute_requires_functions_or_static_globals : Warning<
   "%0 only applies to variables with static storage duration and functions">,
@@ -3408,6 +3401,10 @@ def note_unavailable_here : Note<
   "%select{unavailable|deleted|deprecated}1 here">;
 def note_implicitly_deleted : Note<
   "explicitly defaulted function was implicitly deleted here">;
+def note_inherited_deleted_here : Note<
+  "deleted constructor was inherited here">;
+def note_cannot_inherit : Note<
+  "constructor cannot be inherited">;
 def warn_not_enough_argument : Warning<
   "not enough variable arguments in %0 declaration to fit a sentinel">,
   InGroup<Sentinel>;
@@ -3428,7 +3425,7 @@ def err_redefinition : Error<"redefinition of %0">;
 def err_definition_of_implicitly_declared_member : Error<
   "definition of implicitly declared %select{default constructor|copy "
   "constructor|move constructor|copy assignment operator|move assignment "
-  "operator|destructor}1">;
+  "operator|destructor|function}1">;
 def err_definition_of_explicitly_defaulted_member : Error<
   "definition of explicitly defaulted %select{default constructor|copy "
   "constructor|move constructor|copy assignment operator|move assignment "
@@ -4249,6 +4246,8 @@ def err_typecheck_member_reference_arrow : Error<
   "member reference type %0 is not a pointer">;
 def err_typecheck_member_reference_suggestion : Error<
   "member reference type %0 is %select{a|not a}1 pointer; maybe you meant to use '%select{->|.}1'?">;
+def note_typecheck_member_reference_suggestion : Note<
+  "did you mean to use '.' instead?">;
 def err_typecheck_member_reference_type : Error<
   "cannot refer to type member %0 in %1 with '%select{.|->}2'">;
 def err_typecheck_member_reference_unknown : Error<
@@ -5394,27 +5393,33 @@ def err_builtin_fn_use : Error<"builtin functions must be directly called">;
 def warn_call_wrong_number_of_arguments : Warning<
   "too %select{few|many}0 arguments in call to %1">;
 def err_atomic_builtin_must_be_pointer : Error<
-  "first argument to atomic builtin must be a pointer (%0 invalid)">;
+  "address argument to atomic builtin must be a pointer (%0 invalid)">;
 def err_atomic_builtin_must_be_pointer_intptr : Error<
-  "first argument to atomic builtin must be a pointer to integer or pointer"
+  "address argument to atomic builtin must be a pointer to integer or pointer"
   " (%0 invalid)">;
+def err_atomic_builtin_must_be_pointer_intfltptr : Error<
+  "address argument to atomic builtin must be a pointer to integer,"
+  " floating-point or pointer (%0 invalid)">;
 def err_atomic_builtin_pointer_size : Error<
-  "first argument to atomic builtin must be a pointer to 1,2,4,8 or 16 byte "
+  "address argument to atomic builtin must be a pointer to 1,2,4,8 or 16 byte "
   "type (%0 invalid)">;
+def err_atomic_exclusive_builtin_pointer_size : Error<
+  "address argument to load or store exclusive builtin must be a pointer to"
+  " 1,2,4 or 8 byte type (%0 invalid)">;
 def err_atomic_op_needs_atomic : Error<
-  "first argument to atomic operation must be a pointer to _Atomic "
+  "address argument to atomic operation must be a pointer to _Atomic "
   "type (%0 invalid)">;
 def err_atomic_op_needs_non_const_atomic : Error<
-  "first argument to atomic operation must be a pointer to non-const _Atomic "
+  "address argument to atomic operation must be a pointer to non-const _Atomic "
   "type (%0 invalid)">;
 def err_atomic_op_needs_trivial_copy : Error<
-  "first argument to atomic operation must be a pointer to a trivially-copyable"
-  " type (%0 invalid)">;
+  "address argument to atomic operation must be a pointer to a "
+  "trivially-copyable type (%0 invalid)">;
 def err_atomic_op_needs_atomic_int_or_ptr : Error<
-  "first argument to atomic operation must be a pointer to %select{|atomic }0"
+  "address argument to atomic operation must be a pointer to %select{|atomic }0"
   "integer or pointer (%1 invalid)">;
 def err_atomic_op_bitwise_needs_atomic_int : Error<
-  "first argument to bitwise atomic operation must be a pointer to "
+  "address argument to bitwise atomic operation must be a pointer to "
   "%select{|atomic }0integer (%1 invalid)">;
   
 def err_atomic_load_store_uses_lib : Error<
@@ -6492,13 +6497,25 @@ def err_omp_expected_var_arg_suggest : Error<
 def err_omp_global_var_arg : Error<
   "arguments of '#pragma omp %0' must have %select{global storage|static storage duration}1">;
 def err_omp_ref_type_arg : Error<
-  "arguments of '#pragma omp %0' cannot be of reference type">;
+  "arguments of '#pragma omp %0' cannot be of reference type %1">;
 def err_omp_var_scope : Error<
   "'#pragma omp %0' must appear in the scope of the %q1 variable declaration">;
 def err_omp_var_used : Error<
   "'#pragma omp %0' must precede all references to variable %q1">;
 def err_omp_var_thread_local : Error<
   "variable %0 cannot be threadprivate because it is thread-local">;
+def err_omp_private_incomplete_type : Error<
+  "a private variable with incomplete type %0">;
+def err_omp_directive_nonblock : Error<
+  "directive '#pragma omp %0' bound to nonblock statement">;
+def err_omp_unexpected_clause_value : Error <
+  "expected %0 in OpenMP clause '%1'">;
+def err_omp_expected_var_name : Error <
+  "expected variable name">;
+def err_omp_required_method : Error <
+  "%0 variable must have an accessible, unambiguous %select{default constructor|copy constructor|copy assignment operator|'%2'|destructor}1">;
+def err_omp_clause_ref_type_arg : Error<
+  "arguments of OpenMP clause '%0' cannot be of reference type %1">;
 def err_omp_threadprivate_incomplete_type : Error<
   "threadprivate variable with incomplete type %0">;
 } // end of OpenMP category

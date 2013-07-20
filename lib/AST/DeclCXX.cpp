@@ -662,7 +662,7 @@ void CXXRecordDecl::addedMember(Decl *D) {
       if (!Context.getLangOpts().ObjCAutoRefCount ||
           T.getObjCLifetime() != Qualifiers::OCL_ExplicitNone)
         setHasObjectMember(true);
-    } else if (!T.isPODType(Context))
+    } else if (!T.isCXX98PODType(Context))
       data().PlainOldData = false;
     
     if (T->isReferenceType()) {
@@ -1969,6 +1969,12 @@ UsingDecl *UsingDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
                              DeclarationNameInfo(), false);
 }
 
+SourceRange UsingDecl::getSourceRange() const {
+  SourceLocation Begin = isAccessDeclaration()
+    ? getQualifierLoc().getBeginLoc() : UsingLocation;
+  return SourceRange(Begin, getNameInfo().getEndLoc());
+}
+
 void UnresolvedUsingValueDecl::anchor() { }
 
 UnresolvedUsingValueDecl *
@@ -1986,6 +1992,12 @@ UnresolvedUsingValueDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   return new (Mem) UnresolvedUsingValueDecl(0, QualType(), SourceLocation(),
                                             NestedNameSpecifierLoc(),
                                             DeclarationNameInfo());
+}
+
+SourceRange UnresolvedUsingValueDecl::getSourceRange() const {
+  SourceLocation Begin = isAccessDeclaration()
+    ? getQualifierLoc().getBeginLoc() : UsingLocation;
+  return SourceRange(Begin, getNameInfo().getEndLoc());
 }
 
 void UnresolvedUsingTypenameDecl::anchor() { }

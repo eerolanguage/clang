@@ -112,8 +112,8 @@ def ccc_debug_Group : OptionGroup<"<clang debug/development internal options>">,
   Group<ccc_Group>, HelpText<"DEBUG/DEVELOPMENT OPTIONS">;
 
 class CCCDriverOpt : Group<ccc_driver_Group>, Flags<[DriverOption, HelpHidden]>;
-def ccc_cxx : Flag<["-"], "ccc-cxx">, CCCDriverOpt,
-  HelpText<"Act as a C++ driver">;
+def driver_mode : Joined<["--"], "driver-mode=">, CCCDriverOpt,
+  HelpText<"Set the driver mode to either 'gcc', 'g++' or 'cpp'">;
 def ccc_echo : Flag<["-"], "ccc-echo">, CCCDriverOpt,
   HelpText<"Echo commands before running them">;
 def ccc_gcc_name : Separate<["-"], "ccc-gcc-name">, CCCDriverOpt,
@@ -1009,6 +1009,9 @@ def mxgot : Flag<["-"], "mxgot">, Group<m_Group>;
 def mno_xgot : Flag<["-"], "mno-xgot">, Group<m_Group>;
 def mldc1_sdc1 : Flag<["-"], "mldc1-sdc1">, Group<m_Group>;
 def mno_ldc1_sdc1 : Flag<["-"], "mno-ldc1-sdc1">, Group<m_Group>;
+def mcheck_zero_division : Flag<["-"], "mcheck-zero-division">, Group<m_Group>;
+def mno_check_zero_division : Flag<["-"], "mno-check-zero-division">,
+                              Group<m_Group>;
 def mdsp : Flag<["-"], "mdsp">, Group<m_Group>;
 def mno_dsp : Flag<["-"], "mno-dsp">, Group<m_Group>;
 def mdspr2 : Flag<["-"], "mdspr2">, Group<m_Group>;

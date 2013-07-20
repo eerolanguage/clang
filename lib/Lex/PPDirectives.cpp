@@ -432,7 +432,7 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation IfTokenLoc,
           if (Callbacks)
             Callbacks->Elif(Tok.getLocation(),
                             SourceRange(ConditionalBegin, ConditionalEnd),
-                            CondInfo.IfLoc);
+                            ShouldEnter, CondInfo.IfLoc);
           break;
         }
       }
@@ -2206,7 +2206,8 @@ void Preprocessor::HandleIfDirective(Token &IfToken,
 
   if (Callbacks)
     Callbacks->If(IfToken.getLocation(),
-                  SourceRange(ConditionalBegin, ConditionalEnd));
+                  SourceRange(ConditionalBegin, ConditionalEnd),
+                  ConditionalTrue);
 
   // Should we include the stuff contained by this directive?
   if (ConditionalTrue) {
@@ -2302,7 +2303,8 @@ void Preprocessor::HandleElifDirective(Token &ElifToken) {
   
   if (Callbacks)
     Callbacks->Elif(ElifToken.getLocation(),
-                    SourceRange(ConditionalBegin, ConditionalEnd), CI.IfLoc);
+                    SourceRange(ConditionalBegin, ConditionalEnd),
+                    true, CI.IfLoc);
 
   // Finally, skip the rest of the contents of this block.
   SkipExcludedConditionalBlock(CI.IfLoc, /*Foundnonskip*/true,

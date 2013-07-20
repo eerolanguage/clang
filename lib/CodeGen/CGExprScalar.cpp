@@ -2958,7 +2958,7 @@ static bool isCheapEnoughToEvaluateUnconditionally(const Expr *E,
   E = E->IgnoreParens();
 
   // Anything that is an integer or floating point constant is fine.
-  if (E->isConstantInitializer(CGF.getContext(), false))
+  if (E->isEvaluatable(CGF.getContext()))
     return true;
 
   // Non-volatile automatic variables too, to get "cond ? X : Y" where
@@ -3101,7 +3101,7 @@ VisitAbstractConditionalOperator(const AbstractConditionalOperator *E) {
 }
 
 Value *ScalarExprEmitter::VisitChooseExpr(ChooseExpr *E) {
-  return Visit(E->getChosenSubExpr(CGF.getContext()));
+  return Visit(E->getChosenSubExpr());
 }
 
 Value *ScalarExprEmitter::VisitVAArgExpr(VAArgExpr *VE) {

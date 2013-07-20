@@ -15,8 +15,8 @@
 #include "clang/Basic/AllDiagnostics.h"
 #include "clang/Basic/DiagnosticCategories.h"
 #include "clang/Basic/SourceManager.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <map>
 using namespace clang;
@@ -83,34 +83,28 @@ static const StaticDiagInfoRec StaticDiagInfo[] = {
 #include "clang/Basic/DiagnosticSemaKinds.inc"
 #include "clang/Basic/DiagnosticAnalysisKinds.inc"
 #undef DIAG
-  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 };
 
-static const unsigned StaticDiagInfoSize =
-  llvm::array_lengthof(StaticDiagInfo)-1;
+static const unsigned StaticDiagInfoSize = llvm::array_lengthof(StaticDiagInfo);
 
 /// GetDiagInfo - Return the StaticDiagInfoRec entry for the specified DiagID,
 /// or null if the ID is invalid.
 static const StaticDiagInfoRec *GetDiagInfo(unsigned DiagID) {
   // If assertions are enabled, verify that the StaticDiagInfo array is sorted.
 #ifndef NDEBUG
-  static bool IsFirst = true;
-  if (IsFirst) {
-    for (unsigned i = 1; i != StaticDiagInfoSize; ++i) {
-      assert(StaticDiagInfo[i-1].DiagID != StaticDiagInfo[i].DiagID &&
-             "Diag ID conflict, the enums at the start of clang::diag (in "
-             "DiagnosticIDs.h) probably need to be increased");
+  for (unsigned i = 1; i != StaticDiagInfoSize; ++i) {
+    assert(StaticDiagInfo[i-1].DiagID != StaticDiagInfo[i].DiagID &&
+           "Diag ID conflict, the enums at the start of clang::diag (in "
+           "DiagnosticIDs.h) probably need to be increased");
 
-      assert(StaticDiagInfo[i-1] < StaticDiagInfo[i] &&
-             "Improperly sorted diag info");
-    }
-    IsFirst = false;
+    assert(StaticDiagInfo[i-1] < StaticDiagInfo[i] &&
+           "Improperly sorted diag info");
   }
 #endif
 
   // Out of bounds diag. Can't be in the table.
   using namespace diag;
-  if (DiagID >= DIAG_UPPER_LIMIT)
+  if (DiagID >= DIAG_UPPER_LIMIT || DiagID <= DIAG_START_COMMON)
     return 0;
 
   // Compute the index of the requested diagnostic in the static table.
@@ -122,8 +116,7 @@ static const StaticDiagInfoRec *GetDiagInfo(unsigned DiagID) {
   // This is cheaper than a binary search on the table as it doesn't touch
   // memory at all.
   unsigned Offset = 0;
-  unsigned ID = DiagID;
-#define DIAG_START_COMMON 0 // Sentinel value.
+  unsigned ID = DiagID - DIAG_START_COMMON - 1;
 #define CATEGORY(NAME, PREV) \
   if (DiagID > DIAG_START_##NAME) { \
     Offset += NUM_BUILTIN_##PREV##_DIAGNOSTICS - DIAG_START_##PREV - 1; \
@@ -139,7 +132,6 @@ CATEGORY(COMMENT, AST)
 CATEGORY(SEMA, COMMENT)
 CATEGORY(ANALYSIS, SEMA)
 #undef CATEGORY
-#undef DIAG_START_COMMON
 
   // Avoid out of bounds reads.
   if (ID + Offset >= StaticDiagInfoSize)

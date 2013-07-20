@@ -35,10 +35,7 @@ text = '\n'.join(buf)
 
 # Determine range to format.
 cursor = int(vim.eval('line2byte(line("."))+col(".")')) - 2
-offset = int(vim.eval('line2byte(' +
-                      str(vim.current.range.start + 1) + ')')) - 1
-length = int(vim.eval('line2byte(' +
-                      str(vim.current.range.end + 2) + ')')) - offset - 2
+lines = '%s:%s' % (vim.current.range.start + 1, vim.current.range.end + 1)
 
 # Avoid flashing an ugly, ugly cmd prompt on Windows when invoking clang-format.
 startupinfo = None
@@ -48,8 +45,8 @@ if sys.platform.startswith('win32'):
   startupinfo.wShowWindow = subprocess.SW_HIDE
 
 # Call formatter.
-p = subprocess.Popen([binary, '-offset', str(offset), '-length', str(length),
-                      '-style', style, '-cursor', str(cursor)],
+p = subprocess.Popen([binary, '-lines', lines, '-style', style,
+                      '-cursor', str(cursor)],
                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                      stdin=subprocess.PIPE, startupinfo=startupinfo)
 stdout, stderr = p.communicate(input=text)
@@ -71,8 +68,8 @@ else:
   output = json.loads(lines[0])
   lines = lines[1:]
   if '\n'.join(lines) != text:
-    for i in range(min(len(buf), len(lines))):
-      buf[i] = lines[i]
+    common_length = min(len(buf), len(lines))
+    buf[:common_length] = lines[:common_length]
     for line in lines[len(buf):]:
       buf.append(line)
     del buf[len(lines):]

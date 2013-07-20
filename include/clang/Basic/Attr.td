@@ -172,7 +172,7 @@ def AlignMac68k : InheritableAttr {
   let SemaHandler = 0;
 }
 
-def AllocSize : Attr {
+def AllocSize : InheritableAttr {
   let Spellings = [GNU<"alloc_size">, CXX11<"gnu", "alloc_size">];
   let Args = [VariadicUnsignedArgument<"Args">];
 }
@@ -326,7 +326,7 @@ def CXX11NoReturn : InheritableAttr {
   let Subjects = [Function];
 }
 
-def OpenCLKernel : Attr {
+def OpenCLKernel : InheritableAttr {
   let Spellings = [Keyword<"__kernel">, Keyword<"kernel">];
 }
 
@@ -557,12 +557,12 @@ def ObjCNSObject : InheritableAttr {
   let Spellings = [GNU<"NSObject">];
 }
 
-def ObjCPreciseLifetime : Attr {
+def ObjCPreciseLifetime : InheritableAttr {
   let Spellings = [GNU<"objc_precise_lifetime">];
   let Subjects = [Var];
 }
 
-def ObjCReturnsInnerPointer : Attr {
+def ObjCReturnsInnerPointer : InheritableAttr {
   let Spellings = [GNU<"objc_returns_inner_pointer">];
   let Subjects = [ObjCMethod];
 }
@@ -572,7 +572,7 @@ def ObjCRequiresSuper : InheritableAttr {
   let Subjects = [ObjCMethod];
 }
 
-def ObjCRootClass : Attr {
+def ObjCRootClass : InheritableAttr {
   let Spellings = [GNU<"objc_root_class">];
   let Subjects = [ObjCInterface];
 }
@@ -692,7 +692,7 @@ def ObjCGC : Attr {
   let ASTNode = 0;
 }
 
-def ObjCOwnership : Attr {
+def ObjCOwnership : InheritableAttr {
   let Spellings = [GNU<"objc_ownership">];
   let Args = [IdentifierArgument<"Kind">];
   let ASTNode = 0;
@@ -747,6 +747,11 @@ def TypeVisibility : InheritableAttr {
 def VecReturn : InheritableAttr {
   let Spellings = [GNU<"vecreturn">];
   let Subjects = [CXXRecord];
+}
+
+def WarnUnused : InheritableAttr {
+  let Spellings = [GNU<"warn_unused">, CXX11<"gnu", "warn_unused">];
+  let Subjects = [Record];
 }
 
 def WarnUnusedResult : InheritableAttr {

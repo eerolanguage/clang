@@ -122,7 +122,9 @@ private:
 
       if (CurrentToken->is(tok::r_paren)) {
         if (MightBeFunctionType && CurrentToken->Next &&
-            CurrentToken->Next->isOneOf(tok::l_paren, tok::l_square))
+            (CurrentToken->Next->is(tok::l_paren) ||
+             (CurrentToken->Next->is(tok::l_square) &&
+              !Contexts.back().IsExpression)))
           Left->Type = TT_FunctionTypeLParen;
         Left->MatchingParen = CurrentToken;
         CurrentToken->MatchingParen = Left;
@@ -946,12 +948,13 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
       Current->SpacesRequiredBefore =
           spaceRequiredBefore(Line, *Current) ? 1 : 0;
 
-    if (Current->MustBreakBefore) {
-    } else if (Current->is(tok::comment)) {
+    if (Current->is(tok::comment)) {
       Current->MustBreakBefore = Current->NewlinesBefore > 0;
     } else if (Current->Previous->isTrailingComment() ||
                (Current->is(tok::string_literal) &&
                 Current->Previous->is(tok::string_literal))) {
+      Current->MustBreakBefore = true;
+    } else if (Current->Previous->IsUnterminatedLiteral) {
       Current->MustBreakBefore = true;
     } else if (Current->is(tok::lessless) && Current->Next &&
                Current->Previous->is(tok::string_literal) &&
@@ -960,19 +963,12 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
     } else if (Current->Previous->ClosesTemplateDeclaration &&
                Style.AlwaysBreakTemplateDeclarations) {
       Current->MustBreakBefore = true;
-    } else if (Style.AlwaysBreakBeforeMultilineStrings &&
-               Current->is(tok::string_literal) &&
-               Current->Previous->isNot(tok::lessless) &&
-               Current->Previous->Type != TT_InlineASMColon &&
-               Current->getNextNonComment() &&
-               Current->getNextNonComment()->is(tok::string_literal)) {
-      Current->MustBreakBefore = true;
-    } else {
-      Current->MustBreakBefore = false;
     }
     Current->CanBreakBefore =
         Current->MustBreakBefore || canBreakBefore(Line, *Current);
-    if (Current->MustBreakBefore)
+    if (Current->MustBreakBefore ||
+        (Current->is(tok::string_literal) &&
+         Current->TokenText.find("\\\n") != StringRef::npos))
       Current->TotalLength = Current->Previous->TotalLength + Style.ColumnLimit;
     else
       Current->TotalLength = Current->Previous->TotalLength +
@@ -1155,6 +1151,10 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
   if (Left.is(tok::l_paren))
     return false;
   if (Right.is(tok::l_paren)) {
+    if (Left.is(tok::r_paren) && Left.MatchingParen &&
+        Left.MatchingParen->Previous &&
+        Left.MatchingParen->Previous->is(tok::kw___attribute))
+      return true;
     return Line.Type == LT_ObjCDecl ||
            Left.isOneOf(tok::kw_if, tok::kw_for, tok::kw_while, tok::kw_switch,
                         tok::kw_return, tok::kw_catch, tok::kw_new,
@@ -1165,7 +1165,7 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
   if (Left.is(tok::l_brace) && Right.is(tok::r_brace))
     return false; // No spaces in "{}".
   if (Left.is(tok::l_brace) || Right.is(tok::r_brace))
-    return Style.SpacesInBracedLists;
+    return !Style.Cpp11BracedListStyle;
   if (Right.Type == TT_UnaryOperator)
     return !Left.isOneOf(tok::l_paren, tok::l_square, tok::at) &&
            (Left.isNot(tok::colon) || Left.Type != TT_ObjCMethodExpr);
@@ -1267,7 +1267,7 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
         Left.Previous->is(tok::kw___attribute))
       return false;
     if (Left.is(tok::l_paren) && (Left.Previous->Type == TT_BinaryOperator ||
-                                  Left.Previous->is(tok::r_paren)))
+                                  Left.Previous->Type == TT_CastRParen))
       return false;
   }
 

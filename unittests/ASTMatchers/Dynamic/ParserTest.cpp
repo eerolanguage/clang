@@ -73,7 +73,7 @@ public:
     VariantValue Value;
     Parser::parseExpression(Code, this, &Value, &Error);
     Values.push_back(Value);
-    Errors.push_back(Error.ToStringFull());
+    Errors.push_back(Error.toStringFull());
   }
 
   MatcherList actOnMatcherExpression(StringRef MatcherName,
@@ -179,10 +179,12 @@ TEST(ParserTest, ParseMatcher) {
 using ast_matchers::internal::Matcher;
 
 TEST(ParserTest, FullParserTest) {
+  Diagnostics Error;
   OwningPtr<DynTypedMatcher> VarDecl(Parser::parseMatcherExpression(
       "varDecl(hasInitializer(binaryOperator(hasLHS(integerLiteral()),"
       "                                      hasOperatorName(\"+\"))))",
-      NULL));
+      &Error));
+  EXPECT_EQ("", Error.toStringFull());
   Matcher<Decl> M = Matcher<Decl>::constructFrom(*VarDecl);
   EXPECT_TRUE(matches("int x = 1 + false;", M));
   EXPECT_FALSE(matches("int x = true + 1;", M));
@@ -190,13 +192,13 @@ TEST(ParserTest, FullParserTest) {
   EXPECT_FALSE(matches("int x = true - 1;", M));
 
   OwningPtr<DynTypedMatcher> HasParameter(Parser::parseMatcherExpression(
-      "functionDecl(hasParameter(1, hasName(\"x\")))", NULL));
+      "functionDecl(hasParameter(1, hasName(\"x\")))", &Error));
+  EXPECT_EQ("", Error.toStringFull());
   M = Matcher<Decl>::constructFrom(*HasParameter);
 
   EXPECT_TRUE(matches("void f(int a, int x);", M));
   EXPECT_FALSE(matches("void f(int x, int a);", M));
 
-  Diagnostics Error;
   EXPECT_TRUE(Parser::parseMatcherExpression(
       "hasInitializer(\n    binaryOperator(hasLHS(\"A\")))", &Error) == NULL);
   EXPECT_EQ("1:1: Error parsing argument 1 for matcher hasInitializer.\n"
@@ -204,20 +206,20 @@ TEST(ParserTest, FullParserTest) {
             "2:20: Error building matcher hasLHS.\n"
             "2:27: Incorrect type for arg 1. "
             "(Expected = Matcher<Expr>) != (Actual = String)",
-            Error.ToStringFull());
+            Error.toStringFull());
 }
 
 std::string ParseWithError(StringRef Code) {
   Diagnostics Error;
   VariantValue Value;
   Parser::parseExpression(Code, &Value, &Error);
-  return Error.ToStringFull();
+  return Error.toStringFull();
 }
 
 std::string ParseMatcherWithError(StringRef Code) {
   Diagnostics Error;
   Parser::parseMatcherExpression(Code, &Error);
-  return Error.ToStringFull();
+  return Error.toStringFull();
 }
 
 TEST(ParserTest, Errors) {
