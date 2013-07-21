@@ -3561,6 +3561,18 @@ ExprResult Sema::ActOnObjCBridgedCast(Scope *S,
                                       Expr *SubExpr) {
   TypeSourceInfo *TSInfo = 0;
   QualType T = GetTypeFromParser(Type, &TSInfo);
+
+  // For eero, allow casts without a '*' following the class type, 
+  // e.g. (__bridge SomeClass)
+  if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
+      T->isObjCObjectType()) {
+    T = Context.getObjCObjectPointerType(T);
+    if (TSInfo) {
+      const SourceLocation &Loc = TSInfo->getTypeLoc().getBeginLoc();
+      TSInfo = Context.getTrivialTypeSourceInfo(T, Loc);
+    }
+  }
+
   if (!TSInfo)
     TSInfo = Context.getTrivialTypeSourceInfo(T, LParenLoc);
   return BuildObjCBridgedCast(LParenLoc, Kind, BridgeKeywordLoc, TSInfo, 
