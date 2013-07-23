@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -triple i686-unknown-unknown -fsyntax-only -verify %s
 
 // PR6619
 template<bool C> struct if_c { };
@@ -82,9 +82,17 @@ namespace InstantiateFunctionTypedef {
   struct X {
     typedef int functype(int, int);
     functype func;
+
+    typedef int stdfunctype(int, int) __attribute__((stdcall));
+    __attribute__((stdcall)) functype stdfunc1;
+    stdfunctype stdfunc2;
+
+    // FIXME: Test a calling convention not supported by this target.
   };
 
   void f(X<int> x) {
     (void)x.func(1, 2);
+    (void)x.stdfunc1(1, 2);
+    (void)x.stdfunc2(1, 2);
   }
 }

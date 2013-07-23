@@ -51,9 +51,48 @@ CGDebugInfo::~CGDebugInfo() {
          "Region stack mismatch, stack not empty!");
 }
 
+
+NoLocation::NoLocation(CodeGenFunction &CGF, CGBuilderTy &B)
+  : DI(CGF.getDebugInfo()), Builder(B) {
+  if (DI) {
+    SavedLoc = DI->getLocation();
+    DI->CurLoc = SourceLocation();
+    Builder.SetCurrentDebugLocation(llvm::DebugLoc());
+  }
+}
+
+NoLocation::~NoLocation() {
+  if (DI) {
+    assert(Builder.getCurrentDebugLocation().isUnknown());
+    DI->CurLoc = SavedLoc;
+  }
+}
+
+ArtificialLocation::ArtificialLocation(CodeGenFunction &CGF, CGBuilderTy &B)
+  : DI(CGF.getDebugInfo()), Builder(B) {
+  if (DI) {
+    SavedLoc = DI->getLocation();
+    // Sync the Builder.
+    DI->EmitLocation(Builder, SavedLoc);
+    DI->CurLoc = SourceLocation();
+    // Construct a location that has a valid scope, but no line info.
+    llvm::DIDescriptor Scope = DI->LexicalBlockStack.empty() ?
+      llvm::DIDescriptor(DI->TheCU) :
+      llvm::DIDescriptor(DI->LexicalBlockStack.back());
+    Builder.SetCurrentDebugLocation(llvm::DebugLoc::get(0, 0, Scope));
+  }
+}
+
+ArtificialLocation::~ArtificialLocation() {
+  if (DI) {
+    assert(Builder.getCurrentDebugLocation().getLine() == 0);
+    DI->CurLoc = SavedLoc;
+  }
+}
+
 void CGDebugInfo::setLocation(SourceLocation Loc) {
   // If the new location isn't valid return.
-  if (!Loc.isValid()) return;
+  if (Loc.isInvalid()) return;
 
   CurLoc = CGM.getContext().getSourceManager().getExpansionLoc(Loc);
 
@@ -347,12 +386,11 @@ void CGDebugInfo::CreateCompileUnit() {
     RuntimeVers = LO.ObjCRuntime.isNonFragile() ? 2 : 1;
 
   // Create new compile unit.
-  DBuilder.createCompileUnit(LangTag, Filename, getCurrentDirname(),
-                             Producer, LO.Optimize,
-                             CGM.getCodeGenOpts().DwarfDebugFlags,
-                             RuntimeVers, SplitDwarfFilename);
   // FIXME - Eliminate TheCU.
-  TheCU = llvm::DICompileUnit(DBuilder.getCU());
+  TheCU = DBuilder.createCompileUnit(LangTag, Filename, getCurrentDirname(),
+                                     Producer, LO.Optimize,
+                                     CGM.getCodeGenOpts().DwarfDebugFlags,
+                                     RuntimeVers, SplitDwarfFilename);
 }
 
 /// CreateType - Get the Basic type from the cache or create a new
@@ -372,7 +410,7 @@ llvm::DIType CGDebugInfo::CreateType(const BuiltinType *BT) {
   case BuiltinType::Void:
     return llvm::DIType();
   case BuiltinType::ObjCClass:
-    if (ClassTy.isType())
+    if (ClassTy)
       return ClassTy;
     ClassTy = DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
                                          "objc_class", TheCU,
@@ -384,10 +422,10 @@ llvm::DIType CGDebugInfo::CreateType(const BuiltinType *BT) {
     //  Class isa;
     // } *id;
 
-    if (ObjTy.isCompositeType())
+    if (ObjTy)
       return ObjTy;
 
-    if (!ClassTy.isType())
+    if (!ClassTy)
       ClassTy = DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
                                            "objc_class", TheCU,
                                            getOrCreateMainFile(), 0);
@@ -405,7 +443,7 @@ llvm::DIType CGDebugInfo::CreateType(const BuiltinType *BT) {
     return ObjTy;
   }
   case BuiltinType::ObjCSel: {
-    if (SelTy.isType())
+    if (SelTy)
       return SelTy;
     SelTy =
       DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type,
@@ -638,7 +676,7 @@ llvm::DIType CGDebugInfo::CreatePointerLikeType(unsigned Tag,
 
 llvm::DIType CGDebugInfo::getOrCreateStructPtrType(StringRef Name,
                                                    llvm::DIType &Cache) {
-  if (Cache.isType())
+  if (Cache)
     return Cache;
   Cache = DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_structure_type, Name,
                                      TheCU, getOrCreateMainFile(), 0);
@@ -649,7 +687,7 @@ llvm::DIType CGDebugInfo::getOrCreateStructPtrType(StringRef Name,
 
 llvm::DIType CGDebugInfo::CreateType(const BlockPointerType *Ty,
                                      llvm::DIFile Unit) {
-  if (BlockLiteralGeneric.isType())
+  if (BlockLiteralGeneric)
     return BlockLiteralGeneric;
 
   SmallVector<llvm::Value *, 8> EltTys;
@@ -715,7 +753,7 @@ llvm::DIType CGDebugInfo::CreateType(const TypedefType *Ty, llvm::DIFile Unit,
   // typedef, make sure to emit the whole chain.
   llvm::DIType Src =
       getOrCreateType(Ty->getDecl()->getUnderlyingType(), Unit, Declaration);
-  if (!Src.isType())
+  if (!Src)
     return llvm::DIType();
   // We don't set size information, but do specify where the typedef was
   // declared.
@@ -1917,7 +1955,7 @@ void CGDebugInfo::completeFwdDecl(const RecordDecl &RD) {
   QualType QTy = CGM.getContext().getRecordType(&RD);
   llvm::DIType T = getTypeOrNull(QTy);
 
-  if (T.isType() && T.isForwardDecl())
+  if (T && T.isForwardDecl())
     getOrCreateType(QTy, getOrCreateFile(RD.getLocation()));
 }
 
@@ -1949,7 +1987,7 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit,
 
   llvm::DIType T = getCompletedTypeOrNull(Ty);
 
-  if (T.isType()) {
+  if (T) {
     // If we're looking for a definition, make sure we have definitions of any
     // underlying types.
     if (const TypedefType* TTy = dyn_cast<TypedefType>(Ty))
@@ -1967,7 +2005,7 @@ llvm::DIType CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile Unit,
   TypeCache[TyPtr] = Res;
 
   llvm::DIType TC = getTypeOrNull(Ty);
-  if (TC.isType() && TC.isForwardDecl())
+  if (TC && TC.isForwardDecl())
     ReplaceMap.push_back(std::make_pair(TyPtr, static_cast<llvm::Value*>(TC)));
   else if (ObjCInterfaceDecl* Decl = getObjCInterfaceDecl(Ty)) {
     // Interface types may have elements added to them by a
@@ -2127,12 +2165,12 @@ llvm::DIType CGDebugInfo::getOrCreateLimitedType(QualType Ty,
   // We may have cached a forward decl when we could have created
   // a non-forward decl. Go ahead and create a non-forward decl
   // now.
-  if (T.isType() && !T.isForwardDecl()) return T;
+  if (T && !T.isForwardDecl()) return T;
 
   // Otherwise create the type.
   llvm::DIType Res = CreateLimitedTypeNode(Ty, Unit);
 
-  if (T.isType() && T.isForwardDecl())
+  if (T && T.isForwardDecl())
     ReplaceMap.push_back(std::make_pair(Ty.getAsOpaquePtr(),
                                         static_cast<llvm::Value*>(T)));
 
@@ -2445,10 +2483,10 @@ void CGDebugInfo::EmitFunctionStart(GlobalDecl GD, QualType FnType,
 }
 
 /// EmitLocation - Emit metadata to indicate a change in line/column
-/// information in the source file.
+/// information in the source file. If the location is invalid, the
+/// previous location will be reused.
 void CGDebugInfo::EmitLocation(CGBuilderTy &Builder, SourceLocation Loc,
                                bool ForceColumnInfo) {
-
   // Update our current location
   setLocation(Loc);
 
@@ -2638,7 +2676,8 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, unsigned Tag,
   if (isa<ImplicitParamDecl>(VD) && ArgNo == 1)
     Flags |= llvm::DIDescriptor::FlagObjectPointer;
   if (llvm::Argument *Arg = dyn_cast<llvm::Argument>(Storage))
-    if (Arg->getType()->isPointerTy() && !Arg->hasByValAttr() && !VD->getType()->isPointerType())
+    if (Arg->getType()->isPointerTy() && !Arg->hasByValAttr() &&
+        !VD->getType()->isPointerType())
       Flags |= llvm::DIDescriptor::FlagIndirectVariable;
 
   llvm::MDNode *Scope = LexicalBlockStack.back();
@@ -2733,7 +2772,7 @@ void CGDebugInfo::EmitDeclareOfAutoVariable(const VarDecl *VD,
 llvm::DIType CGDebugInfo::CreateSelfType(const QualType &QualTy,
                                          llvm::DIType Ty) {
   llvm::DIType CachedTy = getTypeOrNull(QualTy);
-  if (CachedTy.isType()) Ty = CachedTy;
+  if (CachedTy) Ty = CachedTy;
   else DEBUG(llvm::dbgs() << "No cached type for self.");
   return DBuilder.createObjectPointerType(Ty);
 }
@@ -3167,7 +3206,7 @@ void CGDebugInfo::finalize() {
         RepTy = llvm::DIType(cast<llvm::MDNode>(V));
     }
 
-    if (Ty.isType() && Ty.isForwardDecl() && RepTy.isType())
+    if (Ty && Ty.isForwardDecl() && RepTy)
       Ty.replaceAllUsesWith(RepTy);
   }
 

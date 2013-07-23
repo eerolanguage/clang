@@ -52,7 +52,8 @@ enum AttributeDeclKind {
   ExpectedTLSVar,
   ExpectedVariableOrField,
   ExpectedVariableFieldOrTag,
-  ExpectedTypeOrNamespace
+  ExpectedTypeOrNamespace,
+  ExpectedObjectiveCInterface
 };
 
 //===----------------------------------------------------------------------===//
@@ -1546,10 +1547,8 @@ static void handleWeakRefAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 
 static void handleAliasAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // check the attribute arguments.
-  if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+  if (!checkAttributeNumArgs(S, Attr, 1))
     return;
-  }
 
   Expr *Arg = Attr.getArg(0);
   Arg = Arg->IgnoreParenCasts();
@@ -1669,10 +1668,8 @@ static void handleAlwaysInlineAttr(Sema &S, Decl *D,
 static void handleTLSModelAttr(Sema &S, Decl *D,
                                const AttributeList &Attr) {
   // Check the attribute arguments.
-  if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+  if (!checkAttributeNumArgs(S, Attr, 1))
     return;
-  }
 
   Expr *Arg = Attr.getArg(0);
   Arg = Arg->IgnoreParenCasts();
@@ -2038,8 +2035,8 @@ static void handleDestructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 }
 
 template <typename AttrTy>
-static void handleAttrWithMessage(Sema &S, Decl *D, const AttributeList &Attr,
-                                  const char *Name) {
+static void handleAttrWithMessage(Sema &S, Decl *D,
+                                  const AttributeList &Attr) {
   unsigned NumArgs = Attr.getNumArgs();
   if (NumArgs > 1) {
     S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 1;
@@ -2052,7 +2049,7 @@ static void handleAttrWithMessage(Sema &S, Decl *D, const AttributeList &Attr,
     StringLiteral *SE = dyn_cast<StringLiteral>(Attr.getArg(0));
     if (!SE) {
       S.Diag(Attr.getArg(0)->getLocStart(), diag::err_attribute_not_string)
-        << Name;
+        << Attr.getName();
       return;
     }
     Str = SE->getString();
@@ -2078,7 +2075,8 @@ static void handleArcWeakrefUnavailableAttr(Sema &S, Decl *D,
 static void handleObjCRootClassAttr(Sema &S, Decl *D, 
                                     const AttributeList &Attr) {
   if (!isa<ObjCInterfaceDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_requires_objc_interface);
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedObjectiveCInterface;
     return;
   }
   
@@ -2490,7 +2488,8 @@ static void handleObjCExceptionAttr(Sema &S, Decl *D,
 
   ObjCInterfaceDecl *OCI = dyn_cast<ObjCInterfaceDecl>(D);
   if (OCI == 0) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_requires_objc_interface);
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedObjectiveCInterface;
     return;
   }
 
@@ -2667,6 +2666,17 @@ static void handleSentinelAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   D->addAttr(::new (S.Context)
              SentinelAttr(Attr.getRange(), S.Context, sentinel, nullPos,
                           Attr.getAttributeSpellingListIndex()));
+}
+
+static void handleWarnUnusedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  // Check the attribute arguments.
+  if (!checkAttributeNumArgs(S, Attr, 0))
+    return;
+
+  if (RecordDecl *RD = dyn_cast<RecordDecl>(D))
+    RD->addAttr(::new (S.Context) WarnUnusedAttr(Attr.getRange(), S.Context));
+  else
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
 }
 
 static void handleWarnUnusedResult(Sema &S, Decl *D, const AttributeList &Attr) {
@@ -3127,8 +3137,7 @@ static void handleInitPriorityAttr(Sema &S, Decl *D,
     return;
   }
   
-  if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+  if (!checkAttributeNumArgs(S, Attr, 1)) {
     Attr.setInvalid();
     return;
   }
@@ -4143,8 +4152,7 @@ bool Sema::CheckRegparmAttr(const AttributeList &Attr, unsigned &numParams) {
   if (Attr.isInvalid())
     return true;
 
-  if (Attr.getNumArgs() != 1) {
-    Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+  if (!checkAttributeNumArgs(*this, Attr, 1)) {
     Attr.setInvalid();
     return true;
   }
@@ -4792,7 +4800,7 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
     handleCXX11NoReturnAttr(S, D, Attr);
     break;
   case AttributeList::AT_Deprecated:
-    handleAttrWithMessage<DeprecatedAttr>(S, D, Attr, "deprecated");
+    handleAttrWithMessage<DeprecatedAttr>(S, D, Attr);
     break;
   case AttributeList::AT_Destructor:  handleDestructorAttr  (S, D, Attr); break;
   case AttributeList::AT_ExtVectorType:
@@ -4873,7 +4881,7 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_Packed:      handlePackedAttr      (S, D, Attr); break;
   case AttributeList::AT_Section:     handleSectionAttr     (S, D, Attr); break;
   case AttributeList::AT_Unavailable:
-    handleAttrWithMessage<UnavailableAttr>(S, D, Attr, "unavailable");
+    handleAttrWithMessage<UnavailableAttr>(S, D, Attr);
     break;
   case AttributeList::AT_ArcWeakrefUnavailable: 
     handleArcWeakrefUnavailableAttr (S, D, Attr); 
@@ -4894,6 +4902,9 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_TypeVisibility:
     handleVisibilityAttr(S, D, Attr, true);
+    break;
+  case AttributeList::AT_WarnUnused:
+    handleWarnUnusedAttr(S, D, Attr);
     break;
   case AttributeList::AT_WarnUnusedResult: handleWarnUnusedResult(S, D, Attr);
     break;

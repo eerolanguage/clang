@@ -45,7 +45,7 @@ using namespace llvm::opt;
 /// arguments that is shared with gcc.
 static void CheckPreprocessingOptions(const Driver &D, const ArgList &Args) {
   if (Arg *A = Args.getLastArg(options::OPT_C, options::OPT_CC))
-    if (!Args.hasArg(options::OPT_E) && !D.CCCIsCPP)
+    if (!Args.hasArg(options::OPT_E) && !D.CCCIsCPP())
       D.Diag(diag::err_drv_argument_only_allowed_with)
         << A->getAsString(Args) << "-E";
 }
@@ -1039,6 +1039,14 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
     }
   }
 
+  if (Arg *A = Args.getLastArg(options::OPT_mcheck_zero_division,
+                               options::OPT_mno_check_zero_division)) {
+    if (A->getOption().matches(options::OPT_mno_check_zero_division)) {
+      CmdArgs.push_back("-mllvm");
+      CmdArgs.push_back("-mno-check-zero-division");
+    }
+  }
+
   if (Arg *A = Args.getLastArg(options::OPT_G)) {
     StringRef v = A->getValue();
     CmdArgs.push_back("-mllvm");
@@ -1215,6 +1223,19 @@ void Clang::AddSparcTargetArgs(const ArgList &Args,
     assert(FloatABI == "hard" && "Invalid float abi!");
     CmdArgs.push_back("-mhard-float");
   }
+}
+
+static const char *getSystemZTargetCPU(const ArgList &Args) {
+  if (const Arg *A = Args.getLastArg(options::OPT_march_EQ))
+    return A->getValue();
+  return "z10";
+}
+
+void Clang::AddSystemZTargetArgs(const ArgList &Args,
+                                 ArgStringList &CmdArgs) const {
+  const char *CPUName = getSystemZTargetCPU(Args);
+  CmdArgs.push_back("-target-cpu");
+  CmdArgs.push_back(CPUName);
 }
 
 static const char *getX86TargetCPU(const ArgList &Args,
@@ -1799,9 +1820,10 @@ static bool shouldUseFramePointer(const ArgList &Args,
                                options::OPT_fomit_frame_pointer))
     return A->getOption().matches(options::OPT_fno_omit_frame_pointer);
 
-  // Don't use a frame pointer on linux x86 and x86_64 if optimizing.
+  // Don't use a frame pointer on linux x86, x86_64 and z if optimizing.
   if ((Triple.getArch() == llvm::Triple::x86_64 ||
-       Triple.getArch() == llvm::Triple::x86) &&
+       Triple.getArch() == llvm::Triple::x86 ||
+       Triple.getArch() == llvm::Triple::systemz) &&
       Triple.getOS() == llvm::Triple::Linux) {
     if (Arg *A = Args.getLastArg(options::OPT_O_Group))
       if (!A->getOption().matches(options::OPT_O0))
@@ -1817,9 +1839,10 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
                                options::OPT_momit_leaf_frame_pointer))
     return A->getOption().matches(options::OPT_mno_omit_leaf_frame_pointer);
 
-  // Don't use a leaf frame pointer on linux x86 and x86_64 if optimizing.
+  // Don't use a leaf frame pointer on linux x86, x86_64 and z if optimizing.
   if ((Triple.getArch() == llvm::Triple::x86_64 ||
-       Triple.getArch() == llvm::Triple::x86) &&
+       Triple.getArch() == llvm::Triple::x86 ||
+       Triple.getArch() == llvm::Triple::systemz) &&
       Triple.getOS() == llvm::Triple::Linux) {
     if (Arg *A = Args.getLastArg(options::OPT_O_Group))
       if (!A->getOption().matches(options::OPT_O0))
@@ -2452,6 +2475,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   case llvm::Triple::sparc:
     AddSparcTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::systemz:
+    AddSystemZTargetArgs(Args, CmdArgs);
     break;
 
   case llvm::Triple::x86:
@@ -3987,7 +4014,7 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
   const char *GCCName;
   if (!customGCCName.empty())
     GCCName = customGCCName.c_str();
-  else if (D.CCCIsCXX) {
+  else if (D.CCCIsCXX()) {
     GCCName = "g++";
   } else
     GCCName = "gcc";
@@ -4249,7 +4276,7 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
   // Libraries
   //----------------------------------------------------------------------------
   if (incStdLib && incDefLibs) {
-    if (D.CCCIsCXX) {
+    if (D.CCCIsCXX()) {
       ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
       CmdArgs.push_back("-lm");
     }
@@ -4830,7 +4857,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    if (getToolChain().getDriver().CCCIsCXX)
+    if (getToolChain().getDriver().CCCIsCXX())
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
 
     // link_ssp spec is empty.
@@ -5012,7 +5039,7 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(LibPath + "values-Xa.o"));
       CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtbegin.o"));
     }
-    if (getToolChain().getDriver().CCCIsCXX)
+    if (getToolChain().getDriver().CCCIsCXX())
       CmdArgs.push_back(Args.MakeArgString(LibPath + "cxa_finalize.o"));
   }
 
@@ -5027,7 +5054,7 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    if (getToolChain().getDriver().CCCIsCXX)
+    if (getToolChain().getDriver().CCCIsCXX())
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
     CmdArgs.push_back("-lgcc_s");
     if (!Args.hasArg(options::OPT_shared)) {
@@ -5268,7 +5295,7 @@ void openbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    if (D.CCCIsCXX) {
+    if (D.CCCIsCXX()) {
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
       if (Args.hasArg(options::OPT_pg)) 
         CmdArgs.push_back("-lm_p");
@@ -5398,7 +5425,7 @@ void bitrig::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    if (D.CCCIsCXX) {
+    if (D.CCCIsCXX()) {
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
       if (Args.hasArg(options::OPT_pg))
         CmdArgs.push_back("-lm_p");
@@ -5638,7 +5665,7 @@ void freebsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    if (D.CCCIsCXX) {
+    if (D.CCCIsCXX()) {
       ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
       if (Args.hasArg(options::OPT_pg))
         CmdArgs.push_back("-lm_p");
@@ -5808,7 +5835,7 @@ void netbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    if (D.CCCIsCXX) {
+    if (D.CCCIsCXX()) {
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
       CmdArgs.push_back("-lm");
     }
@@ -5926,8 +5953,10 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-KPIC");
     }
   } else if (getToolChain().getArch() == llvm::Triple::systemz) {
-    // At the moment we always produce z10 code.
-    CmdArgs.push_back("-march=z10");
+    // Always pass an -march option, since our default of z10 is later
+    // than the GNU assembler's default.
+    StringRef CPUName = getSystemZTargetCPU(Args);
+    CmdArgs.push_back(Args.MakeArgString("-march=" + CPUName));
   }
 
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
@@ -5960,23 +5989,23 @@ static void AddLibgcc(llvm::Triple Triple, const Driver &D,
   bool isAndroid = Triple.getEnvironment() == llvm::Triple::Android;
   bool StaticLibgcc = Args.hasArg(options::OPT_static_libgcc) ||
                       Args.hasArg(options::OPT_static);
-  if (!D.CCCIsCXX)
+  if (!D.CCCIsCXX())
     CmdArgs.push_back("-lgcc");
 
   if (StaticLibgcc || isAndroid) {
-    if (D.CCCIsCXX)
+    if (D.CCCIsCXX())
       CmdArgs.push_back("-lgcc");
   } else {
-    if (!D.CCCIsCXX)
+    if (!D.CCCIsCXX())
       CmdArgs.push_back("--as-needed");
     CmdArgs.push_back("-lgcc_s");
-    if (!D.CCCIsCXX)
+    if (!D.CCCIsCXX())
       CmdArgs.push_back("--no-as-needed");
   }
 
   if (StaticLibgcc && !isAndroid)
     CmdArgs.push_back("-lgcc_eh");
-  else if (!Args.hasArg(options::OPT_shared) && D.CCCIsCXX)
+  else if (!Args.hasArg(options::OPT_shared) && D.CCCIsCXX())
     CmdArgs.push_back("-lgcc");
 
   // According to Android ABI, we have to link with libdl if we are
@@ -6205,7 +6234,7 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Call these before we add the C++ ABI library.
   if (Sanitize.needsUbsanRt())
-    addUbsanRTLinux(getToolChain(), Args, CmdArgs, D.CCCIsCXX,
+    addUbsanRTLinux(getToolChain(), Args, CmdArgs, D.CCCIsCXX(),
                     Sanitize.needsAsanRt() || Sanitize.needsTsanRt() ||
                     Sanitize.needsMsanRt() || Sanitize.needsLsanRt());
   if (Sanitize.needsAsanRt())
@@ -6220,7 +6249,7 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   // The profile runtime also needs access to system libraries.
   addProfileRTLinux(getToolChain(), Args, CmdArgs);
 
-  if (D.CCCIsCXX &&
+  if (D.CCCIsCXX() &&
       !Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
     bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
@@ -6336,7 +6365,7 @@ void minix::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    if (D.CCCIsCXX) {
+    if (D.CCCIsCXX()) {
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
       CmdArgs.push_back("-lm");
     }
@@ -6484,7 +6513,7 @@ void dragonfly::Link::ConstructJob(Compilation &C, const JobAction &JA,
       }
     }
 
-    if (D.CCCIsCXX) {
+    if (D.CCCIsCXX()) {
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
       CmdArgs.push_back("-lm");
     }

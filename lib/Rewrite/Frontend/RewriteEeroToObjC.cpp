@@ -686,7 +686,7 @@ void TranslatorVisitor::RewriteFunctionDecl(FunctionDecl* Function) {
   if (Function->isThisDeclarationADefinition()) {
     LocEnd = Function->getBody()->getLocStart();
     str += " {";
-    DeferredInsertText(Function->getLocEnd(), "\n}");
+    DeferredInsertTextAfterToken(Function->getLocEnd(), "\n}");
   } else {
     LocEnd = Function->getLocEnd();
     str += ";";
@@ -1595,8 +1595,10 @@ void TranslatorVisitor::RewriteWhileStatement(WhileStmt* S) {
 //
 void TranslatorVisitor::RewriteDoStatement(DoStmt* S) {
 
-  CompoundStmt* body = dyn_cast<CompoundStmt>(S->getBody());
-  DeferredInsertText(body->getLBracLoc(), " {");
+  const SourceLocation& DoLoc = S->getDoLoc();
+  const SourceLocation& DoLocEnd = Lexer::getLocForEndOfToken(DoLoc, 0, *SM, LangOpts);
+  TheRewriter.ReplaceText(GetRange(DoLoc, DoLocEnd), "do {");
+
   DeferredInsertText(S->getWhileLoc(), "} ");
 
   string condStr = " (";

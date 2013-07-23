@@ -38,8 +38,27 @@ public:
   Range() : Offset(0), Length(0) {}
   Range(unsigned Offset, unsigned Length) : Offset(Offset), Length(Length) {}
 
+  /// \brief Accessors.
+  /// @{
   unsigned getOffset() const { return Offset; }
   unsigned getLength() const { return Length; }
+  /// @}
+
+  /// \name Range Predicates
+  /// @{
+  /// \brief Whether this range overlaps with \p RHS or not.
+  bool overlapsWith(Range RHS) const {
+    if ((Offset + Length) <= RHS.Offset || Offset >= (RHS.Offset + RHS.Length))
+      return false;
+    return true;
+  }
+
+  /// \brief Whether this range contains \p RHS or not.
+  bool contains(Range RHS) const {
+    return RHS.Offset >= Offset &&
+           (RHS.Offset + RHS.Length) <= (Offset + Length);
+  }
+  /// @}
 
 private:
   unsigned Offset;
@@ -124,13 +143,13 @@ typedef std::set<Replacement, Replacement::Less> Replacements;
 /// other applications.
 ///
 /// \returns true if all replacements apply. false otherwise.
-bool applyAllReplacements(Replacements &Replaces, Rewriter &Rewrite);
+bool applyAllReplacements(const Replacements &Replaces, Rewriter &Rewrite);
 
 /// \brief Applies all replacements in \p Replaces to \p Code.
 ///
 /// This completely ignores the path stored in each replacement. If one or more
 /// replacements cannot be applied, this returns an empty \c string.
-std::string applyAllReplacements(StringRef Code, Replacements &Replaces);
+std::string applyAllReplacements(StringRef Code, const Replacements &Replaces);
 
 /// \brief Calculates how a code \p Position is shifted when \p Replaces are
 /// applied.

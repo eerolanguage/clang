@@ -2798,7 +2798,8 @@ void Sema::ArgumentDependentLookup(DeclarationName Name, bool Operator,
         bool DeclaredInAssociatedClass = false;
         for (Decl *DI = D; DI; DI = DI->getPreviousDecl()) {
           DeclContext *LexDC = DI->getLexicalDeclContext();
-          if (AssociatedClasses.count(cast<CXXRecordDecl>(LexDC))) {
+          if (isa<CXXRecordDecl>(LexDC) &&
+              AssociatedClasses.count(cast<CXXRecordDecl>(LexDC))) {
             DeclaredInAssociatedClass = true;
             break;
           }
