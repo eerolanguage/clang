@@ -1210,7 +1210,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     } else if (Tok.is(tok::semi) && !Tok.isAtStartOfLine()) {
       EndLoc = ConsumeToken(); // the semicolon at the end of the line
     } else {
-      EndLoc = PP.getLocForEndOfToken(PrevTokLocation);
+      EndLoc = PP.getLocForEndOfToken(PrevTokLocation, 1);
     }
 
     Selector Sel = PP.getSelectorTable().getNullarySelector(SelIdent);
@@ -1452,7 +1452,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
   } else if (Tok.is(tok::semi) && !Tok.isAtStartOfLine()) {
     EndLoc = ConsumeToken(); // the semicolon at the end of the line
   } else {
-    EndLoc = PP.getLocForEndOfToken(PrevTokLocation);
+    EndLoc = PP.getLocForEndOfToken(PrevTokLocation, 1);
   }
   
   if (KeyIdents.size() == 0)
@@ -1526,7 +1526,7 @@ Parser::ParseOptionalMethodDecl(SourceLocation mLoc,
         if (Tok.is(tok::semi) && !Tok.isAtStartOfLine()) {
           EndLoc = ConsumeToken(); // the semicolon at the end of the line
         } else {
-          EndLoc = PP.getLocForEndOfToken(PrevTokLocation);
+          EndLoc = PP.getLocForEndOfToken(PrevTokLocation, 1);
         }
 
         Selector PartialSel = PP.getSelectorTable().getSelector(KeyIdents.size(),

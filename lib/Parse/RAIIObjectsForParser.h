@@ -376,13 +376,18 @@ namespace clang {
       switch (tokLocMode) {
         case UseSameLineTokLocs:
           Loc = P.Tok.getLocation();
+          if (Loc.isMacroID())
+            Loc = P.PP.getSourceManager().getExpansionLoc(Loc);
           break;
         case UseSplitLineTokLocs:
-          Loc = P.PP.getLocForEndOfToken(P.PrevTokLocation);
+          Loc = P.PrevTokLocation;
+          if (Loc.isMacroID()) {
+            const SourceManager &SM = P.PP.getSourceManager();
+            Loc = SM.getExpansionRange(Loc).second; // end location
+          }
+          Loc = P.PP.getLocForEndOfToken(Loc, 1);
           break;
       }
-      if (Loc.isMacroID())
-        Loc = P.PP.getSourceManager().getExpansionLoc(Loc);
       return Loc;
     }
     SourceLocation getCloseLocForMode() {
@@ -390,11 +395,14 @@ namespace clang {
       switch (tokLocMode) {
         case UseSameLineTokLocs:
         case UseSplitLineTokLocs:
-          Loc = P.PP.getLocForEndOfToken(P.PrevTokLocation);
+          Loc = P.PrevTokLocation;
+          if (Loc.isMacroID()) {
+            const SourceManager &SM = P.PP.getSourceManager();
+            Loc = SM.getExpansionRange(Loc).second; // end location
+          }
+          Loc = P.PP.getLocForEndOfToken(Loc, 1);
           break;
       }
-      if (Loc.isMacroID())
-        Loc = P.PP.getSourceManager().getExpansionLoc(Loc);
       return Loc;
     }
     

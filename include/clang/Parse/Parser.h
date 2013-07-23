@@ -760,7 +760,7 @@ private:
   void InsertTokenAndIgnoreNewline(const tok::TokenKind tokenKind) {
     InsertTokenAndKeepNewline(tokenKind);
 
-    Tok.setLocation(PP.getLocForEndOfToken(PrevTokLocation));
+    Tok.setLocation(PP.getLocForEndOfToken(PrevTokLocation, 1));
     Tok.clearFlag(Token::LeadingSpace);
     Tok.clearFlag(Token::StartOfLine);
   }
