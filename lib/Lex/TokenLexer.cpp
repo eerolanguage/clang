@@ -493,6 +493,9 @@ void TokenLexer::Lex(Token &Tok) {
     IdentifierInfo *II = Tok.getIdentifierInfo();
     Tok.setKind(II->getTokenID());
 
+    // For "legacy" headers, revert the keywords eero introduced
+    PP.RevertKeywordToIdentifierIfNeeded(Tok);
+
     // If this identifier was poisoned and from a paste, emit an error.  This
     // won't be handled by Preprocessor::HandleIdentifier because this is coming
     // from a macro expansion.
@@ -502,11 +505,6 @@ void TokenLexer::Lex(Token &Tok) {
 
     if (!DisableMacroExpansion && II->isHandleIdentifierCase())
       PP.HandleIdentifier(Tok);
-  }
-
-  // For "legacy" headers, revert the keywords eero introduced
-  if (!Macro) {
-    PP.RevertKeywordToIdentifierIfNeeded(Tok);
   }
 
   // Otherwise, return a normal token.
