@@ -82,13 +82,6 @@ bool Preprocessor::isInLegacyMode(const SourceLocation &Loc) const {
            !SourceMgr.isFromMainFile(SourceMgr.getSpellingLoc(Loc))));
 }
 
-/// isStartOfLegacyMacro - Return true if we're at the beginning of a legacy
-/// macro
-bool Preprocessor::isStartOfLegacyMacro(const SourceLocation &Loc) const {
-  return (inLegacyMacro && 
-          SourceMgr.isAtStartOfImmediateMacroExpansion(Loc));
-}
-
 //===----------------------------------------------------------------------===//
 // Methods for Entering and Callbacks for leaving various contexts
 //===----------------------------------------------------------------------===//

@@ -1260,9 +1260,6 @@ public:
   /// isInLegacyMode - Return true if we're in legacy (standard C/ObjC/etc) mode
   bool isInLegacyMode(const SourceLocation &Loc) const;
 
-  /// isStartOfLegacyMacro - Return true if we're at the beginning of a legacy macro
-  bool isStartOfLegacyMacro(const SourceLocation &Loc) const;
-
   /// ConcatenateIncludeName - Handle cases where the \#include name is expanded
   /// from a macro as multiple tokens, which need to be glued together.  This
   /// occurs for code like:

@@ -802,8 +802,7 @@ StmtResult Parser::ParseCompoundStatement(bool isStmtExpr) {
 StmtResult Parser::ParseCompoundStatement(bool isStmtExpr,
                                           unsigned ScopeFlags) {
   assert((Tok.is(tok::l_brace) ||
-          (getLangOpts().OffSideRule && 
-           !PP.isInLegacyMode(Tok.getLocation()))) &&
+          (getLangOpts().OffSideRule && !PP.isInLegacyHeader())) && 
          "Not a compount stmt!");
 
   // Enter a scope to hold everything within the compound stmt.  Compound
@@ -885,9 +884,10 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
   InMessageExpressionRAIIObject InMessage(*this, false);
   BalancedDelimiterTracker T(*this, tok::l_brace);
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
-      (!PP.isInLegacyMacro() ||
-       PP.isStartOfLegacyMacro(Tok.getLocation()))) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() && 
+      (!Tok.getLocation().isMacroID() ||
+        PP.isAtStartOfMacroExpansion(Tok.getLocation()) ||
+        !PP.isInLegacyMacro())) {
     if (Tok.isAtStartOfLine()) {
       T.setIgnored(BalancedDelimiterTracker::UseSplitLineTokLocs);
     } else {
@@ -952,10 +952,10 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
     }
 
     // Main off-side rule logic
-    if (getLangOpts().OffSideRule && Tok.isAtStartOfLine() &&
-        !PP.isInLegacyHeader() &&
-        (!PP.isInLegacyMacro() ||
-         PP.isStartOfLegacyMacro(Tok.getLocation()))) {
+    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() && 
+        Tok.isAtStartOfLine() &&
+        (!Tok.getLocation().isMacroID() ||
+          PP.isAtStartOfMacroExpansion(Tok.getLocation()))) {
       unsigned column = Column(Tok.getLocation());
       if (!indentationPositions.empty()) {
         if (newScope && column > indentationPositions.back()) {
@@ -1031,10 +1031,10 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   SourceLocation CloseLoc = Tok.getLocation();
 
   // We broke out of the while loop because we found a '}' or EOF.
-  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() &&
-      (!PP.isInLegacyMacro() ||
-       PP.isStartOfLegacyMacro(Tok.getLocation())) &&
-      !indentationPositions.empty()) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader() && 
+      !indentationPositions.empty() &&
+      (!Tok.getLocation().isMacroID() ||
+        PP.isAtStartOfMacroExpansion(CloseLoc))) {
     indentationPositions.pop_back();
     if (Tok.is(tok::r_brace)) {
       Diag(Tok, diag::err_not_allowed) << "'}'";
