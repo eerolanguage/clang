@@ -807,8 +807,7 @@ Use ``__has_feature(cxx_contextual_conversions)`` or
 ``__has_extension(cxx_contextual_conversions)`` to determine if the C++1y rules
 are used when performing an implicit conversion for an array bound in a
 *new-expression*, the operand of a *delete-expression*, an integral constant
-expression, or a condition in a ``switch`` statement. Clang does not yet
-support this feature.
+expression, or a condition in a ``switch`` statement.
 
 C++1y decltype(auto)
 ^^^^^^^^^^^^^^^^^^^^
@@ -827,9 +826,9 @@ for default initializers in aggregate members is enabled.
 C++1y generalized lambda capture
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Use ``__has_feature(cxx_generalized_capture)`` or
-``__has_extension(cxx_generalized_capture`` to determine if support for
-generalized lambda captures is enabled
+Use ``__has_feature(cxx_init_capture)`` or
+``__has_extension(cxx_init_capture)`` to determine if support for
+lambda captures with explicit initializers is enabled
 (for instance, ``[n(0)] { return ++n; }``).
 Clang does not yet support this feature.
 
@@ -849,7 +848,6 @@ Use ``__has_feature(cxx_relaxed_constexpr)`` or
 ``__has_extension(cxx_relaxed_constexpr)`` to determine if variable
 declarations, local variable modification, and control flow constructs
 are permitted in ``constexpr`` functions.
-Clang's implementation of this feature is incomplete.
 
 C++1y return type deduction
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1257,6 +1255,23 @@ Further examples of these attributes are available in the static analyzer's `lis
 Query for these features with ``__has_attribute(ns_consumed)``,
 ``__has_attribute(ns_returns_retained)``, etc.
 
+objc_msg_lookup_stret
+---------------------
+
+Traditionally, if a runtime is used that follows the GNU Objective-C ABI, a
+call to objc_msg_lookup() would be emitted for each message send, which would
+return a pointer to the actual implementation of the method. However,
+objc_msg_lookup() has no information at all about the method signature of the
+actual method. Therefore, certain features like forwarding messages cannot be
+correctly implemented for methods returning structs using objc_msg_lookup(), as
+methods returning structs use a slightly different calling convention.
+
+To work around this, Clang emits calls to objc_msg_lookup_stret() instead for
+methods that return structs if the runtime supports this, allowing the runtime
+to use a different forwarding handler for methods returning structs.
+
+To check if Clang emits calls to objc_msg_lookup_stret(),
+__has_feature(objc_msg_lookup_stret) can be used.
 
 Function Overloading in C
 =========================

@@ -416,19 +416,18 @@ namespace NoReturn {
     f(&x);
     *x = 47; // no warning
   }
+}
 
-  void g2(int *x) {
-    if (! x) NR();
-    *x = 47; // no warning
+namespace PseudoDtor {
+  template <typename T>
+  void destroy(T &obj) {
+    clang_analyzer_checkInlined(true); // expected-warning{{TRUE}}
+    obj.~T();
   }
 
-  void f3(int **x) {
-    NR();
-  }
-
-  void g3() {
-    int *x;
-    f3(&x);
-    *x = 47; // no warning
+  void test() {
+    int i;
+    destroy(i);
+    clang_analyzer_eval(true); // expected-warning{{TRUE}}
   }
 }

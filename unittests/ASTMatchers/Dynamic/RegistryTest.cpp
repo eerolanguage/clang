@@ -124,6 +124,30 @@ TEST_F(RegistryTest, ConstructWithMatcherArgs) {
   EXPECT_FALSE(matches("void f(int x, int a);", HasParameter));
 }
 
+TEST_F(RegistryTest, OverloadedMatchers) {
+  Matcher<Stmt> CallExpr0 = constructMatcher(
+      "callExpr",
+      constructMatcher("callee", constructMatcher("memberExpr",
+                                                  constructMatcher("isArrow"))))
+      .getTypedMatcher<Stmt>();
+
+  Matcher<Stmt> CallExpr1 = constructMatcher(
+      "callExpr",
+      constructMatcher(
+          "callee",
+          constructMatcher("methodDecl",
+                           constructMatcher("hasName", std::string("x")))))
+      .getTypedMatcher<Stmt>();
+
+  std::string Code = "class Y { public: void x(); }; void z() { Y y; y.x(); }";
+  EXPECT_FALSE(matches(Code, CallExpr0));
+  EXPECT_TRUE(matches(Code, CallExpr1));
+
+  Code = "class Z { public: void z() { this->z(); } };";
+  EXPECT_TRUE(matches(Code, CallExpr0));
+  EXPECT_FALSE(matches(Code, CallExpr1));
+}
+
 TEST_F(RegistryTest, PolymorphicMatchers) {
   const MatcherList IsDefinition = constructMatcher("isDefinition");
   Matcher<Decl> Var =
@@ -196,6 +220,37 @@ TEST_F(RegistryTest, CXXCtorInitializer) {
   EXPECT_TRUE(matches("struct Foo { Foo() : foo(1) {} int foo; };", CtorDecl));
   EXPECT_FALSE(matches("struct Foo { Foo() {} int foo; };", CtorDecl));
   EXPECT_FALSE(matches("struct Foo { Foo() : bar(1) {} int bar; };", CtorDecl));
+}
+
+TEST_F(RegistryTest, Adaptative) {
+  Matcher<Decl> D = constructMatcher(
+      "recordDecl",
+      constructMatcher(
+          "has",
+          constructMatcher("recordDecl",
+                           constructMatcher("hasName", std::string("X")))))
+      .getTypedMatcher<Decl>();
+  EXPECT_TRUE(matches("class X {};", D));
+  EXPECT_TRUE(matches("class Y { class X {}; };", D));
+  EXPECT_FALSE(matches("class Y { class Z {}; };", D));
+
+  Matcher<Stmt> S = constructMatcher(
+      "forStmt",
+      constructMatcher(
+          "hasDescendant",
+          constructMatcher("varDecl",
+                           constructMatcher("hasName", std::string("X")))))
+      .getTypedMatcher<Stmt>();
+  EXPECT_TRUE(matches("void foo() { for(int X;;); }", S));
+  EXPECT_TRUE(matches("void foo() { for(;;) { int X; } }", S));
+  EXPECT_FALSE(matches("void foo() { for(;;); }", S));
+  EXPECT_FALSE(matches("void foo() { if (int X = 0){} }", S));
+
+  S = constructMatcher(
+      "compoundStmt", constructMatcher("hasParent", constructMatcher("ifStmt")))
+      .getTypedMatcher<Stmt>();
+  EXPECT_TRUE(matches("void foo() { if (true) { int x = 42; } }", S));
+  EXPECT_FALSE(matches("void foo() { if (true) return; }", S));
 }
 
 TEST_F(RegistryTest, Errors) {

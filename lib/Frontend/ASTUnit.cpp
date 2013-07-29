@@ -1264,7 +1264,7 @@ ASTUnit::ComputePreamble(CompilerInvocation &Invocation,
   // (to a memory buffer).
   llvm::MemoryBuffer *Buffer = 0;
   std::string MainFilePath(FrontendOpts.Inputs[0].getFile());
-  uint64_t MainFileID;
+  llvm::sys::fs::UniqueID MainFileID;
   if (!llvm::sys::fs::getUniqueID(MainFilePath, MainFileID)) {
     // Check whether there is a file-file remapping of the main file
     for (PreprocessorOptions::remapped_file_iterator
@@ -1273,7 +1273,7 @@ ASTUnit::ComputePreamble(CompilerInvocation &Invocation,
          M != E;
          ++M) {
       std::string MPath(M->first);
-      uint64_t MID;
+      llvm::sys::fs::UniqueID MID;
       if (!llvm::sys::fs::getUniqueID(MPath, MID)) {
         if (MainFileID == MID) {
           // We found a remapping. Try to load the resulting, remapped source.
@@ -1299,7 +1299,7 @@ ASTUnit::ComputePreamble(CompilerInvocation &Invocation,
          M != E;
          ++M) {
       std::string MPath(M->first);
-      uint64_t MID;
+      llvm::sys::fs::UniqueID MID;
       if (!llvm::sys::fs::getUniqueID(MPath, MID)) {
         if (MainFileID == MID) {
           // We found a remapping.
@@ -1417,16 +1417,16 @@ llvm::MemoryBuffer *ASTUnit::getMainBufferWithPrecompiledPreamble(
              REnd = PreprocessorOpts.remapped_file_end();
            !AnyFileChanged && R != REnd;
            ++R) {
-        struct stat StatBuf;
-        if (FileMgr->getNoncachedStatValue(R->second, StatBuf)) {
+        llvm::sys::fs::file_status Status;
+        if (FileMgr->getNoncachedStatValue(R->second, Status)) {
           // If we can't stat the file we're remapping to, assume that something
           // horrible happened.
           AnyFileChanged = true;
           break;
         }
-        
-        OverriddenFiles[R->first] = std::make_pair(StatBuf.st_size, 
-                                                   StatBuf.st_mtime);
+
+        OverriddenFiles[R->first] = std::make_pair(
+            Status.getSize(), Status.getLastModificationTime().toEpochTime());
       }
       for (PreprocessorOptions::remapped_file_buffer_iterator
                 R = PreprocessorOpts.remapped_file_buffer_begin(),
@@ -1455,12 +1455,13 @@ llvm::MemoryBuffer *ASTUnit::getMainBufferWithPrecompiledPreamble(
         }
         
         // The file was not remapped; check whether it has changed on disk.
-        struct stat StatBuf;
-        if (FileMgr->getNoncachedStatValue(F->first(), StatBuf)) {
+        llvm::sys::fs::file_status Status;
+        if (FileMgr->getNoncachedStatValue(F->first(), Status)) {
           // If we can't stat the file, assume that something horrible happened.
           AnyFileChanged = true;
-        } else if (StatBuf.st_size != F->second.first || 
-                   StatBuf.st_mtime != F->second.second)
+        } else if (Status.getSize() != uint64_t(F->second.first) ||
+                   Status.getLastModificationTime().toEpochTime() !=
+                       uint64_t(F->second.second))
           AnyFileChanged = true;
       }
           
@@ -2469,11 +2470,11 @@ void ASTUnit::CodeComplete(StringRef File, unsigned Line, unsigned Column,
   llvm::MemoryBuffer *OverrideMainBuffer = 0;
   if (!getPreambleFile(this).empty()) {
     std::string CompleteFilePath(File);
-    uint64_t CompleteFileID;
+    llvm::sys::fs::UniqueID CompleteFileID;
 
     if (!llvm::sys::fs::getUniqueID(CompleteFilePath, CompleteFileID)) {
       std::string MainPath(OriginalSourceFile);
-      uint64_t MainID;
+      llvm::sys::fs::UniqueID MainID;
       if (!llvm::sys::fs::getUniqueID(MainPath, MainID)) {
         if (CompleteFileID == MainID && Line > 1)
           OverrideMainBuffer

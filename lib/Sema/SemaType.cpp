@@ -1649,6 +1649,12 @@ QualType Sema::BuildExtVectorType(QualType T, Expr *ArraySize,
       return QualType();
     }
 
+    if (VectorType::isVectorSizeTooLarge(vectorSize)) {
+      Diag(AttrLoc, diag::err_attribute_size_too_large)
+        << ArraySize->getSourceRange();
+      return QualType();
+    }
+
     return Context.getExtVectorType(T, vectorSize);
   }
 
@@ -3847,7 +3853,8 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
 
   // Check the attribute arguments.
   if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+      << Attr.getName() << 1;
     Attr.setInvalid();
     return;
   }
@@ -3855,8 +3862,8 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
   llvm::APSInt addrSpace(32);
   if (ASArgExpr->isTypeDependent() || ASArgExpr->isValueDependent() ||
       !ASArgExpr->isIntegerConstantExpr(addrSpace, S.Context)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_address_space_not_int)
-      << ASArgExpr->getSourceRange();
+    S.Diag(Attr.getLoc(), diag::err_attribute_argument_not_int)
+      << Attr.getName()->getName() << ASArgExpr->getSourceRange();
     Attr.setInvalid();
     return;
   }
@@ -3951,8 +3958,8 @@ static bool handleObjCOwnershipTypeAttr(TypeProcessingState &state,
     AttrLoc = S.getSourceManager().getImmediateExpansionRange(AttrLoc).first;
 
   if (!attr.getParameterName()) {
-    S.Diag(AttrLoc, diag::err_attribute_argument_n_not_string)
-      << "objc_ownership" << 1;
+    S.Diag(AttrLoc, diag::err_attribute_argument_n_type)
+      << attr.getName() << 1 << 2 /*string*/;
     attr.setInvalid();
     return true;
   }
@@ -4087,14 +4094,15 @@ static bool handleObjCGCTypeAttr(TypeProcessingState &state,
 
   // Check the attribute arguments.
   if (!attr.getParameterName()) {
-    S.Diag(attr.getLoc(), diag::err_attribute_argument_n_not_string)
-      << "objc_gc" << 1;
+    S.Diag(attr.getLoc(), diag::err_attribute_argument_n_type)
+      << attr.getName() << 1 << 2 /*string*/;
     attr.setInvalid();
     return true;
   }
   Qualifiers::GC GCAttr;
   if (attr.getNumArgs() != 0) {
-    S.Diag(attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+    S.Diag(attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+      << attr.getName() << 1;
     attr.setInvalid();
     return true;
   }
@@ -4478,7 +4486,8 @@ static void HandleOpenCLImageAccessAttribute(QualType& CurType,
                                              Sema &S) {
   // Check the attribute arguments.
   if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+      << Attr.getName() << 1;
     Attr.setInvalid();
     return;
   }
@@ -4518,7 +4527,8 @@ static void HandleVectorSizeAttr(QualType& CurType, const AttributeList &Attr,
                                  Sema &S) {
   // Check the attribute arguments.
   if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+      << Attr.getName() << 1;
     Attr.setInvalid();
     return;
   }
@@ -4532,7 +4542,8 @@ static void HandleVectorSizeAttr(QualType& CurType, const AttributeList &Attr,
     return;
   }
   // the base type must be integer or float, and can't already be a vector.
-  if (!CurType->isIntegerType() && !CurType->isRealFloatingType()) {
+  if (!CurType->isBuiltinType() ||
+      (!CurType->isIntegerType() && !CurType->isRealFloatingType())) {
     S.Diag(Attr.getLoc(), diag::err_attribute_invalid_vector_type) << CurType;
     Attr.setInvalid();
     return;
@@ -4544,6 +4555,12 @@ static void HandleVectorSizeAttr(QualType& CurType, const AttributeList &Attr,
   // the vector size needs to be an integral multiple of the type size.
   if (vectorSize % typeSize) {
     S.Diag(Attr.getLoc(), diag::err_attribute_invalid_size)
+      << sizeExpr->getSourceRange();
+    Attr.setInvalid();
+    return;
+  }
+  if (VectorType::isVectorSizeTooLarge(vectorSize / typeSize)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_size_too_large)
       << sizeExpr->getSourceRange();
     Attr.setInvalid();
     return;
@@ -4584,7 +4601,8 @@ static void HandleExtVectorTypeAttr(QualType &CurType,
   } else {
     // check the attribute arguments.
     if (Attr.getNumArgs() != 1) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+      S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+        << Attr.getName() << 1;
       return;
     }
     sizeExpr = Attr.getArg(0);
@@ -4609,7 +4627,8 @@ static void HandleNeonVectorTypeAttr(QualType& CurType,
                                      const char *AttrName) {
   // Check the attribute arguments.
   if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+      << Attr.getName() << 1;
     Attr.setInvalid();
     return;
   }
@@ -4916,7 +4935,7 @@ bool Sema::RequireCompleteTypeImpl(SourceLocation Loc, QualType T,
   NamedDecl *Def = 0;
   if (!T->isIncompleteType(&Def)) {
     // If we know about the definition but it is not visible, complain.
-    if (!Diagnoser.Suppressed && Def && !LookupResult::isVisible(Def)) {
+    if (!Diagnoser.Suppressed && Def && !LookupResult::isVisible(*this, Def)) {
       // Suppress this error outside of a SFINAE context if we've already
       // emitted the error once for this type. There's no usefulness in
       // repeating the diagnostic.

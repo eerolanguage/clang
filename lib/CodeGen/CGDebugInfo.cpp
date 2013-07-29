@@ -72,13 +72,19 @@ ArtificialLocation::ArtificialLocation(CodeGenFunction &CGF, CGBuilderTy &B)
   : DI(CGF.getDebugInfo()), Builder(B) {
   if (DI) {
     SavedLoc = DI->getLocation();
+    DI->CurLoc = SourceLocation();
+    Builder.SetCurrentDebugLocation(llvm::DebugLoc());
+  }
+}
+
+void ArtificialLocation::Emit() {
+  if (DI) {
     // Sync the Builder.
     DI->EmitLocation(Builder, SavedLoc);
     DI->CurLoc = SourceLocation();
     // Construct a location that has a valid scope, but no line info.
-    llvm::DIDescriptor Scope = DI->LexicalBlockStack.empty() ?
-      llvm::DIDescriptor(DI->TheCU) :
-      llvm::DIDescriptor(DI->LexicalBlockStack.back());
+    assert(!DI->LexicalBlockStack.empty());
+    llvm::DIDescriptor Scope(DI->LexicalBlockStack.back());
     Builder.SetCurrentDebugLocation(llvm::DebugLoc::get(0, 0, Scope));
   }
 }
@@ -2599,10 +2605,12 @@ llvm::DIType CGDebugInfo::EmitTypeForVarWithBlocksAttr(const VarDecl *VD,
   Qualifiers::ObjCLifetime Lifetime;
   if (CGM.getContext().getByrefLifetime(Type,
                                         Lifetime, HasByrefExtendedLayout)
-      && HasByrefExtendedLayout)
+      && HasByrefExtendedLayout) {
+    FType = CGM.getContext().getPointerType(CGM.getContext().VoidTy);
     EltTys.push_back(CreateMemberType(Unit, FType,
                                       "__byref_variable_layout",
                                       &FieldOffset));
+  }
 
   CharUnits Align = CGM.getContext().getDeclAlign(VD);
   if (Align > CGM.getContext().toCharUnitsFromBits(

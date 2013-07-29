@@ -86,6 +86,7 @@ LANGOPT(RTTI              , 1, 1, "run-time type information")
 LANGOPT(MSBitfields       , 1, 0, "Microsoft-compatible structure layout")
 LANGOPT(Freestanding, 1, 0, "freestanding implementation")
 LANGOPT(NoBuiltin         , 1, 0, "disable builtin functions")
+LANGOPT(NoMathBuiltin     , 1, 0, "disable math builtin functions")
 
 LANGOPT(OptionalSemicolons,    1, 0, "Optional semicolons")
 LANGOPT(OffSideRule,           1, 0, "Off-side rule")
