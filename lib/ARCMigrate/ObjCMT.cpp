@@ -38,6 +38,9 @@ class ObjCMigrateASTConsumer : public ASTConsumer {
                                   const ObjCImplementationDecl *ImpDecl);
   void migrateNSEnumDecl(ASTContext &Ctx, const EnumDecl *EnumDcl,
                      const TypedefDecl *TypedefDcl);
+  void migrateInstanceType(ASTContext &Ctx, ObjCContainerDecl *CDecl);
+  void migrateMethodInstanceType(ASTContext &Ctx, ObjCContainerDecl *CDecl,
+                                 ObjCMethodDecl *OM);
 
 public:
   std::string MigrateDir;
@@ -293,12 +296,14 @@ ClassImplementsAllMethodsAndProperties(ASTContext &Ctx,
   // In auto-synthesis, protocol properties are not synthesized. So,
   // a conforming protocol must have its required properties declared
   // in class interface.
+  bool HasAtleastOneRequiredProperty = false;
   if (const ObjCProtocolDecl *PDecl = Protocol->getDefinition())
     for (ObjCProtocolDecl::prop_iterator P = PDecl->prop_begin(),
          E = PDecl->prop_end(); P != E; ++P) {
       ObjCPropertyDecl *Property = *P;
       if (Property->getPropertyImplementation() == ObjCPropertyDecl::Optional)
         continue;
+      HasAtleastOneRequiredProperty = true;
       DeclContext::lookup_const_result R = IDecl->lookup(Property->getDeclName());
       if (R.size() == 0) {
         // Relax the rule and look into class's implementation for a synthesize
@@ -317,12 +322,14 @@ ClassImplementsAllMethodsAndProperties(ASTContext &Ctx,
       else
         return false;
     }
+  
   // At this point, all required properties in this protocol conform to those
   // declared in the class.
   // Check that class implements the required methods of the protocol too.
+  bool HasAtleastOneRequiredMethod = false;
   if (const ObjCProtocolDecl *PDecl = Protocol->getDefinition()) {
     if (PDecl->meth_begin() == PDecl->meth_end())
-      return false;
+      return HasAtleastOneRequiredProperty;
     for (ObjCContainerDecl::method_iterator M = PDecl->meth_begin(),
          MEnd = PDecl->meth_end(); M != MEnd; ++M) {
       ObjCMethodDecl *MD = (*M);
@@ -330,10 +337,11 @@ ClassImplementsAllMethodsAndProperties(ASTContext &Ctx,
         continue;
       if (MD->getImplementationControl() == ObjCMethodDecl::Optional)
         continue;
-      bool match = false;
       DeclContext::lookup_const_result R = ImpDecl->lookup(MD->getDeclName());
       if (R.size() == 0)
         return false;
+      bool match = false;
+      HasAtleastOneRequiredMethod = true;
       for (unsigned I = 0, N = R.size(); I != N; ++I)
         if (ObjCMethodDecl *ImpMD = dyn_cast<ObjCMethodDecl>(R[0]))
           if (Ctx.ObjCMethodsAreEqual(MD, ImpMD)) {
@@ -344,8 +352,9 @@ ClassImplementsAllMethodsAndProperties(ASTContext &Ctx,
         return false;
     }
   }
-
-  return true;
+  if (HasAtleastOneRequiredProperty || HasAtleastOneRequiredMethod)
+    return true;
+  return false;
 }
 
 static bool rewriteToObjCInterfaceDecl(const ObjCInterfaceDecl *IDecl,
@@ -399,10 +408,12 @@ static bool rewriteToNSEnumDecl(const EnumDecl *EnumDcl,
   return false;
 }
 
-static bool rewriteToNSEnumDecl(const EnumDecl *EnumDcl,
+static bool rewriteToNSMacroDecl(const EnumDecl *EnumDcl,
                                 const TypedefDecl *TypedefDcl,
-                                const NSAPI &NS, edit::Commit &commit) {
-  std::string ClassString = "NS_ENUM(NSInteger, ";
+                                const NSAPI &NS, edit::Commit &commit,
+                                 bool IsNSIntegerType) {
+  std::string ClassString =
+    IsNSIntegerType ? "NS_ENUM(NSInteger, " : "NS_OPTIONS(NSUInteger, ";
   ClassString += TypedefDcl->getIdentifier()->getName();
   ClassString += ')';
   SourceRange R(EnumDcl->getLocStart(), EnumDcl->getLocStart());
@@ -410,6 +421,29 @@ static bool rewriteToNSEnumDecl(const EnumDecl *EnumDcl,
   SourceLocation TypedefLoc = TypedefDcl->getLocEnd();
   commit.remove(SourceRange(TypedefLoc, TypedefLoc));
   return true;
+}
+
+static bool UseNSOptionsMacro(ASTContext &Ctx,
+                              const EnumDecl *EnumDcl) {
+  bool PowerOfTwo = true;
+  for (EnumDecl::enumerator_iterator EI = EnumDcl->enumerator_begin(),
+       EE = EnumDcl->enumerator_end(); EI != EE; ++EI) {
+    EnumConstantDecl *Enumerator = (*EI);
+    const Expr *InitExpr = Enumerator->getInitExpr();
+    if (!InitExpr) {
+      PowerOfTwo = false;
+      continue;
+    }
+    InitExpr = InitExpr->IgnoreImpCasts();
+    if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(InitExpr))
+      if (BO->isShiftOp() || BO->isBitwiseOp())
+        return true;
+    
+    uint64_t EnumVal = Enumerator->getInitVal().getZExtValue();
+    if (PowerOfTwo && EnumVal && !llvm::isPowerOf2_64(EnumVal))
+      PowerOfTwo = false;
+  }
+  return PowerOfTwo;
 }
 
 void ObjCMigrateASTConsumer::migrateProtocolConformance(ASTContext &Ctx,   
@@ -479,23 +513,29 @@ void ObjCMigrateASTConsumer::migrateNSEnumDecl(ASTContext &Ctx,
   QualType qt = TypedefDcl->getTypeSourceInfo()->getType();
   bool IsNSIntegerType = NSAPIObj->isObjCNSIntegerType(qt);
   bool IsNSUIntegerType = !IsNSIntegerType && NSAPIObj->isObjCNSUIntegerType(qt);
+  
   if (!IsNSIntegerType && !IsNSUIntegerType) {
     // Also check for typedef enum {...} TD;
     if (const EnumType *EnumTy = qt->getAs<EnumType>()) {
       if (EnumTy->getDecl() == EnumDcl) {
-        // NS_ENUM must be available.
-        if (!Ctx.Idents.get("NS_ENUM").hasMacroDefinition())
+        bool NSOptions = UseNSOptionsMacro(Ctx, EnumDcl);
+        if (NSOptions) {
+          if (!Ctx.Idents.get("NS_OPTIONS").hasMacroDefinition())
+            return;
+        }
+        else if (!Ctx.Idents.get("NS_ENUM").hasMacroDefinition())
           return;
         edit::Commit commit(*Editor);
-        rewriteToNSEnumDecl(EnumDcl, TypedefDcl, *NSAPIObj, commit);
+        rewriteToNSMacroDecl(EnumDcl, TypedefDcl, *NSAPIObj, commit, !NSOptions);
         Editor->commit(commit);
-        return;
       }
-      else
-        return;
     }
-    else
-      return;
+    return;
+  }
+  if (IsNSIntegerType && UseNSOptionsMacro(Ctx, EnumDcl)) {
+    // We may still use NS_OPTIONS based on what we find in the enumertor list.
+    IsNSIntegerType = false;
+    IsNSUIntegerType = true;
   }
   
   // NS_ENUM must be available.
@@ -507,6 +547,69 @@ void ObjCMigrateASTConsumer::migrateNSEnumDecl(ASTContext &Ctx,
   edit::Commit commit(*Editor);
   rewriteToNSEnumDecl(EnumDcl, TypedefDcl, *NSAPIObj, commit, IsNSIntegerType);
   Editor->commit(commit);
+}
+
+void ObjCMigrateASTConsumer::migrateMethodInstanceType(ASTContext &Ctx,
+                                                       ObjCContainerDecl *CDecl,
+                                                       ObjCMethodDecl *OM) {
+  ObjCInstanceTypeFamily OIT_Family =
+    Selector::getInstTypeMethodFamily(OM->getSelector());
+  if (OIT_Family == OIT_None)
+    return;
+  std::string ClassName;
+  switch (OIT_Family) {
+    case OIT_Array:
+      ClassName = "NSArray";
+      break;
+    case OIT_Dictionary:
+      ClassName = "NSDictionary";
+      break;
+    case OIT_MemManage:
+      ClassName = "NSObject";
+      break;
+    default:
+      return;
+  }
+  if (!OM->getResultType()->isObjCIdType())
+    return;
+  
+  ObjCInterfaceDecl *IDecl = dyn_cast<ObjCInterfaceDecl>(CDecl);
+  if (!IDecl) {
+    if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(CDecl))
+      IDecl = CatDecl->getClassInterface();
+    else if (ObjCImplDecl *ImpDecl = dyn_cast<ObjCImplDecl>(CDecl))
+      IDecl = ImpDecl->getClassInterface();
+  }
+  if (!IDecl ||
+      !IDecl->lookupInheritedClass(&Ctx.Idents.get(ClassName)))
+    return;
+  
+  SourceRange R;
+  std::string ClassString;
+  if (TypeSourceInfo *TSInfo =  OM->getResultTypeSourceInfo()) {
+    TypeLoc TL = TSInfo->getTypeLoc();
+    R = SourceRange(TL.getBeginLoc(), TL.getEndLoc());
+    ClassString = "instancetype";
+  }
+  else {
+    R = SourceRange(OM->getLocStart(), OM->getLocStart());
+    ClassString = OM->isInstanceMethod() ? '-' : '+';
+    ClassString += " (instancetype)";
+  }
+  edit::Commit commit(*Editor);
+  commit.replace(R, ClassString);
+  Editor->commit(commit);
+}
+
+void ObjCMigrateASTConsumer::migrateInstanceType(ASTContext &Ctx,
+                                                 ObjCContainerDecl *CDecl) {
+  // migrate methods which can have instancetype as their result type.
+  for (ObjCContainerDecl::method_iterator M = CDecl->meth_begin(),
+       MEnd = CDecl->meth_end();
+       M != MEnd; ++M) {
+    ObjCMethodDecl *Method = (*M);
+    migrateMethodInstanceType(Ctx, CDecl, Method);
+  }
 }
 
 namespace {
@@ -547,6 +650,9 @@ void ObjCMigrateASTConsumer::HandleTranslationUnit(ASTContext &Ctx) {
           if (const TypedefDecl *TD = dyn_cast<TypedefDecl>(*N))
             migrateNSEnumDecl(Ctx, ED, TD);
       }
+      // migrate methods which can have instancetype as their result type.
+      if (ObjCContainerDecl *CDecl = dyn_cast<ObjCContainerDecl>(*D))
+        migrateInstanceType(Ctx, CDecl);
     }
   
   Rewriter rewriter(Ctx.getSourceManager(), Ctx.getLangOpts());

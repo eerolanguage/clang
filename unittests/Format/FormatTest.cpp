@@ -544,7 +544,21 @@ TEST_F(FormatTest, FormatsSwitchStatement) {
                      "  }\n"
                      "}");
   verifyGoogleFormat("switch (test)\n"
-                     "    ;");
+                     "  ;");
+
+  verifyGoogleFormat("#define OPERATION_CASE(name) \\\n"
+                     "  case OP_name:              \\\n"
+                     "    return operations::Operation##name\n");
+  verifyGoogleFormat("Operation codeToOperation(OperationCode OpCode) {\n"
+                     "  // Get the correction operation class.\n"
+                     "  switch (OpCode) {\n"
+                     "    CASE(Add);\n"
+                     "    CASE(Subtract);\n"
+                     "    default:\n"
+                     "      return operations::Unknown;\n"
+                     "  }\n"
+                     "#undef OPERATION_CASE\n"
+                     "}");
 }
 
 TEST_F(FormatTest, FormatsLabels) {
@@ -2265,6 +2279,47 @@ TEST_F(FormatTest, ExpressionIndentation) {
                "return aaaaaaaaaaaaaaaaaaa +\n"
                "       b; //",
                getLLVMStyleWithColumns(30));
+}
+
+TEST_F(FormatTest, ExpressionIndentationBreakingBeforeOperators) {
+  // Not sure what the best system is here. Like this, the LHS can be found
+  // immediately above an operator (everything with the same or a higher
+  // indent). The RHS is aligned right of the operator and so compasses
+  // everything until something with the same indent as the operator is found.
+  // FIXME: Is this a good system?
+  FormatStyle Style = getLLVMStyle();
+  Style.BreakBeforeBinaryOperators = true;
+  verifyFormat(
+      "bool value = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "             + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "             + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "             == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "                * bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+      "                + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+      "             && aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "                * aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      "                > ccccccccccccccccccccccccccccccccccccccccc;",
+      Style);
+  verifyFormat("if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    * aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n}",
+               Style);
+  verifyFormat("if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "      * aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n}",
+               Style);
+  verifyFormat("if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "    == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "       * aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "       + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n}",
+               Style);
+  verifyFormat("if () {\n"
+               "} else if (aaaaa && bbbbb // break\n"
+               "                    > ccccc) {\n"
+               "}",
+               Style);
 }
 
 TEST_F(FormatTest, ConstructorInitializers) {
@@ -5361,6 +5416,11 @@ TEST_F(FormatTest, GetsPredefinedStyleByName) {
   EXPECT_TRUE(getPredefinedStyle("moZILla", &Styles[2]));
   EXPECT_TRUE(allStylesEqual(Styles));
 
+  Styles[0] = getWebKitStyle();
+  EXPECT_TRUE(getPredefinedStyle("WebKit", &Styles[1]));
+  EXPECT_TRUE(getPredefinedStyle("wEbKit", &Styles[2]));
+  EXPECT_TRUE(allStylesEqual(Styles));
+
   EXPECT_FALSE(getPredefinedStyle("qwerty", &Styles[0]));
 }
 
@@ -5384,6 +5444,8 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(AllowShortLoopsOnASingleLine);
   CHECK_PARSE_BOOL(AlwaysBreakTemplateDeclarations);
   CHECK_PARSE_BOOL(BinPackParameters);
+  CHECK_PARSE_BOOL(BreakBeforeBinaryOperators);
+  CHECK_PARSE_BOOL(BreakConstructorInitializersBeforeComma);
   CHECK_PARSE_BOOL(ConstructorInitializerAllOnOneLineOrOnePerLine);
   CHECK_PARSE_BOOL(DerivePointerBinding);
   CHECK_PARSE_BOOL(IndentCaseLabels);
@@ -5513,6 +5575,78 @@ TEST_F(FormatTest, SplitsUTF8BlockComments) {
             " * 𝕓𝕪𝕥𝕖\n"
             " * 𝖀𝕿𝕱-𝟠 */",
             format("/* 𝓣𝓮𝓼𝓽 𝔣𝔬𝔲𝔯 𝕓𝕪𝕥𝕖 𝖀𝕿𝕱-𝟠 */", getLLVMStyleWithColumns(12)));
+}
+
+TEST_F(FormatTest, FormatsWithWebKitStyle) {
+  FormatStyle Style = getWebKitStyle();
+
+  // Don't indent in outer namespaces.
+  verifyFormat("namespace outer {\n"
+               "int i;\n"
+               "namespace inner {\n"
+               "int i;\n" // FIXME: This should be indented.
+               "} // namespace inner\n"
+               "} // namespace outer\n"
+               "namespace other_outer {\n"
+               "int i;\n"
+               "}",
+               Style);
+
+  // Don't indent case labels.
+  verifyFormat("switch (variable) {\n"
+               "case 1:\n"
+               "case 2:\n"
+               "    doSomething();\n"
+               "    break;\n"
+               "default:\n"
+               "    ++variable;\n"
+               "}",
+               Style);
+
+  // Wrap before binary operators.
+  EXPECT_EQ(
+      "void f()\n"
+      "{\n"
+      "    if (aaaaaaaaaaaaaaaa\n"
+      "        && bbbbbbbbbbbbbbbbbbbbbbbb\n"
+      "        && (cccccccccccccccccccccccccc || dddddddddddddddddddd))\n"
+      "        return;\n"
+      "}",
+      format(
+          "void f() {\n"
+          "if (aaaaaaaaaaaaaaaa\n"
+          "&& bbbbbbbbbbbbbbbbbbbbbbbb\n"
+          "&& (cccccccccccccccccccccccccc || dddddddddddddddddddd))\n"
+          "return;\n"
+          "}",
+          Style));
+
+  // Constructor initializers are formatted one per line with the "," on the
+  // new line.
+  verifyFormat("Constructor()\n"
+               "    : aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+               "    , aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaa, // break\n"
+               "                               aaaaaaaaaaaaaa)\n"
+               "    , aaaaaaaaaaaaaaaaaaaaaaa()\n{\n}",
+               Style);
+
+  // Do not align comments.
+  // FIXME: Implement option to suppress comment alignment.
+  // verifyFormat("int a; // Do not\n"
+  //              "double b; // align comments.");
+
+  // Accept input's line breaks.
+  EXPECT_EQ("if (aaaaaaaaaaaaaaa\n"
+            "    || bbbbbbbbbbbbbbb) {\n"
+            "    i++;\n"
+            "}",
+            format("if (aaaaaaaaaaaaaaa\n"
+                   "|| bbbbbbbbbbbbbbb) { i++; }",
+                   Style));
+  EXPECT_EQ("if (aaaaaaaaaaaaaaa || bbbbbbbbbbbbbbb) {\n"
+            "    i++;\n"
+            "}",
+            format("if (aaaaaaaaaaaaaaa || bbbbbbbbbbbbbbb) { i++; }", Style));
 }
 
 #endif

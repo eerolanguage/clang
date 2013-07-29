@@ -129,9 +129,6 @@ public:
   /// Whether the driver is just the preprocessor.
   bool CCCIsCPP() const { return Mode == CPPMode; }
 
-  /// Echo commands while executing (in -v style).
-  unsigned CCCEcho : 1;
-
   /// Only print tool bindings, don't build any jobs.
   unsigned CCCPrintBindings : 1;
 
@@ -398,6 +395,10 @@ private:
                                 StringRef DarwinArchName = "") const;
 
   /// @}
+
+  /// \brief Get bitmasks for which option flags to include and exclude based on
+  /// the driver mode.
+  std::pair<unsigned, unsigned> getIncludeExcludeOptionFlagMasks() const;
 
 public:
   /// GetReleaseVersion - Parse (([0-9]+)(.([0-9]+)(.([0-9]+)?))?)? and

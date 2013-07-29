@@ -31,6 +31,10 @@ namespace format {
 /// specific guidelines.
 struct FormatStyle {
   /// \brief The column limit.
+  ///
+  /// A column limit of \c 0 means that there is no column limit. In this case,
+  /// clang-format will respect the input's line breaking decisions within
+  /// statements.
   unsigned ColumnLimit;
 
   /// \brief The maximum number of consecutive empty lines to keep.
@@ -104,6 +108,10 @@ struct FormatStyle {
   /// initializer on its own line.
   bool ConstructorInitializerAllOnOneLineOrOnePerLine;
 
+  /// \brief Always break constructor initializers before commas and align
+  /// the commas with the colon.
+  bool BreakConstructorInitializersBeforeComma;
+
   /// \brief If true, "if (a) return;" can be put on a single line.
   bool AllowShortIfStatementsOnASingleLine;
 
@@ -131,6 +139,9 @@ struct FormatStyle {
   /// \brief If true, \c IndentWidth consecutive spaces will be replaced with
   /// tab characters.
   bool UseTab;
+
+  /// \brief If \c true, binary operators will be placed after line breaks.
+  bool BreakBeforeBinaryOperators;
 
   /// \brief Different ways to attach braces to their surrounding context.
   enum BraceBreakingStyle {
@@ -217,6 +228,10 @@ FormatStyle getChromiumStyle();
 /// \brief Returns a format style complying with Mozilla's style guide:
 /// https://developer.mozilla.org/en-US/docs/Developer_Guide/Coding_Style.
 FormatStyle getMozillaStyle();
+
+/// \brief Returns a format style complying with Webkit's style guide:
+/// http://www.webkit.org/coding/coding-style.html
+FormatStyle getWebKitStyle();
 
 /// \brief Gets a predefined style by name.
 ///

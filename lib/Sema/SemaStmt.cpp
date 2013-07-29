@@ -2597,32 +2597,23 @@ Sema::ActOnCapScopeReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
   // For blocks/lambdas with implicit return types, we check each return
   // statement individually, and deduce the common return type when the block
   // or lambda is completed.
-  if (AutoType *AT =
-          FnRetType.isNull() ? 0 : FnRetType->getContainedAutoType()) {
-    // In C++1y, the return type may involve 'auto'.
-    FunctionDecl *FD = cast<LambdaScopeInfo>(CurCap)->CallOperator;
-    if (CurContext->isDependentContext()) {
-      // C++1y [dcl.spec.auto]p12:
-      //   Return type deduction [...] occurs when the definition is
-      //   instantiated even if the function body contains a return
-      //   statement with a non-type-dependent operand.
-      CurCap->ReturnType = FnRetType = Context.DependentTy;
-    } else if (DeduceFunctionTypeFromReturnExpr(FD, ReturnLoc, RetValExp, AT)) {
-      FD->setInvalidDecl();
-      return StmtError();
-    } else
-      CurCap->ReturnType = FnRetType = FD->getResultType();
-  } else if (CurCap->HasImplicitReturnType) {
-    // FIXME: Fold this into the 'auto' codepath above.
+  if (CurCap->HasImplicitReturnType) {
+    // FIXME: Fold this into the 'auto' codepath below.
     if (RetValExp && !isa<InitListExpr>(RetValExp)) {
       ExprResult Result = DefaultFunctionArrayLvalueConversion(RetValExp);
       if (Result.isInvalid())
         return StmtError();
       RetValExp = Result.take();
 
-      if (!CurContext->isDependentContext())
+      if (!CurContext->isDependentContext()) {
         FnRetType = RetValExp->getType();
-      else
+        // In C++11, we take the type of the expression after decay and
+        // lvalue-to-rvalue conversion, so a class type can be cv-qualified.
+        // In C++1y, we perform template argument deduction as if the return
+        // type were 'auto', so an implicit return type is never cv-qualified.
+        if (getLangOpts().CPlusPlus1y && FnRetType.hasQualifiers())
+          FnRetType = FnRetType.getUnqualifiedType();
+      } else
         FnRetType = CurCap->ReturnType = Context.DependentTy;
     } else {
       if (RetValExp) {
@@ -2640,6 +2631,21 @@ Sema::ActOnCapScopeReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     // make sure we provide a return type now for better error recovery.
     if (CurCap->ReturnType.isNull())
       CurCap->ReturnType = FnRetType;
+  } else if (AutoType *AT =
+                 FnRetType.isNull() ? 0 : FnRetType->getContainedAutoType()) {
+    // In C++1y, the return type may involve 'auto'.
+    FunctionDecl *FD = cast<LambdaScopeInfo>(CurCap)->CallOperator;
+    if (CurContext->isDependentContext()) {
+      // C++1y [dcl.spec.auto]p12:
+      //   Return type deduction [...] occurs when the definition is
+      //   instantiated even if the function body contains a return
+      //   statement with a non-type-dependent operand.
+      CurCap->ReturnType = FnRetType = Context.DependentTy;
+    } else if (DeduceFunctionTypeFromReturnExpr(FD, ReturnLoc, RetValExp, AT)) {
+      FD->setInvalidDecl();
+      return StmtError();
+    } else
+      CurCap->ReturnType = FnRetType = FD->getResultType();
   }
   assert(!FnRetType.isNull());
 

@@ -48,9 +48,124 @@ void RegistryMaps::registerMatcher(StringRef MatcherName,
   Constructors[MatcherName] = Callback;
 }
 
+/// \brief MatcherCreateCallback that wraps multiple "overloads" of the same
+///   matcher.
+///
+/// It will try every overload and generate appropriate errors for when none or
+/// more than one overloads match the arguments.
+class OverloadedMatcherCreateCallback : public MatcherCreateCallback {
+ public:
+   OverloadedMatcherCreateCallback(ArrayRef<MatcherCreateCallback *> Callbacks)
+       : Overloads(Callbacks) {}
+
+  virtual ~OverloadedMatcherCreateCallback() {
+    for (size_t i = 0, e = Overloads.size(); i != e; ++i)
+      delete Overloads[i];
+  }
+
+  virtual MatcherList run(const SourceRange &NameRange,
+                          ArrayRef<ParserValue> Args,
+                          Diagnostics *Error) const {
+    std::vector<MatcherList> Constructed;
+    Diagnostics::OverloadContext Ctx(Error);
+    for (size_t i = 0, e = Overloads.size(); i != e; ++i) {
+      MatcherList SubMatcher = Overloads[i]->run(NameRange, Args, Error);
+      if (!SubMatcher.empty()) {
+        Constructed.push_back(SubMatcher);
+      }
+    }
+
+    if (Constructed.empty()) return MatcherList();  // No overload matched.
+    // We ignore the errors if any matcher succeeded.
+    Ctx.revertErrors();
+    if (Constructed.size() > 1) {
+      // More than one constructed. It is ambiguous.
+      Error->addError(NameRange, Error->ET_RegistryAmbiguousOverload);
+      return MatcherList();
+    }
+    return Constructed[0];
+  }
+
+ private:
+  std::vector<MatcherCreateCallback*> Overloads;
+};
+
 #define REGISTER_MATCHER(name)                                                 \
   registerMatcher(#name, internal::makeMatcherAutoMarshall(                    \
                              ::clang::ast_matchers::name, #name));
+
+#define SPECIFIC_MATCHER_OVERLOAD(name, Id)                                    \
+  static_cast< ::clang::ast_matchers::name##_Type##Id>(                        \
+      ::clang::ast_matchers::name)
+
+#define REGISTER_OVERLOADED_2(name)                                            \
+  do {                                                                         \
+    MatcherCreateCallback *Callbacks[] = {                                     \
+      internal::makeMatcherAutoMarshall(SPECIFIC_MATCHER_OVERLOAD(name, 0),    \
+                                        #name),                                \
+      internal::makeMatcherAutoMarshall(SPECIFIC_MATCHER_OVERLOAD(name, 1),    \
+                                        #name)                                 \
+    };                                                                         \
+    registerMatcher(#name, new OverloadedMatcherCreateCallback(Callbacks));    \
+  } while (0)
+
+/// \brief Class that allows us to bind to the constructor of an
+///   \c ArgumentAdaptingMatcher.
+/// This class, together with \c collectAdaptativeMatcherOverloads below, help
+/// us detect the Adapter class and create overload functions for the
+/// appropriate To/From types.
+/// We instantiate the \c createAdatingMatcher function for every type in
+/// \c FromTypes. \c ToTypes is handled on the marshaller side by using the
+/// \c ReturnTypes typedef in \c ArgumentAdaptingMatcher.
+template <template <typename ToArg, typename FromArg> class ArgumentAdapterT,
+          typename FromTypes, typename ToTypes>
+struct AdaptativeMatcherWrapper {
+  template <typename FromArg>
+  static ast_matchers::internal::ArgumentAdaptingMatcher<
+      ArgumentAdapterT, FromArg, FromTypes, ToTypes>
+  createAdatingMatcher(
+      const ast_matchers::internal::Matcher<FromArg> &InnerMatcher) {
+    return ast_matchers::internal::ArgumentAdaptingMatcher<
+        ArgumentAdapterT, FromArg, FromTypes, ToTypes>(InnerMatcher);
+  }
+
+  static void collectOverloads(StringRef Name,
+                               std::vector<MatcherCreateCallback *> &Out,
+                               ast_matchers::internal::EmptyTypeList) {}
+
+  template <typename FromTypeList>
+  static void collectOverloads(StringRef Name,
+                               std::vector<MatcherCreateCallback *> &Out,
+                               FromTypeList TypeList) {
+    Out.push_back(internal::makeMatcherAutoMarshall(
+        &createAdatingMatcher<typename FromTypeList::head>, Name));
+    collectOverloads(Name, Out, typename FromTypeList::tail());
+  }
+
+  static void collectOverloads(StringRef Name,
+                               std::vector<MatcherCreateCallback *> &Out) {
+    collectOverloads(Name, Out, FromTypes());
+  }
+};
+
+template <template <typename ToArg, typename FromArg> class ArgumentAdapterT,
+          typename DummyArg, typename FromTypes, typename ToTypes>
+void collectAdaptativeMatcherOverloads(
+    StringRef Name,
+    ast_matchers::internal::ArgumentAdaptingMatcher<ArgumentAdapterT, DummyArg,
+                                                    FromTypes, ToTypes>(
+        *func)(const ast_matchers::internal::Matcher<DummyArg> &),
+    std::vector<MatcherCreateCallback *> &Out) {
+  AdaptativeMatcherWrapper<ArgumentAdapterT, FromTypes,
+                           ToTypes>::collectOverloads(Name, Out);
+}
+
+#define REGISTER_ADAPTATIVE(name)                                              \
+  do {                                                                         \
+    std::vector<MatcherCreateCallback *> Overloads;                            \
+    collectAdaptativeMatcherOverloads(#name, &name<Decl>, Overloads);          \
+    registerMatcher(#name, new OverloadedMatcherCreateCallback(Overloads));    \
+  } while (0)
 
 /// \brief Generate a registry map with all the known matchers.
 RegistryMaps::RegistryMaps() {
@@ -59,16 +174,6 @@ RegistryMaps::RegistryMaps() {
   // Need Variant/Parser fixes:
   // ofKind
   //
-  // Function overloaded by args:
-  // hasType
-  // callee
-  // hasPrefix
-  // isDerivedFrom
-  // isSameOrDerivedFrom
-  // pointsTo
-  // references
-  // thisPointerType
-  //
   // Polymorphic + argument overload:
   // unless
   // eachOf
@@ -76,19 +181,27 @@ RegistryMaps::RegistryMaps() {
   // allOf
   // findAll
   //
-  // Adaptative matcher (similar to polymorphic matcher):
-  // has
-  // forEach
-  // forEachDescendant
-  // hasDescendant
-  // hasParent
-  // hasAncestor
-  //
   // Other:
   // loc
   // equals
   // equalsNode
   // hasDeclaration
+
+  REGISTER_OVERLOADED_2(callee);
+  REGISTER_OVERLOADED_2(hasPrefix);
+  REGISTER_OVERLOADED_2(hasType);
+  REGISTER_OVERLOADED_2(isDerivedFrom);
+  REGISTER_OVERLOADED_2(isSameOrDerivedFrom);
+  REGISTER_OVERLOADED_2(pointsTo);
+  REGISTER_OVERLOADED_2(references);
+  REGISTER_OVERLOADED_2(thisPointerType);
+
+  REGISTER_ADAPTATIVE(forEach);
+  REGISTER_ADAPTATIVE(forEachDescendant);
+  REGISTER_ADAPTATIVE(has);
+  REGISTER_ADAPTATIVE(hasAncestor);
+  REGISTER_ADAPTATIVE(hasDescendant);
+  REGISTER_ADAPTATIVE(hasParent);
 
   REGISTER_MATCHER(accessSpecDecl);
   REGISTER_MATCHER(alignOfExpr);
@@ -139,6 +252,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(explicitCastExpr);
   REGISTER_MATCHER(expr);
   REGISTER_MATCHER(fieldDecl);
+  REGISTER_MATCHER(floatLiteral);
   REGISTER_MATCHER(forField);
   REGISTER_MATCHER(forRangeStmt);
   REGISTER_MATCHER(forStmt);

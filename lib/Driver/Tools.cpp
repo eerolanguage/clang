@@ -228,7 +228,6 @@ static bool forwardToGCC(const Option &O) {
   // Don't forward inputs from the original command line.  They are added from
   // InputInfoList.
   return O.getKind() != Option::InputClass &&
-         !O.hasFlag(options::NoForward) &&
          !O.hasFlag(options::DriverOption) &&
          !O.hasFlag(options::LinkerInput);
 }
@@ -551,6 +550,7 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
       return true;
     return false;
 
+  case llvm::Triple::ppc64le:
   case llvm::Triple::systemz:
     return false;
   }
@@ -882,7 +882,7 @@ static void getMipsCPUAndABI(const ArgList &Args,
 
   // Setup default CPU and ABI names.
   if (CPUName.empty() && ABIName.empty()) {
-    switch (TC.getTriple().getArch()) {
+    switch (TC.getArch()) {
     default:
       llvm_unreachable("Unexpected triple arch name");
     case llvm::Triple::mips:
@@ -1110,6 +1110,7 @@ static std::string getPPCTargetCPU(const ArgList &Args) {
       .Case("pwr7", "pwr7")
       .Case("powerpc", "ppc")
       .Case("powerpc64", "ppc64")
+      .Case("powerpc64le", "ppc64le")
       .Default("");
   }
 
@@ -1127,6 +1128,8 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
   if (TargetCPUName.empty() && !Triple.isOSDarwin()) {
     if (Triple.getArch() == llvm::Triple::ppc64)
       TargetCPUName = "ppc64";
+    else if (Triple.getArch() == llvm::Triple::ppc64le)
+      TargetCPUName = "ppc64le";
     else
       TargetCPUName = "ppc";
   }
@@ -1570,6 +1573,41 @@ static bool UseRelaxAll(Compilation &C, const ArgList &Args) {
     RelaxDefault);
 }
 
+static void CollectArgsForIntegratedAssembler(Compilation &C,
+                                              const ArgList &Args,
+                                              ArgStringList &CmdArgs,
+                                              const Driver &D) {
+    if (UseRelaxAll(C, Args))
+      CmdArgs.push_back("-mrelax-all");
+
+    // When using an integrated assembler, translate -Wa, and -Xassembler
+    // options.
+    for (arg_iterator it = Args.filtered_begin(options::OPT_Wa_COMMA,
+                                               options::OPT_Xassembler),
+           ie = Args.filtered_end(); it != ie; ++it) {
+      const Arg *A = *it;
+      A->claim();
+
+      for (unsigned i = 0, e = A->getNumValues(); i != e; ++i) {
+        StringRef Value = A->getValue(i);
+
+        if (Value == "-force_cpusubtype_ALL") {
+          // Do nothing, this is the default and we don't support anything else.
+        } else if (Value == "-L") {
+          CmdArgs.push_back("-msave-temp-labels");
+        } else if (Value == "--fatal-warnings") {
+          CmdArgs.push_back("-mllvm");
+          CmdArgs.push_back("-fatal-assembler-warnings");
+        } else if (Value == "--noexecstack") {
+          CmdArgs.push_back("-mnoexecstack");
+        } else {
+          D.Diag(diag::err_drv_unsupported_option_argument)
+            << A->getOption().getName() << Value;
+        }
+      }
+    }
+}
+
 SanitizerArgs::SanitizerArgs(const ToolChain &TC, const ArgList &Args)
     : Kind(0), BlacklistFile(""), MsanTrackOrigins(false),
       AsanZeroBaseShadow(false) {
@@ -1970,35 +2008,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   } else if (isa<AssembleJobAction>(JA)) {
     CmdArgs.push_back("-emit-obj");
 
-    if (UseRelaxAll(C, Args))
-      CmdArgs.push_back("-mrelax-all");
-
-    // When using an integrated assembler, translate -Wa, and -Xassembler
-    // options.
-    for (arg_iterator it = Args.filtered_begin(options::OPT_Wa_COMMA,
-                                               options::OPT_Xassembler),
-           ie = Args.filtered_end(); it != ie; ++it) {
-      const Arg *A = *it;
-      A->claim();
-
-      for (unsigned i = 0, e = A->getNumValues(); i != e; ++i) {
-        StringRef Value = A->getValue(i);
-
-        if (Value == "-force_cpusubtype_ALL") {
-          // Do nothing, this is the default and we don't support anything else.
-        } else if (Value == "-L") {
-          CmdArgs.push_back("-msave-temp-labels");
-        } else if (Value == "--fatal-warnings") {
-          CmdArgs.push_back("-mllvm");
-          CmdArgs.push_back("-fatal-assembler-warnings");
-        } else if (Value == "--noexecstack") {
-          CmdArgs.push_back("-mnoexecstack");
-        } else {
-          D.Diag(diag::err_drv_unsupported_option_argument)
-            << A->getOption().getName() << Value;
-        }
-      }
-    }
+    CollectArgsForIntegratedAssembler(C, Args, CmdArgs, D);
 
     // Also ignore explicit -force_cpusubtype_ALL option.
     (void) Args.hasArg(options::OPT_force__cpusubtype__ALL);
@@ -2212,7 +2222,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (Arg *A = Args.getLastArg(options::OPT_fpcc_struct_return,
                                options::OPT_freg_struct_return)) {
-    if (getToolChain().getTriple().getArch() != llvm::Triple::x86) {
+    if (getToolChain().getArch() != llvm::Triple::x86) {
       D.Diag(diag::err_drv_unsupported_opt_for_target)
         << A->getSpelling() << getToolChain().getTriple().str();
     } else if (A->getOption().matches(options::OPT_fpcc_struct_return)) {
@@ -2448,7 +2458,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Add target specific cpu and features flags.
-  switch(getToolChain().getTriple().getArch()) {
+  switch(getToolChain().getArch()) {
   default:
     break;
 
@@ -2466,6 +2476,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   case llvm::Triple::ppc:
   case llvm::Triple::ppc64:
+  case llvm::Triple::ppc64le:
     AddPPCTargetArgs(Args, CmdArgs);
     break;
 
@@ -2509,7 +2520,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     Arg *Unsupported;
     if (types::isCXX(InputType) &&
         getToolChain().getTriple().isOSDarwin() &&
-        getToolChain().getTriple().getArch() == llvm::Triple::x86) {
+        getToolChain().getArch() == llvm::Triple::x86) {
       if ((Unsupported = Args.getLastArg(options::OPT_fapple_kext)) ||
           (Unsupported = Args.getLastArg(options::OPT_mkernel)))
         D.Diag(diag::err_drv_clang_unsupported_opt_cxx_darwin_i386)
@@ -2908,10 +2919,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Report an error for -faltivec on anything other than PowerPC.
   if (const Arg *A = Args.getLastArg(options::OPT_faltivec))
-    if (!(getToolChain().getTriple().getArch() == llvm::Triple::ppc ||
-          getToolChain().getTriple().getArch() == llvm::Triple::ppc64))
+    if (!(getToolChain().getArch() == llvm::Triple::ppc ||
+          getToolChain().getArch() == llvm::Triple::ppc64 ||
+          getToolChain().getArch() == llvm::Triple::ppc64le))
       D.Diag(diag::err_drv_argument_only_allowed_with)
-        << A->getAsString(Args) << "ppc/ppc64";
+        << A->getAsString(Args) << "ppc/ppc64/ppc64le";
 
   if (getToolChain().SupportsProfiling())
     Args.AddLastArg(CmdArgs, options::OPT_pg);
@@ -3111,7 +3123,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -fshort-enums=0 is default for all architectures except Hexagon.
   if (Args.hasFlag(options::OPT_fshort_enums,
                    options::OPT_fno_short_enums,
-                   getToolChain().getTriple().getArch() ==
+                   getToolChain().getArch() ==
                    llvm::Triple::hexagon))
     CmdArgs.push_back("-fshort-enums");
 
@@ -3130,7 +3142,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_use_cxa_atexit,
                    getToolChain().getTriple().getOS() != llvm::Triple::Cygwin &&
                   getToolChain().getTriple().getOS() != llvm::Triple::MinGW32 &&
-              getToolChain().getTriple().getArch() != llvm::Triple::hexagon) ||
+              getToolChain().getArch() != llvm::Triple::hexagon) ||
       KernelOrKext)
     CmdArgs.push_back("-fno-use-cxa-atexit");
 
@@ -3197,7 +3209,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (!Args.hasFlag(options::OPT_fobjc_legacy_dispatch,
                       options::OPT_fno_objc_legacy_dispatch,
                       objcRuntime.isLegacyDispatchDefaultForArch(
-                        getToolChain().getTriple().getArch()))) {
+                        getToolChain().getArch()))) {
       if (getToolChain().UseObjCMixedDispatch())
         CmdArgs.push_back("-fobjc-dispatch-method=mixed");
       else
@@ -3478,13 +3490,20 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    options::OPT_fno_apple_pragma_pack, false))
     CmdArgs.push_back("-fapple-pragma-pack");
 
+  // le32-specific flags: 
+  //  -fno-math-builtin: clang should not convert math builtins to intrinsics
+  //                     by default.
+  if (getToolChain().getArch() == llvm::Triple::le32) {
+    CmdArgs.push_back("-fno-math-builtin");
+  }
+
   // Default to -fno-builtin-str{cat,cpy} on Darwin for ARM.
   //
   // FIXME: This is disabled until clang -cc1 supports -fno-builtin-foo. PR4941.
 #if 0
   if (getToolChain().getTriple().isOSDarwin() &&
-      (getToolChain().getTriple().getArch() == llvm::Triple::arm ||
-       getToolChain().getTriple().getArch() == llvm::Triple::thumb)) {
+      (getToolChain().getArch() == llvm::Triple::arm ||
+       getToolChain().getArch() == llvm::Triple::thumb)) {
     if (!Args.hasArg(options::OPT_fbuiltin_strcat))
       CmdArgs.push_back("-fno-builtin-strcat");
     if (!Args.hasArg(options::OPT_fbuiltin_strcpy))
@@ -3811,11 +3830,8 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-main-file-name");
   CmdArgs.push_back(Clang::getBaseInputName(Args, Inputs));
 
-  if (UseRelaxAll(C, Args))
-    CmdArgs.push_back("-relax-all");
-
   // Add target specific cpu and features flags.
-  switch(getToolChain().getTriple().getArch()) {
+  switch(getToolChain().getArch()) {
   default:
     break;
 
@@ -3879,8 +3895,9 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
 
   // FIXME: Add -static support, once we have it.
 
-  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
-                       options::OPT_Xassembler);
+  CollectArgsForIntegratedAssembler(C, Args, CmdArgs,
+                                    getToolChain().getDriver());
+
   Args.AddAllArgs(CmdArgs, options::OPT_mllvm);
 
   assert(Output.isFilename() && "Unexpected lipo output.");
@@ -3940,6 +3957,8 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("ppc");
     else if (Arch == llvm::Triple::ppc64)
       CmdArgs.push_back("ppc64");
+    else if (Arch == llvm::Triple::ppc64le)
+      CmdArgs.push_back("ppc64le");
     else
       CmdArgs.push_back(Args.MakeArgString(getToolChain().getArchName()));
   }
@@ -3951,7 +3970,8 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
   // here.
   if (Arch == llvm::Triple::x86 || Arch == llvm::Triple::ppc)
     CmdArgs.push_back("-m32");
-  else if (Arch == llvm::Triple::x86_64 || Arch == llvm::Triple::ppc64)
+  else if (Arch == llvm::Triple::x86_64 || Arch == llvm::Triple::ppc64 ||
+           Arch == llvm::Triple::ppc64le)
     CmdArgs.push_back("-m64");
 
   if (Output.isFilename()) {
@@ -4403,12 +4423,12 @@ void darwin::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   AddDarwinArch(Args, CmdArgs);
 
   // Use -force_cpusubtype_ALL on x86 by default.
-  if (getToolChain().getTriple().getArch() == llvm::Triple::x86 ||
-      getToolChain().getTriple().getArch() == llvm::Triple::x86_64 ||
+  if (getToolChain().getArch() == llvm::Triple::x86 ||
+      getToolChain().getArch() == llvm::Triple::x86_64 ||
       Args.hasArg(options::OPT_force__cpusubtype__ALL))
     CmdArgs.push_back("-force_cpusubtype_ALL");
 
-  if (getToolChain().getTriple().getArch() != llvm::Triple::x86_64 &&
+  if (getToolChain().getArch() != llvm::Triple::x86_64 &&
       (((Args.hasArg(options::OPT_mkernel) ||
          Args.hasArg(options::OPT_fapple_kext)) &&
         (!getDarwinToolChain().isTargetIPhoneOS() ||
@@ -5903,6 +5923,10 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-a64");
     CmdArgs.push_back("-mppc64");
     CmdArgs.push_back("-many");
+  } else if (getToolChain().getArch() == llvm::Triple::ppc64le) {
+    CmdArgs.push_back("-a64");
+    CmdArgs.push_back("-mppc64le");
+    CmdArgs.push_back("-many");
   } else if (getToolChain().getArch() == llvm::Triple::arm) {
     StringRef MArch = getToolChain().getArchName();
     if (MArch == "armv7" || MArch == "armv7a" || MArch == "armv7-a")
@@ -6048,6 +6072,7 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
   } else if (ToolChain.getArch() == llvm::Triple::ppc)
     return "/lib/ld.so.1";
   else if (ToolChain.getArch() == llvm::Triple::ppc64 ||
+           ToolChain.getArch() == llvm::Triple::ppc64le ||
            ToolChain.getArch() == llvm::Triple::systemz)
     return "/lib64/ld64.so.1";
   else
