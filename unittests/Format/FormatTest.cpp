@@ -842,10 +842,10 @@ TEST_F(FormatTest, AlignsBlockComments) {
                    "           1.1.1. to keep the formatting.\n"
                    "   */"));
   EXPECT_EQ("/*\n"
-            "Don't try to outdent if there's not enough inentation.\n"
+            "Don't try to outdent if there's not enough indentation.\n"
             "*/",
             format("  /*\n"
-                   " Don't try to outdent if there's not enough inentation.\n"
+                   " Don't try to outdent if there's not enough indentation.\n"
                    " */"));
 
   EXPECT_EQ("int i; /* Comment with empty...\n"
@@ -1565,6 +1565,37 @@ TEST_F(FormatTest, FormatsNamespaces) {
                    "int i;\n"
                    "}    // my_namespace\n"
                    "#endif    // HEADER_GUARD"));
+
+  FormatStyle Style = getLLVMStyle();
+  Style.NamespaceIndentation = FormatStyle::NI_All;
+  EXPECT_EQ("namespace out {\n"
+            "  int i;\n"
+            "  namespace in {\n"
+            "    int i;\n"
+            "  } // namespace\n"
+            "} // namespace",
+            format("namespace out {\n"
+                   "int i;\n"
+                   "namespace in {\n"
+                   "int i;\n"
+                   "} // namespace\n"
+                   "} // namespace",
+                   Style));
+
+  Style.NamespaceIndentation = FormatStyle::NI_Inner;
+  EXPECT_EQ("namespace out {\n"
+            "int i;\n"
+            "namespace in {\n"
+            "  int i;\n"
+            "} // namespace\n"
+            "} // namespace",
+            format("namespace out {\n"
+                   "int i;\n"
+                   "namespace in {\n"
+                   "int i;\n"
+                   "} // namespace\n"
+                   "} // namespace",
+                   Style));
 }
 
 TEST_F(FormatTest, FormatsExternC) { verifyFormat("extern \"C\" {\nint a;"); }
@@ -3372,6 +3403,8 @@ TEST_F(FormatTest, UnderstandsTemplateParameters) {
                "  while (a < b && c > d) {\n"
                "  }\n"
                "}");
+  verifyFormat("template <typename... Types>\n"
+               "typename enable_if<0 < sizeof...(Types)>::type Foo() {}");
 }
 
 TEST_F(FormatTest, UnderstandsBinaryOperators) {
@@ -4107,7 +4140,7 @@ TEST_F(FormatTest, UnderstandContextOfRecordTypeKeywords) {
       "    : Implementation(new ImplicitCastMatcher<F>(Other)) {}");
 
   // FIXME: This is still incorrectly handled at the formatter side.
-  verifyFormat("template <> struct X < 15, i < 3 && 42 < 50 && 33<28> {};");
+  verifyFormat("template <> struct X < 15, i<3 && 42 < 50 && 33 < 28> {};");
 
   // FIXME:
   // This now gets parsed incorrectly as class definition.
@@ -5439,6 +5472,7 @@ TEST_F(FormatTest, ParsesConfiguration) {
   EXPECT_FALSE(Style.FIELD);
 
   CHECK_PARSE_BOOL(AlignEscapedNewlinesLeft);
+  CHECK_PARSE_BOOL(AlignTrailingComments);
   CHECK_PARSE_BOOL(AllowAllParametersOfDeclarationOnNextLine);
   CHECK_PARSE_BOOL(AllowShortIfStatementsOnASingleLine);
   CHECK_PARSE_BOOL(AllowShortLoopsOnASingleLine);
@@ -5482,6 +5516,14 @@ TEST_F(FormatTest, ParsesConfiguration) {
               FormatStyle::BS_Linux);
   CHECK_PARSE("BreakBeforeBraces: Stroustrup", BreakBeforeBraces,
               FormatStyle::BS_Stroustrup);
+
+  Style.NamespaceIndentation = FormatStyle::NI_All;
+  CHECK_PARSE("NamespaceIndentation: None", NamespaceIndentation,
+              FormatStyle::NI_None);
+  CHECK_PARSE("NamespaceIndentation: Inner", NamespaceIndentation,
+              FormatStyle::NI_Inner);
+  CHECK_PARSE("NamespaceIndentation: All", NamespaceIndentation,
+              FormatStyle::NI_All);
 
 #undef CHECK_PARSE
 #undef CHECK_PARSE_BOOL
@@ -5584,7 +5626,7 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
   verifyFormat("namespace outer {\n"
                "int i;\n"
                "namespace inner {\n"
-               "int i;\n" // FIXME: This should be indented.
+               "    int i;\n"
                "} // namespace inner\n"
                "} // namespace outer\n"
                "namespace other_outer {\n"
@@ -5630,10 +5672,17 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
                "    , aaaaaaaaaaaaaaaaaaaaaaa()\n{\n}",
                Style);
 
+  // Access specifiers should be aligned left.
+  verifyFormat("class C {\n"
+               "public:\n"
+               "    int i;\n"
+               "};",
+               Style);
+
   // Do not align comments.
-  // FIXME: Implement option to suppress comment alignment.
-  // verifyFormat("int a; // Do not\n"
-  //              "double b; // align comments.");
+  verifyFormat("int a; // Do not\n"
+               "double b; // align comments.",
+               Style);
 
   // Accept input's line breaks.
   EXPECT_EQ("if (aaaaaaaaaaaaaaa\n"

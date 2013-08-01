@@ -77,6 +77,15 @@ struct FormatStyle {
   /// Switch statement body is always indented one level more than case labels.
   bool IndentCaseLabels;
 
+  enum NamespaceIndentationKind {
+    NI_None,  // Don't indent in namespaces.
+    NI_Inner, // Indent only in inner namespaces (nested in other namespaces).
+    NI_All    // Indent in all namespaces.
+  };
+
+  /// \brief The indentation used for namespaces.
+  NamespaceIndentationKind NamespaceIndentation;
+
   /// \brief The number of spaces to before trailing line comments.
   unsigned SpacesBeforeTrailingComments;
 
@@ -121,6 +130,9 @@ struct FormatStyle {
   /// \brief Add a space in front of an Objective-C protocol list, i.e. use
   /// Foo <Protocol> instead of Foo<Protocol>.
   bool ObjCSpaceBeforeProtocolList;
+
+  /// \brief If \c true, aligns trailing comments.
+  bool AlignTrailingComments;
 
   /// \brief If \c true, aligns escaped newlines as far left as possible.
   /// Otherwise puts them into the right-most column.
@@ -179,6 +191,7 @@ struct FormatStyle {
   bool operator==(const FormatStyle &R) const {
     return AccessModifierOffset == R.AccessModifierOffset &&
            AlignEscapedNewlinesLeft == R.AlignEscapedNewlinesLeft &&
+           AlignTrailingComments == R.AlignTrailingComments &&
            AllowAllParametersOfDeclarationOnNextLine ==
                R.AllowAllParametersOfDeclarationOnNextLine &&
            AllowShortIfStatementsOnASingleLine ==
@@ -198,6 +211,7 @@ struct FormatStyle {
            IndentCaseLabels == R.IndentCaseLabels &&
            IndentWidth == R.IndentWidth &&
            MaxEmptyLinesToKeep == R.MaxEmptyLinesToKeep &&
+           NamespaceIndentation == R.NamespaceIndentation &&
            ObjCSpaceBeforeProtocolList == R.ObjCSpaceBeforeProtocolList &&
            PenaltyBreakComment == R.PenaltyBreakComment &&
            PenaltyBreakFirstLessLess == R.PenaltyBreakFirstLessLess &&

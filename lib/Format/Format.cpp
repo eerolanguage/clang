@@ -53,6 +53,18 @@ struct ScalarEnumerationTraits<clang::format::FormatStyle::BraceBreakingStyle> {
   }
 };
 
+template <>
+struct ScalarEnumerationTraits<
+    clang::format::FormatStyle::NamespaceIndentationKind> {
+  static void
+  enumeration(IO &IO,
+              clang::format::FormatStyle::NamespaceIndentationKind &Value) {
+    IO.enumCase(Value, "None", clang::format::FormatStyle::NI_None);
+    IO.enumCase(Value, "Inner", clang::format::FormatStyle::NI_Inner);
+    IO.enumCase(Value, "All", clang::format::FormatStyle::NI_All);
+  }
+};
+
 template <> struct MappingTraits<clang::format::FormatStyle> {
   static void mapping(llvm::yaml::IO &IO, clang::format::FormatStyle &Style) {
     if (IO.outputting()) {
@@ -79,6 +91,7 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
 
     IO.mapOptional("AccessModifierOffset", Style.AccessModifierOffset);
     IO.mapOptional("AlignEscapedNewlinesLeft", Style.AlignEscapedNewlinesLeft);
+    IO.mapOptional("AlignTrailingComments", Style.AlignTrailingComments);
     IO.mapOptional("AllowAllParametersOfDeclarationOnNextLine",
                    Style.AllowAllParametersOfDeclarationOnNextLine);
     IO.mapOptional("AllowShortIfStatementsOnASingleLine",
@@ -102,6 +115,7 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
                    Style.ExperimentalAutoDetectBinPacking);
     IO.mapOptional("IndentCaseLabels", Style.IndentCaseLabels);
     IO.mapOptional("MaxEmptyLinesToKeep", Style.MaxEmptyLinesToKeep);
+    IO.mapOptional("NamespaceIndentation", Style.NamespaceIndentation);
     IO.mapOptional("ObjCSpaceBeforeProtocolList",
                    Style.ObjCSpaceBeforeProtocolList);
     IO.mapOptional("PenaltyBreakComment", Style.PenaltyBreakComment);
@@ -140,6 +154,7 @@ FormatStyle getLLVMStyle() {
   FormatStyle LLVMStyle;
   LLVMStyle.AccessModifierOffset = -2;
   LLVMStyle.AlignEscapedNewlinesLeft = false;
+  LLVMStyle.AlignTrailingComments = true;
   LLVMStyle.AllowAllParametersOfDeclarationOnNextLine = true;
   LLVMStyle.AllowShortIfStatementsOnASingleLine = false;
   LLVMStyle.AllowShortLoopsOnASingleLine = false;
@@ -158,6 +173,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.IndentFunctionDeclarationAfterType = false;
   LLVMStyle.IndentWidth = 2;
   LLVMStyle.MaxEmptyLinesToKeep = 1;
+  LLVMStyle.NamespaceIndentation = FormatStyle::NI_None;
   LLVMStyle.ObjCSpaceBeforeProtocolList = true;
   LLVMStyle.PointerBindsToType = false;
   LLVMStyle.SpacesBeforeTrailingComments = 1;
@@ -174,6 +190,7 @@ FormatStyle getGoogleStyle() {
   FormatStyle GoogleStyle;
   GoogleStyle.AccessModifierOffset = -1;
   GoogleStyle.AlignEscapedNewlinesLeft = true;
+  GoogleStyle.AlignTrailingComments = true;
   GoogleStyle.AllowAllParametersOfDeclarationOnNextLine = true;
   GoogleStyle.AllowShortIfStatementsOnASingleLine = true;
   GoogleStyle.AllowShortLoopsOnASingleLine = true;
@@ -192,6 +209,7 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.IndentFunctionDeclarationAfterType = true;
   GoogleStyle.IndentWidth = 2;
   GoogleStyle.MaxEmptyLinesToKeep = 1;
+  GoogleStyle.NamespaceIndentation = FormatStyle::NI_None;
   GoogleStyle.ObjCSpaceBeforeProtocolList = false;
   GoogleStyle.PointerBindsToType = true;
   GoogleStyle.SpacesBeforeTrailingComments = 2;
@@ -229,11 +247,14 @@ FormatStyle getMozillaStyle() {
 
 FormatStyle getWebKitStyle() {
   FormatStyle Style = getLLVMStyle();
-  Style.ColumnLimit = 0;
-  Style.BreakBeforeBraces = FormatStyle::BS_Stroustrup;
+  Style.AccessModifierOffset = -4;
+  Style.AlignTrailingComments = false;
   Style.BreakBeforeBinaryOperators = true;
+  Style.BreakBeforeBraces = FormatStyle::BS_Stroustrup;
   Style.BreakConstructorInitializersBeforeComma = true;
+  Style.ColumnLimit = 0;
   Style.IndentWidth = 4;
+  Style.NamespaceIndentation = FormatStyle::NI_Inner;
   Style.PointerBindsToType = true;
   return Style;
 }
