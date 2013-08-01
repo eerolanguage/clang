@@ -27,14 +27,15 @@ enum ClangFlags {
   LinkerInput = (1 << 5),
   NoArgumentUnused = (1 << 6),
   Unsupported = (1 << 7),
-  CLOption = (1 << 8),
-  CC1Option = (1 << 9),
-  NoDriverOption = (1 << 10)
+  CoreOption = (1 << 8),
+  CLOption = (1 << 9),
+  CC1Option = (1 << 10),
+  NoDriverOption = (1 << 11)
 };
 
 enum ID {
     OPT_INVALID = 0, // This is not an option ID.
-#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, FLAGS, PARAM, \
+#define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM, \
                HELPTEXT, METAVAR) OPT_##ID,
 #include "clang/Driver/Options.inc"
     LastOption
