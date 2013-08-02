@@ -274,10 +274,6 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
   assert(!CurTokenLexer &&
          "Ending a file when currently in a macro!");
 
-  if (isEndOfMacro) {
-    inLegacyMacro = false;
-  }
-
   // See if this file had a controlling macro.
   if (CurPPLexer) {  // Not ending a macro, ignore it.
     if (const IdentifierInfo *ControllingMacro =
@@ -370,6 +366,8 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
             (SourceMgr.getFileCharacteristic(CurLexer->getFileLoc()) !=
              SrcMgr::C_User);
       }
+    } else if (CurLexer && !CurLexer->Is_PragmaLexer) {
+      inLegacyMacro = false;
     }
 
     // Notify the client, if desired, that we are in a new source file.
