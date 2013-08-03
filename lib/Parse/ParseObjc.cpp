@@ -2091,7 +2091,7 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
   }
 
   // Their parsing was not deferred
-  if (getLangOpts().OffSideRule && !PP.isInLegacyMode(Tok.getLocation())) {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
     for (size_t i = 0; i < ParsedObjCMethods.size(); ++i)
       DeclsInGroup.push_back(ParsedObjCMethods[i]);
     ParsedObjCMethods.clear();
