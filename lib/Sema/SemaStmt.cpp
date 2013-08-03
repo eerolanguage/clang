@@ -1711,7 +1711,7 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
       return StmtError(Diag(VD->getLocation(), diag::err_non_variable_decl_in_for));
 
     ValueDecl *valDecl = cast<ValueDecl>(D);
-    InitVarExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, First->getLocEnd()).take();
+    InitVarExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, First->getLocStart()).take();
 
   } else {
     InitVarExpr = cast<Expr>(First);
@@ -1748,7 +1748,7 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
   // Begin loop at <NSRange>.location
   CXXScopeSpec SS;
   UnqualifiedId Name;
-  Name.setIdentifier(&(PP.getIdentifierTable().get("location")),First->getLocEnd());
+  Name.setIdentifier(&(PP.getIdentifierTable().get("location")),Second->getLocStart());
   ExprResult beginExpr = ActOnMemberAccessExpr(getCurScope(),
                                                Second, 
                                                SourceLocation(), 
