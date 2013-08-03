@@ -2058,12 +2058,24 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
 
   SmallVector<Decl *, 8> DeclsInGroup;
 
+  bool doAutoSynthesize = (getLangOpts().OffSideRule && !PP.isInLegacyHeader());
+
   {
     ObjCImplParsingDataRAII ObjCImplParsing(*this, ObjCImpDecl);
     while (!ObjCImplParsing.isFinished() && Tok.isNot(tok::eof)) {
       ParsedAttributesWithRange attrs(AttrFactory);
       MaybeParseCXX11Attributes(attrs);
       MaybeParseMicrosoftAttributes(attrs);
+      
+      // Since parsing isn't deferred when using the offside rule,
+      // do the auto synthesizing after any manual synthesizing
+      // has been done.
+      if (doAutoSynthesize && !Tok.is(tok::at) &&
+          !Tok.is(tok::kw_synthesize) && !Tok.is(tok::kw_dynamic)) {
+        Actions.DefaultSynthesizeProperties(getCurScope(), ObjCImpDecl);
+        doAutoSynthesize = false;
+      }
+      
       if (DeclGroupPtrTy DGP = ParseExternalDeclaration(attrs)) {
         DeclGroupRef DG = DGP.get();
         DeclsInGroup.append(DG.begin(), DG.end());
