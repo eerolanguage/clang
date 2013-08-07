@@ -239,6 +239,13 @@ namespace clang {
                                      ClassTemplatePartialSpecializationDecl *D);
     void VisitClassScopeFunctionSpecializationDecl(
                                        ClassScopeFunctionSpecializationDecl *D);
+    RedeclarableResult
+    VisitVarTemplateSpecializationDeclImpl(VarTemplateSpecializationDecl *D);
+    void VisitVarTemplateSpecializationDecl(VarTemplateSpecializationDecl *D) {
+      VisitVarTemplateSpecializationDeclImpl(D);
+    }
+    void VisitVarTemplatePartialSpecializationDecl(
+        VarTemplatePartialSpecializationDecl *D);
     void VisitTemplateTypeParmDecl(TemplateTypeParmDecl *D);
     void VisitValueDecl(ValueDecl *VD);
     void VisitEnumConstantDecl(EnumConstantDecl *ECD);
@@ -252,13 +259,15 @@ namespace clang {
     void VisitFieldDecl(FieldDecl *FD);
     void VisitMSPropertyDecl(MSPropertyDecl *FD);
     void VisitIndirectFieldDecl(IndirectFieldDecl *FD);
-    void VisitVarDecl(VarDecl *VD);
+    RedeclarableResult VisitVarDeclImpl(VarDecl *D);
+    void VisitVarDecl(VarDecl *VD) { VisitVarDeclImpl(VD); }
     void VisitImplicitParamDecl(ImplicitParamDecl *PD);
     void VisitParmVarDecl(ParmVarDecl *PD);
     void VisitNonTypeTemplateParmDecl(NonTypeTemplateParmDecl *D);
     void VisitTemplateDecl(TemplateDecl *D);
     RedeclarableResult VisitRedeclarableTemplateDecl(RedeclarableTemplateDecl *D);
     void VisitClassTemplateDecl(ClassTemplateDecl *D);
+    void VisitVarTemplateDecl(VarTemplateDecl *D);
     void VisitFunctionTemplateDecl(FunctionTemplateDecl *D);
     void VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D);
     void VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
@@ -917,7 +926,7 @@ void ASTDeclReader::VisitIndirectFieldDecl(IndirectFieldDecl *FD) {
     FD->Chaining[I] = ReadDeclAs<NamedDecl>(Record, Idx);
 }
 
-void ASTDeclReader::VisitVarDecl(VarDecl *VD) {
+ASTDeclReader::RedeclarableResult ASTDeclReader::VisitVarDeclImpl(VarDecl *VD) {
   RedeclarableResult Redecl = VisitRedeclarable(VD);
   VisitDeclaratorDecl(VD);
 
@@ -950,6 +959,8 @@ void ASTDeclReader::VisitVarDecl(VarDecl *VD) {
     SourceLocation POI = ReadSourceLocation(Record, Idx);
     Reader.getContext().setInstantiatedFromStaticDataMember(VD, Tmpl, TSK,POI);
   }
+
+  return Redecl;
 }
 
 void ASTDeclReader::VisitImplicitParamDecl(ImplicitParamDecl *PD) {
@@ -1277,7 +1288,6 @@ void ASTDeclReader::VisitCXXConstructorDecl(CXXConstructorDecl *D) {
   VisitCXXMethodDecl(D);
   
   D->IsExplicitSpecified = Record[Idx++];
-  D->ImplicitlyDefined = Record[Idx++];
   llvm::tie(D->CtorInitializers, D->NumCtorInitializers)
       = Reader.ReadCXXCtorInitializers(F, Record, Idx);
 }
@@ -1285,7 +1295,6 @@ void ASTDeclReader::VisitCXXConstructorDecl(CXXConstructorDecl *D) {
 void ASTDeclReader::VisitCXXDestructorDecl(CXXDestructorDecl *D) {
   VisitCXXMethodDecl(D);
 
-  D->ImplicitlyDefined = Record[Idx++];
   D->OperatorDelete = ReadDeclAs<FunctionDecl>(Record, Idx);
 }
 
@@ -1418,6 +1427,40 @@ void ASTDeclReader::VisitClassTemplateDecl(ClassTemplateDecl *D) {
   }
 }
 
+void ASTDeclReader::VisitVarTemplateDecl(VarTemplateDecl *D) {
+  RedeclarableResult Redecl = VisitRedeclarableTemplateDecl(D);
+
+  if (ThisDeclID == Redecl.getFirstID()) {
+    // This ClassTemplateDecl owns a CommonPtr; read it to keep track of all of
+    // the specializations.
+    SmallVector<serialization::DeclID, 2> SpecIDs;
+    SpecIDs.push_back(0);
+
+    // Specializations.
+    unsigned Size = Record[Idx++];
+    SpecIDs[0] += Size;
+    for (unsigned I = 0; I != Size; ++I)
+      SpecIDs.push_back(ReadDeclID(Record, Idx));
+
+    // Partial specializations.
+    Size = Record[Idx++];
+    SpecIDs[0] += Size;
+    for (unsigned I = 0; I != Size; ++I)
+      SpecIDs.push_back(ReadDeclID(Record, Idx));
+
+    VarTemplateDecl::Common *CommonPtr = D->getCommonPtr();
+    if (SpecIDs[0]) {
+      typedef serialization::DeclID DeclID;
+
+      // FIXME: Append specializations!
+      CommonPtr->LazySpecializations =
+          new (Reader.getContext()) DeclID[SpecIDs.size()];
+      memcpy(CommonPtr->LazySpecializations, SpecIDs.data(),
+             SpecIDs.size() * sizeof(DeclID));
+    }
+  }
+}
+
 ASTDeclReader::RedeclarableResult
 ASTDeclReader::VisitClassTemplateSpecializationDeclImpl(
     ClassTemplateSpecializationDecl *D) {
@@ -1525,6 +1568,89 @@ void ASTDeclReader::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
       for (unsigned I = 0; I != NumSpecs; ++I)
         CommonPtr->LazySpecializations[I + 1] = ReadDeclID(Record, Idx);
     }
+  }
+}
+
+ASTDeclReader::RedeclarableResult
+ASTDeclReader::VisitVarTemplateSpecializationDeclImpl(
+    VarTemplateSpecializationDecl *D) {
+  RedeclarableResult Redecl = VisitVarDeclImpl(D);
+
+  ASTContext &C = Reader.getContext();
+  if (Decl *InstD = ReadDecl(Record, Idx)) {
+    if (VarTemplateDecl *VTD = dyn_cast<VarTemplateDecl>(InstD)) {
+      D->SpecializedTemplate = VTD;
+    } else {
+      SmallVector<TemplateArgument, 8> TemplArgs;
+      Reader.ReadTemplateArgumentList(TemplArgs, F, Record, Idx);
+      TemplateArgumentList *ArgList = TemplateArgumentList::CreateCopy(
+          C, TemplArgs.data(), TemplArgs.size());
+      VarTemplateSpecializationDecl::SpecializedPartialSpecialization *PS =
+          new (C)
+          VarTemplateSpecializationDecl::SpecializedPartialSpecialization();
+      PS->PartialSpecialization =
+          cast<VarTemplatePartialSpecializationDecl>(InstD);
+      PS->TemplateArgs = ArgList;
+      D->SpecializedTemplate = PS;
+    }
+  }
+
+  // Explicit info.
+  if (TypeSourceInfo *TyInfo = GetTypeSourceInfo(Record, Idx)) {
+    VarTemplateSpecializationDecl::ExplicitSpecializationInfo *ExplicitInfo =
+        new (C) VarTemplateSpecializationDecl::ExplicitSpecializationInfo;
+    ExplicitInfo->TypeAsWritten = TyInfo;
+    ExplicitInfo->ExternLoc = ReadSourceLocation(Record, Idx);
+    ExplicitInfo->TemplateKeywordLoc = ReadSourceLocation(Record, Idx);
+    D->ExplicitInfo = ExplicitInfo;
+  }
+
+  SmallVector<TemplateArgument, 8> TemplArgs;
+  Reader.ReadTemplateArgumentList(TemplArgs, F, Record, Idx);
+  D->TemplateArgs =
+      TemplateArgumentList::CreateCopy(C, TemplArgs.data(), TemplArgs.size());
+  D->PointOfInstantiation = ReadSourceLocation(Record, Idx);
+  D->SpecializationKind = (TemplateSpecializationKind)Record[Idx++];
+
+  bool writtenAsCanonicalDecl = Record[Idx++];
+  if (writtenAsCanonicalDecl) {
+    VarTemplateDecl *CanonPattern = ReadDeclAs<VarTemplateDecl>(Record, Idx);
+    if (D->isCanonicalDecl()) { // It's kept in the folding set.
+      if (VarTemplatePartialSpecializationDecl *Partial =
+              dyn_cast<VarTemplatePartialSpecializationDecl>(D)) {
+        Partial->SequenceNumber =
+            CanonPattern->getNextPartialSpecSequenceNumber();
+        CanonPattern->getCommonPtr()->PartialSpecializations
+            .GetOrInsertNode(Partial);
+      } else {
+        CanonPattern->getCommonPtr()->Specializations.GetOrInsertNode(D);
+      }
+    }
+  }
+
+  return Redecl;
+}
+
+void ASTDeclReader::VisitVarTemplatePartialSpecializationDecl(
+    VarTemplatePartialSpecializationDecl *D) {
+  RedeclarableResult Redecl = VisitVarTemplateSpecializationDeclImpl(D);
+
+  ASTContext &C = Reader.getContext();
+  D->TemplateParams = Reader.ReadTemplateParameterList(F, Record, Idx);
+
+  unsigned NumArgs = Record[Idx++];
+  if (NumArgs) {
+    D->NumArgsAsWritten = NumArgs;
+    D->ArgsAsWritten = new (C) TemplateArgumentLoc[NumArgs];
+    for (unsigned i = 0; i != NumArgs; ++i)
+      D->ArgsAsWritten[i] = Reader.ReadTemplateArgumentLoc(F, Record, Idx);
+  }
+
+  // These are read/set from/to the first declaration.
+  if (ThisDeclID == Redecl.getFirstID()) {
+    D->InstantiatedFromMember.setPointer(
+        ReadDeclAs<VarTemplatePartialSpecializationDecl>(Record, Idx));
+    D->InstantiatedFromMember.setInt(Record[Idx++]);
   }
 }
 
@@ -2003,6 +2129,17 @@ void ASTDeclReader::attachPreviousDecl(Decl *D, Decl *previous) {
     RedeclarableTemplateDecl *TD = cast<RedeclarableTemplateDecl>(D);
     TD->RedeclLink.setNext(cast<RedeclarableTemplateDecl>(previous));
   }
+
+  // If the declaration was visible in one module, a redeclaration of it in
+  // another module remains visible even if it wouldn't be visible by itself.
+  //
+  // FIXME: In this case, the declaration should only be visible if a module
+  //        that makes it visible has been imported.
+  // FIXME: This is not correct in the case where previous is a local extern
+  //        declaration and D is a friend declaraton.
+  D->IdentifierNamespace |=
+      previous->IdentifierNamespace &
+      (Decl::IDNS_Ordinary | Decl::IDNS_Tag | Decl::IDNS_Type);
 }
 
 void ASTDeclReader::attachLatestDecl(Decl *D, Decl *Latest) {
@@ -2061,11 +2198,6 @@ ASTReader::combineStoredMergedDecls(Decl *Canon, GlobalDeclID CanonID) {
   Pos->second.erase(std::unique(Pos->second.begin(), Pos->second.end()),
                     Pos->second.end());
   return Pos;
-}
-
-void ASTReader::loadAndAttachPreviousDecl(Decl *D, serialization::DeclID ID) {
-  Decl *previous = GetDecl(ID);
-  ASTDeclReader::attachPreviousDecl(D, previous);
 }
 
 /// \brief Read the declaration at the given offset from the AST file.
@@ -2171,6 +2303,15 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
     break;
   case DECL_CLASS_TEMPLATE_PARTIAL_SPECIALIZATION:
     D = ClassTemplatePartialSpecializationDecl::CreateDeserialized(Context, ID);
+    break;
+  case DECL_VAR_TEMPLATE:
+    D = VarTemplateDecl::CreateDeserialized(Context, ID);
+    break;
+  case DECL_VAR_TEMPLATE_SPECIALIZATION:
+    D = VarTemplateSpecializationDecl::CreateDeserialized(Context, ID);
+    break;
+  case DECL_VAR_TEMPLATE_PARTIAL_SPECIALIZATION:
+    D = VarTemplatePartialSpecializationDecl::CreateDeserialized(Context, ID);
     break;
   case DECL_CLASS_SCOPE_FUNCTION_SPECIALIZATION:
     D = ClassScopeFunctionSpecializationDecl::CreateDeserialized(Context, ID);
@@ -2499,7 +2640,7 @@ void ASTReader::loadPendingDeclChain(serialization::GlobalDeclID ID) {
   for (unsigned I = 0, N = Chain.size(); I != N; ++I) {
     if (Chain[I] == CanonDecl)
       continue;
-    
+
     ASTDeclReader::attachPreviousDecl(Chain[I], MostRecent);
     MostRecent = Chain[I];
   }

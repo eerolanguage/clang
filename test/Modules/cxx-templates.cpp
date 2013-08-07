@@ -51,6 +51,9 @@ void g() {
   // 'common'. That type is not visible here.
   PerformDelayedLookup(defined_in_common);
 
+  // Likewise, but via a default argument.
+  PerformDelayedLookupInDefaultArgument(defined_in_common);
+
   // Trigger the instantiation of a template in 'b' that uses a type defined in
   // 'b_impl'. That type is not visible here.
   UseDefinedInBImpl<int>();
@@ -67,6 +70,10 @@ void g() {
   // expected-note@Inputs/cxx-templates-b-impl.h:1 {{definition is here}}
   PerformDelayedLookup(defined_in_b_impl); // expected-note {{in instantiation of}}
 }
+
+RedeclaredAsFriend<int> raf1;
+RedeclareTemplateAsFriend<double> rtaf;
+RedeclaredAsFriend<double> raf2;
 
 @import cxx_templates_common;
 

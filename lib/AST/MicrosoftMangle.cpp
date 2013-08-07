@@ -123,7 +123,7 @@ private:
 #undef NON_CANONICAL_TYPE
 #undef TYPE
   
-  void mangleType(const TagType*);
+  void mangleType(const TagDecl *TD);
   void mangleDecayedArrayType(const ArrayType *T, bool IsGlobal);
   void mangleArrayType(const ArrayType *T);
   void mangleFunctionClass(const FunctionDecl *FD);
@@ -329,7 +329,11 @@ void MicrosoftCXXNameMangler::mangleVariableEncoding(const VarDecl *VD) {
       mangleQualifiers(Ty.getQualifiers(), false);
   } else {
     mangleType(Ty, TL.getSourceRange(), QMM_Drop);
-    mangleQualifiers(Ty.getLocalQualifiers(), false);
+    mangleQualifiers(Ty.getLocalQualifiers(), Ty->isMemberPointerType());
+    // Member pointers are suffixed with a back reference to the member
+    // pointer's class name.
+    if (const MemberPointerType *MPT = Ty->getAs<MemberPointerType>())
+      mangleName(MPT->getClass()->getAsCXXRecordDecl());
   }
 }
 
@@ -889,6 +893,9 @@ void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
     mangleIntegerLiteral(TA.getAsIntegral(),
                          TA.getIntegralType()->isBooleanType());
     break;
+  case TemplateArgument::NullPtr:
+    Out << "$0A@";
+    break;
   case TemplateArgument::Expression:
     mangleExpression(TA.getAsExpr());
     break;
@@ -901,8 +908,10 @@ void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
       mangleTemplateArg(TD, *I, ArgIndex);
     break;
   case TemplateArgument::Template:
-  case TemplateArgument::TemplateExpansion:
-  case TemplateArgument::NullPtr: {
+    mangleType(cast<TagDecl>(
+        TA.getAsTemplate().getAsTemplateDecl()->getTemplatedDecl()));
+    break;
+  case TemplateArgument::TemplateExpansion: {
     // Issue a diagnostic.
     DiagnosticsEngine &Diags = Context.getDiags();
     unsigned DiagID = Diags.getCustomDiagID(DiagnosticsEngine::Error,
@@ -973,6 +982,7 @@ void MicrosoftCXXNameMangler::mangleQualifiers(Qualifiers Quals,
   //         ::= 5 # not really based
   bool HasConst = Quals.hasConst(),
        HasVolatile = Quals.hasVolatile();
+
   if (!IsMember) {
     if (HasConst && HasVolatile) {
       Out << 'D';
@@ -984,6 +994,9 @@ void MicrosoftCXXNameMangler::mangleQualifiers(Qualifiers Quals,
       Out << 'A';
     }
   } else {
+    if (PointersAre64Bit)
+      Out << 'E';
+
     if (HasConst && HasVolatile) {
       Out << 'T';
     } else if (HasVolatile) {
@@ -1405,13 +1418,13 @@ void MicrosoftCXXNameMangler::mangleType(const UnresolvedUsingType *T,
 // <class-type>  ::= V <name>
 // <enum-type>   ::= W <size> <name>
 void MicrosoftCXXNameMangler::mangleType(const EnumType *T, SourceRange) {
-  mangleType(cast<TagType>(T));
+  mangleType(cast<TagType>(T)->getDecl());
 }
 void MicrosoftCXXNameMangler::mangleType(const RecordType *T, SourceRange) {
-  mangleType(cast<TagType>(T));
+  mangleType(cast<TagType>(T)->getDecl());
 }
-void MicrosoftCXXNameMangler::mangleType(const TagType *T) {
-  switch (T->getDecl()->getTagKind()) {
+void MicrosoftCXXNameMangler::mangleType(const TagDecl *TD) {
+  switch (TD->getTagKind()) {
     case TTK_Union:
       Out << 'T';
       break;
@@ -1425,10 +1438,10 @@ void MicrosoftCXXNameMangler::mangleType(const TagType *T) {
     case TTK_Enum:
       Out << 'W';
       Out << getASTContext().getTypeSizeInChars(
-                cast<EnumDecl>(T->getDecl())->getIntegerType()).getQuantity();
+                cast<EnumDecl>(TD)->getIntegerType()).getQuantity();
       break;
   }
-  mangleName(T->getDecl());
+  mangleName(TD);
 }
 
 // <type>       ::= <array-type>
