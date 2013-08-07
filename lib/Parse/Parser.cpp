@@ -1545,8 +1545,9 @@ Parser::TryAnnotateName(bool IsAddressOfOperand,
       return ANK_TemplateName;
     }
     // Fall through.
+  case Sema::NC_VarTemplate:
   case Sema::NC_FunctionTemplate: {
-    // We have a type or function template followed by '<'.
+    // We have a type, variable or function template followed by '<'.
     ConsumeToken();
     UnqualifiedId Id;
     Id.setIdentifier(Name, NameLoc);
@@ -1761,7 +1762,8 @@ bool Parser::TryAnnotateTypeOrScopeTokenAfterScopeSpec(bool EnteringContext,
       // annotation token to a type annotation token now.
       AnnotateTemplateIdTokenAsType();
       return false;
-    }
+    } else if (TemplateId->Kind == TNK_Var_template)
+      return false;
   }
 
   if (SS.isEmpty())

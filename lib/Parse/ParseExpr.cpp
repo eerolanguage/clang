@@ -1613,7 +1613,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         IdentifierInfo *Id = Tok.getIdentifierInfo();
         SourceLocation Loc = ConsumeToken();
         Name.setIdentifier(Id, Loc);
-      } else if (isEero && !LHS.isInvalid() && 
+      } else if (isEero && (OpKind == tok::period) && !LHS.isInvalid() &&
                  ((Tok.is(tok::identifier) && NextToken().is(tok::colon)) ||
                   Tok.is(tok::colon))) {
         LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(), SourceLocation(),
@@ -1628,7 +1628,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         LHS = ExprError();
       
       // Universal dot notation, including for 'id' and block objects
-      if (isEero && !LHS.isInvalid()) {
+      if (isEero && (OpKind == tok::period) && !LHS.isInvalid()) {
         const QualType LHSType = LHS.get()->getType();
         if (LHSType->isObjCObjectPointerType() ||
             LHSType->isSpecificPlaceholderType(BuiltinType::PseudoObject) ||

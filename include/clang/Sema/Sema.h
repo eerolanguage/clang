@@ -87,6 +87,7 @@ namespace clang {
   class ClassTemplateDecl;
   class ClassTemplatePartialSpecializationDecl;
   class ClassTemplateSpecializationDecl;
+  class VarTemplatePartialSpecializationDecl;
   class CodeCompleteConsumer;
   class CodeCompletionAllocator;
   class CodeCompletionTUInfo;
@@ -173,6 +174,7 @@ namespace clang {
   class UsingShadowDecl;
   class ValueDecl;
   class VarDecl;
+  class VarTemplateSpecializationDecl;
   class VisibilityAttr;
   class VisibleDeclConsumer;
   class IndirectFieldDecl;
@@ -1325,6 +1327,7 @@ public:
     NC_Expression,
     NC_NestedNameSpecifier,
     NC_TypeTemplate,
+    NC_VarTemplate,
     NC_FunctionTemplate
   };
 
@@ -1363,6 +1366,12 @@ public:
       return Result;
     }
 
+    static NameClassification VarTemplate(TemplateName Name) {
+      NameClassification Result(NC_VarTemplate);
+      Result.Template = Name;
+      return Result;
+    }
+
     static NameClassification FunctionTemplate(TemplateName Name) {
       NameClassification Result(NC_FunctionTemplate);
       Result.Template = Name;
@@ -1382,13 +1391,22 @@ public:
     }
 
     TemplateName getTemplateName() const {
-      assert(Kind == NC_TypeTemplate || Kind == NC_FunctionTemplate);
+      assert(Kind == NC_TypeTemplate || Kind == NC_FunctionTemplate ||
+             Kind == NC_VarTemplate);
       return Template;
     }
 
     TemplateNameKind getTemplateNameKind() const {
-      assert(Kind == NC_TypeTemplate || Kind == NC_FunctionTemplate);
-      return Kind == NC_TypeTemplate? TNK_Type_template : TNK_Function_template;
+      switch (Kind) {
+      case NC_TypeTemplate:
+        return TNK_Type_template;
+      case NC_FunctionTemplate:
+        return TNK_Function_template;
+      case NC_VarTemplate:
+        return TNK_Var_template;
+      default:
+        llvm_unreachable("unsuported name classification.");
+      }
     }
   };
 
@@ -1443,6 +1461,12 @@ public:
                                     LookupResult &Previous);
   NamedDecl* ActOnTypedefNameDecl(Scope* S, DeclContext* DC, TypedefNameDecl *D,
                                   LookupResult &Previous, bool &Redeclaration);
+  bool HandleVariableRedeclaration(Decl *D, CXXScopeSpec &SS);
+  NamedDecl *ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
+                                     TypeSourceInfo *TInfo,
+                                     LookupResult &Previous,
+                                     MultiTemplateParamsArg TemplateParamLists,
+                                     bool &AddToScope);
 
   /// Support for namespace-like prefixes
   void ActOnUsingPrefix(Scope *CurScope,
@@ -1450,10 +1474,6 @@ public:
                         SourceLocation PrefixNameLoc,
                         IdentifierInfo *PrefixName);
 
-  NamedDecl* ActOnVariableDeclarator(Scope* S, Declarator& D, DeclContext* DC,
-                                     TypeSourceInfo *TInfo,
-                                     LookupResult &Previous,
-                                     MultiTemplateParamsArg TemplateParamLists);
   // Returns true if the variable declaration is a redeclaration
   bool CheckVariableDeclaration(VarDecl *NewVD, LookupResult &Previous);
   void CheckVariableDeclarationType(VarDecl *NewVD);
@@ -3175,11 +3195,10 @@ public:
                               ExprValueKind VK,
                               SourceLocation Loc,
                               const CXXScopeSpec *SS = 0);
-  ExprResult BuildDeclRefExpr(ValueDecl *D, QualType Ty,
-                              ExprValueKind VK,
+  ExprResult BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
                               const DeclarationNameInfo &NameInfo,
-                              const CXXScopeSpec *SS = 0,
-                              NamedDecl *FoundD = 0);
+                              const CXXScopeSpec *SS = 0, NamedDecl *FoundD = 0,
+                              const TemplateArgumentListInfo *TemplateArgs = 0);
   ExprResult
   BuildAnonymousStructUnionMemberReference(
       const CXXScopeSpec &SS,
@@ -3213,9 +3232,9 @@ public:
   ExprResult BuildDeclarationNameExpr(const CXXScopeSpec &SS,
                                       LookupResult &R,
                                       bool NeedsADL);
-  ExprResult BuildDeclarationNameExpr(const CXXScopeSpec &SS,
-                                      const DeclarationNameInfo &NameInfo,
-                                      NamedDecl *D, NamedDecl *FoundD = 0);
+  ExprResult BuildDeclarationNameExpr(
+      const CXXScopeSpec &SS, const DeclarationNameInfo &NameInfo, NamedDecl *D,
+      NamedDecl *FoundD = 0, const TemplateArgumentListInfo *TemplateArgs = 0);
 
   ExprResult BuildLiteralOperatorCall(LookupResult &R,
                                       DeclarationNameInfo &SuffixInfo,
@@ -5036,6 +5055,7 @@ public:
   /// \brief The context in which we are checking a template parameter list.
   enum TemplateParamListContext {
     TPC_ClassTemplate,
+    TPC_VarTemplate,
     TPC_FunctionTemplate,
     TPC_ClassTemplateMember,
     TPC_FriendClassTemplate,
@@ -5092,6 +5112,21 @@ public:
                                     ASTTemplateArgsPtr TemplateArgsIn,
                                     SourceLocation RAngleLoc);
 
+  DeclResult ActOnVarTemplateSpecialization(
+      Scope *S, VarTemplateDecl *VarTemplate, Declarator &D, TypeSourceInfo *DI,
+      SourceLocation TemplateKWLoc, TemplateParameterList *TemplateParams,
+      StorageClass SC, bool IsPartialSpecialization);
+
+  DeclResult CheckVarTemplateId(VarTemplateDecl *Template,
+                                SourceLocation TemplateLoc,
+                                SourceLocation TemplateNameLoc,
+                                const TemplateArgumentListInfo &TemplateArgs);
+
+  ExprResult CheckVarTemplateId(const CXXScopeSpec &SS,
+                                const DeclarationNameInfo &NameInfo,
+                                VarTemplateDecl *Template,
+                                SourceLocation TemplateLoc,
+                                const TemplateArgumentListInfo *TemplateArgs);
 
   ExprResult BuildTemplateIdExpr(const CXXScopeSpec &SS,
                                  SourceLocation TemplateKWLoc,
@@ -5763,12 +5798,16 @@ public:
                           sema::TemplateDeductionInfo &Info);
 
   TemplateDeductionResult
-  SubstituteExplicitTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
-                              TemplateArgumentListInfo &ExplicitTemplateArgs,
-                      SmallVectorImpl<DeducedTemplateArgument> &Deduced,
-                                 SmallVectorImpl<QualType> &ParamTypes,
-                                      QualType *FunctionType,
-                                      sema::TemplateDeductionInfo &Info);
+  DeduceTemplateArguments(VarTemplatePartialSpecializationDecl *Partial,
+                          const TemplateArgumentList &TemplateArgs,
+                          sema::TemplateDeductionInfo &Info);
+
+  TemplateDeductionResult SubstituteExplicitTemplateArguments(
+      FunctionTemplateDecl *FunctionTemplate,
+      TemplateArgumentListInfo &ExplicitTemplateArgs,
+      SmallVectorImpl<DeducedTemplateArgument> &Deduced,
+      SmallVectorImpl<QualType> &ParamTypes, QualType *FunctionType,
+      sema::TemplateDeductionInfo &Info);
 
   /// brief A function argument from which we performed template argument
   // deduction for a call.
@@ -5860,6 +5899,10 @@ public:
                                   ClassTemplatePartialSpecializationDecl *PS1,
                                   ClassTemplatePartialSpecializationDecl *PS2,
                                   SourceLocation Loc);
+
+  VarTemplatePartialSpecializationDecl *getMoreSpecializedPartialSpecialization(
+      VarTemplatePartialSpecializationDecl *PS1,
+      VarTemplatePartialSpecializationDecl *PS2, SourceLocation Loc);
 
   void MarkUsedTemplateParameters(const TemplateArgumentList &TemplateArgs,
                                   bool OnlyDeduced,
@@ -6131,6 +6174,15 @@ public:
     /// specialization.
     InstantiatingTemplate(Sema &SemaRef, SourceLocation PointOfInstantiation,
                           ClassTemplatePartialSpecializationDecl *PartialSpec,
+                          ArrayRef<TemplateArgument> TemplateArgs,
+                          sema::TemplateDeductionInfo &DeductionInfo,
+                          SourceRange InstantiationRange = SourceRange());
+
+    /// \brief Note that we are instantiating as part of template
+    /// argument deduction for a variable template partial
+    /// specialization.
+    InstantiatingTemplate(Sema &SemaRef, SourceLocation PointOfInstantiation,
+                          VarTemplatePartialSpecializationDecl *PartialSpec,
                           ArrayRef<TemplateArgument> TemplateArgs,
                           sema::TemplateDeductionInfo &DeductionInfo,
                           SourceRange InstantiationRange = SourceRange());
@@ -6415,6 +6467,29 @@ public:
   void InstantiateFunctionDefinition(SourceLocation PointOfInstantiation,
                                      FunctionDecl *Function,
                                      bool Recursive = false,
+                                     bool DefinitionRequired = false);
+  VarTemplateSpecializationDecl *BuildVarTemplateInstantiation(
+      VarTemplateDecl *VarTemplate, VarDecl *FromVar,
+      const TemplateArgumentList &TemplateArgList,
+      const TemplateArgumentListInfo &TemplateArgsInfo,
+      SmallVectorImpl<TemplateArgument> &Converted,
+      SourceLocation PointOfInstantiation, void *InsertPos,
+      LateInstantiatedAttrVec *LateAttrs = 0,
+      LocalInstantiationScope *StartingScope = 0);
+  VarTemplateSpecializationDecl *CompleteVarTemplateSpecializationDecl(
+      VarTemplateSpecializationDecl *VarSpec, VarDecl *PatternDecl,
+      const MultiLevelTemplateArgumentList &TemplateArgs);
+  void
+  BuildVariableInstantiation(VarDecl *NewVar, VarDecl *OldVar,
+                             const MultiLevelTemplateArgumentList &TemplateArgs,
+                             LateInstantiatedAttrVec *LateAttrs = 0,
+                             LocalInstantiationScope *StartingScope = 0,
+                             bool ForVarTemplate = false);
+  void InstantiateVariableInitializer(
+      VarDecl *Var, VarDecl *OldVar,
+      const MultiLevelTemplateArgumentList &TemplateArgs);
+  void InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
+                                     VarDecl *Var, bool Recursive = false,
                                      bool DefinitionRequired = false);
   void InstantiateStaticDataMemberDefinition(
                                      SourceLocation PointOfInstantiation,
@@ -6979,11 +7054,16 @@ public:
   enum VarArgKind {
     VAK_Valid,
     VAK_ValidInCXX11,
+    VAK_Undefined,
     VAK_Invalid
   };
 
   // Determines which VarArgKind fits an expression.
   VarArgKind isValidVarArgType(const QualType &Ty);
+
+  /// Check to see if the given expression is a valid argument to a variadic
+  /// function, issuing a diagnostic if not.
+  void checkVariadicArgument(const Expr *E, VariadicCallType CT);
 
   /// GatherArgumentsForCall - Collector argument expressions for various
   /// form of call prototypes.
@@ -7001,10 +7081,6 @@ public:
   // will create a runtime trap if the resulting type is not a POD type.
   ExprResult DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
                                               FunctionDecl *FDecl);
-
-  /// Checks to see if the given expression is a valid argument to a variadic
-  /// function, issuing a diagnostic and returning NULL if not.
-  bool variadicArgumentPODCheck(const Expr *E, VariadicCallType CT);
 
   // UsualArithmeticConversions - performs the UsualUnaryConversions on it's
   // operands and then handles various conversions that are common to binary
@@ -7631,7 +7707,7 @@ private:
 
   bool CheckARMBuiltinExclusiveCall(unsigned BuiltinID, CallExpr *TheCall);
   bool CheckARMBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall);
-
+  bool CheckAArch64BuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall);
   bool CheckMipsBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall);
 
   bool SemaBuiltinVAStart(CallExpr *TheCall);
@@ -7652,6 +7728,7 @@ private:
   bool SemaBuiltinConstantArg(CallExpr *TheCall, int ArgNum,
                               llvm::APSInt &Result);
 
+public:
   enum FormatStringType {
     FST_Scanf,
     FST_Printf,
@@ -7663,37 +7740,26 @@ private:
   };
   static FormatStringType GetFormatStringType(const FormatAttr *Format);
 
-  enum StringLiteralCheckType {
-    SLCT_NotALiteral,
-    SLCT_UncheckedLiteral,
-    SLCT_CheckedLiteral
-  };
-
-  StringLiteralCheckType checkFormatStringExpr(const Expr *E,
-                                               ArrayRef<const Expr *> Args,
-                                               bool HasVAListArg,
-                                               unsigned format_idx,
-                                               unsigned firstDataArg,
-                                               FormatStringType Type,
-                                               VariadicCallType CallType,
-                                               bool inFunctionCall = true);
-
   void CheckFormatString(const StringLiteral *FExpr, const Expr *OrigFormatExpr,
                          ArrayRef<const Expr *> Args, bool HasVAListArg,
                          unsigned format_idx, unsigned firstDataArg,
                          FormatStringType Type, bool inFunctionCall,
-                         VariadicCallType CallType);
+                         VariadicCallType CallType,
+                         llvm::SmallBitVector &CheckedVarArgs);
 
+private:
   bool CheckFormatArguments(const FormatAttr *Format,
                             ArrayRef<const Expr *> Args,
                             bool IsCXXMember,
                             VariadicCallType CallType,
-                            SourceLocation Loc, SourceRange Range);
+                            SourceLocation Loc, SourceRange Range,
+                            llvm::SmallBitVector &CheckedVarArgs);
   bool CheckFormatArguments(ArrayRef<const Expr *> Args,
                             bool HasVAListArg, unsigned format_idx,
                             unsigned firstDataArg, FormatStringType Type,
                             VariadicCallType CallType,
-                            SourceLocation Loc, SourceRange range);
+                            SourceLocation Loc, SourceRange range,
+                            llvm::SmallBitVector &CheckedVarArgs);
 
   void CheckNonNullArguments(const NonNullAttr *NonNull,
                              const Expr * const *ExprArgs,

@@ -804,6 +804,7 @@ Corrected:
     
     if (!Result.empty()) {
       bool IsFunctionTemplate;
+      bool IsVarTemplate;
       TemplateName Template;
       if (Result.end() - Result.begin() > 1) {
         IsFunctionTemplate = true;
@@ -813,7 +814,8 @@ Corrected:
         TemplateDecl *TD
           = cast<TemplateDecl>((*Result.begin())->getUnderlyingDecl());
         IsFunctionTemplate = isa<FunctionTemplateDecl>(TD);
-        
+        IsVarTemplate = isa<VarTemplateDecl>(TD);
+
         if (SS.isSet() && !SS.isInvalid())
           Template = Context.getQualifiedTemplateName(SS.getScopeRep(), 
                                                     /*TemplateKeyword=*/false,
@@ -830,8 +832,9 @@ Corrected:
         
         return NameClassification::FunctionTemplate(Template);
       }
-      
-      return NameClassification::TypeTemplate(Template);
+
+      return IsVarTemplate ? NameClassification::VarTemplate(Template)
+                           : NameClassification::TypeTemplate(Template);
     }
   }
 
@@ -3018,8 +3021,7 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous,
   if (getLangOpts().CPlusPlus &&
       New->isThisDeclarationADefinition() == VarDecl::Definition &&
       (Def = Old->getDefinition())) {
-    Diag(New->getLocation(), diag::err_redefinition)
-      << New->getDeclName();
+    Diag(New->getLocation(), diag::err_redefinition) << New;
     Diag(Def->getLocation(), diag::note_previous_definition);
     New->setInvalidDecl();
     return;
@@ -4263,8 +4265,8 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
                                   TemplateParamLists,
                                   AddToScope);
   } else {
-    New = ActOnVariableDeclarator(S, D, DC, TInfo, Previous,
-                                  TemplateParamLists);
+    New = ActOnVariableDeclarator(S, D, DC, TInfo, Previous, TemplateParamLists,
+                                  AddToScope);
   }
 
   if (New == 0)
@@ -4782,10 +4784,26 @@ static bool shouldConsiderLinkage(const FunctionDecl *FD) {
   llvm_unreachable("Unexpected context");
 }
 
-NamedDecl*
+bool Sema::HandleVariableRedeclaration(Decl *D, CXXScopeSpec &SS) {
+  // If this is a redeclaration of a variable template or a forward
+  // declaration of a variable template partial specialization 
+  // with nested name specifier, complain.
+
+  if (D && SS.isNotEmpty() &&
+      (isa<VarTemplateDecl>(D) ||
+       isa<VarTemplatePartialSpecializationDecl>(D))) {
+    Diag(SS.getBeginLoc(), diag::err_forward_var_nested_name_specifier)
+      << isa<VarTemplatePartialSpecializationDecl>(D) << SS.getRange();
+    return true;
+  }
+  return false;
+}
+
+NamedDecl *
 Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
                               TypeSourceInfo *TInfo, LookupResult &Previous,
-                              MultiTemplateParamsArg TemplateParamLists) {
+                              MultiTemplateParamsArg TemplateParamLists,
+                              bool &AddToScope) {
   QualType R = TInfo->getType();
   DeclarationName Name = GetNameForDeclarator(D).getName();
 
@@ -4876,7 +4894,12 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     }
   }
 
-  bool isExplicitSpecialization = false;
+  bool IsExplicitSpecialization = false;
+  bool IsVariableTemplateSpecialization = false;
+  bool IsPartialSpecialization = false;
+  bool Invalid = false; // TODO: Can we remove this (error-prone)?
+  TemplateParameterList *TemplateParams = 0;
+  VarTemplateDecl *PrevVarTemplate = 0;
   VarDecl *NewVD;
   if (!getLangOpts().CPlusPlus) {
     NewVD = VarDecl::Create(Context, DC, D.getLocStart(),
@@ -4913,7 +4936,8 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       case SC_OpenCLWorkGroupLocal:
         llvm_unreachable("OpenCL storage class in c++!");
       }
-    }
+    }    
+
     if (SC == SC_Static && CurContext->isRecord()) {
       if (const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(DC)) {
         if (RD->isLocalClass())
@@ -4936,23 +4960,20 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       }
     }
 
+    NamedDecl *PrevDecl = 0;
+    if (Previous.begin() != Previous.end())
+      PrevDecl = (*Previous.begin())->getUnderlyingDecl();
+    PrevVarTemplate = dyn_cast_or_null<VarTemplateDecl>(PrevDecl);
+
     // Match up the template parameter lists with the scope specifier, then
     // determine whether we have a template or a template specialization.
-    isExplicitSpecialization = false;
-    bool Invalid = false;
-    if (TemplateParameterList *TemplateParams =
-            MatchTemplateParametersToScopeSpecifier(
-                D.getDeclSpec().getLocStart(), D.getIdentifierLoc(),
-                D.getCXXScopeSpec(), TemplateParamLists,
-                /*never a friend*/ false, isExplicitSpecialization, Invalid)) {
-      if (TemplateParams->size() > 0) {
-        // There is no such thing as a variable template.
-        Diag(D.getIdentifierLoc(), diag::err_template_variable)
-          << II
-          << SourceRange(TemplateParams->getTemplateLoc(),
-                         TemplateParams->getRAngleLoc());
-        return 0;
-      } else {
+    TemplateParams = MatchTemplateParametersToScopeSpecifier(
+        D.getDeclSpec().getLocStart(), D.getIdentifierLoc(),
+        D.getCXXScopeSpec(), TemplateParamLists,
+        /*never a friend*/ false, IsExplicitSpecialization, Invalid);
+    if (TemplateParams) {
+      if (!TemplateParams->size() &&
+          D.getName().getKind() != UnqualifiedId::IK_TemplateId) {
         // There is an extraneous 'template<>' for this variable. Complain
         // about it, but allow the declaration of the variable.
         Diag(TemplateParams->getTemplateLoc(),
@@ -4960,12 +4981,116 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
           << II
           << SourceRange(TemplateParams->getTemplateLoc(),
                          TemplateParams->getRAngleLoc());
+      } else {
+        // Only C++1y supports variable templates (N3651).
+        Diag(D.getIdentifierLoc(),
+             getLangOpts().CPlusPlus1y
+                 ? diag::warn_cxx11_compat_variable_template
+                 : diag::ext_variable_template);
+
+        if (D.getName().getKind() == UnqualifiedId::IK_TemplateId) {
+          // This is an explicit specialization or a partial specialization.
+          // Check that we can declare a specialization here
+
+          IsVariableTemplateSpecialization = true;
+          IsPartialSpecialization = TemplateParams->size() > 0;
+
+        } else { // if (TemplateParams->size() > 0)
+          // This is a template declaration.
+
+          // Check that we can declare a template here.
+          if (CheckTemplateDeclScope(S, TemplateParams))
+            return 0;
+
+          // If there is a previous declaration with the same name, check
+          // whether this is a valid redeclaration.
+          if (PrevDecl && !isDeclInScope(PrevDecl, DC, S))
+            PrevDecl = PrevVarTemplate = 0;
+
+          if (PrevVarTemplate) {
+            // Ensure that the template parameter lists are compatible.
+            if (!TemplateParameterListsAreEqual(
+                    TemplateParams, PrevVarTemplate->getTemplateParameters(),
+                    /*Complain=*/true, TPL_TemplateMatch))
+              return 0;
+          } else if (PrevDecl && PrevDecl->isTemplateParameter()) {
+            // Maybe we will complain about the shadowed template parameter.
+            DiagnoseTemplateParameterShadow(D.getIdentifierLoc(), PrevDecl);
+
+            // Just pretend that we didn't see the previous declaration.
+            PrevDecl = 0;
+          } else if (PrevDecl) {
+            // C++ [temp]p5:
+            // ... a template name declared in namespace scope or in class
+            // scope shall be unique in that scope.
+            Diag(D.getIdentifierLoc(), diag::err_redefinition_different_kind)
+                << Name;
+            Diag(PrevDecl->getLocation(), diag::note_previous_definition);
+            return 0;
+          }
+
+          // Check the template parameter list of this declaration, possibly
+          // merging in the template parameter list from the previous variable
+          // template declaration.
+          if (CheckTemplateParameterList(
+                  TemplateParams,
+                  PrevVarTemplate ? PrevVarTemplate->getTemplateParameters()
+                                  : 0,
+                  (D.getCXXScopeSpec().isSet() && DC && DC->isRecord() &&
+                   DC->isDependentContext())
+                      ? TPC_ClassTemplateMember
+                      : TPC_VarTemplate))
+            Invalid = true;
+
+          if (D.getCXXScopeSpec().isSet()) {
+            // If the name of the template was qualified, we must be defining
+            // the template out-of-line.
+            if (!D.getCXXScopeSpec().isInvalid() && !Invalid &&
+                !PrevVarTemplate) {
+              Diag(D.getIdentifierLoc(), diag::err_member_def_does_not_match)
+                  << Name << DC << D.getCXXScopeSpec().getRange();
+              Invalid = true;
+            }
+          }
+        }
       }
+    } else if (D.getName().getKind() == UnqualifiedId::IK_TemplateId) {
+      TemplateIdAnnotation *TemplateId = D.getName().TemplateId;
+
+      // We have encountered something that the user meant to be a
+      // specialization (because it has explicitly-specified template
+      // arguments) but that was not introduced with a "template<>" (or had
+      // too few of them).
+      // FIXME: Differentiate between attempts for explicit instantiations
+      // (starting with "template") and the rest.
+      Diag(D.getIdentifierLoc(), diag::err_template_spec_needs_header)
+          << SourceRange(TemplateId->LAngleLoc, TemplateId->RAngleLoc)
+          << FixItHint::CreateInsertion(D.getDeclSpec().getLocStart(),
+                                        "template<> ");
+      IsVariableTemplateSpecialization = true;
     }
 
-    NewVD = VarDecl::Create(Context, DC, D.getLocStart(),
-                            D.getIdentifierLoc(), II,
-                            R, TInfo, SC);
+    if (IsVariableTemplateSpecialization) {
+      if (!PrevVarTemplate) {
+        Diag(D.getIdentifierLoc(), diag::err_var_spec_no_template)
+            << IsPartialSpecialization;
+        return 0;
+      }
+
+      SourceLocation TemplateKWLoc =
+          TemplateParamLists.size() > 0
+              ? TemplateParamLists[0]->getTemplateLoc()
+              : SourceLocation();
+      DeclResult Res = ActOnVarTemplateSpecialization(
+          S, PrevVarTemplate, D, TInfo, TemplateKWLoc, TemplateParams, SC,
+          IsPartialSpecialization);
+      if (Res.isInvalid())
+        return 0;
+      NewVD = cast<VarDecl>(Res.get());
+      AddToScope = false;
+    } else
+      NewVD = VarDecl::Create(Context, DC, D.getLocStart(),
+                              D.getIdentifierLoc(), II, R, TInfo, SC);
 
     // If this decl has an auto type in need of deduction, make a note of the
     // Decl so we can diagnose uses of it in its own initializer.
@@ -4977,7 +5102,14 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
     SetNestedNameSpecifier(NewVD, D);
 
-    if (TemplateParamLists.size() > 0 && D.getCXXScopeSpec().isSet()) {
+    // FIXME: Do we need D.getCXXScopeSpec().isSet()?
+    if (TemplateParams && TemplateParamLists.size() > 1 &&
+        (!IsVariableTemplateSpecialization || D.getCXXScopeSpec().isSet())) {
+      NewVD->setTemplateParameterListsInfo(
+          Context, TemplateParamLists.size() - 1, TemplateParamLists.data());
+    } else if (IsVariableTemplateSpecialization ||
+               (!TemplateParams && TemplateParamLists.size() > 0 &&
+                (D.getCXXScopeSpec().isSet()))) {
       NewVD->setTemplateParameterListsInfo(Context,
                                            TemplateParamLists.size(),
                                            TemplateParamLists.data());
@@ -5034,7 +5166,12 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   }
 
   if (D.getDeclSpec().isModulePrivateSpecified()) {
-    if (isExplicitSpecialization)
+    if (IsVariableTemplateSpecialization)
+      Diag(NewVD->getLocation(), diag::err_module_private_specialization)
+          << (IsPartialSpecialization ? 1 : 0)
+          << FixItHint::CreateRemoval(
+                 D.getDeclSpec().getModulePrivateSpecLoc());
+    else if (IsExplicitSpecialization)
       Diag(NewVD->getLocation(), diag::err_module_private_specialization)
         << 2
         << FixItHint::CreateRemoval(D.getDeclSpec().getModulePrivateSpecLoc());
@@ -5103,15 +5240,17 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   }
 
   // Diagnose shadowed variables before filtering for scope.
+  // FIXME: Special treatment for static variable template members (?).
   if (!D.getCXXScopeSpec().isSet())
     CheckShadow(S, NewVD, Previous);
 
   // Don't consider existing declarations that are in a different
   // scope and are out-of-semantic-context declarations (if the new
   // declaration has linkage).
-  FilterLookupForScope(Previous, DC, S, shouldConsiderLinkage(NewVD),
-                       isExplicitSpecialization);
-  
+  FilterLookupForScope(
+      Previous, DC, S, shouldConsiderLinkage(NewVD),
+      IsExplicitSpecialization || IsVariableTemplateSpecialization);
+
   if (!getLangOpts().CPlusPlus) {
     D.setRedeclaration(CheckVariableDeclaration(NewVD, Previous));
   } else {
@@ -5135,10 +5274,19 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       NewVD->setInvalidDecl();
     }
 
-    D.setRedeclaration(CheckVariableDeclaration(NewVD, Previous));
+    if (!IsVariableTemplateSpecialization) {
+      if (PrevVarTemplate) {
+        LookupResult PrevDecl(*this, GetNameForDeclarator(D),
+                              LookupOrdinaryName, ForRedeclaration);
+        PrevDecl.addDecl(PrevVarTemplate->getTemplatedDecl());
+        D.setRedeclaration(CheckVariableDeclaration(NewVD, PrevDecl));
+      } else
+        D.setRedeclaration(CheckVariableDeclaration(NewVD, Previous));
+    }
 
     // This is an explicit specialization of a static data member. Check it.
-    if (isExplicitSpecialization && !NewVD->isInvalidDecl() &&
+    // FIXME: Special treatment for static variable template members (?).
+    if (IsExplicitSpecialization && !NewVD->isInvalidDecl() &&
         CheckMemberSpecialization(NewVD, Previous))
       NewVD->setInvalidDecl();
   }
@@ -5161,7 +5309,45 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     }
   }
 
-  return NewVD;
+  // If this is not a variable template, return it now
+  if (!TemplateParams || IsVariableTemplateSpecialization)
+    return NewVD;
+
+  // If this is supposed to be a variable template, create it as such.
+  VarTemplateDecl *NewTemplate =
+      VarTemplateDecl::Create(Context, DC, D.getIdentifierLoc(), Name,
+                              TemplateParams, NewVD, PrevVarTemplate);
+  NewVD->setDescribedVarTemplate(NewTemplate);
+
+  if (D.getDeclSpec().isModulePrivateSpecified())
+    NewTemplate->setModulePrivate();
+
+  // If we are providing an explicit specialization of a static variable
+  // template, make a note of that.
+  if (PrevVarTemplate && PrevVarTemplate->getInstantiatedFromMemberTemplate())
+    NewTemplate->setMemberSpecialization();
+
+  // Set the lexical context of this template
+  NewTemplate->setLexicalDeclContext(CurContext);
+  if (NewVD->isStaticDataMember() && NewVD->isOutOfLine())
+    NewTemplate->setAccess(NewVD->getAccess());
+
+  if (PrevVarTemplate)
+    mergeDeclAttributes(NewVD, PrevVarTemplate->getTemplatedDecl());
+
+  AddPushedVisibilityAttribute(NewVD);
+
+  PushOnScopeChains(NewTemplate, S);
+  AddToScope = false;
+
+  if (Invalid) {
+    NewTemplate->setInvalidDecl();
+    NewVD->setInvalidDecl();
+  }
+
+  ActOnDocumentableDecl(NewTemplate);
+
+  return NewTemplate;
 }
 
 /// \brief Diagnose variable or built-in function shadowing.  Implements
@@ -6760,6 +6946,8 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         // specialization (because it has explicitly-specified template
         // arguments) but that was not introduced with a "template<>" (or had
         // too few of them).
+        // FIXME: Differentiate between attempts for explicit instantiations
+        // (starting with "template") and the rest.
         Diag(D.getIdentifierLoc(), diag::err_template_spec_needs_header)
           << SourceRange(TemplateId->LAngleLoc, TemplateId->RAngleLoc)
           << FixItHint::CreateInsertion(
@@ -7721,7 +7909,6 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     RealDecl->setInvalidDecl();
     return;
   }
-
   ParenListExpr *CXXDirectInit = dyn_cast<ParenListExpr>(Init);
 
   // C++11 [decl.spec.auto]p6. Deduce the type which 'auto' stands in for.
