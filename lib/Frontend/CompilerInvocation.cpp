@@ -876,6 +876,8 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
   Opts.ResourceDir = Args.getLastArgValue(OPT_resource_dir);
   Opts.ModuleCachePath = Args.getLastArgValue(OPT_fmodules_cache_path);
   Opts.DisableModuleHash = Args.hasArg(OPT_fdisable_module_hash);
+  // -fmodules implies -fmodule-maps
+  Opts.ModuleMaps = Args.hasArg(OPT_fmodule_maps) || Args.hasArg(OPT_fmodules);
   Opts.ModuleCachePruneInterval =
       getLastArgIntValue(Args, OPT_fmodules_prune_interval, 7 * 24 * 60 * 60);
   Opts.ModuleCachePruneAfter =
@@ -1571,9 +1573,11 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
 
   // Parse the arguments.
   OwningPtr<OptTable> Opts(createDriverOptTable());
+  const unsigned IncludedFlagsBitmask = options::CC1Option;
   unsigned MissingArgIndex, MissingArgCount;
   OwningPtr<InputArgList> Args(
-    Opts->ParseArgs(ArgBegin, ArgEnd,MissingArgIndex, MissingArgCount));
+    Opts->ParseArgs(ArgBegin, ArgEnd, MissingArgIndex, MissingArgCount,
+                    IncludedFlagsBitmask));
 
   // Check for missing argument error.
   if (MissingArgCount) {
@@ -1587,17 +1591,6 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
          ie = Args->filtered_end(); it != ie; ++it) {
     Diags.Report(diag::err_drv_unknown_argument) << (*it)->getAsString(*Args);
     Success = false;
-  }
-
-  // Issue errors on arguments that are not valid for CC1.
-  for (ArgList::iterator I = Args->begin(), E = Args->end();
-       I != E; ++I) {
-    if ((*I)->getOption().matches(options::OPT_INPUT))
-      continue;
-    if (!(*I)->getOption().hasFlag(options::CC1Option)) {
-      Diags.Report(diag::err_drv_unknown_argument) << (*I)->getAsString(*Args);
-      Success = false;
-    }
   }
 
   Success = ParseAnalyzerArgs(*Res.getAnalyzerOpts(), *Args, Diags) && Success;

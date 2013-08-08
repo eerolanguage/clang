@@ -922,16 +922,8 @@ Value *ScalarExprEmitter::VisitShuffleVectorExpr(ShuffleVectorExpr *E) {
     llvm::VectorType *MTy = cast<llvm::VectorType>(Mask->getType());
     llvm::Constant* EltMask;
 
-    // Treat vec3 like vec4.
-    if ((LHSElts == 6) && (E->getNumSubExprs() == 3))
-      EltMask = llvm::ConstantInt::get(MTy->getElementType(),
-                                       (1 << llvm::Log2_32(LHSElts+2))-1);
-    else if ((LHSElts == 3) && (E->getNumSubExprs() == 2))
-      EltMask = llvm::ConstantInt::get(MTy->getElementType(),
-                                       (1 << llvm::Log2_32(LHSElts+1))-1);
-    else
-      EltMask = llvm::ConstantInt::get(MTy->getElementType(),
-                                       (1 << llvm::Log2_32(LHSElts))-1);
+    EltMask = llvm::ConstantInt::get(MTy->getElementType(),
+                                     llvm::NextPowerOf2(LHSElts-1)-1);
 
     // Mask off the high bits of each shuffle index.
     Value *MaskBits = llvm::ConstantVector::getSplat(MTy->getNumElements(),
@@ -952,14 +944,6 @@ Value *ScalarExprEmitter::VisitShuffleVectorExpr(ShuffleVectorExpr *E) {
       Value *Indx = Builder.CreateExtractElement(Mask, IIndx, "shuf_idx");
       Indx = Builder.CreateZExt(Indx, CGF.Int32Ty, "idx_zext");
 
-      // Handle vec3 special since the index will be off by one for the RHS.
-      if ((LHSElts == 6) && (E->getNumSubExprs() == 3)) {
-        Value *cmpIndx, *newIndx;
-        cmpIndx = Builder.CreateICmpUGT(Indx, Builder.getInt32(3),
-                                        "cmp_shuf_idx");
-        newIndx = Builder.CreateSub(Indx, Builder.getInt32(1), "shuf_idx_adj");
-        Indx = Builder.CreateSelect(cmpIndx, newIndx, Indx, "sel_shuf_idx");
-      }
       Value *VExt = Builder.CreateExtractElement(LHS, Indx, "shuf_elt");
       NewV = Builder.CreateInsertElement(NewV, VExt, IIndx, "shuf_ins");
     }
@@ -969,14 +953,14 @@ Value *ScalarExprEmitter::VisitShuffleVectorExpr(ShuffleVectorExpr *E) {
   Value* V1 = CGF.EmitScalarExpr(E->getExpr(0));
   Value* V2 = CGF.EmitScalarExpr(E->getExpr(1));
 
-  // Handle vec3 special since the index will be off by one for the RHS.
-  llvm::VectorType *VTy = cast<llvm::VectorType>(V1->getType());
   SmallVector<llvm::Constant*, 32> indices;
-  for (unsigned i = 2; i < E->getNumSubExprs(); i++) {
-    unsigned Idx = E->getShuffleMaskIdx(CGF.getContext(), i-2);
-    if (VTy->getNumElements() == 3 && Idx > 3)
-      Idx -= 1;
-    indices.push_back(Builder.getInt32(Idx));
+  for (unsigned i = 2; i < E->getNumSubExprs(); ++i) {
+    llvm::APSInt Idx = E->getShuffleMaskIdx(CGF.getContext(), i-2);
+    // Check for -1 and output it as undef in the IR.
+    if (Idx.isSigned() && Idx.isAllOnesValue())
+      indices.push_back(llvm::UndefValue::get(CGF.Int32Ty));
+    else
+      indices.push_back(Builder.getInt32(Idx.getZExtValue()));
   }
 
   Value *SV = llvm::ConstantVector::get(indices);

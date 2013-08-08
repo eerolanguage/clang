@@ -1407,6 +1407,14 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
   CmdArgs.push_back ("-machine-sink-split=0");
 }
 
+void Clang::AddAArch64TargetArgs(const ArgList &Args,
+                                 ArgStringList &CmdArgs) const {
+  const Driver &D = getToolChain().getDriver();
+  // Honor -mfpu=.
+  if (const Arg *A = Args.getLastArg(options::OPT_mfpu_EQ))
+    addFPUArgs(D, A, Args, CmdArgs);
+}
+
 static bool
 shouldUseExceptionTablesForObjCExceptions(const ObjCRuntime &runtime,
                                           const llvm::Triple &Triple) {
@@ -1893,17 +1901,15 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
 /// If the PWD environment variable is set, add a CC1 option to specify the
 /// debug compilation directory.
 static void addDebugCompDirArg(const ArgList &Args, ArgStringList &CmdArgs) {
-  struct stat StatPWDBuf, StatDotBuf;
-
   const char *pwd = ::getenv("PWD");
   if (!pwd)
     return;
 
+  llvm::sys::fs::file_status PWDStatus, DotStatus;
   if (llvm::sys::path::is_absolute(pwd) &&
-      stat(pwd, &StatPWDBuf) == 0 &&
-      stat(".", &StatDotBuf) == 0 &&
-      StatPWDBuf.st_ino == StatDotBuf.st_ino &&
-      StatPWDBuf.st_dev == StatDotBuf.st_dev) {
+      !llvm::sys::fs::status(pwd, PWDStatus) &&
+      !llvm::sys::fs::status(".", DotStatus) &&
+      PWDStatus.getUniqueID() == DotStatus.getUniqueID()) {
     CmdArgs.push_back("-fdebug-compilation-dir");
     CmdArgs.push_back(Args.MakeArgString(pwd));
     return;
@@ -2500,9 +2506,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::hexagon:
     AddHexagonTargetArgs(Args, CmdArgs);
     break;
+
+  case llvm::Triple::aarch64:
+    AddAArch64TargetArgs(Args, CmdArgs);
+    break;
   }
-
-
 
   // Pass the linker version in use.
   if (Arg *A = Args.getLastArg(options::OPT_mlinker_version_EQ)) {
@@ -2697,14 +2705,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // preprocessed inputs and configure concludes that -fPIC is not supported.
   Args.ClaimAllArgs(options::OPT_D);
 
-  // Manually translate -O to -O2 and -O4 to -O3; let clang reject
-  // others.
+  // Manually translate -O4 to -O3; let clang reject others.
   if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
     if (A->getOption().matches(options::OPT_O4))
       CmdArgs.push_back("-O3");
-    else if (A->getOption().matches(options::OPT_O) &&
-             A->getValue()[0] == '\0')
-      CmdArgs.push_back("-O2");
     else
       A->render(Args, CmdArgs);
   }
@@ -3066,6 +3070,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fmodules");
       HaveModules = true;
     }
+  }
+
+  // -fmodule-maps enables module map processing (off by default) for header
+  // checking.  It is implied by -fmodules.
+  if (Args.hasFlag(options::OPT_fmodule_maps, options::OPT_fno_module_maps,
+                   false)) {
+    CmdArgs.push_back("-fmodule-maps");
   }
 
   // If a module path was provided, pass it along. Otherwise, use a temporary
@@ -3448,9 +3459,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    options::OPT_fno_vectorize, true))
     CmdArgs.push_back("-vectorize-loops");
 
-  // -fno-slp-vectorize is default.
+  // -fslp-vectorize is default.
   if (Args.hasFlag(options::OPT_fslp_vectorize,
-                   options::OPT_fno_slp_vectorize, false))
+                   options::OPT_fno_slp_vectorize, true))
     CmdArgs.push_back("-vectorize-slp");
 
   // -fno-slp-vectorize-aggressive is default.
@@ -3627,6 +3638,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // care to warn the user about.
   Args.ClaimAllArgs(options::OPT_clang_ignored_f_Group);
   Args.ClaimAllArgs(options::OPT_clang_ignored_m_Group);
+
+  // Claim ignored clang-cl options.
+  Args.ClaimAllArgs(options::OPT_cl_ignored_Group);
 
   // Disable warnings for clang -E -use-gold-plugin -emit-llvm foo.c
   Args.ClaimAllArgs(options::OPT_use_gold_plugin);
@@ -4512,6 +4526,9 @@ void darwin::Link::AddLinkArgs(Compilation &C,
       CmdArgs.push_back("-demangle");
   }
 
+  if (Args.hasArg(options::OPT_rdynamic) && Version[0] >= 137)
+    CmdArgs.push_back("-export_dynamic");
+
   // If we are using LTO, then automatically create a temporary file path for
   // the linker to use, so that it's lifetime will extend past a possible
   // dsymutil step.
@@ -4718,9 +4735,6 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   // categories.
   if (Args.hasArg(options::OPT_ObjC) || Args.hasArg(options::OPT_ObjCXX))
     CmdArgs.push_back("-ObjC");
-
-  if (Args.hasArg(options::OPT_rdynamic))
-    CmdArgs.push_back("-export_dynamic");
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());

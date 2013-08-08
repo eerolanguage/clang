@@ -4618,6 +4618,42 @@ static void HandleExtVectorTypeAttr(QualType &CurType,
     CurType = T;
 }
 
+static bool isPermittedNeonBaseType(QualType &Ty,
+                                    VectorType::VectorKind VecKind,
+                                    bool IsAArch64) {
+  const BuiltinType *BTy = Ty->getAs<BuiltinType>();
+  if (!BTy)
+    return false;
+
+  if (VecKind == VectorType::NeonPolyVector) {
+    if (IsAArch64) {
+      // AArch64 polynomial vectors are unsigned
+      return BTy->getKind() == BuiltinType::UChar ||
+             BTy->getKind() == BuiltinType::UShort;
+    } else {
+      // AArch32 polynomial vector are signed.
+      return BTy->getKind() == BuiltinType::SChar ||
+             BTy->getKind() == BuiltinType::Short;
+    }
+  }
+
+  // Non-polynomial vector types: the usual suspects are allowed, as well as
+  // float64_t on AArch64.
+  if (IsAArch64 && BTy->getKind() == BuiltinType::Double)
+    return true;
+
+  return BTy->getKind() == BuiltinType::SChar ||
+         BTy->getKind() == BuiltinType::UChar ||
+         BTy->getKind() == BuiltinType::Short ||
+         BTy->getKind() == BuiltinType::UShort ||
+         BTy->getKind() == BuiltinType::Int ||
+         BTy->getKind() == BuiltinType::UInt ||
+         BTy->getKind() == BuiltinType::LongLong ||
+         BTy->getKind() == BuiltinType::ULongLong ||
+         BTy->getKind() == BuiltinType::Float ||
+         BTy->getKind() == BuiltinType::Half;
+}
+
 /// HandleNeonVectorTypeAttr - The "neon_vector_type" and
 /// "neon_polyvector_type" attributes are used to create vector types that
 /// are mangled according to ARM's ABI.  Otherwise, these types are identical
@@ -4647,24 +4683,15 @@ static void HandleNeonVectorTypeAttr(QualType& CurType,
     return;
   }
   // Only certain element types are supported for Neon vectors.
-  const BuiltinType* BTy = CurType->getAs<BuiltinType>();
-  if (!BTy ||
-      (VecKind == VectorType::NeonPolyVector &&
-       BTy->getKind() != BuiltinType::SChar &&
-       BTy->getKind() != BuiltinType::Short) ||
-      (BTy->getKind() != BuiltinType::SChar &&
-       BTy->getKind() != BuiltinType::UChar &&
-       BTy->getKind() != BuiltinType::Short &&
-       BTy->getKind() != BuiltinType::UShort &&
-       BTy->getKind() != BuiltinType::Int &&
-       BTy->getKind() != BuiltinType::UInt &&
-       BTy->getKind() != BuiltinType::LongLong &&
-       BTy->getKind() != BuiltinType::ULongLong &&
-       BTy->getKind() != BuiltinType::Float)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_invalid_vector_type) <<CurType;
+  llvm::Triple::ArchType Arch =
+        S.Context.getTargetInfo().getTriple().getArch();
+  if (!isPermittedNeonBaseType(CurType, VecKind,
+                               Arch == llvm::Triple::aarch64)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_invalid_vector_type) << CurType;
     Attr.setInvalid();
     return;
   }
+
   // The total size of the vector must be 64 or 128 bits.
   unsigned typeSize = static_cast<unsigned>(S.Context.getTypeSize(CurType));
   unsigned numElts = static_cast<unsigned>(numEltsInt.getZExtValue());

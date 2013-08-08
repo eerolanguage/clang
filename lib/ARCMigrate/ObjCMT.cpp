@@ -41,6 +41,9 @@ class ObjCMigrateASTConsumer : public ASTConsumer {
   void migrateInstanceType(ASTContext &Ctx, ObjCContainerDecl *CDecl);
   void migrateMethodInstanceType(ASTContext &Ctx, ObjCContainerDecl *CDecl,
                                  ObjCMethodDecl *OM);
+  void migrateFactoryMethod(ASTContext &Ctx, ObjCContainerDecl *CDecl,
+                            ObjCMethodDecl *OM,
+                            ObjCInstanceTypeFamily OIT_Family = OIT_None);
 
 public:
   std::string MigrateDir;
@@ -208,26 +211,37 @@ static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
                                   const NSAPI &NS, edit::Commit &commit) {
   ASTContext &Context = NS.getASTContext();
   std::string PropertyString = "@property";
-  const ParmVarDecl *argDecl = *Setter->param_begin();
-  QualType ArgType = Context.getCanonicalType(argDecl->getType());
-  Qualifiers::ObjCLifetime propertyLifetime = ArgType.getObjCLifetime();
   
-  if (ArgType->isObjCRetainableType() &&
-      propertyLifetime == Qualifiers::OCL_Strong) {
-    if (const ObjCObjectPointerType *ObjPtrTy =
-        ArgType->getAs<ObjCObjectPointerType>()) {
-      ObjCInterfaceDecl *IDecl = ObjPtrTy->getObjectType()->getInterface();
-      if (IDecl &&
-          IDecl->lookupNestedProtocol(&Context.Idents.get("NSCopying")))
-        PropertyString += "(copy)";
-    }
-  }
-  else if (propertyLifetime == Qualifiers::OCL_Weak)
-    // TODO. More precise determination of 'weak' attribute requires
-    // looking into setter's implementation for backing weak ivar.
-    PropertyString += "(weak)";
-  else
+  std::string PropertyNameString = Getter->getNameAsString();
+  StringRef PropertyName(PropertyNameString);
+  // Short circuit properties that contain the name "delegate" or "dataSource",
+  // or have exact name "target" to have unsafe_unretained attribute.
+  if (PropertyName.equals("target") ||
+      (PropertyName.find("delegate") != StringRef::npos) ||
+      (PropertyName.find("dataSource") != StringRef::npos))
     PropertyString += "(unsafe_unretained)";
+  else {
+    const ParmVarDecl *argDecl = *Setter->param_begin();
+    QualType ArgType = Context.getCanonicalType(argDecl->getType());
+    Qualifiers::ObjCLifetime propertyLifetime = ArgType.getObjCLifetime();
+    bool RetainableObject = ArgType->isObjCRetainableType();
+    if (RetainableObject && propertyLifetime == Qualifiers::OCL_Strong) {
+      if (const ObjCObjectPointerType *ObjPtrTy =
+          ArgType->getAs<ObjCObjectPointerType>()) {
+        ObjCInterfaceDecl *IDecl = ObjPtrTy->getObjectType()->getInterface();
+        if (IDecl &&
+            IDecl->lookupNestedProtocol(&Context.Idents.get("NSCopying")))
+          PropertyString += "(copy)";
+        else
+          PropertyString += "(retain)";
+      }
+    } else if (propertyLifetime == Qualifiers::OCL_Weak)
+      // TODO. More precise determination of 'weak' attribute requires
+      // looking into setter's implementation for backing weak ivar.
+      PropertyString += "(weak)";
+    else if (RetainableObject)
+      PropertyString += "(retain)";
+  }
   
   // strip off any ARC lifetime qualifier.
   QualType CanResultTy = Context.getCanonicalType(Getter->getResultType());
@@ -239,7 +253,7 @@ static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
   PropertyString += " ";
   PropertyString += CanResultTy.getAsString(Context.getPrintingPolicy());
   PropertyString += " ";
-  PropertyString += Getter->getNameAsString();
+  PropertyString += PropertyNameString;
   commit.replace(CharSourceRange::getCharRange(Getter->getLocStart(),
                                                Getter->getDeclaratorEndLoc()),
                  PropertyString);
@@ -549,15 +563,36 @@ void ObjCMigrateASTConsumer::migrateNSEnumDecl(ASTContext &Ctx,
   Editor->commit(commit);
 }
 
+static void ReplaceWithInstancetype(const ObjCMigrateASTConsumer &ASTC,
+                                    ObjCMethodDecl *OM) {
+  SourceRange R;
+  std::string ClassString;
+  if (TypeSourceInfo *TSInfo =  OM->getResultTypeSourceInfo()) {
+    TypeLoc TL = TSInfo->getTypeLoc();
+    R = SourceRange(TL.getBeginLoc(), TL.getEndLoc());
+    ClassString = "instancetype";
+  }
+  else {
+    R = SourceRange(OM->getLocStart(), OM->getLocStart());
+    ClassString = OM->isInstanceMethod() ? '-' : '+';
+    ClassString += " (instancetype)";
+  }
+  edit::Commit commit(*ASTC.Editor);
+  commit.replace(R, ClassString);
+  ASTC.Editor->commit(commit);
+}
+
 void ObjCMigrateASTConsumer::migrateMethodInstanceType(ASTContext &Ctx,
                                                        ObjCContainerDecl *CDecl,
                                                        ObjCMethodDecl *OM) {
   ObjCInstanceTypeFamily OIT_Family =
     Selector::getInstTypeMethodFamily(OM->getSelector());
-  if (OIT_Family == OIT_None)
-    return;
+  
   std::string ClassName;
   switch (OIT_Family) {
+    case OIT_None:
+      migrateFactoryMethod(Ctx, CDecl, OM);
+      return;
     case OIT_Array:
       ClassName = "NSArray";
       break;
@@ -567,7 +602,8 @@ void ObjCMigrateASTConsumer::migrateMethodInstanceType(ASTContext &Ctx,
     case OIT_MemManage:
       ClassName = "NSObject";
       break;
-    default:
+    case OIT_Singleton:
+      migrateFactoryMethod(Ctx, CDecl, OM, OIT_Singleton);
       return;
   }
   if (!OM->getResultType()->isObjCIdType())
@@ -581,24 +617,11 @@ void ObjCMigrateASTConsumer::migrateMethodInstanceType(ASTContext &Ctx,
       IDecl = ImpDecl->getClassInterface();
   }
   if (!IDecl ||
-      !IDecl->lookupInheritedClass(&Ctx.Idents.get(ClassName)))
+      !IDecl->lookupInheritedClass(&Ctx.Idents.get(ClassName))) {
+    migrateFactoryMethod(Ctx, CDecl, OM);
     return;
-  
-  SourceRange R;
-  std::string ClassString;
-  if (TypeSourceInfo *TSInfo =  OM->getResultTypeSourceInfo()) {
-    TypeLoc TL = TSInfo->getTypeLoc();
-    R = SourceRange(TL.getBeginLoc(), TL.getEndLoc());
-    ClassString = "instancetype";
   }
-  else {
-    R = SourceRange(OM->getLocStart(), OM->getLocStart());
-    ClassString = OM->isInstanceMethod() ? '-' : '+';
-    ClassString += " (instancetype)";
-  }
-  edit::Commit commit(*Editor);
-  commit.replace(R, ClassString);
-  Editor->commit(commit);
+  ReplaceWithInstancetype(*this, OM);
 }
 
 void ObjCMigrateASTConsumer::migrateInstanceType(ASTContext &Ctx,
@@ -610,6 +633,63 @@ void ObjCMigrateASTConsumer::migrateInstanceType(ASTContext &Ctx,
     ObjCMethodDecl *Method = (*M);
     migrateMethodInstanceType(Ctx, CDecl, Method);
   }
+}
+
+void ObjCMigrateASTConsumer::migrateFactoryMethod(ASTContext &Ctx,
+                                                  ObjCContainerDecl *CDecl,
+                                                  ObjCMethodDecl *OM,
+                                                  ObjCInstanceTypeFamily OIT_Family) {
+  if (OM->isInstanceMethod() ||
+      OM->getResultType() == Ctx.getObjCInstanceType() ||
+      !OM->getResultType()->isObjCIdType())
+    return;
+  
+  // Candidate factory methods are + (id) NaMeXXX : ... which belong to a class
+  // NSYYYNamE with matching names be at least 3 characters long.
+  ObjCInterfaceDecl *IDecl = dyn_cast<ObjCInterfaceDecl>(CDecl);
+  if (!IDecl) {
+    if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(CDecl))
+      IDecl = CatDecl->getClassInterface();
+    else if (ObjCImplDecl *ImpDecl = dyn_cast<ObjCImplDecl>(CDecl))
+      IDecl = ImpDecl->getClassInterface();
+  }
+  if (!IDecl)
+    return;
+  
+  std::string StringClassName = IDecl->getName();
+  StringRef LoweredClassName(StringClassName);
+  std::string StringLoweredClassName = LoweredClassName.lower();
+  LoweredClassName = StringLoweredClassName;
+  
+  IdentifierInfo *MethodIdName = OM->getSelector().getIdentifierInfoForSlot(0);
+  std::string MethodName = MethodIdName->getName();
+  if (OIT_Family == OIT_Singleton) {
+    StringRef STRefMethodName(MethodName);
+    size_t len = 0;
+    if (STRefMethodName.startswith("standard"))
+      len = strlen("standard");
+    else if (STRefMethodName.startswith("shared"))
+      len = strlen("shared");
+    else if (STRefMethodName.startswith("default"))
+      len = strlen("default");
+    else
+      return;
+    MethodName = STRefMethodName.substr(len);
+  }
+  std::string MethodNameSubStr = MethodName.substr(0, 3);
+  StringRef MethodNamePrefix(MethodNameSubStr);
+  std::string StringLoweredMethodNamePrefix = MethodNamePrefix.lower();
+  MethodNamePrefix = StringLoweredMethodNamePrefix;
+  size_t Ix = LoweredClassName.rfind(MethodNamePrefix);
+  if (Ix == StringRef::npos)
+    return;
+  std::string ClassNamePostfix = LoweredClassName.substr(Ix);
+  StringRef LoweredMethodName(MethodName);
+  std::string StringLoweredMethodName = LoweredMethodName.lower();
+  LoweredMethodName = StringLoweredMethodName;
+  if (!LoweredMethodName.startswith(ClassNamePostfix))
+    return;
+  ReplaceWithInstancetype(*this, OM);
 }
 
 namespace {

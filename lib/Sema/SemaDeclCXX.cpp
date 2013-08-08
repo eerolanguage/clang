@@ -2001,10 +2001,12 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
 
     Member->setAccess(AS);
 
-    // If we have declared a member function template, set the access of the
-    // templated declaration as well.
+    // If we have declared a member function template or static data member
+    // template, set the access of the templated declaration as well.
     if (FunctionTemplateDecl *FunTmpl = dyn_cast<FunctionTemplateDecl>(Member))
       FunTmpl->getTemplatedDecl()->setAccess(AS);
+    else if (VarTemplateDecl *VarTmpl = dyn_cast<VarTemplateDecl>(Member))
+      VarTmpl->getTemplatedDecl()->setAccess(AS);
   }
 
   if (VS.isOverrideSpecified())
@@ -8422,7 +8424,6 @@ void Sema::DefineImplicitDestructor(SourceLocation CurrentLocation,
 
   SourceLocation Loc = Destructor->getLocation();
   Destructor->setBody(new (Context) CompoundStmt(Loc));
-  Destructor->setImplicitlyDefined(true);
   Destructor->setUsed();
   MarkVTableUsed(CurrentLocation, ClassDecl);
 
@@ -9817,7 +9818,6 @@ void Sema::DefineImplicitCopyConstructor(SourceLocation CurrentLocation,
                                                MultiStmtArg(),
                                                /*isStmtExpr=*/false)
                                                               .takeAs<Stmt>());
-    CopyConstructor->setImplicitlyDefined(true);
   }
   
   CopyConstructor->setUsed();
@@ -10007,7 +10007,6 @@ void Sema::DefineImplicitMoveConstructor(SourceLocation CurrentLocation,
                                                MultiStmtArg(),
                                                /*isStmtExpr=*/false)
                                                               .takeAs<Stmt>());
-    MoveConstructor->setImplicitlyDefined(true);
   }
 
   MoveConstructor->setUsed();
