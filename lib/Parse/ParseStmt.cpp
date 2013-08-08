@@ -1227,7 +1227,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
     ParseScope InnerScope(this, Scope::DeclScope,
                           C99orCXX && Tok.isNot(tok::l_brace));
 
-    if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+    if (getLangOpts().OffSideRule && !PP.isInLegacyMode(IfLoc)) {
       if (Tok.isAtStartOfLine()) { // line break after "else"
         ElseStmt = ParseCompoundStatement();
         ProcessElseStatement = false;
