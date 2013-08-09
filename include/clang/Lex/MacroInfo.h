@@ -101,6 +101,9 @@ private:
   /// \brief Must warn if the macro is unused at the end of translation unit.
   bool IsWarnIfUnused : 1;
 
+  /// \brief True if the macro directive was loaded from a "legacy" (std C/ObjC/C++) file.
+  bool FromLegacyFile : 1;
+
   /// \brief Whether this macro info was loaded from an AST file.
   unsigned FromASTFile : 1;
 
@@ -281,6 +284,11 @@ public:
   /// \brief Determine whether this macro info came from an AST file (such as
   /// a precompiled header or module) rather than having been parsed.
   bool isFromASTFile() const { return FromASTFile; }
+
+  /// \brief Return true if the macro directive was loaded from a legacy file.
+  bool isFromLegacyFile() const { return FromLegacyFile; }
+
+  void setIsFromLegacyFile() { FromLegacyFile = true; }
 
   /// \brief Retrieve the global ID of the module that owns this particular
   /// macro info.

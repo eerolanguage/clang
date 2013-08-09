@@ -61,6 +61,26 @@ PreprocessorLexer *Preprocessor::getCurrentFileLexer() const {
   return 0;
 }
 
+/// isInLegacyHeader - Return true if currently in a legacy header.
+bool Preprocessor::isInLegacyHeader() const { 
+  return inLegacyHeader;
+}
+
+/// isInLegacyMacro - Return true if currently in a legacy macro.
+bool Preprocessor::isInLegacyMacro() const { 
+  return inLegacyMacro;
+}
+
+/// isInLegacyMode - Return true if currently in a legacy header 
+/// (standard C/ObjC/etc), or macro defined in one.
+bool Preprocessor::isInLegacyMode(const SourceLocation &Loc) const {
+  // When expanding a legacy macro in an eero source file,
+  // make sure to parse the arguments (found in the main source
+  // file) using eero syntax.
+  return (inLegacyHeader || 
+          (inLegacyMacro && 
+           !SourceMgr.isFromMainFile(SourceMgr.getSpellingLoc(Loc))));
+}
 
 //===----------------------------------------------------------------------===//
 // Methods for Entering and Callbacks for leaving various contexts
@@ -185,6 +205,8 @@ void Preprocessor::EnterMacro(Token &Tok, SourceLocation ILEnd,
   CurTokenLexer.reset(TokLexer);
   if (CurLexerKind != CLK_LexAfterModuleImport)
     CurLexerKind = CLK_TokenLexer;
+
+  inLegacyMacro = Macro->isFromLegacyFile();
 }
 
 /// EnterTokenStream - Add a "macro" context to the top of the include stack,
@@ -344,6 +366,8 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
             (SourceMgr.getFileCharacteristic(CurLexer->getFileLoc()) !=
              SrcMgr::C_User);
       }
+    } else if (CurLexer && !CurLexer->Is_PragmaLexer) {
+      inLegacyMacro = false;
     }
 
     // Notify the client, if desired, that we are in a new source file.

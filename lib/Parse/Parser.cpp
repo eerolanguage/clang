@@ -167,8 +167,8 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
 
   if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && 
       (ExpectedTok == tok::semi)) {
-    if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
-      return false;
+    if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line
+      return false;                                  // break is present
     } else {
       Diag(Tok, diag::err_expected) << "newline";
       Tok.setKind(tok::eof); // drastic, but in bad state otherwise
@@ -212,8 +212,8 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
   }
 
   if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader()) {
-    if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line break present
-      return false;
+    if (Tok.isAtStartOfLine() || Tok.is(tok::eof)) { // optional here if line
+      return false;                                  // break is present
     } else {
       Diag(Tok, diag::err_expected) << "newline";
       while (Tok.isNot(tok::eof) && !Tok.isAtStartOfLine()) // flush the rest 

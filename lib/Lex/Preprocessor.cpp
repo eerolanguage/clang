@@ -67,7 +67,8 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
       CodeComplete(0), CodeCompletionFile(0), CodeCompletionOffset(0),
       CodeCompletionReached(0), SkipMainFilePreamble(0, true), CurPPLexer(0),
       CurDirLookup(0), CurLexerKind(CLK_Lexer), Callbacks(0),
-      MacroArgCache(0), Record(0), inLegacyHeader(true),
+      MacroArgCache(0), Record(0), 
+      inLegacyHeader(true), inLegacyMacro(false),
       MIChainHead(0), MICache(0),
       DeserialMIChainHead(0) {
   OwnsHeaderSearch = OwnsHeaders;

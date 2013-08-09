@@ -1587,7 +1587,8 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
                                               SourceLocation *DeclEnd,
                                               ForRangeInit *FRI) {
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
 
   // Parse the first declarator.
   ParsingDeclarator D(*this, DS, static_cast<Declarator::TheContext>(Context));
@@ -1647,8 +1648,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   }
 
   // Eero "nested functions" (const blocks, really)
-  if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-      Context == Declarator::BlockContext &&
+  if (isEero && Context == Declarator::BlockContext &&
       !AllowFunctionDefinitions &&
        D.isFunctionDeclarator() && isStartOfFunctionDefinition(D)) {
 
@@ -1883,7 +1883,8 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
 
   bool TypeContainsAuto = D.getDeclSpec().containsPlaceholderType();
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
   const bool isColonEqual = isEero && Tok.is(tok::colonequal);
 
   if (isColonEqual && !TypeContainsAuto) {
@@ -2438,7 +2439,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         Tok.isNot(tok::semi) &&
         !firstPass && 
         Tok.isAtStartOfLine()) {
-      InsertTokenAndIgnoreNewline(tok::semi); // not great, but most reliable way to do this
+      // Not great, but the most reliable way to do this
+      InsertTokenAndIgnoreNewline(tok::semi);
     }
 
     if (firstPass)
@@ -2708,7 +2710,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw_decltype:
     case tok::identifier: {
       // Check for Eero ':=' local type infererence
-      if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+      if (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
           Tok.is(tok::identifier) && NextToken().is(tok::colonequal)) {
         isInvalid = DS.SetTypeSpecType(DeclSpec::TST_auto, Loc, PrevSpec,
                                        DiagID);
@@ -3439,7 +3441,8 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
 
   if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() && 
       Tok.isAtStartOfLine())
-    InsertTokenAndIgnoreNewline(tok::semi); // TODO: revisit this, should avoid inserting semi
+    // TODO: revisit this, should avoid inserting semi    
+    InsertTokenAndIgnoreNewline(tok::semi);
 }
 
 /// ParseEnumSpecifier
@@ -3695,7 +3698,8 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
   } else if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
              Tok.isAtStartOfLine()) {
     TUK = (DS.isFriendSpecified() ? Sema::TUK_Friend : Sema::TUK_Declaration);
-    InsertTokenAndIgnoreNewline(tok::semi); // TODO: is there a way to avoid inserting a semi?
+    // TODO: is there a way to avoid inserting a semi?
+    InsertTokenAndIgnoreNewline(tok::semi);
   } else {
     TUK = Sema::TUK_Reference;
   }
@@ -3975,7 +3979,9 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
+  case tok::kw_class: if (getLangOpts().Eero && 
+                          !PP.isInLegacyMode(Tok.getLocation())) 
+                        return false;
   case tok::kw_struct:
   case tok::kw___interface:
   case tok::kw_union:
@@ -4058,7 +4064,9 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
+  case tok::kw_class: if (getLangOpts().Eero && 
+                          !PP.isInLegacyMode(Tok.getLocation())) 
+                        return false;
   case tok::kw_struct:
   case tok::kw___interface:
   case tok::kw_union:
@@ -4128,7 +4136,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
       return false;
     if (TryAltiVecVectorToken())
       return true;
-    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+    if (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
         NextToken().is(tok::colonequal))
       return true;
     // Fall through.
@@ -4218,7 +4226,9 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_event_t:
 
     // struct-or-union-specifier (C99) or class-specifier (C++)
-  case tok::kw_class: if (getLangOpts().Eero && !PP.isInLegacyHeader()) return false;
+  case tok::kw_class: if (getLangOpts().Eero && 
+                          !PP.isInLegacyMode(Tok.getLocation())) 
+                        return false;
   case tok::kw_struct:
   case tok::kw_union:
   case tok::kw___interface:
@@ -4881,7 +4891,8 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
       Diag(Tok, diag::err_expected_ident_lparen);
     D.SetIdentifier(0, Tok.getLocation());
     D.setInvalidType(true);
-    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader())
+    if (getLangOpts().OptionalSemicolons && 
+        !PP.isInLegacyMode(Tok.getLocation()))
       Tok.setKind(tok::eof); // gets stuck otherwise
   }
 

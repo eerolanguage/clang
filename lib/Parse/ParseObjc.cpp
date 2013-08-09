@@ -203,7 +203,8 @@ Decl *Parser::ParseObjCAtInterfaceDeclaration(SourceLocation AtLoc,
     return 0;
   }
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
 
   // We have a class or category name - consume it.
   IdentifierInfo *nameId = Tok.getIdentifierInfo();
@@ -418,7 +419,8 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
   SmallVector<DeclGroupPtrTy, 8> allTUVariables;
   tok::ObjCKeywordKind MethodImplKind = tok::objc_not_keyword;
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
 
   SourceRange AtEnd;
     
@@ -516,7 +518,8 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       return cutOffParsing();
     }
     
-    if (getLangOpts().Eero && !PP.isInLegacyHeader()) { // objc keywords without "@"s
+    if (getLangOpts().Eero && 
+        !PP.isInLegacyMode(Tok.getLocation())) { // objc keywords without "@"s
       switch (Tok.getKind()) {
         case tok::kw_import:
         case tok::kw_optional:
@@ -665,7 +668,8 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
 ///     unsafe_unretained
 ///
 void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
   const tok::TokenKind OpenKind = !isEero ? tok::l_paren : tok::l_brace;
   const tok::TokenKind CloseKind = !isEero ? tok::r_paren : tok::r_brace;
   
@@ -1003,7 +1007,8 @@ ParsedType Parser::ParseObjCTypeName(ObjCDeclSpec &DS,
          context == Declarator::ObjCResultContext);
   assert((paramAttrs != 0) == (context == Declarator::ObjCParameterContext));
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
 
   assert((Tok.is(tok::l_paren) || isEero) && "expected (");
 
@@ -1735,7 +1740,8 @@ void Parser::HelperActionsForIvarDeclarations(Decl *interfaceDecl, SourceLocatio
 void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
                                              tok::ObjCKeywordKind visibility,
                                              SourceLocation atLoc) {
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
   assert((Tok.is(tok::l_brace) || isEero) && "expected {");
   SmallVector<Decl *, 32> AllIvarDecls;
     
@@ -1837,7 +1843,8 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
 
     if (Tok.is(tok::semi)) {
       ConsumeToken();
-    } else if (!getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader()) {
+    } else if (!getLangOpts().OptionalSemicolons && 
+               !PP.isInLegacyMode(Tok.getLocation())) {
       Diag(Tok, diag::err_expected_semi_decl_list);
       // Skip to end of block or statement
       SkipUntil(tok::r_brace, true, true);
@@ -1894,7 +1901,7 @@ Parser::ParseObjCAtProtocolDeclaration(SourceLocation AtLoc,
                                                    attrs.getList());
   }
 
-  if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+  if (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
       Column(Tok.getLocation()) <= Column(AtLoc)) {
     IdentifierLocPair ProtoInfo(protocolName, nameLoc);
     return Actions.ActOnForwardProtocolDeclaration(AtLoc, &ProtoInfo, 1,
@@ -2043,7 +2050,7 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
   
     // if we have ivars
     if (Tok.is(tok::l_brace) ||
-        (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+        (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
          (isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
       ParseObjCClassInstanceVariables(ObjCImpDecl, tok::objc_private, AtLoc);
     else if (Tok.is(tok::less)) { // we have illegal '<' try to recover
@@ -2290,13 +2297,14 @@ StmtResult Parser::ParseObjCThrowStmt(SourceLocation atLoc) {
 StmtResult
 Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
   ConsumeToken(); // consume synchronized
-  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || PP.isInLegacyHeader())) {
+  if (Tok.isNot(tok::l_paren) && (!getLangOpts().Eero || 
+                                  PP.isInLegacyMode(Tok.getLocation()))) {
     Diag(Tok, diag::err_expected_lparen_after) << "@synchronized";
     return StmtError();
   }
 
   // The operand is surrounded with parentheses.
-  if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
+  if (!getLangOpts().Eero || PP.isInLegacyMode(Tok.getLocation())) {
     ConsumeParen();  // '('
   } else if (Tok.isAtStartOfLine()) {
     Diag(PrevTokLocation, diag::err_expected) <<
@@ -2307,7 +2315,7 @@ Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
 
   if (Tok.is(tok::r_paren)) {
     ConsumeParen();  // ')'
-  } else if (!getLangOpts().Eero || PP.isInLegacyHeader()) {
+  } else if (!getLangOpts().Eero || PP.isInLegacyMode(Tok.getLocation())) {
     if (!operand.isInvalid())
       Diag(Tok, diag::err_expected_rparen);
 
@@ -2317,7 +2325,7 @@ Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
 
   // Require a compound statement.
   if (Tok.isNot(tok::l_brace) &&
-      (!getLangOpts().OffSideRule || PP.isInLegacyHeader())) {
+      (!getLangOpts().OffSideRule || PP.isInLegacyMode(Tok.getLocation()))) {
     if (!operand.isInvalid())
       Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
@@ -2359,7 +2367,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
 
   ConsumeToken(); // consume try
   if (Tok.isNot(tok::l_brace) &&
-      (!getLangOpts().OffSideRule || PP.isInLegacyHeader())) {
+      (!getLangOpts().OffSideRule || PP.isInLegacyMode(Tok.getLocation()))) {
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
   }
@@ -2371,7 +2379,8 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
   if (TryBody.isInvalid())
     TryBody = Actions.ActOnNullStmt(Tok.getLocation());
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
 
   while (Tok.is(tok::at) ||
          (isEero && (Tok.is(tok::kw_catch) || Tok.is(tok::kw_finally)))) {
@@ -2420,7 +2429,8 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
 
         StmtResult CatchBody(true);
         if (Tok.is(tok::l_brace) ||
-            (getLangOpts().OffSideRule && !PP.isInLegacyHeader()))
+            (getLangOpts().OffSideRule && 
+             !PP.isInLegacyMode(Tok.getLocation())))
           CatchBody = ParseCompoundStatementBody();
         else
           Diag(Tok, diag::err_expected_lbrace);
@@ -2447,7 +2457,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
 
       StmtResult FinallyBody(true);
       if (Tok.is(tok::l_brace) ||
-          (getLangOpts().OffSideRule && !PP.isInLegacyHeader()))
+          (getLangOpts().OffSideRule && !PP.isInLegacyMode(Tok.getLocation())))
         FinallyBody = ParseCompoundStatementBody();
       else
         Diag(Tok, diag::err_expected_lbrace);
@@ -2476,7 +2486,7 @@ StmtResult
 Parser::ParseObjCAutoreleasePoolStmt(SourceLocation atLoc) {
   ConsumeToken(); // consume autoreleasepool
   if (Tok.isNot(tok::l_brace) &&
-      (!getLangOpts().OffSideRule || PP.isInLegacyHeader())) {
+      (!getLangOpts().OffSideRule || PP.isInLegacyMode(Tok.getLocation()))) {
     Diag(Tok, diag::err_expected_lbrace);
     return StmtError();
   }
@@ -2559,7 +2569,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
 
     SourceLocation ReturnLoc;
     ExprResult DefaultReturnExpr(ExprError());
-    if (getLangOpts().Eero && !PP.isInLegacyHeader() && 
+    if (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
         Tok.is(tok::equal) && !Tok.isAtStartOfLine()) {
       ReturnLoc = ConsumeToken(); // '='
       DefaultReturnExpr = ParseAssignmentExpression();
@@ -3055,7 +3065,8 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
                                        ExprArg ReceiverExpr) {
   InMessageExpressionRAIIObject InMessage(*this, true);
 
-  const bool isEero = getLangOpts().Eero && !PP.isInLegacyHeader();
+  const bool isEero = getLangOpts().Eero && 
+                      !PP.isInLegacyMode(Tok.getLocation());
 
   if (Tok.is(tok::code_completion)) {
     if (SuperLoc.isValid())
@@ -3445,7 +3456,9 @@ Parser::ParseObjCEncodeExpression(SourceLocation AtLoc) {
 ///       \@protocol ( protocol-name )
 ExprResult
 Parser::ParseObjCProtocolExpression(SourceLocation AtLoc) {
-  const bool isNotLiteral = !getLangOpts().Eero || PP.isInLegacyHeader() || Tok.isNot(tok::less);
+  const bool isNotLiteral = !getLangOpts().Eero || 
+                            PP.isInLegacyMode(Tok.getLocation()) || 
+                            Tok.isNot(tok::less);
   SourceLocation ProtoLoc = isNotLiteral ?  ConsumeToken() : Tok.getLocation();
 
   if (Tok.isNot(tok::l_paren) && isNotLiteral)
@@ -3471,7 +3484,9 @@ Parser::ParseObjCProtocolExpression(SourceLocation AtLoc) {
 ///     objc-selector-expression
 ///       @selector '(' objc-keyword-selector ')'
 ExprResult Parser::ParseObjCSelectorExpression(SourceLocation AtLoc) {
-  const bool isNotLiteral = !getLangOpts().Eero || PP.isInLegacyHeader() || Tok.isNot(tok::pipe);
+  const bool isNotLiteral = !getLangOpts().Eero || 
+                            PP.isInLegacyMode(Tok.getLocation()) || 
+                            Tok.isNot(tok::pipe);
   SourceLocation SelectorLoc = isNotLiteral ? ConsumeToken() : Tok.getLocation();
 
   if (Tok.isNot(tok::l_paren) && isNotLiteral)

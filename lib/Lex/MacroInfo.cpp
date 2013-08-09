@@ -29,6 +29,7 @@ MacroInfo::MacroInfo(SourceLocation DefLoc)
     IsUsed(false),
     IsAllowRedefinitionsWithoutWarning(false),
     IsWarnIfUnused(false),
+    FromLegacyFile(false),
     FromASTFile(false) {
 }
 
