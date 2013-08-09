@@ -78,7 +78,7 @@ DefMacroDirective *
 Preprocessor::AllocateDefMacroDirective(MacroInfo *MI, SourceLocation Loc,
                                         bool isImported) {
   DefMacroDirective *MD = BP.Allocate<DefMacroDirective>();
-  if (inLegacyHeader) {
+  if (inLegacyHeader || MI->isFromASTFile()) {
     MI->setIsFromLegacyFile();
   }
   new (MD) DefMacroDirective(MI, Loc, isImported);
