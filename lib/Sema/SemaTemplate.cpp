@@ -1050,8 +1050,8 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
     // template out-of-line.
     if (!SS.isInvalid() && !Invalid && !PrevClassTemplate) {
       Diag(NameLoc, TUK == TUK_Friend ? diag::err_friend_decl_does_not_match
-                                      : diag::err_member_def_does_not_match)
-        << Name << SemanticContext << SS.getRange();
+                                      : diag::err_member_decl_does_not_match)
+        << Name << SemanticContext << /*IsDefinition*/true << SS.getRange();
       Invalid = true;
     }
   }
@@ -7902,11 +7902,26 @@ Sema::getTemplateArgumentBindingsText(const TemplateParameterList *Params,
   return Out.str();
 }
 
-void Sema::MarkAsLateParsedTemplate(FunctionDecl *FD, bool Flag) {
+void Sema::MarkAsLateParsedTemplate(FunctionDecl *FD, Decl *FnD,
+                                    CachedTokens &Toks) {
   if (!FD)
     return;
-  FD->setLateTemplateParsed(Flag);
-} 
+
+  LateParsedTemplate *LPT = new LateParsedTemplate;
+
+  // Take tokens to avoid allocations
+  LPT->Toks.swap(Toks);
+  LPT->D = FnD;
+  LateParsedTemplateMap[FD] = LPT;
+
+  FD->setLateTemplateParsed(true);
+}
+
+void Sema::UnmarkAsLateParsedTemplate(FunctionDecl *FD) {
+  if (!FD)
+    return;
+  FD->setLateTemplateParsed(false);
+}
 
 bool Sema::IsInsideALocalClassWithinATemplateFunction() {
   DeclContext *DC = CurContext;

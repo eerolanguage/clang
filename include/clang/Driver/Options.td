@@ -791,6 +791,8 @@ def ftrap_function_EQ : Joined<["-"], "ftrap-function=">, Group<f_Group>, Flags<
 def funit_at_a_time : Flag<["-"], "funit-at-a-time">, Group<f_Group>;
 def funroll_loops : Flag<["-"], "funroll-loops">, Group<f_Group>,
   HelpText<"Turn on loop unroller">, Flags<[CC1Option]>;
+def fno_unroll_loops : Flag<["-"], "fno-unroll-loops">, Group<f_Group>,
+  HelpText<"Turn off loop unroller">, Flags<[CC1Option]>;
 def funsigned_bitfields : Flag<["-"], "funsigned-bitfields">, Group<f_Group>;
 def funsigned_char : Flag<["-"], "funsigned-char">, Group<f_Group>;
 def funwind_tables : Flag<["-"], "funwind-tables">, Group<f_Group>;
@@ -1333,6 +1335,6 @@ def Z_reserved_lib_stdcxx : Flag<["-"], "Z-reserved-lib-stdc++">,
 def Z_reserved_lib_cckext : Flag<["-"], "Z-reserved-lib-cckext">,
     Flags<[LinkerInput, NoArgumentUnused, Unsupported]>, Group<reserved_lib_Group>;
 
-include "CLCompatOptions.td"
-
 include "CC1Options.td"
+
+include "CLCompatOptions.td"

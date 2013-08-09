@@ -290,7 +290,7 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
     }
   }
 
-  SanitizerArgs Sanitize(*this, Args);
+  SanitizerArgs Sanitize(getDriver(), Args);
 
   // Add Ubsan runtime library, if required.
   if (Sanitize.needsUbsanRt()) {
@@ -943,31 +943,33 @@ Generic_GCC::GCCVersion Linux::GCCVersion::Parse(StringRef VersionText) {
 }
 
 /// \brief Less-than for GCCVersion, implementing a Strict Weak Ordering.
-bool Generic_GCC::GCCVersion::operator<(const GCCVersion &RHS) const {
-  if (Major != RHS.Major)
-    return Major < RHS.Major;
-  if (Minor != RHS.Minor)
-    return Minor < RHS.Minor;
-  if (Patch != RHS.Patch) {
+bool Generic_GCC::GCCVersion::isOlderThan(int RHSMajor, int RHSMinor,
+                                          int RHSPatch,
+                                          StringRef RHSPatchSuffix) const {
+  if (Major != RHSMajor)
+    return Major < RHSMajor;
+  if (Minor != RHSMinor)
+    return Minor < RHSMinor;
+  if (Patch != RHSPatch) {
     // Note that versions without a specified patch sort higher than those with
     // a patch.
-    if (RHS.Patch == -1)
+    if (RHSPatch == -1)
       return true;
     if (Patch == -1)
       return false;
 
     // Otherwise just sort on the patch itself.
-    return Patch < RHS.Patch;
+    return Patch < RHSPatch;
   }
-  if (PatchSuffix != RHS.PatchSuffix) {
+  if (PatchSuffix != RHSPatchSuffix) {
     // Sort empty suffixes higher.
-    if (RHS.PatchSuffix.empty())
+    if (RHSPatchSuffix.empty())
       return true;
     if (PatchSuffix.empty())
       return false;
 
     // Provide a lexicographic sort to make this a total ordering.
-    return PatchSuffix < RHS.PatchSuffix;
+    return PatchSuffix < RHSPatchSuffix;
   }
 
   // The versions are equal.
@@ -1396,8 +1398,7 @@ void Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple(
       CandidateGCCInstallPaths.push_back(LI->path());
       StringRef VersionText = llvm::sys::path::filename(LI->path());
       GCCVersion CandidateVersion = GCCVersion::Parse(VersionText);
-      static const GCCVersion MinVersion = { "4.1.1", 4, 1, 1, "" };
-      if (CandidateVersion < MinVersion)
+      if (CandidateVersion.isOlderThan(4, 1, 1))
         continue;
       if (CandidateVersion <= Version)
         continue;
@@ -2354,7 +2355,7 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   addPathIfExists(SysRoot + "/lib", Paths);
   addPathIfExists(SysRoot + "/usr/lib", Paths);
 
-  IsPIEDefault = SanitizerArgs(*this, Args).hasZeroBaseShadow();
+  IsPIEDefault = SanitizerArgs(getDriver(), Args).hasZeroBaseShadow(*this);
 }
 
 bool Linux::HasNativeLLVMSupport() const {
@@ -2372,8 +2373,8 @@ Tool *Linux::buildAssembler() const {
 void Linux::addClangTargetOptions(const ArgList &DriverArgs,
                                   ArgStringList &CC1Args) const {
   const Generic_GCC::GCCVersion &V = GCCInstallation.getVersion();
-  bool UseInitArrayDefault
-    = V >= Generic_GCC::GCCVersion::Parse("4.7.0") ||
+  bool UseInitArrayDefault =
+      !V.isOlderThan(4, 7, 0) ||
       getTriple().getArch() == llvm::Triple::aarch64 ||
       getTriple().getEnvironment() == llvm::Triple::Android;
   if (DriverArgs.hasFlag(options::OPT_fuse_init_array,

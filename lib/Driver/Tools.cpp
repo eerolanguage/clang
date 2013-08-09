@@ -1616,130 +1616,6 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
     }
 }
 
-SanitizerArgs::SanitizerArgs(const ToolChain &TC, const ArgList &Args)
-    : Kind(0), BlacklistFile(""), MsanTrackOrigins(false),
-      AsanZeroBaseShadow(false) {
-  unsigned AllKinds = 0;  // All kinds of sanitizers that were turned on
-                          // at least once (possibly, disabled further).
-  const Driver &D = TC.getDriver();
-  for (ArgList::const_iterator I = Args.begin(), E = Args.end(); I != E; ++I) {
-    unsigned Add, Remove;
-    if (!parse(D, Args, *I, Add, Remove, true))
-      continue;
-    (*I)->claim();
-    Kind |= Add;
-    Kind &= ~Remove;
-    AllKinds |= Add;
-  }
-
-  UbsanTrapOnError =
-    Args.hasArg(options::OPT_fcatch_undefined_behavior) ||
-    Args.hasFlag(options::OPT_fsanitize_undefined_trap_on_error,
-                 options::OPT_fno_sanitize_undefined_trap_on_error, false);
-
-  if (Args.hasArg(options::OPT_fcatch_undefined_behavior) &&
-      !Args.hasFlag(options::OPT_fsanitize_undefined_trap_on_error,
-                    options::OPT_fno_sanitize_undefined_trap_on_error, true)) {
-    D.Diag(diag::err_drv_argument_not_allowed_with)
-      << "-fcatch-undefined-behavior"
-      << "-fno-sanitize-undefined-trap-on-error";
-  }
-
-  // Warn about undefined sanitizer options that require runtime support.
-  if (UbsanTrapOnError && notAllowedWithTrap()) {
-    if (Args.hasArg(options::OPT_fcatch_undefined_behavior))
-      D.Diag(diag::err_drv_argument_not_allowed_with)
-        << lastArgumentForKind(D, Args, NotAllowedWithTrap)
-        << "-fcatch-undefined-behavior";
-    else if (Args.hasFlag(options::OPT_fsanitize_undefined_trap_on_error,
-                          options::OPT_fno_sanitize_undefined_trap_on_error,
-                          false))
-      D.Diag(diag::err_drv_argument_not_allowed_with)
-        << lastArgumentForKind(D, Args, NotAllowedWithTrap)
-        << "-fsanitize-undefined-trap-on-error";
-  }
-
-  // Only one runtime library can be used at once.
-  bool NeedsAsan = needsAsanRt();
-  bool NeedsTsan = needsTsanRt();
-  bool NeedsMsan = needsMsanRt();
-  bool NeedsLsan = needsLeakDetection();
-  if (NeedsAsan && NeedsTsan)
-    D.Diag(diag::err_drv_argument_not_allowed_with)
-      << lastArgumentForKind(D, Args, NeedsAsanRt)
-      << lastArgumentForKind(D, Args, NeedsTsanRt);
-  if (NeedsAsan && NeedsMsan)
-    D.Diag(diag::err_drv_argument_not_allowed_with)
-      << lastArgumentForKind(D, Args, NeedsAsanRt)
-      << lastArgumentForKind(D, Args, NeedsMsanRt);
-  if (NeedsTsan && NeedsMsan)
-    D.Diag(diag::err_drv_argument_not_allowed_with)
-      << lastArgumentForKind(D, Args, NeedsTsanRt)
-      << lastArgumentForKind(D, Args, NeedsMsanRt);
-  if (NeedsLsan && NeedsTsan)
-    D.Diag(diag::err_drv_argument_not_allowed_with)
-      << lastArgumentForKind(D, Args, NeedsLeakDetection)
-      << lastArgumentForKind(D, Args, NeedsTsanRt);
-  if (NeedsLsan && NeedsMsan)
-    D.Diag(diag::err_drv_argument_not_allowed_with)
-      << lastArgumentForKind(D, Args, NeedsLeakDetection)
-      << lastArgumentForKind(D, Args, NeedsMsanRt);
-  // FIXME: Currenly -fsanitize=leak is silently ignored in the presence of
-  // -fsanitize=address. Perhaps it should print an error, or perhaps
-  // -f(-no)sanitize=leak should change whether leak detection is enabled by
-  // default in ASan?
-
-  // If -fsanitize contains extra features of ASan, it should also
-  // explicitly contain -fsanitize=address (probably, turned off later in the
-  // command line).
-  if ((Kind & AddressFull) != 0 && (AllKinds & Address) == 0)
-    D.Diag(diag::warn_drv_unused_sanitizer)
-     << lastArgumentForKind(D, Args, AddressFull)
-     << "-fsanitize=address";
-
-  // Parse -f(no-)sanitize-blacklist options.
-  if (Arg *BLArg = Args.getLastArg(options::OPT_fsanitize_blacklist,
-                                   options::OPT_fno_sanitize_blacklist)) {
-    if (BLArg->getOption().matches(options::OPT_fsanitize_blacklist)) {
-      std::string BLPath = BLArg->getValue();
-      if (llvm::sys::fs::exists(BLPath))
-        BlacklistFile = BLPath;
-      else
-        D.Diag(diag::err_drv_no_such_file) << BLPath;
-    }
-  } else {
-    // If no -fsanitize-blacklist option is specified, try to look up for
-    // blacklist in the resource directory.
-    std::string BLPath;
-    if (getDefaultBlacklistForKind(D, Kind, BLPath) &&
-        llvm::sys::fs::exists(BLPath))
-      BlacklistFile = BLPath;
-  }
-
-  // Parse -f(no-)sanitize-memory-track-origins options.
-  if (NeedsMsan)
-    MsanTrackOrigins =
-      Args.hasFlag(options::OPT_fsanitize_memory_track_origins,
-                   options::OPT_fno_sanitize_memory_track_origins,
-                   /* Default */false);
-
-  // Parse -f(no-)sanitize-address-zero-base-shadow options.
-  if (NeedsAsan) {
-    bool IsAndroid = (TC.getTriple().getEnvironment() == llvm::Triple::Android);
-    bool ZeroBaseShadowDefault = IsAndroid;
-    AsanZeroBaseShadow =
-        Args.hasFlag(options::OPT_fsanitize_address_zero_base_shadow,
-                     options::OPT_fno_sanitize_address_zero_base_shadow,
-                     ZeroBaseShadowDefault);
-    // Zero-base shadow is a requirement on Android.
-    if (IsAndroid && !AsanZeroBaseShadow) {
-      D.Diag(diag::err_drv_argument_not_allowed_with)
-          << "-fno-sanitize-address-zero-base-shadow"
-          << lastArgumentForKind(D, Args, Address);
-    }
-  }
-}
-
 static void addProfileRTLinux(
     const ToolChain &TC, const ArgList &Args, ArgStringList &CmdArgs) {
   if (!(Args.hasArg(options::OPT_fprofile_arcs) ||
@@ -1858,6 +1734,12 @@ static void addUbsanRTLinux(const ToolChain &TC, const ArgList &Args,
   // we're linking in C++ mode.
   if (IsCXX)
     addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "ubsan_cxx", false);
+}
+
+static void addDfsanRTLinux(const ToolChain &TC, const ArgList &Args,
+                            ArgStringList &CmdArgs) {
+  if (!Args.hasArg(options::OPT_shared))
+    addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "dfsan", true);
 }
 
 static bool shouldUseFramePointer(const ArgList &Args,
@@ -2512,6 +2394,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     break;
   }
 
+  // Add clang-cl arguments.
+  if (getToolChain().getDriver().IsCLMode())
+    AddClangCLArgs(Args, CmdArgs);
+
   // Pass the linker version in use.
   if (Arg *A = Args.getLastArg(options::OPT_mlinker_version_EQ)) {
     CmdArgs.push_back("-target-linker-version");
@@ -2908,8 +2794,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_show_template_tree);
   Args.AddLastArg(CmdArgs, options::OPT_fno_elide_type);
 
-  SanitizerArgs Sanitize(getToolChain(), Args);
-  Sanitize.addArgs(Args, CmdArgs);
+  SanitizerArgs Sanitize(D, Args);
+  Sanitize.addArgs(getToolChain(), Args, CmdArgs);
 
   if (!Args.hasFlag(options::OPT_fsanitize_recover,
                     options::OPT_fno_sanitize_recover,
@@ -2969,7 +2855,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fwrapv");
   }
   Args.AddLastArg(CmdArgs, options::OPT_fwritable_strings);
-  Args.AddLastArg(CmdArgs, options::OPT_funroll_loops);
+  Args.AddLastArg(CmdArgs, options::OPT_funroll_loops,
+                  options::OPT_fno_unroll_loops);
 
   Args.AddLastArg(CmdArgs, options::OPT_pthread);
 
@@ -3797,6 +3684,54 @@ ObjCRuntime Clang::AddObjCRuntimeArgs(const ArgList &args,
   cmdArgs.push_back(args.MakeArgString(
                                  "-fobjc-runtime=" + runtime.getAsString()));
   return runtime;
+}
+
+void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
+  unsigned RTOptionID = options::OPT__SLASH_MT;
+
+  if (Arg *A = Args.getLastArg(options::OPT__SLASH_MD,
+                               options::OPT__SLASH_MDd,
+                               options::OPT__SLASH_MT,
+                               options::OPT__SLASH_MTd)) {
+    RTOptionID = A->getOption().getID();
+  }
+
+  switch(RTOptionID) {
+    case options::OPT__SLASH_MD:
+      CmdArgs.push_back("-D_MT");
+      CmdArgs.push_back("-D_DLL");
+      CmdArgs.push_back("--dependent-lib=msvcrt");
+      break;
+    case options::OPT__SLASH_MDd:
+      CmdArgs.push_back("-D_DEBUG");
+      CmdArgs.push_back("-D_MT");
+      CmdArgs.push_back("-D_DLL");
+      CmdArgs.push_back("--dependent-lib=msvcrtd");
+      break;
+    case options::OPT__SLASH_MT:
+      CmdArgs.push_back("-D_MT");
+      CmdArgs.push_back("--dependent-lib=libcmt");
+      break;
+    case options::OPT__SLASH_MTd:
+      CmdArgs.push_back("-D_DEBUG");
+      CmdArgs.push_back("-D_MT");
+      CmdArgs.push_back("--dependent-lib=libcmtd");
+      break;
+    default:
+      llvm_unreachable("Unexpected option ID.");
+  }
+
+  // This provides POSIX compatibility (maps 'open' to '_open'), which most
+  // users want.  The /Za flag to cl.exe turns this off, but it's not
+  // implemented in clang.
+  CmdArgs.push_back("--dependent-lib=oldnames");
+
+  // FIXME: Make this default for the win32 triple.
+  CmdArgs.push_back("-cxx-abi");
+  CmdArgs.push_back("microsoft");
+
+  if (Arg *A = Args.getLastArg(options::OPT_show_includes))
+    A->render(Args, CmdArgs);
 }
 
 void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
@@ -4832,7 +4767,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
-  SanitizerArgs Sanitize(getToolChain(), Args);
+  SanitizerArgs Sanitize(getToolChain().getDriver(), Args);
   // If we're building a dynamic lib with -fsanitize=address,
   // unresolved symbols may appear. Mark all
   // of them as dynamic_lookup. Linking executables is handled in
@@ -6096,10 +6031,10 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   const Driver &D = ToolChain.getDriver();
   const bool isAndroid =
     ToolChain.getTriple().getEnvironment() == llvm::Triple::Android;
-  SanitizerArgs Sanitize(getToolChain(), Args);
+  SanitizerArgs Sanitize(D, Args);
   const bool IsPIE =
     !Args.hasArg(options::OPT_shared) &&
-    (Args.hasArg(options::OPT_pie) || Sanitize.hasZeroBaseShadow());
+    (Args.hasArg(options::OPT_pie) || Sanitize.hasZeroBaseShadow(ToolChain));
 
   ArgStringList CmdArgs;
 
@@ -6277,6 +6212,8 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     addMsanRTLinux(getToolChain(), Args, CmdArgs);
   if (Sanitize.needsLsanRt())
     addLsanRTLinux(getToolChain(), Args, CmdArgs);
+  if (Sanitize.needsDfsanRt())
+    addDfsanRTLinux(getToolChain(), Args, CmdArgs);
 
   // The profile runtime also needs access to system libraries.
   addProfileRTLinux(getToolChain(), Args, CmdArgs);
@@ -6617,7 +6554,8 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
-    !Args.hasArg(options::OPT_nostartfiles)) {
+      !Args.hasArg(options::OPT_nostartfiles) &&
+      !C.getDriver().IsCLMode()) {
     CmdArgs.push_back("-defaultlib:libcmt");
   }
 

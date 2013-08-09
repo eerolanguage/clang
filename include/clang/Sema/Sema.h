@@ -394,8 +394,12 @@ public:
   SmallVector<std::pair<CXXMethodDecl*, const FunctionProtoType*>, 2>
     DelayedDefaultedMemberExceptionSpecs;
 
+  typedef llvm::DenseMap<const FunctionDecl *, LateParsedTemplate *>
+  LateParsedTemplateMapT;
+  LateParsedTemplateMapT LateParsedTemplateMap;
+
   /// \brief Callback to the parser to parse templated functions when needed.
-  typedef void LateTemplateParserCB(void *P, const FunctionDecl *FD);
+  typedef void LateTemplateParserCB(void *P, LateParsedTemplate &LPT);
   LateTemplateParserCB *LateTemplateParser;
   void *OpaqueParser;
 
@@ -2364,6 +2368,9 @@ public:
     /// are outside of the current scope unless they have linkage. See
     /// C99 6.2.2p4-5 and C++ [basic.link]p6.
     LookupRedeclarationWithLinkage,
+    /// Look up a friend of a local class. This lookup does not look
+    /// outside the innermost non-class scope. See C++11 [class.friend]p11.
+    LookupLocalFriendName,
     /// Look up the name of an Objective-C protocol.
     LookupObjCProtocolName,
     /// Look up implicit 'self' parameter of an objective-c method.
@@ -4760,7 +4767,9 @@ public:
   void ActOnFinishDelayedMemberDeclarations(Scope *S, Decl *Record);
   void ActOnFinishDelayedCXXMethodDeclaration(Scope *S, Decl *Method);
   void ActOnFinishDelayedMemberInitializers(Decl *Record);
-  void MarkAsLateParsedTemplate(FunctionDecl *FD, bool Flag = true);
+  void MarkAsLateParsedTemplate(FunctionDecl *FD, Decl *FnD,
+                                CachedTokens &Toks);
+  void UnmarkAsLateParsedTemplate(FunctionDecl *FD);
   bool IsInsideALocalClassWithinATemplateFunction();
 
   Decl *ActOnStaticAssertDeclaration(SourceLocation StaticAssertLoc,
@@ -6851,7 +6860,8 @@ public:
   /// ActOnPragmaMSStruct - Called on well formed \#pragma ms_struct [on|off].
   void ActOnPragmaMSStruct(PragmaMSStructKind Kind);
 
-  /// ActOnPragmaMSStruct - Called on well formed \#pragma comment(kind, "arg").
+  /// ActOnPragmaMSComment - Called on well formed
+  /// \#pragma comment(kind, "arg").
   void ActOnPragmaMSComment(PragmaMSCommentKind Kind, StringRef Arg);
 
   /// ActOnPragmaDetectMismatch - Call on well-formed \#pragma detect_mismatch
@@ -7903,6 +7913,14 @@ DeductionFailureInfo
 MakeDeductionFailureInfo(ASTContext &Context, Sema::TemplateDeductionResult TDK,
                          sema::TemplateDeductionInfo &Info);
 
-}  // end namespace clang
+/// \brief Contains a late templated function.
+/// Will be parsed at the end of the translation unit, used by Sema & Parser.
+struct LateParsedTemplate {
+  CachedTokens Toks;
+  /// \brief The template function declaration to be late parsed.
+  Decl *D;
+};
+
+} // end namespace clang
 
 #endif

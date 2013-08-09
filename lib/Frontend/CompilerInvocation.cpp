@@ -351,8 +351,9 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.OptimizeSize = getOptimizationLevelSize(Args);
   Opts.SimplifyLibCalls = !(Args.hasArg(OPT_fno_builtin) ||
                             Args.hasArg(OPT_ffreestanding));
-  Opts.UnrollLoops = Args.hasArg(OPT_funroll_loops) ||
-                     (Opts.OptimizationLevel > 1 && !Opts.OptimizeSize);
+  Opts.UnrollLoops =
+      Args.hasFlag(OPT_funroll_loops, OPT_fno_unroll_loops,
+                   (Opts.OptimizationLevel > 1 && !Opts.OptimizeSize));
 
   Opts.Autolink = !Args.hasArg(OPT_fno_autolink);
   Opts.AsmVerbose = Args.hasArg(OPT_masm_verbose);
@@ -502,6 +503,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
     }
   }
 
+  Opts.DependentLibraries = Args.getAllArgValues(OPT_dependent_lib);
+
   return Success;
 }
 
@@ -515,6 +518,7 @@ static void ParseDependencyOutputArgs(DependencyOutputOptions &Opts,
   Opts.ShowHeaderIncludes = Args.hasArg(OPT_H);
   Opts.HeaderIncludeOutputFile = Args.getLastArgValue(OPT_header_include_file);
   Opts.AddMissingHeaderDeps = Args.hasArg(OPT_MG);
+  Opts.PrintShowIncludes = Args.hasArg(OPT_show_includes);
   Opts.DOTOutputFile = Args.getLastArgValue(OPT_dependency_dot);
 }
 

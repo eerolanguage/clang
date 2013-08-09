@@ -260,7 +260,7 @@ void CompilerInstance::createPreprocessor() {
     AttachDependencyGraphGen(*PP, DepOpts.DOTOutputFile,
                              getHeaderSearchOpts().Sysroot);
 
-  
+
   // Handle generating header include information, if requested.
   if (DepOpts.ShowHeaderIncludes)
     AttachHeaderIncludeGen(*PP);
@@ -270,6 +270,11 @@ void CompilerInstance::createPreprocessor() {
       OutputPath = "";
     AttachHeaderIncludeGen(*PP, /*ShowAllHeaders=*/true, OutputPath,
                            /*ShowDepth=*/false);
+  }
+
+  if (DepOpts.PrintShowIncludes) {
+    AttachHeaderIncludeGen(*PP, /*ShowAllHeaders=*/false, /*OutputPath=*/"",
+                           /*ShowDepth=*/true, /*MSStyle=*/true);
   }
 }
 

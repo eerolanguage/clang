@@ -218,6 +218,7 @@ static inline unsigned getIDNS(Sema::LookupNameKind NameKind,
   case Sema::LookupObjCImplicitSelfParam:
   case Sema::LookupOrdinaryName:
   case Sema::LookupRedeclarationWithLinkage:
+  case Sema::LookupLocalFriendName:
     IDNS = Decl::IDNS_Ordinary;
     if (CPlusPlus) {
       IDNS |= Decl::IDNS_Tag | Decl::IDNS_Member | Decl::IDNS_Namespace;
@@ -907,6 +908,15 @@ bool Sema::CppLookupName(LookupResult &R, Scope *S) {
         if (CXXRecordDecl *Record = dyn_cast_or_null<CXXRecordDecl>(Ctx))
           R.setNamingClass(Record);
       return true;
+    }
+
+    if (R.getLookupKind() == LookupLocalFriendName && !S->isClassScope()) {
+      // C++11 [class.friend]p11:
+      //   If a friend declaration appears in a local class and the name
+      //   specified is an unqualified name, a prior declaration is
+      //   looked up without considering scopes that are outside the
+      //   innermost enclosing non-class scope.
+      return false;
     }
 
     if (!Ctx && S->isTemplateParamScope() && OutsideOfTemplateParamDC &&
@@ -1632,6 +1642,7 @@ bool Sema::LookupQualifiedName(LookupResult &R, DeclContext *LookupCtx,
     case LookupOrdinaryName:
     case LookupMemberName:
     case LookupRedeclarationWithLinkage:
+    case LookupLocalFriendName:
       BaseCallback = &CXXRecordDecl::FindOrdinaryMember;
       break;
 
