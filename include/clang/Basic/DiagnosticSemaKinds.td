@@ -1906,6 +1906,9 @@ def warn_missing_atsign_prefix : Warning<
 def warn_objc_string_literal_comparison : Warning<
   "direct comparison of a string literal has undefined behavior">, 
   InGroup<ObjCStringComparison>;
+def warn_concatenated_nsarray_literal : Warning<
+  "concatenated nsstring literal for an nsarray expression">,
+  InGroup<ObjCStringConcatenation>;
 def note_objc_literal_comparison_isequal : Note<
   "use 'isEqual:' instead">;
 
@@ -2185,6 +2188,28 @@ def note_found_mutex_near_match : Note<"found near match '%0'">;
 // Dummy warning that will trigger "beta" warnings from the analysis if enabled. 
 def warn_thread_safety_beta : Warning<
   "Thread safety beta warning.">, InGroup<ThreadSafetyBeta>, DefaultIgnore;
+
+// Consumed warnings
+def warn_use_while_consumed : Warning<
+  "invocation of method '%0' on object '%1' while it is in the 'consumed' "
+  "state">, InGroup<Consumed>, DefaultIgnore;
+def warn_use_of_temp_while_consumed : Warning<
+  "invocation of method '%0' on a temporary object while it is in the "
+  "'consumed' state">, InGroup<Consumed>, DefaultIgnore;
+def warn_uniqueness_attribute_wrong_decl_type : Warning<
+  "%0 attribute only applies to methods">,
+  InGroup<Consumed>, DefaultIgnore;
+
+// ConsumedStrict warnings
+def warn_use_in_unknown_state : Warning<
+  "invocation of method '%0' on object '%1' while it is in an unknown state">,
+  InGroup<ConsumedStrict>, DefaultIgnore;
+def warn_use_of_temp_in_unknown_state : Warning<
+  "invocation of method '%0' on a temporary object while it is in an unknown "
+  "state">, InGroup<ConsumedStrict>, DefaultIgnore;
+def warn_unnecessary_test : Warning<
+  "unnecessary test. Variable '%0' is known to be in the '%1' state">,
+  InGroup<ConsumedStrict>, DefaultIgnore;
 
 def warn_impcast_vector_scalar : Warning<
   "implicit conversion turns vector to scalar: %0 to %1">,
@@ -4139,6 +4164,9 @@ def ext_sizeof_alignof_void_type : Extension<
 def err_sizeof_alignof_incomplete_type : Error<
   "invalid application of '%select{sizeof|alignof|vec_step}0' to an "
   "incomplete type %1">;
+def err_sizeof_alignof_function_type : Error<
+  "invalid application of '%select{sizeof|alignof|vec_step}0' to a "
+  "function type">;
 def err_sizeof_alignof_bitfield : Error<
   "invalid application of '%select{sizeof|alignof}0' to bit-field">;
 def err_alignof_member_of_incomplete_type : Error<
@@ -5090,6 +5118,8 @@ def err_invalid_declarator_global_scope : Error<
   "definition or redeclaration of %0 cannot name the global scope">;
 def err_invalid_declarator_in_function : Error<
   "definition or redeclaration of %0 not allowed inside a function">;
+def err_invalid_declarator_in_block : Error<
+  "definition or redeclaration of %0 not allowed inside a block">;
 def err_not_tag_in_scope : Error<
   "no %select{struct|interface|union|class|enum}0 named %1 in %2">;
 def err_not_var_in_scope : Error<

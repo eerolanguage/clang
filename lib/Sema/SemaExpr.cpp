@@ -1655,7 +1655,7 @@ Sema::DecomposeUnqualifiedId(const UnqualifiedId &Id,
 bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
                                CorrectionCandidateCallback &CCC,
                                TemplateArgumentListInfo *ExplicitTemplateArgs,
-                               llvm::ArrayRef<Expr *> Args) {
+                               ArrayRef<Expr *> Args) {
   DeclarationName Name = R.getLookupName();
 
   unsigned diagnostic = diag::err_undeclared_var_use;
@@ -3181,6 +3181,10 @@ static bool CheckExtensionTraitOperandType(Sema &S, QualType T,
                                            SourceLocation Loc,
                                            SourceRange ArgRange,
                                            UnaryExprOrTypeTrait TraitKind) {
+  // Invalid types must be hard errors for SFINAE in C++.
+  if (S.LangOpts.CPlusPlus)
+    return true;
+
   // C99 6.5.3.4p1:
   if (T->isFunctionType() &&
       (TraitKind == UETT_SizeOf || TraitKind == UETT_AlignOf)) {
@@ -3263,6 +3267,12 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(Expr *E,
   ExprTy = E->getType();
   assert(!ExprTy->isReferenceType());
 
+  if (ExprTy->isFunctionType()) {
+    Diag(E->getExprLoc(), diag::err_sizeof_alignof_function_type)
+      << ExprKind << E->getSourceRange();
+    return true;
+  }
+
   if (CheckObjCTraitOperandConstraints(*this, ExprTy, E->getExprLoc(),
                                        E->getSourceRange(), ExprKind))
     return true;
@@ -3335,6 +3345,12 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(QualType ExprType,
                           diag::err_sizeof_alignof_incomplete_type,
                           ExprKind, ExprRange))
     return true;
+
+  if (ExprType->isFunctionType()) {
+    Diag(OpLoc, diag::err_sizeof_alignof_function_type)
+      << ExprKind << ExprRange;
+    return true;
+  }
 
   if (CheckObjCTraitOperandConstraints(*this, ExprType, OpLoc, ExprRange,
                                        ExprKind))

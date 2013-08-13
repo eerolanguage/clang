@@ -91,6 +91,8 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     }
 
     IO.mapOptional("AccessModifierOffset", Style.AccessModifierOffset);
+    IO.mapOptional("ConstructorInitializerIndentWidth",
+                   Style.ConstructorInitializerIndentWidth);
     IO.mapOptional("AlignEscapedNewlinesLeft", Style.AlignEscapedNewlinesLeft);
     IO.mapOptional("AlignTrailingComments", Style.AlignTrailingComments);
     IO.mapOptional("AllowAllParametersOfDeclarationOnNextLine",
@@ -167,6 +169,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.BreakConstructorInitializersBeforeComma = false;
   LLVMStyle.ColumnLimit = 80;
   LLVMStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = false;
+  LLVMStyle.ConstructorInitializerIndentWidth = 4;
   LLVMStyle.Cpp11BracedListStyle = false;
   LLVMStyle.DerivePointerBinding = false;
   LLVMStyle.ExperimentalAutoDetectBinPacking = false;
@@ -203,6 +206,7 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.BreakConstructorInitializersBeforeComma = false;
   GoogleStyle.ColumnLimit = 80;
   GoogleStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = true;
+  GoogleStyle.ConstructorInitializerIndentWidth = 4;
   GoogleStyle.Cpp11BracedListStyle = true;
   GoogleStyle.DerivePointerBinding = true;
   GoogleStyle.ExperimentalAutoDetectBinPacking = false;
@@ -595,6 +599,12 @@ private:
     unsigned ContinuationIndent =
         std::max(State.Stack.back().LastSpace, State.Stack.back().Indent) + 4;
     if (Newline) {
+      // Breaking before the first "<<" is generally not desirable if the LHS is
+      // short.
+      if (Current.is(tok::lessless) && State.Stack.back().FirstLessLess == 0 &&
+          State.Column <= Style.ColumnLimit / 2)
+        ExtraPenalty += Style.PenaltyBreakFirstLessLess;
+
       State.Stack.back().ContainsLineBreak = true;
       if (Current.is(tok::r_brace)) {
         if (Current.BlockKind == BK_BracedInit)
@@ -645,6 +655,10 @@ private:
                  Previous.isOneOf(tok::coloncolon, tok::equal) ||
                  Previous.Type == TT_ObjCMethodExpr) {
         State.Column = ContinuationIndent;
+      } else if (Current.Type == TT_CtorInitializerColon) {
+        State.Column = FirstIndent + Style.ConstructorInitializerIndentWidth;
+      } else if (Current.Type == TT_CtorInitializerComma) {
+        State.Column = State.Stack.back().Indent;
       } else {
         State.Column = State.Stack.back().Indent;
         // Ensure that we fall back to indenting 4 spaces instead of just
@@ -704,10 +718,6 @@ private:
              Line.MustBeDeclaration))
           State.Stack.back().BreakBeforeParameter = true;
       }
-
-      // Breaking before the first "<<" is generally not desirable.
-      if (Current.is(tok::lessless) && State.Stack.back().FirstLessLess == 0)
-        ExtraPenalty += Style.PenaltyBreakFirstLessLess;
 
     } else {
       if (Current.is(tok::equal) &&
@@ -819,8 +829,9 @@ private:
       //     : First(...), ...
       //       Next(...)
       //       ^ line up here.
-      if (!Style.BreakConstructorInitializersBeforeComma)
-        State.Stack.back().Indent = State.Column + 2;
+      State.Stack.back().Indent =
+          State.Column +
+          (Style.BreakConstructorInitializersBeforeComma ? 0 : 2);
       if (Style.ConstructorInitializerAllOnOneLineOrOnePerLine)
         State.Stack.back().AvoidBinPacking = true;
       State.Stack.back().BreakBeforeParameter = false;
@@ -973,7 +984,7 @@ private:
       // Exempts unterminated string literals from line breaking. The user will
       // likely want to terminate the string before any line breaking is done.
       if (Current.IsUnterminatedLiteral)
-         return 0;
+        return 0;
 
       Token.reset(new BreakableStringLiteral(Current, StartColumn,
                                              Line.InPPDirective, Encoding));
@@ -1228,7 +1239,7 @@ private:
       return true;
     if (!Style.Cpp11BracedListStyle && Current.is(tok::r_brace) &&
         State.Stack.back().BreakBeforeClosingBrace)
-       return true;
+      return true;
     if (Previous.is(tok::semi) && State.LineContainsContinuedForLoopSection)
       return true;
     if (Style.BreakConstructorInitializersBeforeComma) {

@@ -3188,10 +3188,12 @@ TEST_F(FormatTest, AlignsPipes) {
                "             << aaaaaaaaaaaaaaaaaaaaaaaaaaaa;",
                getLLVMStyleWithColumns(70));
 
-  // But sometimes, breaking before the first "<<" is necessary.
+  // But sometimes, breaking before the first "<<" is desirable.
   verifyFormat("Diag(aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbb)\n"
                "    << aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
                "    << aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;");
+  verifyFormat("SemaRef.Diag(Loc, diag::note_for_range_begin_end)\n"
+               "    << BEF << IsTemplate << Description << E->getType();");
 
   verifyFormat(
       "llvm::errs() << aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
@@ -3246,6 +3248,8 @@ TEST_F(FormatTest, WrapsAtFunctionCallsIfNecessary) {
   verifyFormat("aaaaa(aaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
                "            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa).aaaaa(aaaaa),\n"
                "      aaaaaaaaaaaaaaaaaaaaa);");
+  verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "    aaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaa)->aaaaaaaaa());");
   verifyFormat(
       "aaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
       "      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
@@ -3708,6 +3712,8 @@ TEST_F(FormatTest, UnderstandsRvalueReferences) {
   verifyFormat("template <bool B, bool C> class A {\n"
                "  static_assert(B && C, \"Something is wrong\");\n"
                "};");
+  verifyGoogleFormat("#define IF(a, b, c) if (a && (b == c))");
+  verifyGoogleFormat("#define WHILE(a, b, c) while (a && (b == c))");
 }
 
 TEST_F(FormatTest, FormatsBinaryOperatorsPrecedingEquals) {
@@ -3797,9 +3803,14 @@ TEST_F(FormatTest, FormatsFunctionTypes) {
   verifyFormat("void *(*a)(int *, SomeType *);");
   verifyFormat("int (*func)(void *);");
   verifyFormat("void f() { int (*func)(void *); }");
+  verifyFormat("template <class CallbackClass>\n"
+               "using MyCallback = void (CallbackClass::*)(SomeObject *Data);");
 
   verifyGoogleFormat("A<void*(int*, SomeType*)>;");
   verifyGoogleFormat("void* (*a)(int);");
+  verifyGoogleFormat(
+      "template <class CallbackClass>\n"
+      "using MyCallback = void (CallbackClass::*)(SomeObject* Data);");
 
   // Other constructs can look somewhat like function types:
   verifyFormat("A<sizeof(*x)> a;");
@@ -4175,7 +4186,7 @@ TEST_F(FormatTest, UnderstandContextOfRecordTypeKeywords) {
                "  f();\n");
 
   // This is simply incomplete. Formatting is not important, but must not crash.
-  verifyFormat("class A:"); 
+  verifyFormat("class A:");
 }
 
 TEST_F(FormatTest, DoNotInterfereWithErrorAndWarning) {
@@ -5563,6 +5574,16 @@ TEST_F(FormatTest, AllmanBraceBreaking) {
                BreakBeforeBraceShortIfs);
 }
 
+TEST_F(FormatTest, CatchExceptionReferenceBinding) {
+  verifyFormat("void f() {\n"
+               "  try {\n"
+               "  }\n"
+               "  catch (const Exception &e) {\n"
+               "  }\n"
+               "}\n",
+               getLLVMStyle());
+}
+
 TEST_F(FormatTest, UnderstandsPragmas) {
   verifyFormat("#pragma omp reduction(| : var)");
   verifyFormat("#pragma omp reduction(+ : var)");
@@ -5639,6 +5660,8 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(IndentFunctionDeclarationAfterType);
 
   CHECK_PARSE("AccessModifierOffset: -1234", AccessModifierOffset, -1234);
+  CHECK_PARSE("ConstructorInitializerIndentWidth: 1234",
+              ConstructorInitializerIndentWidth, 1234u);
   CHECK_PARSE("ColumnLimit: 1234", ColumnLimit, 1234u);
   CHECK_PARSE("MaxEmptyLinesToKeep: 1234", MaxEmptyLinesToKeep, 1234u);
   CHECK_PARSE("PenaltyExcessCharacter: 1234", PenaltyExcessCharacter, 1234u);
@@ -5768,6 +5791,55 @@ TEST_F(FormatTest, SplitsUTF8BlockComments) {
             format("/* 𝓣𝓮𝓼𝓽 𝔣𝔬𝔲𝔯 𝕓𝕪𝕥𝕖 𝖀𝕿𝕱-𝟠 */", getLLVMStyleWithColumns(12)));
 }
 
+TEST_F(FormatTest, ConstructorInitializerIndentWidth) {
+  FormatStyle Style = getLLVMStyle();
+
+  Style.ConstructorInitializerIndentWidth = 4;
+  verifyFormat(
+      "SomeClass::Constructor()\n"
+      "    : aaaaaaaaaaaaa(aaaaaaaaaaaaaa), aaaaaaaaaaaaa(aaaaaaaaaaaaaa),\n"
+      "      aaaaaaaaaaaaa(aaaaaaaaaaaaaa) {}",
+      Style);
+
+  Style.ConstructorInitializerIndentWidth = 2;
+  verifyFormat(
+      "SomeClass::Constructor()\n"
+      "  : aaaaaaaaaaaaa(aaaaaaaaaaaaaa), aaaaaaaaaaaaa(aaaaaaaaaaaaaa),\n"
+      "    aaaaaaaaaaaaa(aaaaaaaaaaaaaa) {}",
+      Style);
+
+  Style.ConstructorInitializerIndentWidth = 0;
+  verifyFormat(
+      "SomeClass::Constructor()\n"
+      ": aaaaaaaaaaaaa(aaaaaaaaaaaaaa), aaaaaaaaaaaaa(aaaaaaaaaaaaaa),\n"
+      "  aaaaaaaaaaaaa(aaaaaaaaaaaaaa) {}",
+      Style);
+
+  Style.BreakConstructorInitializersBeforeComma = true;
+  Style.ConstructorInitializerIndentWidth = 4;
+  verifyFormat("SomeClass::Constructor()\n"
+               "    : a(a)\n"
+               "    , b(b)\n"
+               "    , c(c) {}",
+               Style);
+
+  Style.ConstructorInitializerIndentWidth = 2;
+  verifyFormat("SomeClass::Constructor()\n"
+               "  : a(a)\n"
+               "  , b(b)\n"
+               "  , c(c) {}",
+               Style);
+
+  Style.ConstructorInitializerIndentWidth = 0;
+  verifyFormat("SomeClass::Constructor()\n"
+               ": a(a)\n"
+               ", b(b)\n"
+               ", c(c) {}",
+               Style);
+}
+
+#endif
+
 TEST_F(FormatTest, FormatsWithWebKitStyle) {
   FormatStyle Style = getWebKitStyle();
 
@@ -5846,8 +5918,6 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
             "}",
             format("if (aaaaaaaaaaaaaaa || bbbbbbbbbbbbbbb) { i++; }", Style));
 }
-
-#endif
 
 } // end namespace tooling
 } // end namespace clang

@@ -1961,7 +1961,7 @@ static void diagnoseIgnoredQualifiers(
     { DeclSpec::TQ_atomic, "_Atomic", AtomicQualLoc }
   };
 
-  llvm::SmallString<32> QualStr;
+  SmallString<32> QualStr;
   unsigned NumQuals = 0;
   SourceLocation Loc;
   FixItHint FixIts[4];
@@ -5066,6 +5066,11 @@ bool Sema::RequireCompleteTypeImpl(SourceLocation Loc, QualType T,
   // If the Objective-C class was a forward declaration, produce a note.
   if (IFace && !IFace->getDecl()->isInvalidDecl())
     Diag(IFace->getDecl()->getLocation(), diag::note_forward_class);
+
+  // If we have external information that we can use to suggest a fix,
+  // produce a note.
+  if (ExternalSource)
+    ExternalSource->MaybeDiagnoseMissingCompleteType(Loc, T);
 
   return true;
 }

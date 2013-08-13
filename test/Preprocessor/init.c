@@ -1224,6 +1224,11 @@
 // MIPS-DSPR2:#define __mips_dsp_rev 2
 // MIPS-DSPR2:#define __mips_dspr2 1
 //
+// RUN: %clang_cc1 -target-feature +msa \
+// RUN:   -E -dM -triple=mips-none-none < /dev/null \
+// RUN:   | FileCheck -check-prefix MIPS-MSA %s
+// MIPS-MSA:#define __mips_msa 1
+//
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=msp430-none-none < /dev/null | FileCheck -check-prefix MSP430 %s
 //
 // MSP430:#define MSP430 1
@@ -2941,3 +2946,6 @@
 // ANDROID: __ANDROID__ 1
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64-unknown-freebsd < /dev/null | FileCheck -check-prefix PPC64-FREEBSD %s
 // PPC64-FREEBSD-NOT: #define __LONG_DOUBLE_128__ 1
+//
+// RUN: %clang_cc1 -E -dM -ffreestanding -triple=xcore-none-none < /dev/null | FileCheck -check-prefix XCORE %s
+// XCORE:#define __XS1B__ 1

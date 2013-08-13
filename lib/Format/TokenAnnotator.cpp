@@ -93,7 +93,8 @@ private:
       }
     }
 
-    if (Left->Previous && Left->Previous->is(tok::kw_static_assert))
+    if (Left->Previous && Left->Previous->isOneOf(tok::kw_static_assert,
+                                                  tok::kw_if, tok::kw_while))
       Contexts.back().IsExpression = true;
 
     if (StartsObjCMethodExpr) {
@@ -123,6 +124,10 @@ private:
         }
       }
 
+      if (CurrentToken->Previous->Type == TT_PointerOrReference &&
+          CurrentToken->Previous->Previous->isOneOf(tok::l_paren,
+                                                    tok::coloncolon))
+        MightBeFunctionType = true;
       if (CurrentToken->is(tok::r_paren)) {
         if (MightBeFunctionType && CurrentToken->Next &&
             (CurrentToken->Next->is(tok::l_paren) ||
@@ -152,10 +157,6 @@ private:
       }
       if (CurrentToken->isOneOf(tok::r_square, tok::r_brace))
         return false;
-      if (CurrentToken->Previous->Type == TT_PointerOrReference &&
-          CurrentToken->Previous->Previous->isOneOf(tok::l_paren,
-                                                    tok::coloncolon))
-        MightBeFunctionType = true;
       updateParameterCount(Left, CurrentToken);
       if (CurrentToken->is(tok::comma) && CurrentToken->Next &&
           !CurrentToken->Next->HasUnescapedNewline &&
@@ -577,6 +578,7 @@ private:
 
   void determineTokenType(FormatToken &Current) {
     if (Current.getPrecedence() == prec::Assignment &&
+        !Line.First->isOneOf(tok::kw_template, tok::kw_using) &&
         (!Current.Previous || Current.Previous->isNot(tok::kw_operator))) {
       Contexts.back().IsExpression = true;
       for (FormatToken *Previous = Current.Previous;
@@ -592,7 +594,8 @@ private:
     } else if (Current.isOneOf(tok::kw_return, tok::kw_throw) ||
                (Current.is(tok::l_paren) && !Line.MustBeDeclaration &&
                 !Line.InPPDirective &&
-                (!Current.Previous || Current.Previous->isNot(tok::kw_for)))) {
+                (!Current.Previous ||
+                 !Current.Previous->isOneOf(tok::kw_for, tok::kw_catch)))) {
       Contexts.back().IsExpression = true;
     } else if (Current.isOneOf(tok::r_paren, tok::greater, tok::comma)) {
       for (FormatToken *Previous = Current.Previous;
@@ -1085,7 +1088,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
   if (Left.is(tok::l_paren) && Line.MightBeFunctionDecl)
     return 100;
   if (Left.opensScope())
-    return Left.ParameterCount > 1 ? prec::Comma : 20;
+    return Left.ParameterCount > 1 ? prec::Comma : 19;
 
   if (Right.is(tok::lessless)) {
     if (Left.is(tok::string_literal)) {

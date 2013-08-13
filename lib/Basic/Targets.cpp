@@ -4530,6 +4530,7 @@ class MipsTargetInfoBase : public TargetInfo {
   enum DspRevEnum {
     NoDSP, DSP1, DSP2
   } DspRev;
+  bool HasMSA;
 
 protected:
   std::string ABI;
@@ -4538,7 +4539,8 @@ public:
   MipsTargetInfoBase(const llvm::Triple &Triple, const std::string &ABIStr,
                      const std::string &CPUStr)
       : TargetInfo(Triple), CPU(CPUStr), IsMips16(false), IsMicromips(false),
-        IsSingleFloat(false), FloatABI(HardFloat), DspRev(NoDSP), ABI(ABIStr) {}
+        IsSingleFloat(false), FloatABI(HardFloat), DspRev(NoDSP),
+        HasMSA(false), ABI(ABIStr) {}
 
   virtual const char *getABI() const { return ABI.c_str(); }
   virtual bool setABI(const std::string &Name) = 0;
@@ -4588,6 +4590,9 @@ public:
       Builder.defineMacro("__mips_dsp", Twine(1));
       break;
     }
+
+    if (HasMSA)
+      Builder.defineMacro("__mips_msa", Twine(1));
 
     Builder.defineMacro("_MIPS_SZPTR", Twine(getPointerWidth(0)));
     Builder.defineMacro("_MIPS_SZINT", Twine(getIntWidth()));
@@ -4665,7 +4670,8 @@ public:
         Name == "mips32" || Name == "mips32r2" ||
         Name == "mips64" || Name == "mips64r2" ||
         Name == "mips16" || Name == "micromips" ||
-        Name == "dsp" || Name == "dspr2") {
+        Name == "dsp" || Name == "dspr2" ||
+        Name == "msa") {
       Features[Name] = Enabled;
       return true;
     } else if (Name == "32") {
@@ -4699,6 +4705,8 @@ public:
         DspRev = std::max(DspRev, DSP1);
       else if (*it == "+dspr2")
         DspRev = std::max(DspRev, DSP2);
+      else if (*it == "+msa")
+        HasMSA = true;
     }
 
     // Remove front-end specific option.
@@ -5130,6 +5138,64 @@ namespace {
   };
 }
 
+namespace {
+class XCoreTargetInfo : public TargetInfo {
+  static const Builtin::Info BuiltinInfo[];
+public:
+  XCoreTargetInfo(const llvm::Triple &Triple) : TargetInfo(Triple) {
+    BigEndian = false;
+    NoAsmVariants = true;
+    LongLongAlign = 32;
+    SuitableAlign = 32;
+    DoubleAlign = LongDoubleAlign = 32;
+    UseZeroLengthBitfieldAlignment = true;
+    DescriptionString = "e-p:32:32:32-a0:0:32-n32"
+                        "-i1:8:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32"
+                        "-f16:16:32-f32:32:32-f64:32:32";
+  }
+  virtual void getTargetDefines(const LangOptions &Opts,
+                                MacroBuilder &Builder) const {
+    Builder.defineMacro("__XS1B__");
+  }
+  virtual void getTargetBuiltins(const Builtin::Info *&Records,
+                                 unsigned &NumRecords) const {
+    Records = BuiltinInfo;
+    NumRecords = clang::XCore::LastTSBuiltin-Builtin::FirstTSBuiltin;
+  }
+  virtual BuiltinVaListKind getBuiltinVaListKind() const {
+    return TargetInfo::VoidPtrBuiltinVaList;
+  }
+  virtual const char *getClobbers() const {
+    return "";
+  }
+  virtual void getGCCRegNames(const char * const *&Names,
+                              unsigned &NumNames) const {
+    static const char * const GCCRegNames[] = {
+      "r0",   "r1",   "r2",   "r3",   "r4",   "r5",   "r6",   "r7",
+      "r8",   "r9",   "r10",  "r11",  "cp",   "dp",   "sp",   "lr"
+    };
+    Names = GCCRegNames;
+    NumNames = llvm::array_lengthof(GCCRegNames);
+  }
+  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                unsigned &NumAliases) const {
+    Aliases = NULL;
+    NumAliases = 0;
+  }
+  virtual bool validateAsmConstraint(const char *&Name,
+                                     TargetInfo::ConstraintInfo &Info) const {
+    return false;
+  }
+};
+
+const Builtin::Info XCoreTargetInfo::BuiltinInfo[] = {
+#define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
+#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
+                                              ALL_LANGUAGES },
+#include "clang/Basic/BuiltinsXCore.def"
+};
+} // end anonymous namespace.
+
 
 //===----------------------------------------------------------------------===//
 // Driver code
@@ -5141,6 +5207,9 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
   switch (Triple.getArch()) {
   default:
     return NULL;
+
+  case llvm::Triple::xcore:
+    return new XCoreTargetInfo(Triple);
 
   case llvm::Triple::hexagon:
     return new HexagonTargetInfo(Triple);

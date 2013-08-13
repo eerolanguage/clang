@@ -973,7 +973,8 @@ Decl *TemplateDeclInstantiator::VisitVarTemplateDecl(VarTemplateDecl *D) {
 
   // FIXME: This, and ForVarTemplate, is a hack that is probably unnecessary.
   // We should use a simplified version of VisitVarDecl.
-  VarDecl *VarInst = cast_or_null<VarDecl>(VisitVarDecl(Pattern, /*ForVarTemplate=*/true));
+  VarDecl *VarInst =
+      cast_or_null<VarDecl>(VisitVarDecl(Pattern, /*ForVarTemplate=*/ true));
 
   DeclContext *DC = Owner;
 
@@ -2446,9 +2447,12 @@ TemplateDeclInstantiator::InstantiateClassTemplatePartialSpecialization(
 
   // Substitute into the template arguments of the class template partial
   // specialization.
-  TemplateArgumentListInfo InstTemplateArgs; // no angle locations
-  if (SemaRef.Subst(PartialSpec->getTemplateArgsAsWritten(),
-                    PartialSpec->getNumTemplateArgsAsWritten(),
+  const ASTTemplateArgumentListInfo *TemplArgInfo
+    = PartialSpec->getTemplateArgsAsWritten();
+  TemplateArgumentListInfo InstTemplateArgs(TemplArgInfo->LAngleLoc,
+                                            TemplArgInfo->RAngleLoc);
+  if (SemaRef.Subst(TemplArgInfo->getTemplateArgs(),
+                    TemplArgInfo->NumTemplateArgs,
                     InstTemplateArgs, TemplateArgs))
     return 0;
 
@@ -2571,9 +2575,12 @@ TemplateDeclInstantiator::InstantiateVarTemplatePartialSpecialization(
 
   // Substitute into the template arguments of the variable template partial
   // specialization.
-  TemplateArgumentListInfo InstTemplateArgs; // no angle locations
-  if (SemaRef.Subst(PartialSpec->getTemplateArgsAsWritten(),
-                    PartialSpec->getNumTemplateArgsAsWritten(),
+  const ASTTemplateArgumentListInfo *TemplArgInfo
+    = PartialSpec->getTemplateArgsAsWritten();
+  TemplateArgumentListInfo InstTemplateArgs(TemplArgInfo->LAngleLoc,
+                                            TemplArgInfo->RAngleLoc);
+  if (SemaRef.Subst(TemplArgInfo->getTemplateArgs(),
+                    TemplArgInfo->NumTemplateArgs,
                     InstTemplateArgs, TemplateArgs))
     return 0;
 
@@ -3330,6 +3337,8 @@ void Sema::BuildVariableInstantiation(
   NewVar->setInitStyle(OldVar->getInitStyle());
   NewVar->setCXXForRangeDecl(OldVar->isCXXForRangeDecl());
   NewVar->setConstexpr(OldVar->isConstexpr());
+  NewVar->setPreviousDeclInSameBlockScope(
+      OldVar->isPreviousDeclInSameBlockScope());
   NewVar->setAccess(OldVar->getAccess());
 
   if (!OldVar->isStaticDataMember()) {
@@ -3342,13 +3351,18 @@ void Sema::BuildVariableInstantiation(
   if (NewVar->hasAttrs())
     CheckAlignasUnderalignment(NewVar);
 
-  // FIXME: In theory, we could have a previous declaration for variables that
-  // are not static data members.
-  // FIXME: having to fake up a LookupResult is dumb.
   LookupResult Previous(*this, NewVar->getDeclName(), NewVar->getLocation(),
                         Sema::LookupOrdinaryName, Sema::ForRedeclaration);
 
-  if (!isa<VarTemplateSpecializationDecl>(NewVar))
+  if (NewVar->getLexicalDeclContext()->isFunctionOrMethod() &&
+      OldVar->getPreviousDecl()) {
+    // We have a previous declaration. Use that one, so we merge with the
+    // right type.
+    if (NamedDecl *NewPrev = FindInstantiatedDecl(
+            NewVar->getLocation(), OldVar->getPreviousDecl(), TemplateArgs))
+      Previous.addDecl(NewPrev);
+  } else if (!isa<VarTemplateSpecializationDecl>(NewVar) &&
+             OldVar->hasLinkage())
     LookupQualifiedName(Previous, NewVar->getDeclContext(), false);
 
   CheckVariableDeclaration(NewVar, Previous);
@@ -3475,11 +3489,22 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
     llvm::PointerUnion<VarTemplateDecl *,
                        VarTemplatePartialSpecializationDecl *> PatternPtr =
         VarSpec->getSpecializedTemplateOrPartial();
-    if (PatternPtr.is<VarTemplatePartialSpecializationDecl *>())
+    if (PatternPtr.is<VarTemplatePartialSpecializationDecl *>()) {
       PatternDecl = cast<VarDecl>(
           PatternPtr.get<VarTemplatePartialSpecializationDecl *>());
-    else
-      PatternDecl = (PatternPtr.get<VarTemplateDecl *>())->getTemplatedDecl();
+
+      // Find actual definition
+      if (VarDecl *Def = PatternDecl->getDefinition(getASTContext()))
+        PatternDecl = Def;
+    } else {
+      VarTemplateDecl *PatternTemplate = PatternPtr.get<VarTemplateDecl *>();
+
+      // Find actual definition
+      if (VarTemplateDecl *Def = PatternTemplate->getDefinition())
+        PatternTemplate = Def;
+
+      PatternDecl = PatternTemplate->getTemplatedDecl();
+    }
     assert(PatternDecl && "instantiating a non-template");
   }
 
@@ -4056,6 +4081,9 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
     if (isa<NonTypeTemplateParmDecl>(D) || isa<TemplateTypeParmDecl>(D) ||
         isa<TemplateTemplateParmDecl>(D))
       return D;
+
+    if (D->isInvalidDecl())
+      return 0;
 
     // If we didn't find the decl, then we must have a label decl that hasn't
     // been found yet.  Lazily instantiate it and return it now.

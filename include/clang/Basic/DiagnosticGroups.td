@@ -478,6 +478,10 @@ def ThreadSafety : DiagGroup<"thread-safety",
                               ThreadSafetyPrecise]>;
 def ThreadSafetyBeta : DiagGroup<"thread-safety-beta">;
 
+// Uniqueness Analysis warnings
+def Consumed       : DiagGroup<"consumed">;
+def ConsumedStrict : DiagGroup<"consumed-strict", [Consumed]>;
+
 // Note that putting warnings in -Wall will not disable them by default. If a
 // warning should be active _only_ when -Wall is passed in, mark it as
 // DefaultIgnore in addition to putting it here.
@@ -548,6 +552,7 @@ def ObjCCocoaAPI : DiagGroup<"objc-cocoa-api", [
   ]>;
 
 def ObjCStringComparison : DiagGroup<"objc-string-compare">;
+def ObjCStringConcatenation : DiagGroup<"objc-string-concatenation">;
 def ObjCLiteralComparison : DiagGroup<"objc-literal-compare", [
     ObjCStringComparison
   ]>;

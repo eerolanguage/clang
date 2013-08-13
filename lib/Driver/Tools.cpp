@@ -552,7 +552,18 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
 
   case llvm::Triple::ppc64le:
   case llvm::Triple::systemz:
+  case llvm::Triple::xcore:
     return false;
+  }
+}
+
+static bool isNoCommonDefault(const llvm::Triple &Triple) {
+  switch (Triple.getArch()) {
+  default:
+    return false;
+
+  case llvm::Triple::xcore:
+    return true;
   }
 }
 
@@ -1023,6 +1034,9 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
   AddTargetFeature(Args, CmdArgs,
                    options::OPT_mdspr2, options::OPT_mno_dspr2,
                    "dspr2");
+  AddTargetFeature(Args, CmdArgs,
+                   options::OPT_mmsa, options::OPT_mno_msa,
+                   "msa");
 
   if (Arg *A = Args.getLastArg(options::OPT_mxgot, options::OPT_mno_xgot)) {
     if (A->getOption().matches(options::OPT_mxgot)) {
@@ -1720,9 +1734,6 @@ static void addLsanRTLinux(const ToolChain &TC, const ArgList &Args,
 static void addUbsanRTLinux(const ToolChain &TC, const ArgList &Args,
                             ArgStringList &CmdArgs, bool IsCXX,
                             bool HasOtherSanitizerRt) {
-  if (Args.hasArg(options::OPT_shared))
-    return;
-
   // Need a copy of sanitizer_common. This could come from another sanitizer
   // runtime; if we're not including one, include our own copy.
   if (!HasOtherSanitizerRt)
@@ -1758,6 +1769,9 @@ static bool shouldUseFramePointer(const ArgList &Args,
         return false;
   }
 
+  if (Triple.getArch() == llvm::Triple::xcore)
+    return false;
+
   return true;
 }
 
@@ -1777,27 +1791,14 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
         return false;
   }
 
+  if (Triple.getArch() == llvm::Triple::xcore)
+    return false;
+
   return true;
 }
 
-/// If the PWD environment variable is set, add a CC1 option to specify the
-/// debug compilation directory.
+/// Add a CC1 option to specify the debug compilation directory.
 static void addDebugCompDirArg(const ArgList &Args, ArgStringList &CmdArgs) {
-  const char *pwd = ::getenv("PWD");
-  if (!pwd)
-    return;
-
-  llvm::sys::fs::file_status PWDStatus, DotStatus;
-  if (llvm::sys::path::is_absolute(pwd) &&
-      !llvm::sys::fs::status(pwd, PWDStatus) &&
-      !llvm::sys::fs::status(".", DotStatus) &&
-      PWDStatus.getUniqueID() == DotStatus.getUniqueID()) {
-    CmdArgs.push_back("-fdebug-compilation-dir");
-    CmdArgs.push_back(Args.MakeArgString(pwd));
-    return;
-  }
-
-  // Fall back to using getcwd.
   SmallString<128> cwd;
   if (!llvm::sys::fs::current_path(cwd)) {
     CmdArgs.push_back("-fdebug-compilation-dir");
@@ -1851,6 +1852,37 @@ static bool isOptimizationLevelFast(const ArgList &Args) {
   if (Arg *A = Args.getLastArg(options::OPT_O_Group))
     if (A->getOption().matches(options::OPT_Ofast))
       return true;
+  return false;
+}
+
+/// \brief Vectorize at all optimization levels greater than 1 except for -Oz.
+static bool shouldEnableVectorizerAtOLevel(const ArgList &Args) {
+  if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
+    if (A->getOption().matches(options::OPT_O4) ||
+        A->getOption().matches(options::OPT_Ofast))
+      return true;
+
+    if (A->getOption().matches(options::OPT_O0))
+      return false;
+
+    assert(A->getOption().matches(options::OPT_O) && "Must have a -O flag");
+
+    // Vectorize -O (which really is -O2), -Os.
+    StringRef S(A->getValue());
+    if (S == "s" || S.empty())
+      return true;
+
+    // Don't vectorize -Oz.
+    if (S == "z")
+      return false;
+
+    unsigned OptLevel = 0;
+    if (S.getAsInteger(10, OptLevel))
+      return false;
+
+    return OptLevel > 1;
+  }
+
   return false;
 }
 
@@ -2496,12 +2528,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-coverage-file");
       SmallString<128> CoverageFilename(Output.getFilename());
       if (llvm::sys::path::is_relative(CoverageFilename.str())) {
-        if (const char *pwd = ::getenv("PWD")) {
-          if (llvm::sys::path::is_absolute(pwd)) {
-            SmallString<128> Pwd(pwd);
-            llvm::sys::path::append(Pwd, CoverageFilename.str());
-            CoverageFilename.swap(Pwd);
-          }
+        SmallString<128> Pwd;
+        if (!llvm::sys::fs::current_path(Pwd)) {
+          llvm::sys::path::append(Pwd, CoverageFilename.str());
+          CoverageFilename.swap(Pwd);
         }
       }
       CmdArgs.push_back(Args.MakeArgString(CoverageFilename));
@@ -3217,7 +3247,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fpack-struct=1");
   }
 
-  if (KernelOrKext) {
+  if (KernelOrKext || isNoCommonDefault(getToolChain().getTriple())) {
     if (!Args.hasArg(options::OPT_fcommon))
       CmdArgs.push_back("-fno-common");
     Args.ClaimAllArgs(options::OPT_fno_common);
@@ -3336,14 +3366,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    false))
     CmdArgs.push_back("-fasm-blocks");
 
-  // If -Ofast is the optimization level, then -fvectorize should be enabled.
-  // This alias option is being used to simplify the hasFlag logic.
-  OptSpecifier VectorizeAliasOption = OFastEnabled ? options::OPT_Ofast :
+  // Enable vectorization per default according to the optimization level
+  // selected. For optimization levels that want vectorization we use the alias
+  // option to simplify the hasFlag logic.
+  bool EnableVec = shouldEnableVectorizerAtOLevel(Args);
+  OptSpecifier VectorizeAliasOption = EnableVec ? options::OPT_O_Group :
     options::OPT_fvectorize;
-
-  // -fvectorize is default.
   if (Args.hasFlag(options::OPT_fvectorize, VectorizeAliasOption,
-                   options::OPT_fno_vectorize, true))
+                   options::OPT_fno_vectorize, EnableVec))
     CmdArgs.push_back("-vectorize-loops");
 
   // -fslp-vectorize is default.
@@ -6562,12 +6592,14 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-nologo");
 
   Args.AddAllArgValues(CmdArgs, options::OPT_l);
+  Args.AddAllArgValues(CmdArgs, options::OPT__SLASH_link);
 
   // Add filenames immediately.
   for (InputInfoList::const_iterator
        it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
     if (it->isFilename())
       CmdArgs.push_back(it->getFilename());
+    // FIXME: Forward -Wl, etc.
   }
 
   const char *Exec =
