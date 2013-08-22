@@ -1180,7 +1180,6 @@ public:
   void InitializeVTablePointer(BaseSubobject Base,
                                const CXXRecordDecl *NearestVBase,
                                CharUnits OffsetFromNearestVBase,
-                               llvm::Constant *VTable,
                                const CXXRecordDecl *VTableClass);
 
   typedef llvm::SmallPtrSet<const CXXRecordDecl *, 4> VisitedVirtualBasesSetTy;
@@ -1188,7 +1187,6 @@ public:
                                 const CXXRecordDecl *NearestVBase,
                                 CharUnits OffsetFromNearestVBase,
                                 bool BaseIsNonVirtualPrimaryBase,
-                                llvm::Constant *VTable,
                                 const CXXRecordDecl *VTableClass,
                                 VisitedVirtualBasesSetTy& VBases);
 
@@ -1327,8 +1325,7 @@ public:
 
   /// ErrorUnsupported - Print out an error that codegen doesn't support the
   /// specified stmt yet.
-  void ErrorUnsupported(const Stmt *S, const char *Type,
-                        bool OmitOnError=false);
+  void ErrorUnsupported(const Stmt *S, const char *Type);
 
   //===--------------------------------------------------------------------===//
   //                                  Helpers
@@ -2103,8 +2100,6 @@ public:
   void EmitNoreturnRuntimeCallOrInvoke(llvm::Value *callee,
                                        ArrayRef<llvm::Value*> args);
 
-  llvm::Value *BuildVirtualCall(GlobalDecl GD, llvm::Value *This,
-                                llvm::Type *Ty);
   llvm::Value *BuildAppleKextVirtualCall(const CXXMethodDecl *MD, 
                                          NestedNameSpecifier *Qual,
                                          llvm::Type *Ty);

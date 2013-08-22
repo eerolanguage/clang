@@ -29,9 +29,11 @@ namespace {
 /// into template parameter lists.
 class AnnotatingParser {
 public:
-  AnnotatingParser(AnnotatedLine &Line, IdentifierInfo &Ident_in)
-      : Line(Line), CurrentToken(Line.First), KeywordVirtualFound(false),
-        NameFound(false), AutoFound(false), Ident_in(Ident_in) {
+  AnnotatingParser(const FormatStyle &Style, AnnotatedLine &Line,
+                   IdentifierInfo &Ident_in)
+      : Style(Style), Line(Line), CurrentToken(Line.First),
+        KeywordVirtualFound(false), NameFound(false), AutoFound(false),
+        Ident_in(Ident_in) {
     Contexts.push_back(Context(tok::unknown, 1, /*IsExpression=*/false));
   }
 
@@ -268,6 +270,9 @@ private:
   void updateParameterCount(FormatToken *Left, FormatToken *Current) {
     if (Current->is(tok::comma)) {
       ++Left->ParameterCount;
+      if (!Left->Role)
+        Left->Role.reset(new CommaSeparatedList(Style));
+      Left->Role->CommaFound(Current);
     } else if (Left->ParameterCount == 0 && Current->isNot(tok::comment)) {
       Left->ParameterCount = 1;
     }
@@ -717,9 +722,13 @@ private:
                        PreviousNotConst->Previous &&
                        PreviousNotConst->Previous->is(tok::hash);
 
+    if (PreviousNotConst->Type == TT_TemplateCloser)
+      return PreviousNotConst && PreviousNotConst->MatchingParen &&
+             PreviousNotConst->MatchingParen->Previous &&
+             PreviousNotConst->MatchingParen->Previous->isNot(tok::kw_template);
+
     return (!IsPPKeyword && PreviousNotConst->is(tok::identifier)) ||
            PreviousNotConst->Type == TT_PointerOrReference ||
-           PreviousNotConst->Type == TT_TemplateCloser ||
            isSimpleTypeSpecifier(*PreviousNotConst);
   }
 
@@ -823,6 +832,7 @@ private:
 
   SmallVector<Context, 8> Contexts;
 
+  const FormatStyle &Style;
   AnnotatedLine &Line;
   FormatToken *CurrentToken;
   bool KeywordVirtualFound;
@@ -933,7 +943,7 @@ private:
 } // end anonymous namespace
 
 void TokenAnnotator::annotate(AnnotatedLine &Line) {
-  AnnotatingParser Parser(Line, Ident_in);
+  AnnotatingParser Parser(Style, Line, Ident_in);
   Line.Type = Parser.parseLine();
   if (Line.Type == LT_Invalid)
     return;
@@ -1003,6 +1013,11 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
   }
 
   calculateUnbreakableTailLengths(Line);
+  for (Current = Line.First; Current != NULL; Current = Current->Next) {
+    if (Current->Role)
+      Current->Role->precomputeFormattingInfos(Current);
+  }
+
   DEBUG({
     printDebugInfo(Line);
   });
@@ -1041,11 +1056,10 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
       return 3;
     if (Left.Type == TT_StartOfName)
       return 20;
-    else if (Line.MightBeFunctionDecl && Right.BindingStrength == 1)
+    if (Line.MightBeFunctionDecl && Right.BindingStrength == 1)
       // FIXME: Clean up hack of using BindingStrength to find top-level names.
       return Style.PenaltyReturnTypeOnItsOwnLine;
-    else
-      return 200;
+    return 200;
   }
   if (Left.is(tok::equal) && Right.is(tok::l_brace))
     return 150;
@@ -1117,7 +1131,14 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
     return Left.is(tok::hash);
   if (Left.isOneOf(tok::hashhash, tok::hash))
     return Right.is(tok::hash);
-  if (Right.isOneOf(tok::r_paren, tok::semi, tok::comma))
+  if (Left.is(tok::l_paren) && Right.is(tok::r_paren))
+    return Style.SpaceInEmptyParentheses;
+  if (Left.is(tok::l_paren) || Right.is(tok::r_paren))
+    return (Right.Type == TT_CastRParen ||
+            (Left.MatchingParen && Left.MatchingParen->Type == TT_CastRParen))
+               ? Style.SpacesInCStyleCastParentheses
+               : Style.SpacesInParentheses;
+  if (Right.isOneOf(tok::semi, tok::comma))
     return false;
   if (Right.is(tok::less) &&
       (Left.is(tok::kw_template) ||
@@ -1165,17 +1186,17 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
     return Left.Type != TT_ObjCMethodExpr;
   if (Right.is(tok::colon))
     return Right.Type != TT_ObjCMethodExpr && !Left.is(tok::question);
-  if (Left.is(tok::l_paren))
-    return false;
   if (Right.is(tok::l_paren)) {
     if (Left.is(tok::r_paren) && Left.MatchingParen &&
         Left.MatchingParen->Previous &&
         Left.MatchingParen->Previous->is(tok::kw___attribute))
       return true;
     return Line.Type == LT_ObjCDecl ||
-           Left.isOneOf(tok::kw_if, tok::kw_for, tok::kw_while, tok::kw_switch,
-                        tok::kw_return, tok::kw_catch, tok::kw_new,
-                        tok::kw_delete, tok::semi);
+           Left.isOneOf(tok::kw_return, tok::kw_new, tok::kw_delete,
+                        tok::semi) ||
+           (Style.SpaceAfterControlStatementKeyword &&
+            Left.isOneOf(tok::kw_if, tok::kw_for, tok::kw_while, tok::kw_switch,
+                         tok::kw_catch));
   }
   if (Left.is(tok::at) && Right.Tok.getObjCKeywordID() != tok::objc_not_keyword)
     return false;

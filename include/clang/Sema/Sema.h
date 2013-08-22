@@ -1876,8 +1876,7 @@ public:
   void mergeObjCMethodDecls(ObjCMethodDecl *New, ObjCMethodDecl *Old);
   void MergeVarDecl(VarDecl *New, LookupResult &Previous,
                     bool MergeTypeWithPrevious);
-  void MergeVarDeclTypes(VarDecl *New, VarDecl *Old,
-                         bool MergeTypeWithOld);
+  void MergeVarDeclTypes(VarDecl *New, VarDecl *Old, bool MergeTypeWithOld);
   void MergeVarDeclExceptionSpecs(VarDecl *New, VarDecl *Old);
   bool MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old, Scope *S);
 
@@ -2496,6 +2495,15 @@ public:
                              bool EnteringContext = false,
                              const ObjCObjectPointerType *OPT = 0);
 
+  void diagnoseTypo(const TypoCorrection &Correction,
+                    const PartialDiagnostic &TypoDiag,
+                    bool ErrorRecovery = true);
+
+  void diagnoseTypo(const TypoCorrection &Correction,
+                    const PartialDiagnostic &TypoDiag,
+                    const PartialDiagnostic &PrevNote,
+                    bool ErrorRecovery = true);
+
   void FindAssociatedClassesAndNamespaces(SourceLocation InstantiationLoc,
                                           ArrayRef<Expr *> Args,
                                    AssociatedNamespaceSet &AssociatedNamespaces,
@@ -2799,8 +2807,7 @@ public:
   void ActOnStartOfCompoundStmt();
   void ActOnFinishOfCompoundStmt();
   StmtResult ActOnCompoundStmt(SourceLocation L, SourceLocation R,
-                                       MultiStmtArg Elts,
-                                       bool isStmtExpr);
+                               ArrayRef<Stmt *> Elts, bool isStmtExpr);
 
   /// \brief A RAII object to enter scope of a compound statement.
   class CompoundScopeRAII {
@@ -2988,11 +2995,10 @@ public:
   StmtResult ActOnCXXCatchBlock(SourceLocation CatchLoc,
                                 Decl *ExDecl, Stmt *HandlerBlock);
   StmtResult ActOnCXXTryBlock(SourceLocation TryLoc, Stmt *TryBlock,
-                              MultiStmtArg Handlers);
+                              ArrayRef<Stmt *> Handlers);
 
   StmtResult ActOnSEHTryBlock(bool IsCXXTry, // try (true) or __try (false) ?
-                              SourceLocation TryLoc,
-                              Stmt *TryBlock,
+                              SourceLocation TryLoc, Stmt *TryBlock,
                               Stmt *Handler);
 
   StmtResult ActOnSEHExceptBlock(SourceLocation Loc,
@@ -6496,7 +6502,7 @@ public:
                              const MultiLevelTemplateArgumentList &TemplateArgs,
                              LateInstantiatedAttrVec *LateAttrs = 0,
                              LocalInstantiationScope *StartingScope = 0,
-                             bool ForVarTemplate = false);
+                             bool InstantiatingVarTemplate = false);
   void InstantiateVariableInitializer(
       VarDecl *Var, VarDecl *OldVar,
       const MultiLevelTemplateArgumentList &TemplateArgs);

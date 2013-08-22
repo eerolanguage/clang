@@ -524,7 +524,9 @@ void Sema::PrintInstantiationStack() {
           << Active->InstantiationRange;
       } else if (VarDecl *VD = dyn_cast<VarDecl>(D)) {
         Diags.Report(Active->PointOfInstantiation,
-                     diag::note_template_static_data_member_def_here)
+                     VD->isStaticDataMember()?
+                       diag::note_template_static_data_member_def_here
+                     : diag::note_template_variable_def_here)
           << VD
           << Active->InstantiationRange;
       } else if (EnumDecl *ED = dyn_cast<EnumDecl>(D)) {
@@ -2252,12 +2254,10 @@ namespace {
   };
 }
 
-bool
-Sema::InstantiateClassTemplateSpecialization(
-                           SourceLocation PointOfInstantiation,
-                           ClassTemplateSpecializationDecl *ClassTemplateSpec,
-                           TemplateSpecializationKind TSK,
-                           bool Complain) {
+bool Sema::InstantiateClassTemplateSpecialization(
+    SourceLocation PointOfInstantiation,
+    ClassTemplateSpecializationDecl *ClassTemplateSpec,
+    TemplateSpecializationKind TSK, bool Complain) {
   // Perform the actual instantiation on the canonical declaration.
   ClassTemplateSpec = cast<ClassTemplateSpecializationDecl>(
                                          ClassTemplateSpec->getCanonicalDecl());

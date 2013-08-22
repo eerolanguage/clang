@@ -909,7 +909,6 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   // only allowed at the start of a compound stmt regardless of the language.
   while (Tok.is(tok::kw___label__)) {
     SourceLocation LabelLoc = ConsumeToken();
-    Diag(LabelLoc, diag::ext_gnu_local_label);
 
     SmallVector<Decl *, 8> DeclsInGroup;
     while (1) {
@@ -2777,8 +2776,7 @@ Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
   // If the function body could not be parsed, make a bogus compoundstmt.
   if (FnBody.isInvalid()) {
     Sema::CompoundScopeRAII CompoundScope(Actions);
-    FnBody = Actions.ActOnCompoundStmt(LBraceLoc, LBraceLoc,
-                                       MultiStmtArg(), false);
+    FnBody = Actions.ActOnCompoundStmt(LBraceLoc, LBraceLoc, None, false);
   }
 
   BodyScope.Exit();
@@ -2815,8 +2813,7 @@ Decl *Parser::ParseFunctionTryBlock(Decl *Decl, ParseScope &BodyScope) {
   // compound statement as the body.
   if (FnBody.isInvalid()) {
     Sema::CompoundScopeRAII CompoundScope(Actions);
-    FnBody = Actions.ActOnCompoundStmt(LBraceLoc, LBraceLoc,
-                                       MultiStmtArg(), false);
+    FnBody = Actions.ActOnCompoundStmt(LBraceLoc, LBraceLoc, None, false);
   }
 
   BodyScope.Exit();
@@ -2928,7 +2925,7 @@ StmtResult Parser::ParseCXXTryBlockCommon(SourceLocation TryLoc, bool FnTry) {
     if (Handlers.empty())
       return StmtError();
 
-    return Actions.ActOnCXXTryBlock(TryLoc, TryBlock.take(),Handlers);
+    return Actions.ActOnCXXTryBlock(TryLoc, TryBlock.take(), Handlers);
   }
 }
 

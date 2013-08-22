@@ -264,7 +264,7 @@ def Xassembler : Separate<["-"], "Xassembler">,
   HelpText<"Pass <arg> to the assembler">, MetaVarName<"<arg>">;
 def Xclang : Separate<["-"], "Xclang">,
   HelpText<"Pass <arg> to the clang compiler">, MetaVarName<"<arg>">,
-  Flags<[DriverOption]>;
+  Flags<[DriverOption, CoreOption]>;
 def Xlinker : Separate<["-"], "Xlinker">, Flags<[LinkerInput, RenderAsInput]>,
   HelpText<"Pass <arg> to the linker">, MetaVarName<"<arg>">;
 def Xpreprocessor : Separate<["-"], "Xpreprocessor">,
@@ -968,6 +968,10 @@ def mno_ssse3 : Flag<["-"], "mno-ssse3">, Group<m_x86_Features_Group>;
 def mno_aes : Flag<["-"], "mno-aes">, Group<m_x86_Features_Group>;
 def mno_avx : Flag<["-"], "mno-avx">, Group<m_x86_Features_Group>;
 def mno_avx2 : Flag<["-"], "mno-avx2">, Group<m_x86_Features_Group>;
+def mno_avx512f : Flag<["-"], "mno-avx512f">, Group<m_x86_Features_Group>;
+def mno_avx512cd : Flag<["-"], "mno-avx512cd">, Group<m_x86_Features_Group>;
+def mno_avx512er : Flag<["-"], "mno-avx512er">, Group<m_x86_Features_Group>;
+def mno_avx512pf : Flag<["-"], "mno-avx512pf">, Group<m_x86_Features_Group>;
 def mno_pclmul : Flag<["-"], "mno-pclmul">, Group<m_x86_Features_Group>;
 def mno_lzcnt : Flag<["-"], "mno-lzcnt">, Group<m_x86_Features_Group>;
 def mno_rdrnd : Flag<["-"], "mno-rdrnd">, Group<m_x86_Features_Group>;
@@ -1014,6 +1018,10 @@ def mssse3 : Flag<["-"], "mssse3">, Group<m_x86_Features_Group>;
 def maes : Flag<["-"], "maes">, Group<m_x86_Features_Group>;
 def mavx : Flag<["-"], "mavx">, Group<m_x86_Features_Group>;
 def mavx2 : Flag<["-"], "mavx2">, Group<m_x86_Features_Group>;
+def mavx512f : Flag<["-"], "mavx512f">, Group<m_x86_Features_Group>;
+def mavx512cd : Flag<["-"], "mavx512cd">, Group<m_x86_Features_Group>;
+def mavx512er : Flag<["-"], "mavx512er">, Group<m_x86_Features_Group>;
+def mavx512pf : Flag<["-"], "mavx512pf">, Group<m_x86_Features_Group>;
 def mpclmul : Flag<["-"], "mpclmul">, Group<m_x86_Features_Group>;
 def mlzcnt : Flag<["-"], "mlzcnt">, Group<m_x86_Features_Group>;
 def mrdrnd : Flag<["-"], "mrdrnd">, Group<m_x86_Features_Group>;

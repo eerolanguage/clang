@@ -903,7 +903,7 @@ def err_tagless_friend_type_template : Error<
 def err_no_matching_local_friend : Error<
   "no matching function found in local scope">;
 def err_no_matching_local_friend_suggest : Error<
-  "no matching function %0 found in local scope; did you mean %2?">;
+  "no matching function %0 found in local scope; did you mean %3?">;
 def err_partial_specialization_friend : Error<
   "partial specialization cannot be declared as a friend">;
 def err_qualified_friend_def : Error<
@@ -1907,7 +1907,8 @@ def warn_objc_string_literal_comparison : Warning<
   "direct comparison of a string literal has undefined behavior">, 
   InGroup<ObjCStringComparison>;
 def warn_concatenated_nsarray_literal : Warning<
-  "concatenated nsstring literal for an nsarray expression">,
+  "concatenated NSString literal for an NSArray expression - "
+  "possibly missing a comma">,
   InGroup<ObjCStringConcatenation>;
 def note_objc_literal_comparison_isequal : Note<
   "use 'isEqual:' instead">;
@@ -2196,9 +2197,6 @@ def warn_use_while_consumed : Warning<
 def warn_use_of_temp_while_consumed : Warning<
   "invocation of method '%0' on a temporary object while it is in the "
   "'consumed' state">, InGroup<Consumed>, DefaultIgnore;
-def warn_uniqueness_attribute_wrong_decl_type : Warning<
-  "%0 attribute only applies to methods">,
-  InGroup<Consumed>, DefaultIgnore;
 
 // ConsumedStrict warnings
 def warn_use_in_unknown_state : Warning<
@@ -2959,9 +2957,6 @@ def err_template_arg_ref_bind_ignores_quals : Error<
   "ignores qualifiers">;
 def err_template_arg_not_decl_ref : Error<
   "non-type template argument does not refer to any declaration">;
-def err_template_arg_not_object_or_func_form : Error<
-  "non-type template argument does not directly refer to an object or "
-  "function">;
 def err_template_arg_not_address_of : Error<
   "non-type template argument for template parameter of pointer type %0 must "
   "have its address taken">;
@@ -3180,6 +3175,8 @@ def note_function_template_spec_here : Note<
   "in instantiation of function template specialization %q0 requested here">;
 def note_template_static_data_member_def_here : Note<
   "in instantiation of static data member %q0 requested here">;
+def note_template_variable_def_here : Note<
+  "in instantiation of variable template specialization %q0 requested here">;
 def note_template_enum_def_here : Note<
   "in instantiation of enumeration %q0 requested here">;
 def note_template_type_alias_instantiation_here : Note<
@@ -4350,8 +4347,8 @@ def err_friend_decl_with_def_arg_redeclared : Error<
 def err_friend_decl_does_not_match : Error<
   "friend declaration of %0 does not match any declaration in %1">;
 def err_member_decl_does_not_match_suggest : Error<
-  "out-of-line %select{declaration|definition}3 of %0 "
-  "does not match any declaration in %1; did you mean %2?">;
+  "out-of-line %select{declaration|definition}2 of %0 "
+  "does not match any declaration in %1; did you mean %3?">;
 def err_member_def_does_not_match_ret_type : Error<
   "out-of-line definition of %q0 differs from the declaration in the return type">;
 def err_nonstatic_member_out_of_line : Error<
@@ -6478,7 +6475,7 @@ def warn_direct_ivar_access : Warning<"instance variable %0 is being "
 
 // Spell-checking diagnostics
 def err_unknown_type_or_class_name_suggest : Error<
-  "unknown %select{type|class}2 name %0; did you mean %1?">;
+  "unknown %select{type|class}1 name %0; did you mean %2?">;
 def err_unknown_typename_suggest : Error<
   "unknown type name %0; did you mean %1?">;
 def err_unknown_nested_typename_suggest : Error<
@@ -6590,8 +6587,11 @@ def err_opencl_global_invalid_addr_space : Error<
 
 let CategoryName = "OpenMP Issue" in {
 // OpenMP support.
+def err_omp_expected_var_arg : Error<
+  "%0 is not a global variable, static local variable or static data member">;
 def err_omp_expected_var_arg_suggest : Error<
-  "%0 is not a global variable, static local variable or static data member%select{|; did you mean %2?}1">;
+  "%0 is not a global variable, static local variable or static data member; "
+  "did you mean %1">;
 def err_omp_global_var_arg : Error<
   "arguments of '#pragma omp %0' must have %select{global storage|static storage duration}1">;
 def err_omp_ref_type_arg : Error<
@@ -6651,6 +6651,8 @@ def err_module_private_local : Error<
 def err_module_private_local_class : Error<
   "local %select{struct|interface|union|class|enum}0 cannot be declared "
   "__module_private__">;
+def err_module_private_declaration : Error<
+  "declaration of %0 must be imported from module '%1' before it is required">;
 def err_module_private_definition : Error<
   "definition of %0 must be imported from module '%1' before it is required">;
 }
