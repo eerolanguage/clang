@@ -79,7 +79,7 @@ bool Preprocessor::isInLegacyMode(const SourceLocation &Loc) const {
   // file) using eero syntax.
   return (inLegacyHeader || 
           (inLegacyMacro && 
-           !SourceMgr.isFromMainFile(SourceMgr.getSpellingLoc(Loc))));
+           !SourceMgr.isWrittenInMainFile(SourceMgr.getSpellingLoc(Loc))));
 }
 
 //===----------------------------------------------------------------------===//

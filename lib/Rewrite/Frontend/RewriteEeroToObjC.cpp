@@ -513,7 +513,7 @@ bool RewriteEeroToObjC::HandleTopLevelDecl(DeclGroupRef D) {
 
   for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
 
-    if (!SM->isFromMainFile((*I)->getLocation())) {
+    if (!SM->isWrittenInMainFile((*I)->getLocation())) {
       return true;
     }
 
@@ -556,7 +556,7 @@ bool TranslatorVisitor::VisitDecl(Decl* D) {
 
   // Skip all headers. We only want to translate the primary source file.
   //
-  if (!SM->isFromMainFile(D->getLocation())) {
+  if (!SM->isWrittenInMainFile(D->getLocation())) {
     return true;
   }
   
@@ -593,7 +593,7 @@ bool TranslatorVisitor::VisitStmt(Stmt* S) {
 
   // Skip all headers. We only want to translate the primary source file.
   //
-  if (!SM->isFromMainFile(S->getLocStart())) {
+  if (!SM->isWrittenInMainFile(S->getLocStart())) {
     return true;
   }
 
