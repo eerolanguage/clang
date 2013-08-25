@@ -338,6 +338,13 @@ void Sema::ActOnStartOfObjCMethodDef(Scope *FnBodyScope, Decl *D) {
       Diag(Param->getLocation(), diag::warn_arc_strong_pointer_objc_pointer) <<
             Param->getType();
     
+    // Eero instancetype parameters
+    if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
+        Param->getType() == Context.getObjCInstanceType()) {
+      QualType classType(MDecl->getClassInterface()->getTypeForDecl(), 0);
+      Param->setType(Context.getObjCObjectPointerType(classType));
+    }
+        
     if ((*PI)->getIdentifier())
       PushOnScopeChains(*PI, FnBodyScope);
   }
