@@ -340,9 +340,12 @@ void Sema::ActOnStartOfObjCMethodDef(Scope *FnBodyScope, Decl *D) {
     
     // Eero instancetype parameters
     if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-        Param->getType() == Context.getObjCInstanceType()) {
+        Param->getType().getUnqualifiedType() ==
+          Context.getObjCInstanceType()) {
+      Qualifiers qualifiers = Param->getType().getQualifiers();
       QualType classType(MDecl->getClassInterface()->getTypeForDecl(), 0);
-      Param->setType(Context.getObjCObjectPointerType(classType));
+      QualType classPtrType = Context.getObjCObjectPointerType(classType);
+      Param->setType(Context.getQualifiedType(classPtrType, qualifiers));
     }
         
     if ((*PI)->getIdentifier())

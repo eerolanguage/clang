@@ -1337,13 +1337,16 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
     assert(argExpr && "CheckMessageArgumentTypes(): missing expression");
 
     if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-        param->getType() == Context.getObjCInstanceType() &&
+        param->getType().getUnqualifiedType() ==
+            Context.getObjCInstanceType() &&
         !ReceiverType->isObjCIdType()) {
-      if (const ObjCObjectPointerType *ObjT =
+      if (const ObjCObjectPointerType *ObjPT =
           ReceiverType->getAs<ObjCObjectPointerType>()) {
+        const ObjCObjectType *objectType = ObjPT->getObjectType();
         QualType baseObjType =
-            Context.getObjCObjectPointerType(ObjT->getObjectType()->getBaseType());
-        param->setType(baseObjType);
+            Context.getObjCObjectPointerType(objectType->getBaseType());
+        Qualifiers qualifiers = param->getType().getQualifiers();
+        param->setType(Context.getQualifiedType(baseObjType, qualifiers));
         instancetype = true;
       }
     }
