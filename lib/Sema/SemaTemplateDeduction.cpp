@@ -3904,16 +3904,6 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result) {
     return DAR_Failed;
   }
 
-  // For Eero, do this to preserve any typedef type information. Otherwise,
-  // it's ugly when using the eero-to-objc translator.
-  //
-  // TODO: investigate this further
-  //
-  if (getLangOpts().Eero && !PP.isInLegacyHeader() &&
-      Context.hasSameUnqualifiedType(Result, InitType)) {
-    Result = InitType.getUnqualifiedType().withCVRQualifiers(Result.getCVRQualifiers());
-  }
-
   return DAR_Succeeded;
 }
 

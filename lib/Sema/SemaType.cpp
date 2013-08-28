@@ -1094,6 +1094,12 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
   if (declarator.getContext() == Declarator::BlockLiteralContext)
     maybeSynthesizeBlockSignature(state, Result);
 
+  // Eero class instances are always pointers
+  if (S.getLangOpts().Eero && !S.PP.isInLegacyMode(DeclLoc) &&
+      Result->isObjCObjectType()) {
+    Result = Context.getObjCObjectPointerType(Result);
+  }
+
   // Apply any type attributes from the decl spec.  This may cause the
   // list of type attributes to be temporarily saved while the type
   // attributes are pushed around.
@@ -1679,11 +1685,6 @@ bool Sema::CheckFunctionReturnType(QualType &T, SourceLocation Loc) {
   // Methods cannot return interface types. All ObjC objects are
   // passed by reference.
   if (T->isObjCObjectType()) {
-    // Eero class instances are always pointers
-    if (getLangOpts().Eero && !PP.isInLegacyHeader()) {
-      T = Context.getObjCObjectPointerType(T);
-      return false;
-    }
     Diag(Loc, diag::err_object_cannot_be_passed_returned_by_value) << 0 << T;
     return 0;
   }
@@ -2707,12 +2708,6 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
             diag::err_parameters_retval_cannot_have_fp16_type) << 1;
           D.setInvalidType(true);
         }
-      }
-
-      // Eero class instances are always pointers
-      if (S.getLangOpts().Eero && !S.PP.isInLegacyHeader() && 
-          T->isObjCObjectType()) {
-        T = Context.getObjCObjectPointerType(T);
       }
 
       // Methods cannot return interface types. All ObjC objects are

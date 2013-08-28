@@ -1767,7 +1767,9 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
           (NextToken().isAtStartOfLine() ||
            NextToken().is(tok::colon) || NextToken().is(tok::comma))) {
         break; // exit loop, this is an instance method (minus is optional)
-      } else if (Tok.isNot(tok::identifier) && !isKnownToBeTypeSpecifier(Tok)) {
+      } else if (Tok.isNot(tok::identifier) && 
+                 !isKnownToBeTypeSpecifier(Tok) &&
+                 Tok.isNot(tok::kw___attribute)) {
         break; // exit loop, since braces are optional
       }
     }
@@ -2051,7 +2053,9 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
     // if we have ivars
     if (Tok.is(tok::l_brace) ||
         (getLangOpts().Eero && !PP.isInLegacyMode(Tok.getLocation()) &&
-         (isKnownToBeTypeSpecifier(Tok) || Tok.is(tok::identifier))))
+         (isKnownToBeTypeSpecifier(Tok) || 
+          Tok.is(tok::identifier) || 
+          Tok.is(tok::kw___attribute))))
       ParseObjCClassInstanceVariables(ObjCImpDecl, tok::objc_private, AtLoc);
     else if (Tok.is(tok::less)) { // we have illegal '<' try to recover
       Diag(Tok, diag::err_unexpected_protocol_qualifier);
