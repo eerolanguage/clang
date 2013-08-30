@@ -8793,7 +8793,7 @@ static inline BinaryOperatorKind ConvertTokenKindToBinaryOpcode(
   case tok::plus:                 Opc = BO_Add; break;
   case tok::minus:                Opc = BO_Sub; break;
   case tok::lessless:             Opc = BO_Shl; break;
-  case tok::ellipsis:             Opc = BO_Shl; break; // only reached with eero
+  case tok::ellipsis:             Opc = BO_Add; break; // only reached with eero
   case tok::greatergreater:       Opc = BO_Shr; break;
   case tok::lessequal:            Opc = BO_LE; break;
   case tok::less:                 Opc = BO_LT; break;
@@ -9336,7 +9336,7 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
 
     if (LHSType->isObjCObjectPointerType() &&
         RHSType->isObjCObjectPointerType()) {
-      ExprResult ObjectBinOpExpr = ActOnObjectBinOp(S, TokLoc, Kind, Opc, 
+      ExprResult ObjectBinOpExpr = ActOnObjectBinOp(S, TokLoc, Kind, 
                                                     LHSExpr, RHSExpr);
       if (!ObjectBinOpExpr.isInvalid()) {
         return ObjectBinOpExpr;

@@ -3881,7 +3881,7 @@ static inline std::string ConvertTokenKindToBinarySelectorName(
 }
 
 ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
-                                  tok::TokenKind Kind, BinaryOperatorKind Opc,
+                                  tok::TokenKind Kind,
                                   Expr *LHSExpr, Expr *RHSExpr) {
   ExprResult result = ExprError();  
   bool invert;

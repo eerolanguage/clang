@@ -3492,7 +3492,7 @@ public:
 
   // Eero objc object binary operators
   ExprResult ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
-                              tok::TokenKind Kind, BinaryOperatorKind Opc,
+                              tok::TokenKind Kind,
                               Expr *LHSExpr, Expr *RHSExpr);
 
   Selector SelectorForObjectBuiltinBinOp(tok::TokenKind Kind, 
