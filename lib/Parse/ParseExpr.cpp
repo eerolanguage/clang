@@ -720,6 +720,17 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::identifier: {      // primary-expression: identifier
                                // unqualified-id: identifier
                                // constant: enumeration-constant
+
+    // Support blocks resembling "SomeType (int x)"
+    if (isEero && !NextToken().isAtStartOfLine() &&
+        NextToken().is(tok::l_paren) &&
+        Actions.getTypeName(*Tok.getIdentifierInfo(),
+                            Tok.getLocation(),
+                            getCurScope())) {
+      Res = ParseBlockLiteralExpression();
+      break;
+    }
+
     // Turn a potentially qualified name into a annot_typename or
     // annot_cxxscope if it would be valid.  This handles things like x::y, etc.
     if (getLangOpts().CPlusPlus) {
@@ -826,12 +837,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       
       Res = Actions.ActOnClassPropertyRefExpr(II, PropertyName,
                                               ILoc, PropertyLoc);
-      break;
-    }
-
-    // Support blocks resembling "SomeType (int x)"
-    if (isEero && (Actions.getTypeName(II, ILoc, getCurScope()))) {
-      Res = ParseBlockLiteralExpression();
       break;
     }
 
