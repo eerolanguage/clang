@@ -1656,16 +1656,22 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
     ExprResult FuncAsBlock(ParseNestedFunctionAsBlock(DS, D));
 
     // Create and initialize the block variable
-    Decl *TheDecl = ParseDeclarationAfterDeclarator(D);
-    Actions.AddInitializerToDecl(TheDecl, 
+    Scope *S = getCurScope();
+    SourceLocation Loc = D.getIdentifierLoc();
+    TypeSourceInfo *TInfo = Actions.GetTypeForDeclarator(D, S);
+    QualType Type = TInfo->getType();
+    Type.addConst(); // also make the variable itself a const
+    VarDecl *TheDecl = VarDecl::Create(Actions.Context, Actions.CurContext,
+                                       Loc, Loc, D.getIdentifier(),
+                                       Type, TInfo, SC_None);
+    Actions.CheckShadow(S, TheDecl);
+    if (D.hasAttributes())
+      Actions.ProcessDeclAttributeList(S, TheDecl, D.getAttributes(),
+                                       true, true);
+    Actions.PushOnScopeChains(TheDecl, S);
+    Actions.AddInitializerToDecl(TheDecl,
                                  FuncAsBlock.take(), 
                                  false, false);
-
-    // Also make the variable itself a const
-    ValueDecl* valdecl = cast<ValueDecl>(TheDecl);
-    QualType vartype = valdecl->getType();
-    vartype.addConst();
-    valdecl->setType(vartype);
 
     return Actions.ConvertDeclToDeclGroup(TheDecl);
   }

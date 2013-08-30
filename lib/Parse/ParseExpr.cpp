@@ -2776,7 +2776,6 @@ ExprResult Parser::ParseNestedFunctionAsBlock(ParsingDeclSpec &DS,
   SourceLocation DeclaratorLoc = D.getSourceRange().getBegin();
   
   ParseScope BlockScope(this, Scope::BlockScope | Scope::FnScope |
-                              Scope::BreakScope | Scope::ContinueScope |
                               Scope::DeclScope);
   
   Declarator ParamInfo(DS, Declarator::BlockLiteralContext);
