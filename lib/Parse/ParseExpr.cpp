@@ -2727,7 +2727,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     } else {      
       ExprResult Res(ParseAssignmentExpression()); // no comma operators?
       if (!Res.isInvalid())
-        Stmt = StmtResult(Res.take()).take();
+        Stmt = Actions.ActOnExprStmt(Res);
     }
     // Handle ^(int x | return x) closing paren
     ExpectAndConsume(tok::r_paren, diag::err_expected_rparen, "");
