@@ -3913,10 +3913,32 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
 
       // Handle pseudo/placeholder objects
       QualType LHSType = GetExprOrPseudoObjectType(LHSExpr);
+      QualType RHSType = GetExprOrPseudoObjectType(RHSExpr);
 
-      QualType LHSClassType = LHSType->getPointeeType();
+      // Autobox either expression that needs it.
+      // Note: at least one expression had to be an object for us to have
+      // gotten here.
+      if (!RHSType->isObjCObjectPointerType() &&
+          !RHSType->isBlockPointerType()) {
+        ExprResult boxedExpr =
+            BuildObjCBoxedExpr(SourceRange(RHSExpr->getSourceRange()), RHSExpr);
+        if (boxedExpr.isInvalid()) {
+          return ExprError();
+        }
+        RHSExpr = boxedExpr.take();
+        RHSType = RHSExpr->getType();
+      } else if (!LHSType->isObjCObjectPointerType()) {
+        ExprResult boxedExpr =
+            BuildObjCBoxedExpr(SourceRange(LHSExpr->getSourceRange()), LHSExpr);
+        if (boxedExpr.isInvalid()) {
+          return ExprError();
+        }
+        LHSExpr = boxedExpr.take();
+        LHSType = LHSExpr->getType();
+      }
 
       // if method not defined for class of this object, check for builtin
+      QualType LHSClassType = LHSType->getPointeeType();
       if (!LookupMethodInObjectType(Sel, LHSClassType, true)) {
         Selector builtinSel = SelectorForObjectBuiltinBinOp(Kind, LHSClassType);
         if (!builtinSel.isNull()) {
@@ -3926,7 +3948,8 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
       result = ActOnInstanceMessage(S,
                                     LHSExpr, 
                                     Sel,
-                                    LHSExpr->getLocStart(), TokLoc, RHSExpr->getLocEnd(),
+                                    LHSExpr->getLocStart(), TokLoc, 
+                                    RHSExpr->getLocEnd(),
                                     MultiExprArg(&RHSExpr, 1));
       if (invert) {
         result = CreateBuiltinUnaryOp(TokLoc, UO_LNot, result.take());
