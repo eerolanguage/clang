@@ -377,6 +377,8 @@ static ExprResult CheckObjCCollectionLiteralElement(Sema &S, Expr *Element,
   if (!Element->getType()->isObjCObjectPointerType() &&
       !Element->getType()->isBlockPointerType()) {
     bool Recovered = false;
+
+    const bool isEero = (S.getLangOpts().Eero && !S.PP.isInLegacyHeader());
     
     // If this is potentially an Objective-C numeric literal, add the '@'.
     if (isa<IntegerLiteral>(OrigElement) || 
@@ -390,6 +392,8 @@ static ExprResult CheckObjCCollectionLiteralElement(Sema &S, Expr *Element,
                      isa<ObjCBoolLiteralExpr>(OrigElement)) ? 2
                   : 3;
         
+       // Eero auto-boxes numeric literals in objc collections
+       if (!isEero)
         S.Diag(OrigElement->getLocStart(), diag::err_box_literal_collection)
           << Which << OrigElement->getSourceRange()
           << FixItHint::CreateInsertion(OrigElement->getLocStart(), "@");
@@ -406,6 +410,8 @@ static ExprResult CheckObjCCollectionLiteralElement(Sema &S, Expr *Element,
     // If this is potentially an Objective-C string literal, add the '@'.
     else if (StringLiteral *String = dyn_cast<StringLiteral>(OrigElement)) {
       if (String->isAscii()) {
+       // Eero auto-boxes C-string literals in objc collections
+       if (!isEero)
         S.Diag(OrigElement->getLocStart(), diag::err_box_literal_collection)
           << 0 << OrigElement->getSourceRange()
           << FixItHint::CreateInsertion(OrigElement->getLocStart(), "@");
@@ -418,7 +424,17 @@ static ExprResult CheckObjCCollectionLiteralElement(Sema &S, Expr *Element,
         Recovered = true;
       }
     }
-  
+
+    // Eero auto-boxes any other primitive types supported by @()
+    if (isEero && !Recovered) {
+      Result = S.BuildObjCBoxedExpr(OrigElement->getSourceRange(), Element);
+      if (Result.isInvalid())
+        return ExprError();
+      
+      Element = Result.get();
+      Recovered = true;
+    }
+    
     if (!Recovered) {
       S.Diag(Element->getLocStart(), diag::err_invalid_collection_element)
         << Element->getType();
