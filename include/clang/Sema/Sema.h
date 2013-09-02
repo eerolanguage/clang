@@ -1025,7 +1025,7 @@ public:
   QualType BuildExtVectorType(QualType T, Expr *ArraySize,
                               SourceLocation AttrLoc);
 
-  bool CheckFunctionReturnType(QualType &T, SourceLocation Loc);
+  bool CheckFunctionReturnType(QualType T, SourceLocation Loc);
 
   /// \brief Build a function type.
   ///
