@@ -9334,8 +9334,11 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
     QualType LHSType = GetExprOrPseudoObjectType(LHSExpr);
     QualType RHSType = GetExprOrPseudoObjectType(RHSExpr);
 
-    if (LHSType->isObjCObjectPointerType() &&
-        RHSType->isObjCObjectPointerType()) {
+    // Eero: if either operand is an objc object, and neither are regular
+    // pointers, then treat this as an object binary operator.
+    if ((LHSType->isObjCObjectPointerType() ||
+         RHSType->isObjCObjectPointerType()) &&
+         (!LHSType->isPointerType() && !RHSType->isPointerType())) {
       ExprResult ObjectBinOpExpr = ActOnObjectBinOp(S, TokLoc, Kind, 
                                                     LHSExpr, RHSExpr);
       if (!ObjectBinOpExpr.isInvalid()) {
