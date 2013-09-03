@@ -3880,10 +3880,10 @@ static inline std::string ConvertTokenKindToBinarySelectorName(
     case tok::star:           SelectorName = "multipliedBy"; break;
     case tok::slash:          SelectorName = "dividedBy"; break;
     case tok::percent:        SelectorName = "modulo"; break;
-    case tok::less:           SelectorName = "isLess"; break;
-    case tok::lessequal:      SelectorName = "isGreater"; invert = true; break;      
-    case tok::greater:        SelectorName = "isGreater"; break;
-    case tok::greaterequal:   SelectorName = "isLess"; invert = true; break;
+    case tok::less:           SelectorName = "isLessThan"; break;
+    case tok::lessequal:      SelectorName = "isGreaterThan"; invert = true; break;
+    case tok::greater:        SelectorName = "isGreaterThan"; break;
+    case tok::greaterequal:   SelectorName = "isLessThan"; invert = true; break;
     case tok::lessless:       SelectorName = "shiftLeft"; break;
     case tok::greatergreater: SelectorName = "shiftRight"; break;
     case tok::plusequal:      SelectorName = "plus"; assign = true; break;
