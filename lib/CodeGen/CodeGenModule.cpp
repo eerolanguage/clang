@@ -863,8 +863,7 @@ void CodeGenModule::EmitModuleLinkOptions() {
   // Find all of the modules to import, making a little effort to prune
   // non-leaf modules.
   while (!Stack.empty()) {
-    clang::Module *Mod = Stack.back();
-    Stack.pop_back();
+    clang::Module *Mod = Stack.pop_back_val();
 
     bool AnyChildren = false;
 
@@ -1053,7 +1052,7 @@ llvm::Constant *CodeGenModule::GetAddrOfUuidDescriptor(
 
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(
       getModule(), Init->getType(),
-      /*isConstant=*/true, llvm::GlobalValue::ExternalLinkage, Init, Name);
+      /*isConstant=*/true, llvm::GlobalValue::LinkOnceODRLinkage, Init, Name);
   return GV;
 }
 
@@ -2762,8 +2761,13 @@ void CodeGenModule::EmitObjCIvarInitializations(ObjCImplementationDecl *D) {
 /// EmitNamespace - Emit all declarations in a namespace.
 void CodeGenModule::EmitNamespace(const NamespaceDecl *ND) {
   for (RecordDecl::decl_iterator I = ND->decls_begin(), E = ND->decls_end();
-       I != E; ++I)
+       I != E; ++I) {
+    if (const VarDecl *VD = dyn_cast<VarDecl>(*I))
+      if (VD->getTemplateSpecializationKind() != TSK_ExplicitSpecialization &&
+          VD->getTemplateSpecializationKind() != TSK_Undeclared)
+        continue;
     EmitTopLevelDecl(*I);
+  }
 }
 
 // EmitLinkageSpec - Emit all declarations in a linkage spec.

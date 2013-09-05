@@ -27,8 +27,8 @@
 
 using namespace llvm;
 
-// Default style to use when no style specified or specified style not found.
-static const char *DefaultStyle = "LLVM";
+// Fallback style when no style specified or found in a .clang-format file.
+static const char FallbackStyle[] = "LLVM";
 
 static cl::opt<bool> Help("h", cl::desc("Alias for -help"), cl::Hidden);
 
@@ -64,7 +64,7 @@ LineRanges("lines", cl::desc("<start line>:<end line> - format a range of\n"
 static cl::opt<std::string>
     Style("style",
           cl::desc("Coding style, currently supports:\n"
-                   "  LLVM, Google, Chromium, Mozilla.\n"
+                   "  LLVM, Google, Chromium, Mozilla, WebKit.\n"
                    "Use -style=file to load style configuration from\n"
                    ".clang-format file located in one of the parent\n"
                    "directories of the source file (or current\n"
@@ -72,7 +72,7 @@ static cl::opt<std::string>
                    "Use -style=\"{key: value, ...}\" to set specific\n"
                    "parameters, e.g.:\n"
                    "  -style=\"{BasedOnStyle: llvm, IndentWidth: 8}\""),
-          cl::init(DefaultStyle), cl::cat(ClangFormatCategory));
+          cl::init("file"), cl::cat(ClangFormatCategory));
 static cl::opt<bool> Inplace("i",
                              cl::desc("Inplace edit <file>s, if specified."),
                              cl::cat(ClangFormatCategory));
@@ -87,8 +87,8 @@ static cl::opt<bool>
                cl::cat(ClangFormatCategory));
 static cl::opt<unsigned>
     Cursor("cursor",
-           cl::desc("The position of the cursor when invoking clang-format from"
-                    " an editor integration"),
+           cl::desc("The position of the cursor when invoking\n"
+                    "clang-format from an editor integration"),
            cl::init(0), cl::cat(ClangFormatCategory));
 
 static cl::list<std::string> FileNames(cl::Positional, cl::desc("[<file> ...]"),
@@ -108,20 +108,20 @@ static FileID createInMemoryFile(StringRef FileName, const MemoryBuffer *Source,
 
 FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
   FormatStyle Style;
-  getPredefinedStyle(DefaultStyle, &Style);
+  getPredefinedStyle(FallbackStyle, &Style);
 
   if (StyleName.startswith("{")) {
     // Parse YAML/JSON style from the command line.
     if (error_code ec = parseConfiguration(StyleName, &Style)) {
       llvm::errs() << "Error parsing -style: " << ec.message()
-                   << ", using " << DefaultStyle << " style\n";
+                   << ", using " << FallbackStyle << " style\n";
     }
     return Style;
   }
 
   if (!StyleName.equals_lower("file")) {
     if (!getPredefinedStyle(StyleName, &Style))
-      llvm::errs() << "Invalid value for -style, using " << DefaultStyle
+      llvm::errs() << "Invalid value for -style, using " << FallbackStyle
                    << " style\n";
     return Style;
   }
@@ -153,7 +153,7 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
       return Style;
     }
   }
-  llvm::errs() << "Can't find usable .clang-format, using " << DefaultStyle
+  llvm::errs() << "Can't find usable .clang-format, using " << FallbackStyle
                << " style\n";
   return Style;
 }
@@ -310,8 +310,8 @@ int main(int argc, const char **argv) {
       "A tool to format C/C++/Obj-C code.\n\n"
       "If no arguments are specified, it formats the code from standard input\n"
       "and writes the result to the standard output.\n"
-      "If <file>s are given, it reformats the files. If -i is specified \n"
-      "together with <file>s, the files are edited in-place. Otherwise, the \n"
+      "If <file>s are given, it reformats the files. If -i is specified\n"
+      "together with <file>s, the files are edited in-place. Otherwise, the\n"
       "result is written to the standard output.\n");
 
   if (Help)

@@ -39,9 +39,13 @@ unsigned CommaSeparatedList::format(LineState &State,
       LBrace->Next->Type == TT_DesignatedInitializerPeriod)
     return 0;
 
+  // Calculate the number of code points we have to format this list. As the
+  // first token is already placed, we have to subtract it.
+  unsigned RemainingCodePoints = Style.ColumnLimit - State.Column +
+                                 State.NextToken->Previous->CodePointCount;
+
   // Find the best ColumnFormat, i.e. the best number of columns to use.
-  unsigned RemainingCharacters = Style.ColumnLimit - State.Stack.back().Indent;
-  const ColumnFormat *Format = getColumnFormat(RemainingCharacters);
+  const ColumnFormat *Format = getColumnFormat(RemainingCodePoints);
   if (!Format)
     return 0;
 
@@ -77,11 +81,13 @@ unsigned CommaSeparatedList::format(LineState &State,
 // assuming that the entire sequence is put on a single line.
 static unsigned CodePointsBetween(const FormatToken *Begin,
                                   const FormatToken *End) {
+  assert(End->TotalLength >= Begin->TotalLength);
   return End->TotalLength - Begin->TotalLength + Begin->CodePointCount;
 }
 
 void CommaSeparatedList::precomputeFormattingInfos(const FormatToken *Token) {
-  if (!Token->MatchingParen)
+  // FIXME: At some point we might want to do this for other lists, too.
+  if (!Token->MatchingParen || Token->isNot(tok::l_brace))
     return;
 
   FormatToken *ItemBegin = Token->Next;
@@ -114,14 +120,17 @@ void CommaSeparatedList::precomputeFormattingInfos(const FormatToken *Token) {
     } else {
       ItemEnd = Commas[i];
       // The comma is counted as part of the item when calculating the length.
-      ItemLengths.push_back(ItemEnd->TotalLength - ItemBegin->TotalLength +
-                            ItemBegin->CodePointCount);
+      ItemLengths.push_back(CodePointsBetween(ItemBegin, ItemEnd));
       // Consume trailing comments so the are included in EndOfLineItemLength.
       if (ItemEnd->Next && !ItemEnd->Next->HasUnescapedNewline &&
           ItemEnd->Next->isTrailingComment())
         ItemEnd = ItemEnd->Next;
     }
     EndOfLineItemLength.push_back(CodePointsBetween(ItemBegin, ItemEnd));
+    // If there is a trailing comma in the list, the next item will start at the
+    // closing brace. Don't create an extra item for this.
+    if (ItemEnd->getNextNonComment() == Token->MatchingParen)
+      break;
     ItemBegin = ItemEnd->Next;
   }
 

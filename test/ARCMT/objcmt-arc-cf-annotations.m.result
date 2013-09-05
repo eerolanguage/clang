@@ -82,7 +82,7 @@ extern CFTypeRef CFRetain(CFTypeRef cf);
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-extern void CFRelease(CFTypeRef CF_CONSUMED cf);
+extern void CFRelease(CFTypeRef cf);
 
 CF_IMPLICIT_BRIDGING_DISABLED
 
@@ -154,8 +154,8 @@ typedef struct _NSZone NSZone;
 @protocol NSCoding  - (void)encodeWithCoder:(NSCoder *)aCoder;
 @end
 @interface NSObject <NSObject> {}
-+ (instancetype)allocWithZone:(NSZone *)zone;
-+ (instancetype)alloc;
++ (id)allocWithZone:(NSZone *)zone;
++ (id)alloc;
 + (id)new;
 - (void)dealloc;
 @end
@@ -174,18 +174,18 @@ NSFastEnumerationState;
 @end
 @interface NSNumber : NSValue
 - (char)charValue;
-- (instancetype)initWithInt:(int)value;
-+ (NSNumber *)numberWithInt:(int)value;
+- (id)initWithInt:(int)value;
++ (NSNumber *)numberWithInt:(int)value NS_RETURNS_NOT_RETAINED;
 @end
 @class NSString;
 @interface NSArray : NSObject <NSCopying, NSMutableCopying, NSCoding, NSFastEnumeration>
 - (NSUInteger)count;
-- (instancetype)initWithObjects:(const id [])objects count:(NSUInteger)cnt;
-+ (instancetype)arrayWithObject:(id)anObject;
-+ (instancetype)arrayWithObjects:(const id [])objects count:(NSUInteger)cnt;
-+ (instancetype)arrayWithObjects:(id)firstObj, ... __attribute__((sentinel(0,1)));
-- (instancetype)initWithObjects:(id)firstObj, ... __attribute__((sentinel(0,1)));
-- (instancetype)initWithArray:(NSArray *)array;
+- (id)initWithObjects:(const id [])objects count:(NSUInteger)cnt;
++ (instancetype)arrayWithObject:(id)anObject NS_RETURNS_NOT_RETAINED;
++ (instancetype)arrayWithObjects:(const id [])objects count:(NSUInteger)cnt NS_RETURNS_NOT_RETAINED;
++ (instancetype)arrayWithObjects:(id)firstObj, ... __attribute__((sentinel(0,1))) NS_RETURNS_NOT_RETAINED;
+- (id)initWithObjects:(id)firstObj, ... __attribute__((sentinel(0,1)));
+- (id)initWithArray:(NSArray *)array;
 @end  @interface NSArray (NSArrayCreation)  + (instancetype)array;
 @end       @interface NSAutoreleasePool : NSObject {
 }
@@ -196,25 +196,19 @@ typedef double NSTimeInterval;
 @end            typedef unsigned short unichar;
 @interface NSString : NSObject <NSCopying, NSMutableCopying, NSCoding>
 - (NSUInteger)length;
-- (NSString *)stringByAppendingString:(NSString *)aString;
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
+- (NSString *)stringByAppendingString:(NSString *)aString NS_RETURNS_NOT_RETAINED;
 - ( const char *)UTF8String;
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
-- (instancetype)initWithUTF8String:(const char *)nullTerminatedCString;
-+ (instancetype)stringWithUTF8String:(const char *)nullTerminatedCString;
+- (id)initWithUTF8String:(const char *)nullTerminatedCString;
++ (instancetype)stringWithUTF8String:(const char *)nullTerminatedCString NS_RETURNS_NOT_RETAINED;
 @end        @class NSString, NSURL, NSError;
 @interface NSData : NSObject <NSCopying, NSMutableCopying, NSCoding>  - (NSUInteger)length;
-+ (instancetype)dataWithBytesNoCopy:(void *)bytes length:(NSUInteger)length;
-+ (instancetype)dataWithBytesNoCopy:(void *)bytes length:(NSUInteger)length freeWhenDone:(BOOL)b;
++ (instancetype)dataWithBytesNoCopy:(void *)bytes length:(NSUInteger)length NS_RETURNS_NOT_RETAINED;
++ (instancetype)dataWithBytesNoCopy:(void *)bytes length:(NSUInteger)length freeWhenDone:(BOOL)b NS_RETURNS_NOT_RETAINED;
 @end   @class NSLocale, NSDate, NSCalendar, NSTimeZone, NSError, NSArray, NSMutableDictionary;
 @interface NSDictionary : NSObject <NSCopying, NSMutableCopying, NSCoding, NSFastEnumeration>
 - (NSUInteger)count;
-+ (instancetype)dictionaryWithObjects:(NSArray *)objects forKeys:(NSArray *)keys;
-+ (instancetype)dictionaryWithObjects:(const id [])objects forKeys:(const id <NSCopying> [])keys count:(NSUInteger)cnt;
++ (instancetype)dictionaryWithObjects:(NSArray *)objects forKeys:(NSArray *)keys NS_RETURNS_NOT_RETAINED;
++ (instancetype)dictionaryWithObjects:(const id [])objects forKeys:(const id <NSCopying> [])keys count:(NSUInteger)cnt NS_RETURNS_NOT_RETAINED;
 @end
 @interface NSMutableDictionary : NSDictionary  - (void)removeObjectForKey:(id)aKey;
 - (void)setObject:(id)anObject forKey:(id)aKey;
@@ -235,9 +229,9 @@ typedef void (*IOServiceMatchingCallback)(  void * refcon,  io_iterator_t iterat
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-io_service_t IOServiceGetMatchingService(  mach_port_t masterPort,  CFDictionaryRef CF_CONSUMED matching );
-kern_return_t IOServiceGetMatchingServices(  mach_port_t masterPort,  CFDictionaryRef CF_CONSUMED matching,  io_iterator_t * existing );
-kern_return_t IOServiceAddNotification(  mach_port_t masterPort,  const io_name_t notificationType,  CFDictionaryRef CF_CONSUMED matching,  mach_port_t wakePort,  uintptr_t reference,  io_iterator_t * notification ) __attribute__((deprecated));
+io_service_t IOServiceGetMatchingService(  mach_port_t masterPort,  CFDictionaryRef matching );
+kern_return_t IOServiceGetMatchingServices(  mach_port_t masterPort,  CFDictionaryRef matching,  io_iterator_t * existing );
+kern_return_t IOServiceAddNotification(  mach_port_t masterPort,  const io_name_t notificationType,  CFDictionaryRef matching,  mach_port_t wakePort,  uintptr_t reference,  io_iterator_t * notification ) __attribute__((deprecated));
 
 CF_IMPLICIT_BRIDGING_DISABLED
  // expected-note {{'IOServiceAddNotification' declared here}}
@@ -245,11 +239,11 @@ kern_return_t IOServiceAddMatchingNotification(  IONotificationPortRef notifyPor
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-CFMutableDictionaryRef IOServiceMatching(  const char * name ) CF_RETURNS_RETAINED;
-CFMutableDictionaryRef IOServiceNameMatching(  const char * name ) CF_RETURNS_RETAINED;
-CFMutableDictionaryRef IOBSDNameMatching(  mach_port_t masterPort,  uint32_t options,  const char * bsdName ) CF_RETURNS_RETAINED;
-CFMutableDictionaryRef IOOpenFirmwarePathMatching(  mach_port_t masterPort,  uint32_t options,  const char * path ) CF_RETURNS_RETAINED;
-CFMutableDictionaryRef IORegistryEntryIDMatching(  uint64_t entryID ) CF_RETURNS_RETAINED;
+CFMutableDictionaryRef IOServiceMatching(  const char * name );
+CFMutableDictionaryRef IOServiceNameMatching(  const char * name );
+CFMutableDictionaryRef IOBSDNameMatching(  mach_port_t masterPort,  uint32_t options,  const char * bsdName );
+CFMutableDictionaryRef IOOpenFirmwarePathMatching(  mach_port_t masterPort,  uint32_t options,  const char * path );
+CFMutableDictionaryRef IORegistryEntryIDMatching(  uint64_t entryID );
 
 CF_IMPLICIT_BRIDGING_DISABLED
 
@@ -260,7 +254,7 @@ extern DADiskRef DADiskCreateFromBSDName( CFAllocatorRef allocator, DASessionRef
 extern DADiskRef DADiskCreateFromIOMedia( CFAllocatorRef allocator, DASessionRef session, io_service_t media ) CF_RETURNS_RETAINED;
 extern CFDictionaryRef DADiskCopyDescription( DADiskRef disk ) CF_RETURNS_RETAINED;
 extern DADiskRef DADiskCopyWholeDisk( DADiskRef disk ) CF_RETURNS_RETAINED;
-@interface NSTask : NSObject - (instancetype)init;
+@interface NSTask : NSObject - (id)init;
 @end                    typedef struct CGColorSpace *CGColorSpaceRef;
 typedef struct CGImage *CGImageRef;
 typedef struct CGLayer *CGLayerRef;
@@ -338,7 +332,7 @@ extern CGGradientRef CGGradientRetain(CGGradientRef gradient);
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-extern void CGGradientRelease(CGGradientRef CF_CONSUMED gradient);
+extern void CGGradientRelease(CGGradientRef gradient);
 
 CF_IMPLICIT_BRIDGING_DISABLED
 
@@ -349,14 +343,14 @@ extern void CGContextDrawLinearGradient(CGContextRef context,
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-extern CGColorSpaceRef CGColorSpaceCreateDeviceRGB(void) CF_RETURNS_RETAINED;
+extern CGColorSpaceRef CGColorSpaceCreateDeviceRGB(void);
 
 CF_IMPLICIT_BRIDGING_DISABLED
 
 
 @interface NSMutableArray : NSObject
 - (void)addObject:(id)object;
-+ (instancetype)array;
++ (instancetype)array NS_RETURNS_NOT_RETAINED;
 @end
 
 // This is how NSMakeCollectable is declared in the OS X 10.8 headers.
@@ -450,7 +444,7 @@ CFDateRef f7() {
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-CFDateRef MyDateCreate() CF_RETURNS_RETAINED;
+CFDateRef MyDateCreate();
 
 CF_IMPLICIT_BRIDGING_DISABLED
 
@@ -524,7 +518,7 @@ typedef CFTypeRef CREATEFUN();
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-CFTypeRef MyCreateFun() CF_RETURNS_RETAINED;
+CFTypeRef MyCreateFun();
 
 CF_IMPLICIT_BRIDGING_DISABLED
 
@@ -683,7 +677,7 @@ static void rdar_6659160(char *inkind, char *inname)
 //  conventions with respect to 'return'ing ownership.
 @interface PR3677: NSObject @end
 @implementation PR3677
-+ (instancetype)allocWithZone:(NSZone *)inZone {
++ (id)allocWithZone:(NSZone *)inZone {
   return [super allocWithZone:inZone];  // no-warning
 }
 @end
@@ -825,14 +819,8 @@ void rdar_6866843() {
 typedef CFTypeRef OtherRef;
 
 @interface RDar6877235 : NSObject {}
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
 - (CFTypeRef)_copyCFTypeRef CF_RETURNS_RETAINED;
 - (OtherRef)_copyOtherRef CF_RETURNS_RETAINED;
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
 @end
 
 @implementation RDar6877235
@@ -852,16 +840,16 @@ CF_IMPLICIT_BRIDGING_DISABLED
 @interface RDar6320065 : NSObject {
   NSString *_foo;
 }
-- (instancetype)initReturningNewClass;
+- (id)initReturningNewClass;
 - (id)_initReturningNewClassBad;
-- (instancetype)initReturningNewClassBad2;
+- (id)initReturningNewClassBad2;
 @end
 
 @interface RDar6320065Subclass : RDar6320065
 @end
 
 @implementation RDar6320065
-- (instancetype)initReturningNewClass {
+- (id)initReturningNewClass {
   [self release];
   self = [[RDar6320065Subclass alloc] init]; // no-warning
   return self;
@@ -871,7 +859,7 @@ CF_IMPLICIT_BRIDGING_DISABLED
   [[RDar6320065Subclass alloc] init]; // expected-warning {{leak}}
   return self;
 }
-- (instancetype)initReturningNewClassBad2 {
+- (id)initReturningNewClassBad2 {
   [self release];
   self = [[RDar6320065Subclass alloc] init];
   return [self autorelease]; // expected-warning{{Object with a +0 retain count returned to caller where a +1 (owning) retain count is expected}}
@@ -907,8 +895,8 @@ int RDar6320065_test() {
 //===----------------------------------------------------------------------===//
 
 @interface RDar6859457 : NSObject {}
-- (NSString*) NoCopyString;
-- (NSString*) noCopyString;
+- (NSString*) NoCopyString NS_RETURNS_NOT_RETAINED;
+- (NSString*) noCopyString NS_RETURNS_NOT_RETAINED;
 @end
 
 @implementation RDar6859457 
@@ -966,13 +954,7 @@ static void PR4230_new(void)
 typedef struct s6893565* TD6893565;
 
 @interface RDar6893565 {}
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
 -(TD6893565)newThing;
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
 @end
 
 @implementation RDar6893565
@@ -1350,7 +1332,7 @@ void rdar7265711_b(RDar7265711 *x) {
 //===----------------------------------------------------------------------===//
 
 @interface NSCursor : NSObject
-+ (NSCursor *)dragCopyCursor;
++ (NSCursor *)dragCopyCursor NS_RETURNS_NOT_RETAINED;
 @end
 
 void rdar7306898(void) {
@@ -1386,18 +1368,12 @@ typedef NSString* MyStringTy;
 - (NSString*) returnsAnOwnedCFString  CF_RETURNS_RETAINED; // no-warning
 - (MyStringTy) returnsAnOwnedTypedString NS_RETURNS_RETAINED; // no-warning
 - (NSString*) newString NS_RETURNS_NOT_RETAINED; // no-warning
-- (NSString*) newString_auto NS_RETURNS_AUTORELEASED; // no-warning
+- (NSString*) newString_auto NS_RETURNS_AUTORELEASED NS_RETURNS_NOT_RETAINED; // no-warning
 - (NSString*) newStringNoAttr;
 - (int) returnsAnOwnedInt NS_RETURNS_RETAINED; // expected-warning{{'ns_returns_retained' attribute only applies to methods that return an Objective-C object}}
 - (id) pseudoInit NS_CONSUMES_SELF NS_RETURNS_RETAINED;
 + (void) consume:(id) NS_CONSUMED x;
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
 + (void) consume2:(id) CF_CONSUMED x;
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
 @end
 
 static int ownership_attribute_doesnt_go_here NS_RETURNS_RETAINED; // expected-warning{{'ns_returns_retained' attribute only applies to functions and methods}}
@@ -1443,13 +1419,7 @@ void testattr3() {
 }
 
 void consume_ns(id NS_CONSUMED x);
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
 void consume_cf(id CF_CONSUMED x);
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
 
 void testattr4() {
   TestOwnershipAttr *x = [TestOwnershipAttr alloc]; // no-warning
@@ -1472,21 +1442,9 @@ void testattr4() {
 - (NSDate*) returnsCFRetained CF_RETURNS_RETAINED;
 - (CFDateRef) returnsCFRetainedAsCF CF_RETURNS_RETAINED;
 - (CFDateRef) newCFRetainedAsCF CF_RETURNS_NOT_RETAINED;
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
 - (CFDateRef) newCFRetainedAsCFNoAttr CF_RETURNS_RETAINED;
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
-- (NSDate*) alsoReturnsRetained;
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
+- (NSDate*) alsoReturnsRetained NS_RETURNS_NOT_RETAINED;
 - (CFDateRef) alsoReturnsRetainedAsCF CF_RETURNS_NOT_RETAINED;
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
 - (NSDate*) returnsNSRetained NS_RETURNS_RETAINED;
 @end
 
@@ -1604,7 +1562,7 @@ void test_blocks_1_indirect_retain_via_call(void) {
 
 @interface Rdar8015556 : NSObject {} @end
 @implementation Rdar8015556
-- (instancetype)retain {
+- (id)retain {
   return [super retain];
 }
 @end
@@ -1621,7 +1579,7 @@ void r8272168() {
 // Test case for <rdar://problem/8356342>, which in the past triggered
 // a false positive.
 @interface RDar8356342
-- (NSDate*) rdar8356342:(NSDate *)inValue;
+- (NSDate*) rdar8356342:(NSDate *)inValue NS_RETURNS_NOT_RETAINED;
 @end
 
 @implementation RDar8356342
@@ -1665,7 +1623,7 @@ static void rdar_8724287(CFErrorRef error)
 
 CF_IMPLICIT_BRIDGING_ENABLED
 
-extern void *CFStringCreate(void) CF_RETURNS_RETAINED;
+extern void *CFStringCreate(void);
 
 CF_IMPLICIT_BRIDGING_DISABLED
 
@@ -1820,11 +1778,11 @@ void rdar9658496() {
 
 // Support annotations with method families.
 @interface RDar10824732 : NSObject
-- (instancetype)initWithObj:(id CF_CONSUMED)obj;
+- (id)initWithObj:(id CF_CONSUMED)obj;
 @end
 
 @implementation RDar10824732
-- (instancetype)initWithObj:(id)obj {
+- (id)initWithObj:(id)obj {
   [obj release];
   return [super init];
 }
@@ -1848,7 +1806,7 @@ int IOClose(void *context);
 @end
 
 @interface radar10973977 : NSObject
-- (id<SInS>)inputS;
+- (id<SInS>)inputS NS_RETURNS_NOT_RETAINED;
 - (void)reader;
 @end
 
@@ -1867,7 +1825,7 @@ int IOClose(void *context);
 // Object escapes through a selector callback: radar://11398514
 extern id NSApp;
 @interface MySheetController
-- (id<SInS>)inputS;
+- (id<SInS>)inputS NS_RETURNS_NOT_RETAINED;
 - (void)showDoSomethingSheetAction:(id)action;
 - (void)sheetDidEnd:(NSWindow *)sheet returnCode:(int)returnCode contextInfo:(void *)contextInfo;
 @end
@@ -2009,13 +1967,7 @@ id makeCollectableNonLeak() {
 
 
 void consumeAndStopTracking(id NS_CONSUMED obj, void (^callback)(void));
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
 void CFConsumeAndStopTracking(CFTypeRef CF_CONSUMED obj, void (^callback)(void));
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
 
 void testConsumeAndStopTracking() {
   id retained = [@[] retain]; // +1
@@ -2098,12 +2050,12 @@ void testCustomReturnsNotRetained() {
 // Don't print variables which are out of the current scope.
 //===----------------------------------------------------------------------===//
 @interface MyObj12706177 : NSObject
--(instancetype)initX;
+-(id)initX;
 +(void)test12706177;
 @end
 static int Cond;
 @implementation MyObj12706177
--(instancetype)initX {
+-(id)initX {
   if (Cond)
     return 0;
   self = [super init];
@@ -2133,17 +2085,11 @@ void rdar13783514(xpc_connection_t connection) {
   xpc_connection_set_finalizer_f(connection, releaseAfterXPC);
 } // no-warning
 
-
-CF_IMPLICIT_BRIDGING_ENABLED
-
 CFAttributedStringRef CFAttributedCreate(void *CFObj CF_CONSUMED) CF_RETURNS_RETAINED;
-
-CF_IMPLICIT_BRIDGING_DISABLED
-
 
 @interface Action
 @property(nonatomic) SEL action;
 
-@property(nonatomic, unsafe_unretained) id target;
+@property(nonatomic, unsafe_unretained) id target NS_RETURNS_NOT_RETAINED;
 
 @end

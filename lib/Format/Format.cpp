@@ -36,7 +36,9 @@ template <>
 struct ScalarEnumerationTraits<clang::format::FormatStyle::LanguageStandard> {
   static void enumeration(IO &IO,
                           clang::format::FormatStyle::LanguageStandard &Value) {
+    IO.enumCase(Value, "Cpp03", clang::format::FormatStyle::LS_Cpp03);
     IO.enumCase(Value, "C++03", clang::format::FormatStyle::LS_Cpp03);
+    IO.enumCase(Value, "Cpp11", clang::format::FormatStyle::LS_Cpp11);
     IO.enumCase(Value, "C++11", clang::format::FormatStyle::LS_Cpp11);
     IO.enumCase(Value, "Auto", clang::format::FormatStyle::LS_Auto);
   }
@@ -68,7 +70,8 @@ struct ScalarEnumerationTraits<
 template <> struct MappingTraits<clang::format::FormatStyle> {
   static void mapping(llvm::yaml::IO &IO, clang::format::FormatStyle &Style) {
     if (IO.outputting()) {
-      StringRef StylesArray[] = { "LLVM", "Google", "Chromium", "Mozilla" };
+      StringRef StylesArray[] = { "LLVM",    "Google", "Chromium",
+                                  "Mozilla", "WebKit" };
       ArrayRef<StringRef> Styles(StylesArray);
       for (size_t i = 0, e = Styles.size(); i < e; ++i) {
         StringRef StyleName(Styles[i]);
@@ -152,7 +155,7 @@ namespace clang {
 namespace format {
 
 void setDefaultPenalties(FormatStyle &Style) {
-  Style.PenaltyBreakComment = 45;
+  Style.PenaltyBreakComment = 60;
   Style.PenaltyBreakFirstLessLess = 120;
   Style.PenaltyBreakString = 1000;
   Style.PenaltyExcessCharacter = 1000000;
@@ -487,11 +490,11 @@ private:
 
 class FormatTokenLexer {
 public:
-  FormatTokenLexer(Lexer &Lex, SourceManager &SourceMgr,
+  FormatTokenLexer(Lexer &Lex, SourceManager &SourceMgr, FormatStyle &Style,
                    encoding::Encoding Encoding)
-      : FormatTok(NULL), GreaterStashed(false), TrailingWhitespace(0), Lex(Lex),
-        SourceMgr(SourceMgr), IdentTable(getFormattingLangOpts()),
-        Encoding(Encoding) {
+      : FormatTok(NULL), GreaterStashed(false), Column(0),
+        TrailingWhitespace(0), Lex(Lex), SourceMgr(SourceMgr), Style(Style),
+        IdentTable(getFormattingLangOpts()), Encoding(Encoding) {
     Lex.SetKeepWhitespaceMode(true);
   }
 
@@ -509,6 +512,7 @@ private:
   FormatToken *getNextToken() {
     if (GreaterStashed) {
       // Create a synthesized second '>' token.
+      // FIXME: Increment Column and set OriginalColumn.
       Token Greater = FormatTok->Tok;
       FormatTok = new (Allocator.Allocate()) FormatToken;
       FormatTok->Tok = Greater;
@@ -532,13 +536,29 @@ private:
     // Consume and record whitespace until we find a significant token.
     unsigned WhitespaceLength = TrailingWhitespace;
     while (FormatTok->Tok.is(tok::unknown)) {
-      unsigned Newlines = FormatTok->TokenText.count('\n');
-      if (Newlines > 0)
-        FormatTok->LastNewlineOffset =
-            WhitespaceLength + FormatTok->TokenText.rfind('\n') + 1;
-      FormatTok->NewlinesBefore += Newlines;
-      unsigned EscapedNewlines = FormatTok->TokenText.count("\\\n");
-      FormatTok->HasUnescapedNewline |= EscapedNewlines != Newlines;
+      for (int i = 0, e = FormatTok->TokenText.size(); i != e; ++i) {
+        switch (FormatTok->TokenText[i]) {
+        case '\n':
+          ++FormatTok->NewlinesBefore;
+          // FIXME: This is technically incorrect, as it could also
+          // be a literal backslash at the end of the line.
+          if (i == 0 || FormatTok->TokenText[i-1] != '\\')
+            FormatTok->HasUnescapedNewline = true;
+          FormatTok->LastNewlineOffset = WhitespaceLength + i + 1;
+          Column = 0;
+          break;
+        case ' ':
+          ++Column;
+          break;
+        case '\t':
+          Column += Style.IndentWidth - Column % Style.IndentWidth;
+          break;
+        default:
+          ++Column;
+          break;
+        }
+      }
+
       WhitespaceLength += FormatTok->Tok.getLength();
 
       readRawToken(*FormatTok);
@@ -554,11 +574,14 @@ private:
            FormatTok->TokenText[1] == '\n') {
       // FIXME: ++FormatTok->NewlinesBefore is missing...
       WhitespaceLength += 2;
+      Column = 0;
       FormatTok->TokenText = FormatTok->TokenText.substr(2);
     }
+    FormatTok->OriginalColumn = Column;
 
     TrailingWhitespace = 0;
     if (FormatTok->Tok.is(tok::comment)) {
+      // FIXME: Add the trimmed whitespace to Column.
       StringRef UntrimmedText = FormatTok->TokenText;
       FormatTok->TokenText = FormatTok->TokenText.rtrim();
       TrailingWhitespace = UntrimmedText.size() - FormatTok->TokenText.size();
@@ -576,6 +599,17 @@ private:
     FormatTok->CodePointCount =
         encoding::getCodePointCount(FormatTok->TokenText, Encoding);
 
+    if (FormatTok->isOneOf(tok::string_literal, tok::comment)) {
+      StringRef Text = FormatTok->TokenText;
+      size_t FirstNewlinePos = Text.find('\n');
+      if (FirstNewlinePos != StringRef::npos) {
+        FormatTok->CodePointsInFirstLine = encoding::getCodePointCount(
+            Text.substr(0, FirstNewlinePos), Encoding);
+        FormatTok->CodePointsInLastLine = encoding::getCodePointCount(
+            Text.substr(Text.find_last_of('\n') + 1), Encoding);
+      }
+    }
+    // FIXME: Add the CodePointCount to Column.
     FormatTok->WhitespaceRange = SourceRange(
         WhitespaceStart, WhitespaceStart.getLocWithOffset(WhitespaceLength));
     return FormatTok;
@@ -583,9 +617,11 @@ private:
 
   FormatToken *FormatTok;
   bool GreaterStashed;
+  unsigned Column;
   unsigned TrailingWhitespace;
   Lexer &Lex;
   SourceManager &SourceMgr;
+  FormatStyle &Style;
   IdentifierTable IdentTable;
   encoding::Encoding Encoding;
   llvm::SpecificBumpPtrAllocator<FormatToken> Allocator;
@@ -595,7 +631,6 @@ private:
     Lex.LexFromRawLexer(Tok.Tok);
     Tok.TokenText = StringRef(SourceMgr.getCharacterData(Tok.Tok.getLocation()),
                               Tok.Tok.getLength());
-
     // For formatting, treat unterminated string literals like normal string
     // literals.
     if (Tok.is(tok::unknown) && !Tok.TokenText.empty() &&
@@ -622,7 +657,7 @@ public:
   virtual ~Formatter() {}
 
   tooling::Replacements format() {
-    FormatTokenLexer Tokens(Lex, SourceMgr, Encoding);
+    FormatTokenLexer Tokens(Lex, SourceMgr, Style, Encoding);
 
     UnwrappedLineParser Parser(Style, Tokens.lex(), *this);
     bool StructuralError = Parser.parse();
@@ -692,9 +727,7 @@ public:
           formatFirstToken(*TheLine.First, PreviousLineLastToken, Indent,
                            TheLine.InPPDirective);
         } else {
-          Indent = LevelIndent =
-              SourceMgr.getSpellingColumnNumber(FirstTok->Tok.getLocation()) -
-              1;
+          Indent = LevelIndent = FirstTok->OriginalColumn;
         }
         ContinuationIndenter Indenter(Style, SourceMgr, TheLine, Indent,
                                       Whitespaces, Encoding,
@@ -727,8 +760,7 @@ public:
              Tok = Tok->Next) {
           if (Tok == TheLine.First &&
               (Tok->NewlinesBefore > 0 || Tok->IsFirst)) {
-            unsigned LevelIndent =
-                SourceMgr.getSpellingColumnNumber(Tok->Tok.getLocation()) - 1;
+            unsigned LevelIndent = Tok->OriginalColumn;
             // Remove trailing whitespace of the previous line if it was
             // touched.
             if (PreviousLineWasTouched || touchesEmptyLineBefore(TheLine)) {

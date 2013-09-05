@@ -1375,6 +1375,7 @@ static const char *DescriptionStringR600DoubleOps =
 static const char *DescriptionStringSI =
   "e"
   "-p:64:64:64"
+  "-p3:32:32:32"
   "-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64"
   "-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128"
   "-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-v2048:2048:2048"
@@ -1636,6 +1637,7 @@ class X86TargetInfo : public TargetInfo {
     /// Atom processors
     //@{
     CK_Atom,
+    CK_SLM,
     //@}
 
     /// \name Nehalem
@@ -1804,6 +1806,7 @@ public:
       .Case("core2", CK_Core2)
       .Case("penryn", CK_Penryn)
       .Case("atom", CK_Atom)
+      .Case("slm", CK_SLM)
       .Case("corei7", CK_Corei7)
       .Case("corei7-avx", CK_Corei7AVX)
       .Case("core-avx-i", CK_CoreAVXi)
@@ -1879,6 +1882,7 @@ public:
     case CK_Core2:
     case CK_Penryn:
     case CK_Atom:
+    case CK_SLM:
     case CK_Corei7:
     case CK_Corei7AVX:
     case CK_CoreAVXi:
@@ -1976,7 +1980,8 @@ void X86TargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
     setFeatureEnabled(Features, "ssse3", true);
     break;
   case CK_Corei7:
-    setFeatureEnabled(Features, "sse4", true);
+  case CK_SLM:
+    setFeatureEnabled(Features, "sse4.2", true);
     break;
   case CK_Corei7AVX:
     setFeatureEnabled(Features, "avx", true);
@@ -2105,9 +2110,9 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
     case AVX:
       Features["avx"] = true;
     case SSE42:
-      Features["popcnt"] = Features["sse42"] = true;
+      Features["popcnt"] = Features["sse4.2"] = true;
     case SSE41:
-      Features["sse41"] = true;
+      Features["sse4.1"] = true;
     case SSSE3:
       Features["ssse3"] = true;
     case SSE3:
@@ -2136,9 +2141,9 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
   case SSSE3:
     Features["ssse3"] = false;
   case SSE41:
-    Features["sse41"] = false;
+    Features["sse4.1"] = false;
   case SSE42:
-    Features["popcnt"] = Features["sse42"] = false;
+    Features["popcnt"] = Features["sse4.2"] = false;
   case AVX:
     Features["fma"] = Features["avx"] = false;
     setXOPLevel(Features, FMA4, false);
@@ -2211,12 +2216,8 @@ void X86TargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
                                       bool Enabled) const {
   // FIXME: This *really* should not be here.  We need some way of translating
   // options into llvm subtarget features.
-  if (Name == "sse4" || Name == "sse4.2")
-    Name = "sse42";
-  if (Name == "sse4.1")
-    Name = "sse41";
-  if (Name == "rdrnd")
-    Name = "rdrand";
+  if (Name == "sse4")
+    Name = "sse4.2";
 
   Features[Name] = Enabled;
 
@@ -2230,9 +2231,9 @@ void X86TargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
     setSSELevel(Features, SSE3, Enabled);
   else if (Name == "ssse3")
     setSSELevel(Features, SSSE3, Enabled);
-  else if (Name == "sse42")
+  else if (Name == "sse4.2")
     setSSELevel(Features, SSE42, Enabled);
-  else if (Name == "sse41")
+  else if (Name == "sse4.1")
     setSSELevel(Features, SSE41, Enabled);
   else if (Name == "3dnow")
     setMMXLevel(Features, AMD3DNow, Enabled);
@@ -2292,7 +2293,7 @@ bool X86TargetInfo::HandleTargetFeatures(std::vector<std::string> &Features,
       continue;
     }
 
-    if (Feature == "rdrand") {
+    if (Feature == "rdrnd") {
       HasRDRND = true;
       continue;
     }
@@ -2357,8 +2358,8 @@ bool X86TargetInfo::HandleTargetFeatures(std::vector<std::string> &Features,
       .Case("avx512f", AVX512F)
       .Case("avx2", AVX2)
       .Case("avx", AVX)
-      .Case("sse42", SSE42)
-      .Case("sse41", SSE41)
+      .Case("sse4.2", SSE42)
+      .Case("sse4.1", SSE41)
       .Case("ssse3", SSSE3)
       .Case("sse3", SSE3)
       .Case("sse2", SSE2)
@@ -2475,6 +2476,9 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
     break;
   case CK_Atom:
     defineCPUMacros(Builder, "atom");
+    break;
+  case CK_SLM:
+    defineCPUMacros(Builder, "slm");
     break;
   case CK_Corei7:
   case CK_Corei7AVX:
@@ -2699,8 +2703,8 @@ bool X86TargetInfo::hasFeature(StringRef Feature) const {
       .Case("sse2", SSELevel >= SSE2)
       .Case("sse3", SSELevel >= SSE3)
       .Case("ssse3", SSELevel >= SSSE3)
-      .Case("sse41", SSELevel >= SSE41)
-      .Case("sse42", SSELevel >= SSE42)
+      .Case("sse4.1", SSELevel >= SSE41)
+      .Case("sse4.2", SSELevel >= SSE42)
       .Case("sse4a", XOPLevel >= SSE4A)
       .Case("x86", true)
       .Case("x86_32", getTriple().getArch() == llvm::Triple::x86)
@@ -3097,9 +3101,9 @@ public:
   }
 
   virtual CallingConvCheckResult checkCallingConvention(CallingConv CC) const {
-    return (CC == CC_Default ||
-            CC == CC_C || 
-            CC == CC_IntelOclBicc) ? CCCR_OK : CCCR_Warning;
+    return (CC == CC_C ||
+            CC == CC_IntelOclBicc ||
+            CC == CC_X86_64Win64) ? CCCR_OK : CCCR_Warning;
   }
 
   virtual CallingConv getDefaultCallingConv(CallingConvMethodType MT) const {
@@ -3134,6 +3138,11 @@ public:
   }
   virtual BuiltinVaListKind getBuiltinVaListKind() const {
     return TargetInfo::CharPtrBuiltinVaList;
+  }
+  virtual CallingConvCheckResult checkCallingConvention(CallingConv CC) const {
+    return (CC == CC_C ||
+            CC == CC_IntelOclBicc ||
+            CC == CC_X86_64SysV) ? CCCR_OK : CCCR_Warning;
   }
 };
 } // end anonymous namespace

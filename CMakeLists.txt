@@ -19,18 +19,22 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
     endif()
   endif()
 
-  if( NOT EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}" )
-    # Looking for bin/Debug/llvm-tblgen is a complete hack. How can we get
+  if (EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/llvm-config${CMAKE_EXECUTABLE_SUFFIX}")
+    set (PATH_TO_LLVM_CONFIG "${CLANG_PATH_TO_LLVM_BUILD}/bin/llvm-config${CMAKE_EXECUTABLE_SUFFIX}")
+  elseif (EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/Debug/llvm-config${CMAKE_EXECUTABLE_SUFFIX}")
+    # Looking for bin/Debug/llvm-config is a complete hack. How can we get
     # around this?
-    if( NOT EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/Debug/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}" )
-      message(FATAL_ERROR "Please set CLANG_PATH_TO_LLVM_BUILD to a directory containing a LLVM build.")
-    endif()
+    set (PATH_TO_LLVM_CONFIG "${CLANG_PATH_TO_LLVM_BUILD}/bin/Debug/llvm-config${CMAKE_EXECUTABLE_SUFFIX}")
+  else()
+    message(FATAL_ERROR "Please set CLANG_PATH_TO_LLVM_BUILD to a directory containing a LLVM build.")
   endif()
 
   list(APPEND CMAKE_MODULE_PATH "${CLANG_PATH_TO_LLVM_BUILD}/share/llvm/cmake")
 
   get_filename_component(PATH_TO_LLVM_BUILD ${CLANG_PATH_TO_LLVM_BUILD}
     ABSOLUTE)
+
+  option(LLVM_INSTALL_TOOLCHAIN_ONLY "Only include toolchain files in the 'install' target." OFF)
 
   include(AddLLVM)
   include(TableGen)
@@ -46,12 +50,8 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
   include_directories("${PATH_TO_LLVM_BUILD}/include" "${LLVM_MAIN_INCLUDE_DIR}")
   link_directories("${PATH_TO_LLVM_BUILD}/lib")
 
-  if( EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}" )
-    set(LLVM_TABLEGEN_EXE "${PATH_TO_LLVM_BUILD}/bin/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}")
-  else()
-    # FIXME: This is an utter hack.
-    set(LLVM_TABLEGEN_EXE "${PATH_TO_LLVM_BUILD}/bin/Debug/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}")
-  endif()
+  exec_program("${PATH_TO_LLVM_CONFIG} --bindir" OUTPUT_VARIABLE LLVM_BINARY_DIR)
+  set(LLVM_TABLEGEN_EXE "${LLVM_BINARY_DIR}/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}")
 
   # Define the default arguments to use with 'lit', and an option for the user
   # to override.
@@ -239,10 +239,13 @@ macro(add_clang_library name)
   target_link_libraries( ${name} ${LLVM_COMMON_LIBS} )
   link_system_libs( ${name} )
 
-  install(TARGETS ${name}
-    LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-    ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-    RUNTIME DESTINATION bin)
+  if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "libclang")
+    install(TARGETS ${name}
+      LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+      ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+      RUNTIME DESTINATION bin)
+  endif()
+
   set_target_properties(${name} PROPERTIES FOLDER "Clang libraries")
 endmacro(add_clang_library)
 
@@ -256,20 +259,29 @@ include_directories(BEFORE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
 
-install(DIRECTORY include/
-  DESTINATION include
-  FILES_MATCHING
-  PATTERN "*.def"
-  PATTERN "*.h"
-  PATTERN "config.h" EXCLUDE
-  PATTERN ".svn" EXCLUDE
-  )
+if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
+  install(DIRECTORY include/
+    DESTINATION include
+    FILES_MATCHING
+    PATTERN "*.def"
+    PATTERN "*.h"
+    PATTERN "config.h" EXCLUDE
+    PATTERN ".svn" EXCLUDE
+    )
 
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
+  install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
+    DESTINATION include
+    FILES_MATCHING
+    PATTERN "CMakeFiles" EXCLUDE
+    PATTERN "*.inc"
+    )
+endif()
+
+install(DIRECTORY include/clang-c
   DESTINATION include
   FILES_MATCHING
-  PATTERN "CMakeFiles" EXCLUDE
-  PATTERN "*.inc"
+  PATTERN "*.h"
+  PATTERN ".svn" EXCLUDE
   )
 
 add_definitions( -D_GNU_SOURCE )
@@ -323,11 +335,15 @@ option(CLANG_INCLUDE_TESTS
        "Generate build targets for the Clang unit tests."
        ${LLVM_INCLUDE_TESTS})
 
-# TODO: docs.
-
 if( CLANG_INCLUDE_TESTS )
   add_subdirectory(test)
   add_subdirectory(unittests)
+endif()
+
+option(CLANG_INCLUDE_DOCS "Generate build targets for the Clang docs."
+  ${LLVM_INCLUDE_DOCS})
+if( CLANG_INCLUDE_DOCS )
+  add_subdirectory(docs)
 endif()
 
 # Workaround for MSVS10 to avoid the Dialog Hell
@@ -342,5 +358,5 @@ endif()
 set(BUG_REPORT_URL "http://llvm.org/bugs/" CACHE STRING
   "Default URL where bug reports are to be submitted.")
 
-option(CLANG_ORDER_FILE
-  "Order file to use when compiling clang in order to improve startup time." "")
+set(CLANG_ORDER_FILE "" CACHE FILEPATH
+  "Order file to use when compiling clang in order to improve startup time.")

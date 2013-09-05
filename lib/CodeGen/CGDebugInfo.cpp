@@ -599,10 +599,35 @@ llvm::DIType CGDebugInfo::CreateType(const PointerType *Ty,
                                Ty->getPointeeType(), Unit);
 }
 
+/// In C++ mode, types have linkage, so we can rely on the ODR and
+/// on their mangled names, if they're external.
+static SmallString<256>
+getUniqueTagTypeName(const TagType *Ty, CodeGenModule &CGM,
+                     llvm::DICompileUnit TheCU) {
+  SmallString<256> FullName;
+  // FIXME: ODR should apply to ObjC++ exactly the same wasy it does to C++.
+  // For now, only apply ODR with C++.
+  const TagDecl *TD = Ty->getDecl();
+  if (TheCU.getLanguage() != llvm::dwarf::DW_LANG_C_plus_plus ||
+      !TD->isExternallyVisible())
+    return FullName;
+  // Microsoft Mangler does not have support for mangleCXXRTTIName yet.
+  if (CGM.getTarget().getCXXABI().isMicrosoft())
+    return FullName;
+
+  // TODO: This is using the RTTI name. Is there a better way to get
+  // a unique string for a type?
+  llvm::raw_svector_ostream Out(FullName);
+  CGM.getCXXABI().getMangleContext().mangleCXXRTTIName(QualType(Ty, 0), Out);
+  Out.flush();
+  return FullName;
+}
+
 // Creates a forward declaration for a RecordDecl in the given context.
 llvm::DICompositeType
-CGDebugInfo::getOrCreateRecordFwdDecl(const RecordDecl *RD,
+CGDebugInfo::getOrCreateRecordFwdDecl(const RecordType *Ty,
                                       llvm::DIDescriptor Ctx) {
+  const RecordDecl *RD = Ty->getDecl();
   if (llvm::DIType T = getTypeOrNull(CGM.getContext().getRecordType(RD)))
     return llvm::DICompositeType(T);
   llvm::DIFile DefUnit = getOrCreateFile(RD->getLocation());
@@ -620,7 +645,9 @@ CGDebugInfo::getOrCreateRecordFwdDecl(const RecordDecl *RD,
   }
 
   // Create the type.
-  return DBuilder.createForwardDecl(Tag, RDName, Ctx, DefUnit, Line);
+  SmallString<256> FullName = getUniqueTagTypeName(Ty, CGM, TheCU);
+  return DBuilder.createForwardDecl(Tag, RDName, Ctx, DefUnit, Line, 0, 0, 0,
+                                    FullName);
 }
 
 // Walk up the context chain and create forward decls for record decls,
@@ -1122,18 +1149,36 @@ CollectCXXMemberFunctions(const CXXRecordDecl *RD, llvm::DIFile Unit,
   // the functions.
   for(DeclContext::decl_iterator I = RD->decls_begin(),
         E = RD->decls_end(); I != E; ++I) {
-    Decl *D = *I;
-    if (D->isImplicit())
-      continue;
-
-    if (const CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D)) {
-      // Reuse the existing member function declaration if it exists
+    if (const CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(*I)) {
+      // Reuse the existing member function declaration if it exists.
+      // It may be associated with the declaration of the type & should be
+      // reused as we're building the definition.
+      //
+      // This situation can arise in the vtable-based debug info reduction where
+      // implicit members are emitted in a non-vtable TU.
       llvm::DenseMap<const FunctionDecl *, llvm::WeakVH>::iterator MI =
           SPCache.find(Method->getCanonicalDecl());
-      if (MI == SPCache.end())
-        EltTys.push_back(CreateCXXMemberFunction(Method, Unit, RecordTy));
-      else
+      if (MI == SPCache.end()) {
+        // If the member is implicit, lazily create it when we see the
+        // definition, not before. (an ODR-used implicit default ctor that's
+        // never actually code generated should not produce debug info)
+        if (!Method->isImplicit())
+          EltTys.push_back(CreateCXXMemberFunction(Method, Unit, RecordTy));
+      } else
         EltTys.push_back(MI->second);
+    } else if (const FunctionTemplateDecl *FTD =
+                   dyn_cast<FunctionTemplateDecl>(*I)) {
+      // Add any template specializations that have already been seen. Like
+      // implicit member functions, these may have been added to a declaration
+      // in the case of vtable-based debug info reduction.
+      for (FunctionTemplateDecl::spec_iterator SI = FTD->spec_begin(),
+                                               SE = FTD->spec_end();
+           SI != SE; ++SI) {
+        llvm::DenseMap<const FunctionDecl *, llvm::WeakVH>::iterator MI =
+            SPCache.find(cast<CXXMethodDecl>(*SI)->getCanonicalDecl());
+        if (MI != SPCache.end())
+          EltTys.push_back(MI->second);
+      }
     }
   }
 }
@@ -1258,7 +1303,8 @@ CollectTemplateParams(const TemplateParameterList *TPList,
             cast<MemberPointerType>(T.getTypePtr()), chars);
       }
       llvm::DITemplateValueParameter TVP =
-          DBuilder.createTemplateValueParameter(TheCU, Name, TTy, V);
+          DBuilder.createTemplateValueParameter(TheCU, Name, TTy,
+                                                V->stripPointerCasts());
       TemplateParams.push_back(TVP);
     } break;
     case TemplateArgument::NullPtr: {
@@ -1297,8 +1343,18 @@ CollectTemplateParams(const TemplateParameterList *TPList,
               CollectTemplateParams(NULL, TA.getPackAsArray(), Unit));
       TemplateParams.push_back(TVP);
     } break;
+    case TemplateArgument::Expression: {
+      const Expr *E = TA.getAsExpr();
+      QualType T = E->getType();
+      llvm::Value *V = CGM.EmitConstantExpr(E, T);
+      assert(V && "Expression in template argument isn't constant");
+      llvm::DIType TTy = getOrCreateType(T, Unit);
+      llvm::DITemplateValueParameter TVP =
+          DBuilder.createTemplateValueParameter(TheCU, Name, TTy,
+                                                V->stripPointerCasts());
+      TemplateParams.push_back(TVP);
+    } break;
     // And the following should never occur:
-    case TemplateArgument::Expression:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::Null:
       llvm_unreachable(
@@ -1456,7 +1512,7 @@ llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty) {
       (CXXDecl && CXXDecl->hasDefinition() && CXXDecl->isDynamicClass())) {
     llvm::DIDescriptor FDContext =
       getContextDescriptor(cast<Decl>(RD->getDeclContext()));
-    llvm::DIType RetTy = getOrCreateRecordFwdDecl(RD, FDContext);
+    llvm::DIType RetTy = getOrCreateRecordFwdDecl(Ty, FDContext);
     // FIXME: This is conservatively correct. If we return a non-forward decl
     // that's not a full definition (such as those created by
     // createContextChain) then getOrCreateType will record is as a complete
@@ -1845,13 +1901,16 @@ llvm::DIType CGDebugInfo::CreateType(const AtomicType *Ty,
 }
 
 /// CreateEnumType - get enumeration type.
-llvm::DIType CGDebugInfo::CreateEnumType(const EnumDecl *ED) {
+llvm::DIType CGDebugInfo::CreateEnumType(const EnumType *Ty) {
+  const EnumDecl *ED = Ty->getDecl();
   uint64_t Size = 0;
   uint64_t Align = 0;
   if (!ED->getTypeForDecl()->isIncompleteType()) {
     Size = CGM.getContext().getTypeSize(ED->getTypeForDecl());
     Align = CGM.getContext().getTypeAlign(ED->getTypeForDecl());
   }
+
+  SmallString<256> FullName = getUniqueTagTypeName(Ty, CGM, TheCU);
 
   // If this is just a forward declaration, construct an appropriately
   // marked node and just return it.
@@ -1863,7 +1922,7 @@ llvm::DIType CGDebugInfo::CreateEnumType(const EnumDecl *ED) {
     StringRef EDName = ED->getName();
     return DBuilder.createForwardDecl(llvm::dwarf::DW_TAG_enumeration_type,
                                       EDName, EDContext, DefUnit, Line, 0,
-                                      Size, Align);
+                                      Size, Align, FullName);
   }
 
   // Create DIEnumerator elements for each enumerator.
@@ -1889,7 +1948,7 @@ llvm::DIType CGDebugInfo::CreateEnumType(const EnumDecl *ED) {
   llvm::DIType DbgTy =
     DBuilder.createEnumerationType(EnumContext, ED->getName(), DefUnit, Line,
                                    Size, Align, EltArray,
-                                   ClassTy);
+                                   ClassTy, FullName);
   return DbgTy;
 }
 
@@ -2128,7 +2187,7 @@ llvm::DIType CGDebugInfo::CreateTypeNode(QualType Ty, llvm::DIFile Unit) {
   case Type::Record:
     return CreateType(cast<RecordType>(Ty));
   case Type::Enum:
-    return CreateEnumType(cast<EnumType>(Ty)->getDecl());
+    return CreateEnumType(cast<EnumType>(Ty));
   case Type::FunctionProto:
   case Type::FunctionNoProto:
     return CreateType(cast<FunctionType>(Ty), Unit);
@@ -2233,26 +2292,29 @@ llvm::DICompositeType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
   // If this is just a forward declaration, construct an appropriately
   // marked node and just return it.
   if (!RD->getDefinition())
-    return getOrCreateRecordFwdDecl(RD, RDContext);
+    return getOrCreateRecordFwdDecl(Ty, RDContext);
 
   uint64_t Size = CGM.getContext().getTypeSize(Ty);
   uint64_t Align = CGM.getContext().getTypeAlign(Ty);
   llvm::DICompositeType RealDecl;
 
+  SmallString<256> FullName = getUniqueTagTypeName(Ty, CGM, TheCU);
+
   if (RD->isUnion())
     RealDecl = DBuilder.createUnionType(RDContext, RDName, DefUnit, Line,
-                                        Size, Align, 0, llvm::DIArray());
+                                        Size, Align, 0, llvm::DIArray(), 0,
+                                        FullName);
   else if (RD->isClass()) {
     // FIXME: This could be a struct type giving a default visibility different
     // than C++ class type, but needs llvm metadata changes first.
     RealDecl = DBuilder.createClassType(RDContext, RDName, DefUnit, Line,
                                         Size, Align, 0, 0, llvm::DIType(),
                                         llvm::DIArray(), llvm::DIType(),
-                                        llvm::DIArray());
+                                        llvm::DIArray(), FullName);
   } else
     RealDecl = DBuilder.createStructType(RDContext, RDName, DefUnit, Line,
                                          Size, Align, 0, llvm::DIType(),
-                                         llvm::DIArray());
+                                         llvm::DIArray(), 0, 0, FullName);
 
   RegionMap[Ty->getDecl()] = llvm::WeakVH(RealDecl);
   TypeCache[QualType(Ty, 0).getAsOpaquePtr()] = RealDecl;
@@ -2340,9 +2402,11 @@ llvm::DISubprogram CGDebugInfo::getFunctionDeclaration(const Decl *D) {
   llvm::DenseMap<const FunctionDecl *, llvm::WeakVH>::iterator
     MI = SPCache.find(FD->getCanonicalDecl());
   if (MI == SPCache.end()) {
-    if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(FD->getCanonicalDecl())) {
+    if (const CXXMethodDecl *MD =
+            dyn_cast<CXXMethodDecl>(FD->getCanonicalDecl())) {
       llvm::DICompositeType T(S);
-      llvm::DISubprogram SP = CreateCXXMemberFunction(MD, getOrCreateFile(MD->getLocation()), T);
+      llvm::DISubprogram SP =
+          CreateCXXMemberFunction(MD, getOrCreateFile(MD->getLocation()), T);
       T.addMember(SP);
       return SP;
     }
@@ -2439,7 +2503,7 @@ void CGDebugInfo::EmitFunctionStart(GlobalDecl GD, QualType FnType,
   llvm::DIArray TParamsArray;
   if (!HasDecl) {
     // Use llvm function name.
-    Name = Fn->getName();
+    LinkageName = Fn->getName();
   } else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
     // If there is a DISubprogram for this function available then use it.
     llvm::DenseMap<const FunctionDecl *, llvm::WeakVH>::iterator

@@ -504,12 +504,13 @@ CXCallingConv clang_getFunctionTypeCallingConv(CXType X) {
   if (const FunctionType *FD = T->getAs<FunctionType>()) {
 #define TCALLINGCONV(X) case CC_##X: return CXCallingConv_##X
     switch (FD->getCallConv()) {
-      TCALLINGCONV(Default);
       TCALLINGCONV(C);
       TCALLINGCONV(X86StdCall);
       TCALLINGCONV(X86FastCall);
       TCALLINGCONV(X86ThisCall);
       TCALLINGCONV(X86Pascal);
+      TCALLINGCONV(X86_64Win64);
+      TCALLINGCONV(X86_64SysV);
       TCALLINGCONV(AAPCS);
       TCALLINGCONV(AAPCS_VFP);
       TCALLINGCONV(PnaclCall);

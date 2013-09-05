@@ -66,6 +66,7 @@ private:
   void parseFile();
   void parseLevel(bool HasOpeningBrace);
   void parseBlock(bool MustBeDeclaration, bool AddLevel = true);
+  void parseChildBlock();
   void parsePPDirective();
   void parsePPDefine();
   void parsePPIf();
@@ -93,6 +94,8 @@ private:
   void parseObjCUntilAtEnd();
   void parseObjCInterfaceOrImplementation();
   void parseObjCProtocol();
+  void tryToParseLambda();
+  bool tryToParseLambdaIntroducer();
   void addUnwrappedLine();
   bool eof() const;
   void nextToken();

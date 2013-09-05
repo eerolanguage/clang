@@ -377,7 +377,7 @@ void ASTDeclReader::VisitDecl(Decl *D) {
     D->setAttrsImpl(Attrs, Reader.getContext());
   }
   D->setImplicit(Record[Idx++]);
-  D->setUsed(Record[Idx++]);
+  D->setIsUsed(Record[Idx++]);
   D->setReferenced(Record[Idx++]);
   D->setTopLevelDeclInObjCContainer(Record[Idx++]);
   D->setAccess((AccessSpecifier)Record[Idx++]);
@@ -1186,8 +1186,8 @@ void ASTDeclReader::ReadCXXDefinitionData(
   Reader.ReadUnresolvedSet(F, Data.Conversions, Record, Idx);
   Reader.ReadUnresolvedSet(F, Data.VisibleConversions, Record, Idx);
   assert(Data.Definition && "Data.Definition should be already set!");
-  Data.FirstFriend = Record[Idx++];
-  
+  Data.FirstFriend = ReadDeclID(Record, Idx);
+
   if (Data.IsLambda) {
     typedef LambdaExpr::Capture Capture;
     CXXRecordDecl::LambdaDefinitionData &Lambda
@@ -1276,11 +1276,11 @@ ASTDeclReader::VisitCXXRecordDeclImpl(CXXRecordDecl *D) {
   }
   }
 
-  // Load the key function to avoid deserializing every method so we can
+  // Lazily load the key function to avoid deserializing every method so we can
   // compute it.
   if (D->IsCompleteDefinition) {
-    if (CXXMethodDecl *Key = ReadDeclAs<CXXMethodDecl>(Record, Idx))
-      C.KeyFunctions[D] = Key;
+    if (DeclID KeyFn = ReadDeclID(Record, Idx))
+      C.KeyFunctions[D] = KeyFn;
   }
 
   return Redecl;
@@ -1339,7 +1339,7 @@ void ASTDeclReader::VisitFriendDecl(FriendDecl *D) {
     D->Friend = GetTypeSourceInfo(Record, Idx);
   for (unsigned i = 0; i != D->NumTPLists; ++i)
     D->getTPLists()[i] = Reader.ReadTemplateParameterList(F, Record, Idx);
-  D->NextFriend = Record[Idx++];
+  D->NextFriend = ReadDeclID(Record, Idx);
   D->UnsupportedFriend = (Record[Idx++] != 0);
   D->FriendLoc = ReadSourceLocation(Record, Idx);
 }
@@ -1440,6 +1440,9 @@ void ASTDeclReader::VisitClassTemplateDecl(ClassTemplateDecl *D) {
   }
 }
 
+/// TODO: Unify with ClassTemplateDecl version?
+///       May require unifying ClassTemplateDecl and
+///        VarTemplateDecl beyond TemplateDecl...
 void ASTDeclReader::VisitVarTemplateDecl(VarTemplateDecl *D) {
   RedeclarableResult Redecl = VisitRedeclarableTemplateDecl(D);
 
@@ -1574,6 +1577,11 @@ void ASTDeclReader::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
   }
 }
 
+/// TODO: Unify with ClassTemplateSpecializationDecl version?
+///       May require unifying ClassTemplate(Partial)SpecializationDecl and
+///        VarTemplate(Partial)SpecializationDecl with a new data
+///        structure Template(Partial)SpecializationDecl, and
+///        using Template(Partial)SpecializationDecl as input type.
 ASTDeclReader::RedeclarableResult
 ASTDeclReader::VisitVarTemplateSpecializationDeclImpl(
     VarTemplateSpecializationDecl *D) {
@@ -1632,6 +1640,11 @@ ASTDeclReader::VisitVarTemplateSpecializationDeclImpl(
   return Redecl;
 }
 
+/// TODO: Unify with ClassTemplatePartialSpecializationDecl version?
+///       May require unifying ClassTemplate(Partial)SpecializationDecl and
+///        VarTemplate(Partial)SpecializationDecl with a new data
+///        structure Template(Partial)SpecializationDecl, and
+///        using Template(Partial)SpecializationDecl as input type.
 void ASTDeclReader::VisitVarTemplatePartialSpecializationDecl(
     VarTemplatePartialSpecializationDecl *D) {
   RedeclarableResult Redecl = VisitVarTemplateSpecializationDeclImpl(D);
@@ -2823,6 +2836,11 @@ void ASTDeclReader::UpdateDecl(Decl *D, ModuleFile &ModuleFile,
       FunctionDecl *FD = cast<FunctionDecl>(D);
       Reader.Context.adjustDeducedFunctionResultType(
           FD, Reader.readType(ModuleFile, Record, Idx));
+      break;
+    }
+
+    case UPD_DECL_MARKED_USED: {
+      D->markUsed(Reader.getContext());
       break;
     }
     }

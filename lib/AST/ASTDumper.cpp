@@ -249,6 +249,7 @@ namespace  {
     void VisitAttributedStmt(const AttributedStmt *Node);
     void VisitLabelStmt(const LabelStmt *Node);
     void VisitGotoStmt(const GotoStmt *Node);
+    void VisitCXXCatchStmt(const CXXCatchStmt *Node);
 
     // Exprs
     void VisitExpr(const Expr *Node);
@@ -745,6 +746,9 @@ void ASTDumper::dumpDecl(const Decl *D) {
   lastChild();
   dumpFullComment(Comment);
 
+  if (D->isInvalidDecl())
+    OS << " invalid";
+
   setMoreChildren(false);
   if (HasDeclContext)
     dumpDeclContext(cast<DeclContext>(D));
@@ -780,6 +784,8 @@ void ASTDumper::VisitRecordDecl(const RecordDecl *D) {
   dumpName(D);
   if (D->isModulePrivate())
     OS << " __module_private__";
+  if (D->isCompleteDefinition())
+    OS << " definition";
 }
 
 void ASTDumper::VisitEnumConstantDecl(const EnumConstantDecl *D) {
@@ -1454,6 +1460,11 @@ void ASTDumper::VisitGotoStmt(const GotoStmt *Node) {
   VisitStmt(Node);
   OS << " '" << Node->getLabel()->getName() << "'";
   dumpPointer(Node->getLabel());
+}
+
+void ASTDumper::VisitCXXCatchStmt(const CXXCatchStmt *Node) {
+  VisitStmt(Node);
+  dumpDecl(Node->getExceptionDecl());
 }
 
 //===----------------------------------------------------------------------===//

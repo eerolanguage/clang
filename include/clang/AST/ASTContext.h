@@ -148,7 +148,7 @@ class ASTContext : public RefCountedBase<ASTContext> {
   mutable TypeInfoMap MemoizedTypeInfo;
 
   /// \brief A cache mapping from CXXRecordDecls to key functions.
-  llvm::DenseMap<const CXXRecordDecl*, const CXXMethodDecl*> KeyFunctions;
+  llvm::DenseMap<const CXXRecordDecl*, LazyDeclPtr> KeyFunctions;
   
   /// \brief Mapping from ObjCContainers to their ObjCImplementations.
   llvm::DenseMap<ObjCContainerDecl*, ObjCImplDecl*> ObjCImpls;
@@ -1769,19 +1769,9 @@ public:
   NestedNameSpecifier *
   getCanonicalNestedNameSpecifier(NestedNameSpecifier *NNS) const;
 
-  /// \brief Retrieves the default calling convention to use for
-  /// C++ instance methods.
-  CallingConv getDefaultCXXMethodCallConv(bool isVariadic);
-
-  /// \brief Retrieves the canonical representation of the given
-  /// calling convention.
-  CallingConv getCanonicalCallConv(CallingConv CC) const;
-
-  /// \brief Determines whether two calling conventions name the same
-  /// calling convention.
-  bool isSameCallConv(CallingConv lcc, CallingConv rcc) {
-    return (getCanonicalCallConv(lcc) == getCanonicalCallConv(rcc));
-  }
+  /// \brief Retrieves the default calling convention for the current target.
+  CallingConv getDefaultCallingConvention(bool isVariadic,
+                                          bool IsCXXMethod) const;
 
   /// \brief Retrieves the "canonical" template name that refers to a
   /// given template.

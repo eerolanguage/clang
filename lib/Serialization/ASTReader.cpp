@@ -2819,13 +2819,12 @@ void ASTReader::makeModuleVisible(Module *Mod,
                                   bool Complain) {
   llvm::SmallPtrSet<Module *, 4> Visited;
   SmallVector<Module *, 4> Stack;
-  Stack.push_back(Mod);  
+  Stack.push_back(Mod);
   while (!Stack.empty()) {
-    Mod = Stack.back();
-    Stack.pop_back();
+    Mod = Stack.pop_back_val();
 
     if (NameVisibility <= Mod->NameVisibility) {
-      // This module already has this level of visibility (or greater), so 
+      // This module already has this level of visibility (or greater), so
       // there is nothing more to do.
       continue;
     }
@@ -6973,14 +6972,14 @@ ReadTemplateArgumentList(SmallVectorImpl<TemplateArgument> &TemplArgs,
 }
 
 /// \brief Read a UnresolvedSet structure.
-void ASTReader::ReadUnresolvedSet(ModuleFile &F, ASTUnresolvedSet &Set,
+void ASTReader::ReadUnresolvedSet(ModuleFile &F, LazyASTUnresolvedSet &Set,
                                   const RecordData &Record, unsigned &Idx) {
   unsigned NumDecls = Record[Idx++];
   Set.reserve(Context, NumDecls);
   while (NumDecls--) {
-    NamedDecl *D = ReadDeclAs<NamedDecl>(F, Record, Idx);
+    DeclID ID = ReadDeclID(F, Record, Idx);
     AccessSpecifier AS = (AccessSpecifier)Record[Idx++];
-    Set.addDecl(Context, D, AS);
+    Set.addLazyDecl(Context, ID, AS);
   }
 }
 

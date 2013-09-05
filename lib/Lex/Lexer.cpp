@@ -1367,22 +1367,34 @@ void Lexer::SkipBytes(unsigned Bytes, bool StartOfLine) {
 }
 
 static bool isAllowedIDChar(uint32_t C, const LangOptions &LangOpts) {
-  if (LangOpts.CPlusPlus11 || LangOpts.C11)
-    return isCharInSet(C, C11AllowedIDChars);
-  else if (LangOpts.CPlusPlus)
-    return isCharInSet(C, CXX03AllowedIDChars);
-  else
-    return isCharInSet(C, C99AllowedIDChars);
+  if (LangOpts.CPlusPlus11 || LangOpts.C11) {
+    static const llvm::sys::UnicodeCharSet C11AllowedIDChars(
+        C11AllowedIDCharRanges);
+    return C11AllowedIDChars.contains(C);
+  } else if (LangOpts.CPlusPlus) {
+    static const llvm::sys::UnicodeCharSet CXX03AllowedIDChars(
+        CXX03AllowedIDCharRanges);
+    return CXX03AllowedIDChars.contains(C);
+  } else {
+    static const llvm::sys::UnicodeCharSet C99AllowedIDChars(
+        C99AllowedIDCharRanges);
+    return C99AllowedIDChars.contains(C);
+  }
 }
 
 static bool isAllowedInitiallyIDChar(uint32_t C, const LangOptions &LangOpts) {
   assert(isAllowedIDChar(C, LangOpts));
-  if (LangOpts.CPlusPlus11 || LangOpts.C11)
-    return !isCharInSet(C, C11DisallowedInitialIDChars);
-  else if (LangOpts.CPlusPlus)
+  if (LangOpts.CPlusPlus11 || LangOpts.C11) {
+    static const llvm::sys::UnicodeCharSet C11DisallowedInitialIDChars(
+        C11DisallowedInitialIDCharRanges);
+    return !C11DisallowedInitialIDChars.contains(C);
+  } else if (LangOpts.CPlusPlus) {
     return true;
-  else
-    return !isCharInSet(C, C99DisallowedInitialIDChars);
+  } else {
+    static const llvm::sys::UnicodeCharSet C99DisallowedInitialIDChars(
+        C99DisallowedInitialIDCharRanges);
+    return !C99DisallowedInitialIDChars.contains(C);
+  }
 }
 
 static inline CharSourceRange makeCharRange(Lexer &L, const char *Begin,
@@ -1401,11 +1413,15 @@ static void maybeDiagnoseIDCharCompat(DiagnosticsEngine &Diags, uint32_t C,
       CannotStartIdentifier
     };
 
-    if (!isCharInSet(C, C99AllowedIDChars)) {
+    static const llvm::sys::UnicodeCharSet C99AllowedIDChars(
+        C99AllowedIDCharRanges);
+    static const llvm::sys::UnicodeCharSet C99DisallowedInitialIDChars(
+        C99DisallowedInitialIDCharRanges);
+    if (!C99AllowedIDChars.contains(C)) {
       Diags.Report(Range.getBegin(), diag::warn_c99_compat_unicode_id)
         << Range
         << CannotAppearInIdentifier;
-    } else if (IsFirst && isCharInSet(C, C99DisallowedInitialIDChars)) {
+    } else if (IsFirst && C99DisallowedInitialIDChars.contains(C)) {
       Diags.Report(Range.getBegin(), diag::warn_c99_compat_unicode_id)
         << Range
         << CannotStartIdentifier;
@@ -1415,7 +1431,9 @@ static void maybeDiagnoseIDCharCompat(DiagnosticsEngine &Diags, uint32_t C,
   // Check C++98 compatibility.
   if (Diags.getDiagnosticLevel(diag::warn_cxx98_compat_unicode_id,
                                Range.getBegin()) > DiagnosticsEngine::Ignored) {
-    if (!isCharInSet(C, CXX03AllowedIDChars)) {
+    static const llvm::sys::UnicodeCharSet CXX03AllowedIDChars(
+        CXX03AllowedIDCharRanges);
+    if (!CXX03AllowedIDChars.contains(C)) {
       Diags.Report(Range.getBegin(), diag::warn_cxx98_compat_unicode_id)
         << Range;
     }
@@ -2414,10 +2432,28 @@ bool Lexer::LexEndOfFile(Token &Result, const char *CurPtr) {
 
   // C99 5.1.1.2p2: If the file is non-empty and didn't end in a newline, issue
   // a pedwarn.
-  if (CurPtr != BufferStart && (CurPtr[-1] != '\n' && CurPtr[-1] != '\r'))
-    Diag(BufferEnd, LangOpts.CPlusPlus11 ? // C++11 [lex.phases] 2.2 p2
-         diag::warn_cxx98_compat_no_newline_eof : diag::ext_no_newline_eof)
-    << FixItHint::CreateInsertion(getSourceLocation(BufferEnd), "\n");
+  if (CurPtr != BufferStart && (CurPtr[-1] != '\n' && CurPtr[-1] != '\r')) {
+    DiagnosticsEngine &Diags = PP->getDiagnostics();
+    SourceLocation EndLoc = getSourceLocation(BufferEnd);
+    unsigned DiagID;
+
+    if (LangOpts.CPlusPlus11) {
+      // C++11 [lex.phases] 2.2 p2
+      // Prefer the C++98 pedantic compatibility warning over the generic,
+      // non-extension, user-requested "missing newline at EOF" warning.
+      if (Diags.getDiagnosticLevel(diag::warn_cxx98_compat_no_newline_eof,
+                                   EndLoc) != DiagnosticsEngine::Ignored) {
+        DiagID = diag::warn_cxx98_compat_no_newline_eof;
+      } else {
+        DiagID = diag::warn_no_newline_eof;
+      }
+    } else {
+      DiagID = diag::ext_no_newline_eof;
+    }
+
+    Diag(BufferEnd, DiagID)
+      << FixItHint::CreateInsertion(EndLoc, "\n");
+  }
 
   BufferPtr = CurPtr;
 
@@ -2681,8 +2717,10 @@ uint32_t Lexer::tryReadUCN(const char *&StartPtr, const char *SlashLoc,
 }
 
 void Lexer::LexUnicode(Token &Result, uint32_t C, const char *CurPtr) {
+  static const llvm::sys::UnicodeCharSet UnicodeWhitespaceChars(
+      UnicodeWhitespaceCharRanges);
   if (!isLexingRawMode() && !PP->isPreprocessedOutput() &&
-      isCharInSet(C, UnicodeWhitespaceChars)) {
+      UnicodeWhitespaceChars.contains(C)) {
     Diag(BufferPtr, diag::ext_unicode_whitespace)
       << makeCharRange(*this, BufferPtr, CurPtr);
 
@@ -2854,7 +2892,8 @@ LexNextToken:
     // If the next token is obviously a // or /* */ comment, skip it efficiently
     // too (without going through the big switch stmt).
     if (CurPtr[0] == '/' && CurPtr[1] == '/' && !inKeepCommentMode() &&
-        LangOpts.LineComment && !LangOpts.TraditionalCPP) {
+        LangOpts.LineComment &&
+        (LangOpts.CPlusPlus || !LangOpts.TraditionalCPP)) {
       if (SkipLineComment(Result, CurPtr+2))
         return; // There is a token to return.
       goto SkipIgnoredUnits;
@@ -3168,7 +3207,8 @@ LexNextToken:
       // "foo".  Check to see if the character after the second slash is a '*'.
       // If so, we will lex that as a "/" instead of the start of a comment.
       // However, we never do this if we are just preprocessing.
-      bool TreatAsComment = LangOpts.LineComment && !LangOpts.TraditionalCPP;
+      bool TreatAsComment = LangOpts.LineComment &&
+                            (LangOpts.CPlusPlus || !LangOpts.TraditionalCPP);
       if (!TreatAsComment)
         if (!(PP && PP->isPreprocessedOutput()))
           TreatAsComment = getCharAndSize(CurPtr+SizeTmp, SizeTmp2) != '*';

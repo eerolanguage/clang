@@ -442,7 +442,7 @@ bool Sema::DiagnoseUnknownTypeName(IdentifierInfo *&II,
     if (isTemplateName(S, SS ? *SS : EmptySS, /*hasTemplateKeyword=*/false,
                        Name, ParsedType(), true, TemplateResult,
                        MemberOfUnknownSpecialization) == TNK_Type_template) {
-      TemplateName TplName = TemplateResult.getAsVal<TemplateName>();
+      TemplateName TplName = TemplateResult.get();
       Diag(IILoc, diag::err_template_missing_args) << TplName;
       if (TemplateDecl *TplDecl = TplName.getAsTemplateDecl()) {
         Diag(TplDecl->getLocation(), diag::note_template_decl_here)
@@ -2206,17 +2206,11 @@ static bool canRedefineFunction(const FunctionDecl *FD,
           FD->getStorageClass() == SC_Extern);
 }
 
-/// Is the given calling convention the ABI default for the given
-/// declaration?
-static bool isABIDefaultCC(Sema &S, CallingConv CC, FunctionDecl *D) {
-  CallingConv ABIDefaultCC;
-  if (isa<CXXMethodDecl>(D) && cast<CXXMethodDecl>(D)->isInstance()) {
-    ABIDefaultCC = S.Context.getDefaultCXXMethodCallConv(D->isVariadic());
-  } else {
-    // Free C function or a static method.
-    ABIDefaultCC = (S.Context.getLangOpts().MRTD ? CC_X86StdCall : CC_C);
-  }
-  return ABIDefaultCC == CC;
+const AttributedType *Sema::getCallingConvAttributedType(QualType T) const {
+  const AttributedType *AT = T->getAs<AttributedType>();
+  while (AT && !AT->isCallingConv())
+    AT = AT->getModifiedType()->getAs<AttributedType>();
+  return AT;
 }
 
 template <typename T>
@@ -2292,9 +2286,6 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S,
   else
     PrevDiag = diag::note_previous_declaration;
 
-  QualType OldQType = Context.getCanonicalType(Old->getType());
-  QualType NewQType = Context.getCanonicalType(New->getType());
-
   // Don't complain about this if we're in GNU89 mode and the old function
   // is an extern inline function.
   // Don't complain about specializations. They are not supposed to have
@@ -2314,53 +2305,52 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S,
     }
   }
 
-  // If a function is first declared with a calling convention, but is
-  // later declared or defined without one, the second decl assumes the
-  // calling convention of the first.
+
+  // If a function is first declared with a calling convention, but is later
+  // declared or defined without one, all following decls assume the calling
+  // convention of the first.
   //
   // It's OK if a function is first declared without a calling convention,
   // but is later declared or defined with the default calling convention.
   //
-  // For the new decl, we have to look at the NON-canonical type to tell the
-  // difference between a function that really doesn't have a calling
-  // convention and one that is declared cdecl. That's because in
-  // canonicalization (see ASTContext.cpp), cdecl is canonicalized away
-  // because it is the default calling convention.
+  // To test if either decl has an explicit calling convention, we look for
+  // AttributedType sugar nodes on the type as written.  If they are missing or
+  // were canonicalized away, we assume the calling convention was implicit.
   //
   // Note also that we DO NOT return at this point, because we still have
   // other tests to run.
+  QualType OldQType = Context.getCanonicalType(Old->getType());
+  QualType NewQType = Context.getCanonicalType(New->getType());
   const FunctionType *OldType = cast<FunctionType>(OldQType);
-  const FunctionType *NewType = New->getType()->getAs<FunctionType>();
+  const FunctionType *NewType = cast<FunctionType>(NewQType);
   FunctionType::ExtInfo OldTypeInfo = OldType->getExtInfo();
   FunctionType::ExtInfo NewTypeInfo = NewType->getExtInfo();
   bool RequiresAdjustment = false;
-  if (OldTypeInfo.getCC() == NewTypeInfo.getCC()) {
-    // Fast path: nothing to do.
 
-  // Inherit the CC from the previous declaration if it was specified
-  // there but not here.
-  } else if (NewTypeInfo.getCC() == CC_Default) {
-    NewTypeInfo = NewTypeInfo.withCallingConv(OldTypeInfo.getCC());
-    RequiresAdjustment = true;
+  if (OldTypeInfo.getCC() != NewTypeInfo.getCC()) {
+    FunctionDecl *First = Old->getFirstDeclaration();
+    const FunctionType *FT =
+        First->getType().getCanonicalType()->castAs<FunctionType>();
+    FunctionType::ExtInfo FI = FT->getExtInfo();
+    bool NewCCExplicit = getCallingConvAttributedType(New->getType());
+    if (!NewCCExplicit) {
+      // Inherit the CC from the previous declaration if it was specified
+      // there but not here.
+      NewTypeInfo = NewTypeInfo.withCallingConv(OldTypeInfo.getCC());
+      RequiresAdjustment = true;
+    } else {
+      // Calling conventions aren't compatible, so complain.
+      bool FirstCCExplicit = getCallingConvAttributedType(First->getType());
+      Diag(New->getLocation(), diag::err_cconv_change)
+        << FunctionType::getNameForCallConv(NewTypeInfo.getCC())
+        << !FirstCCExplicit
+        << (!FirstCCExplicit ? "" :
+            FunctionType::getNameForCallConv(FI.getCC()));
 
-  // Don't complain about mismatches when the default CC is
-  // effectively the same as the explict one. Only Old decl contains correct
-  // information about storage class of CXXMethod.
-  } else if (OldTypeInfo.getCC() == CC_Default &&
-             isABIDefaultCC(*this, NewTypeInfo.getCC(), Old)) {
-    NewTypeInfo = NewTypeInfo.withCallingConv(OldTypeInfo.getCC());
-    RequiresAdjustment = true;
-
-  } else if (!Context.isSameCallConv(OldTypeInfo.getCC(),
-                                     NewTypeInfo.getCC())) {
-    // Calling conventions really aren't compatible, so complain.
-    Diag(New->getLocation(), diag::err_cconv_change)
-      << FunctionType::getNameForCallConv(NewTypeInfo.getCC())
-      << (OldTypeInfo.getCC() == CC_Default)
-      << (OldTypeInfo.getCC() == CC_Default ? "" :
-          FunctionType::getNameForCallConv(OldTypeInfo.getCC()));
-    Diag(Old->getLocation(), diag::note_previous_declaration);
-    return true;
+      // Put the note on the first decl, since it is the one that matters.
+      Diag(First->getLocation(), diag::note_previous_declaration);
+      return true;
+    }
   }
 
   // FIXME: diagnose the other way around?
@@ -2754,8 +2744,7 @@ bool Sema::MergeCompatibleFunctionDecls(FunctionDecl *New, FunctionDecl *Old,
     New->setPure();
 
   // Merge "used" flag.
-  if (Old->isUsed(false))
-    New->setUsed();
+  New->setIsUsed(Old->isUsed(false));
 
   // Merge attributes from the parameters.  These can mismatch with K&R
   // declarations.
@@ -2878,9 +2867,38 @@ void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old,
   }
 
   // Don't actually update the type on the new declaration if the old
-  // declaration was a extern declaration in a different scope.
+  // declaration was an extern declaration in a different scope.
   if (MergeTypeWithOld)
     New->setType(MergedT);
+}
+
+static bool mergeTypeWithPrevious(Sema &S, VarDecl *NewVD, VarDecl *OldVD,
+                                  LookupResult &Previous) {
+  // C11 6.2.7p4:
+  //   For an identifier with internal or external linkage declared
+  //   in a scope in which a prior declaration of that identifier is
+  //   visible, if the prior declaration specifies internal or
+  //   external linkage, the type of the identifier at the later
+  //   declaration becomes the composite type.
+  //
+  // If the variable isn't visible, we do not merge with its type.
+  if (Previous.isShadowed())
+    return false;
+
+  if (S.getLangOpts().CPlusPlus) {
+    // C++11 [dcl.array]p3:
+    //   If there is a preceding declaration of the entity in the same
+    //   scope in which the bound was specified, an omitted array bound
+    //   is taken to be the same as in that earlier declaration.
+    return NewVD->isPreviousDeclInSameBlockScope() ||
+           (!OldVD->getLexicalDeclContext()->isFunctionOrMethod() &&
+            !NewVD->getLexicalDeclContext()->isFunctionOrMethod());
+  } else {
+    // If the old declaration was function-local, don't merge with its
+    // type unless we're in the same function.
+    return !OldVD->getLexicalDeclContext()->isFunctionOrMethod() ||
+           OldVD->getLexicalDeclContext() == NewVD->getLexicalDeclContext();
+  }
 }
 
 /// MergeVarDecl - We just parsed a variable 'New' which has the same name
@@ -2891,8 +2909,7 @@ void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old,
 /// FinalizeDeclaratorGroup. Unfortunately, we can't analyze tentative
 /// definitions here, since the initializer hasn't been attached.
 ///
-void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous,
-                        bool MergeTypeWithPrevious) {
+void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
   // If the new decl is already invalid, don't do any other checking.
   if (New->isInvalidDecl())
     return;
@@ -2941,7 +2958,8 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous,
   }
 
   // Merge the types.
-  MergeVarDeclTypes(New, Old, MergeTypeWithPrevious);
+  MergeVarDeclTypes(New, Old, mergeTypeWithPrevious(*this, New, Old, Previous));
+
   if (New->isInvalidDecl())
     return;
 
@@ -3036,8 +3054,7 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous,
   }
 
   // Merge "used" flag.
-  if (Old->isUsed(false))
-    New->setUsed();
+  New->setIsUsed(Old->isUsed(false));
 
   // Keep a chain of previous declarations.
   New->setPreviousDeclaration(Old);
@@ -5740,48 +5757,15 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD, LookupResult &Previous) {
 
   // If we did not find anything by this name, look for a non-visible
   // extern "C" declaration with the same name.
-  //
-  // The actual standards text here is:
-  //
-  // C++11 [basic.link]p6:
-  //   The name of a function declared in block scope and the name
-  //   of a variable declared by a block scope extern declaration
-  //   have linkage. If there is a visible declaration of an entity
-  //   with linkage having the same name and type, ignoring entities
-  //   declared outside the innermost enclosing namespace scope, the
-  //   block scope declaration declares that same entity and
-  //   receives the linkage of the previous declaration.
-  //
-  // C++11 [dcl.array]p3:
-  //   If there is a preceding declaration of the entity in the same
-  //   scope in which the bound was specified, an omitted array bound
-  //   is taken to be the same as in that earlier declaration.
-  //
-  // C11 6.2.7p4:
-  //   For an identifier with internal or external linkage declared
-  //   in a scope in which a prior declaration of that identifier is
-  //   visible, if the prior declaration specifies internal or
-  //   external linkage, the type of the identifier at the later
-  //   declaration becomes the composite type.
-  //
-  // The most important point here is that we're not allowed to
-  // update our understanding of the type according to declarations
-  // not in scope (in C++) or not visible (in C).
-  bool MergeTypeWithPrevious;
   if (Previous.empty() &&
       checkForConflictWithNonVisibleExternC(*this, NewVD, Previous))
-    MergeTypeWithPrevious = false;
-  else
-    MergeTypeWithPrevious =
-        !Previous.isShadowed() &&
-        (!getLangOpts().CPlusPlus || NewVD->isPreviousDeclInSameBlockScope() ||
-         !NewVD->getLexicalDeclContext()->isFunctionOrMethod());
+    Previous.setShadowed();
 
   // Filter out any non-conflicting previous declarations.
   filterNonConflictingPreviousDecls(Context, NewVD, Previous);
 
   if (!Previous.empty()) {
-    MergeVarDecl(NewVD, Previous, MergeTypeWithPrevious);
+    MergeVarDecl(NewVD, Previous);
     return true;
   }
 
@@ -6501,6 +6485,11 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
          diag::err_invalid_thread)
       << DeclSpec::getSpecifierName(TSCS);
 
+  if (DC->isRecord() &&
+      D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_static &&
+      !D.getDeclSpec().isFriendSpecified())
+    adjustMemberFunctionCC(R);
+
   bool isFriend = false;
   FunctionTemplateDecl *FunctionTemplate = 0;
   bool isExplicitSpecialization = false;
@@ -6894,10 +6883,6 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         ::new(Context) C11NoReturnAttr(D.getDeclSpec().getNoreturnSpecLoc(),
                                        Context));
 
-  // Process the non-inheritable attributes on this declaration.
-  ProcessDeclAttributes(S, NewFD, D,
-                        /*NonInheritable=*/true, /*Inheritable=*/false);
-
   // Functions returning a variably modified type violate C99 6.7.5.2p2
   // because all functions have linkage.
   if (!NewFD->isInvalidDecl() &&
@@ -6907,8 +6892,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   }
 
   // Handle attributes.
-  ProcessDeclAttributes(S, NewFD, D,
-                        /*NonInheritable=*/false, /*Inheritable=*/true);
+  ProcessDeclAttributes(S, NewFD, D);
 
   QualType RetType = NewFD->getResultType();
   const CXXRecordDecl *Ret = RetType->isRecordType() ?
@@ -7182,7 +7166,8 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
     // Turn this into a variadic function with no parameters.
     const FunctionType *FT = NewFD->getType()->getAs<FunctionType>();
-    FunctionProtoType::ExtProtoInfo EPI;
+    FunctionProtoType::ExtProtoInfo EPI(
+        Context.getDefaultCallingConvention(true, false));
     EPI.Variadic = true;
     EPI.ExtInfo = FT->getExtInfo();
 
@@ -9809,7 +9794,8 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
             FD->getParamDecl(FormatIdx)->getType()->isObjCObjectPointerType())
           fmt = "NSString";
         FD->addAttr(::new (Context) FormatAttr(FD->getLocation(), Context,
-                                               fmt, FormatIdx+1,
+                                               &Context.Idents.get(fmt),
+                                               FormatIdx+1,
                                                HasVAListArg ? 0 : FormatIdx+2));
       }
     }
@@ -9817,7 +9803,8 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
                                              HasVAListArg)) {
      if (!FD->getAttr<FormatAttr>())
        FD->addAttr(::new (Context) FormatAttr(FD->getLocation(), Context,
-                                              "scanf", FormatIdx+1,
+                                              &Context.Idents.get("scanf"),
+                                              FormatIdx+1,
                                               HasVAListArg ? 0 : FormatIdx+2));
     }
 
@@ -9857,7 +9844,7 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
     // target-specific builtins, perhaps?
     if (!FD->getAttr<FormatAttr>())
       FD->addAttr(::new (Context) FormatAttr(FD->getLocation(), Context,
-                                             "printf", 2,
+                                             &Context.Idents.get("printf"), 2,
                                              Name->isStr("vasprintf") ? 0 : 3));
   }
 

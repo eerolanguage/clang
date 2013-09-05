@@ -38,7 +38,7 @@ Handler H = foo;
 
 int __attribute__((pcs("aapcs", "aapcs"))) pcs1(void); // expected-error {{'pcs' attribute takes one argument}}
 int __attribute__((pcs())) pcs2(void); // expected-error {{'pcs' attribute takes one argument}}
-int __attribute__((pcs(pcs1))) pcs3(void); // expected-error {{'pcs' attribute takes one argument}}
+int __attribute__((pcs(pcs1))) pcs3(void); // expected-error {{'pcs' attribute requires a string}}
 int __attribute__((pcs(0))) pcs4(void); // expected-error {{'pcs' attribute requires a string}}
 /* These are ignored because the target is i386 and not ARM */
 int __attribute__((pcs("aapcs"))) pcs5(void); // expected-warning {{calling convention 'pcs' ignored for this target}}
@@ -56,3 +56,7 @@ PROC __attribute__((cdecl)) ctest4(const char *x) {}
 void __attribute__((pnaclcall)) pnaclfunc(float *a) {} // expected-warning {{calling convention 'pnaclcall' ignored for this target}}
 
 void __attribute__((intel_ocl_bicc)) inteloclbifunc(float *a) {}
+
+typedef void typedef_fun_t(int);
+typedef_fun_t typedef_fun; // expected-note {{previous declaration is here}}
+void __attribute__((stdcall)) typedef_fun(int x) { } // expected-error {{function declared 'stdcall' here was previously declared without calling convention}}

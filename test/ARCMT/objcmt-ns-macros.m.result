@@ -15,7 +15,7 @@ typedef NS_ENUM(NSInteger, wibble) {
 };
 
 
-typedef NS_OPTIONS(NSUInteger, UITableViewCellStyle) {
+typedef NS_ENUM(NSUInteger, UITableViewCellStyle) {
     UIViewAutoresizingNone                 = 0,
     UIViewAutoresizingFlexibleLeftMargin,
     UIViewAutoresizingFlexibleWidth,
@@ -66,8 +66,8 @@ enum {
 
 // Should use NS_ENUM even though it is all power of 2.
 typedef NS_ENUM(NSInteger, UIK) {
-  UIKOne = 0x1,
-  UIKTwo = 0x2,
+  UIKOne = 1,
+  UIKTwo = 2,
 };
 
 
@@ -77,3 +77,36 @@ typedef NS_ENUM(NSInteger, NSTickMarkPosition)  {
     NSTickMarkLeft = NSTickMarkAbove,
     NSTickMarkRight = NSTickMarkBelow
 } ;
+
+typedef NS_OPTIONS(NSUInteger, UITableStyle) {
+    UIViewNone         = 0x0,
+    UIViewMargin       = 0x1,
+    UIViewWidth        = 0x2,
+    UIViewRightMargin  = 0x3,
+    UIViewBottomMargin = 0xbadbeef
+};
+
+
+typedef NS_OPTIONS(NSUInteger, UIStyle) {
+    UIView0         = 0,
+    UIView1 = 0XBADBEEF
+};
+
+
+typedef NS_ENUM(NSUInteger, NSBitmapImageFileType) {
+    NSTIFFFileType,
+    NSBMPFileType,
+    NSGIFFileType,
+    NSJPEGFileType,
+    NSPNGFileType,
+    NSJPEG2000FileType
+};
+
+
+typedef NS_ENUM(NSUInteger, NSAlertStyle) {
+    NSWarningAlertStyle = 0,
+    NSInformationalAlertStyle = 1,
+    NSCriticalAlertStyle = 2
+};
+
+

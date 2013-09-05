@@ -81,13 +81,13 @@ class TokenRole;
 struct FormatToken {
   FormatToken()
       : NewlinesBefore(0), HasUnescapedNewline(false), LastNewlineOffset(0),
-        CodePointCount(0), IsFirst(false), MustBreakBefore(false),
-        IsUnterminatedLiteral(false), BlockKind(BK_Unknown), Type(TT_Unknown),
-        SpacesRequiredBefore(0), CanBreakBefore(false),
-        ClosesTemplateDeclaration(false), ParameterCount(0),
-        PackingKind(PPK_Inconclusive), TotalLength(0), UnbreakableTailLength(0),
-        BindingStrength(0), SplitPenalty(0), LongestObjCSelectorName(0),
-        FakeRParens(0), LastInChainOfCalls(false),
+        CodePointCount(0), CodePointsInFirstLine(0), CodePointsInLastLine(0),
+        IsFirst(false), MustBreakBefore(false), IsUnterminatedLiteral(false),
+        BlockKind(BK_Unknown), Type(TT_Unknown), SpacesRequiredBefore(0),
+        CanBreakBefore(false), ClosesTemplateDeclaration(false),
+        ParameterCount(0), PackingKind(PPK_Inconclusive), TotalLength(0),
+        UnbreakableTailLength(0), BindingStrength(0), SplitPenalty(0),
+        LongestObjCSelectorName(0), FakeRParens(0), LastInChainOfCalls(false),
         PartOfMultiVariableDeclStmt(false), MatchingParen(NULL), Previous(NULL),
         Next(NULL) {}
 
@@ -114,6 +114,19 @@ struct FormatToken {
   /// \brief The length of the non-whitespace parts of the token in CodePoints.
   /// We need this to correctly measure number of columns a token spans.
   unsigned CodePointCount;
+
+  /// \brief Contains the number of code points in the first line of a
+  /// multi-line string literal or comment. Zero if there's no newline in the
+  /// token.
+  unsigned CodePointsInFirstLine;
+
+  /// \brief Contains the number of code points in the last line of a
+  /// multi-line string literal or comment. Can be zero for line comments.
+  unsigned CodePointsInLastLine;
+
+  /// \brief Returns \c true if the token text contains newlines (escaped or
+  /// not).
+  bool isMultiline() const { return CodePointsInFirstLine != 0; }
 
   /// \brief Indicates that this is the first token.
   bool IsFirst;
@@ -169,8 +182,17 @@ struct FormatToken {
   /// \brief If this is an opening parenthesis, how are the parameters packed?
   ParameterPackingKind PackingKind;
 
-  /// \brief The total length of the line up to and including this token.
+  /// \brief The total length of the unwrapped line up to and including this
+  /// token.
   unsigned TotalLength;
+
+  /// \brief The original column of this token, including expanded tabs.
+  /// The configured IndentWidth is used as tab width. Only tabs in whitespace
+  /// are expanded.
+  /// FIXME: This is currently only used on the first token of an unwrapped
+  /// line, and the implementation is not correct for other tokens (see the
+  /// FIXMEs in FormatTokenLexer::getNextToken()).
+  unsigned OriginalColumn;
 
   /// \brief The length of following tokens until the next natural split point,
   /// or the next token that can be broken.
@@ -257,6 +279,12 @@ struct FormatToken {
            Type == TT_TemplateCloser;
   }
 
+  /// \brief Returns \c true if this is a "." or "->" accessing a member.
+  bool isMemberAccess() const {
+    return isOneOf(tok::arrow, tok::period) &&
+           Type != TT_DesignatedInitializerPeriod;
+  }
+
   bool isUnaryOperator() const {
     switch (Tok.getKind()) {
     case tok::plus:
@@ -272,10 +300,12 @@ struct FormatToken {
       return false;
     }
   }
+
   bool isBinaryOperator() const {
     // Comma is a binary operator, but does not behave as such wrt. formatting.
     return getPrecedence() > prec::Comma;
   }
+
   bool isTrailingComment() const {
     return is(tok::comment) && (!Next || Next->NewlinesBefore > 0);
   }

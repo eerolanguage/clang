@@ -135,8 +135,7 @@ private:
 
   void mangleTemplateArgs(const TemplateDecl *TD,
                           const TemplateArgumentList &TemplateArgs);
-  void mangleTemplateArg(const TemplateDecl *TD, const TemplateArgument &TA,
-                         int ArgIndex);
+  void mangleTemplateArg(const TemplateDecl *TD, const TemplateArgument &TA);
 };
 
 /// MicrosoftMangleContext - Overrides the default MangleContext for the
@@ -508,8 +507,8 @@ MicrosoftCXXNameMangler::mangleUnqualifiedName(const NamedDecl *ND,
       }
 
       // When VC encounters an anonymous type with no tag and no typedef,
-      // it literally emits '<unnamed-tag>'.
-      Out << "<unnamed-tag>";
+      // it literally emits '<unnamed-tag>@'.
+      Out << "<unnamed-tag>@";
       break;
     }
       
@@ -903,17 +902,18 @@ MicrosoftCXXNameMangler::mangleTemplateArgs(const TemplateDecl *TD,
   unsigned NumTemplateArgs = TemplateArgs.size();
   for (unsigned i = 0; i < NumTemplateArgs; ++i) {
     const TemplateArgument &TA = TemplateArgs[i];
-    mangleTemplateArg(TD, TA, i);
+    mangleTemplateArg(TD, TA);
   }
   Out << '@';
 }
 
 void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
-                                                const TemplateArgument &TA,
-                                                int ArgIndex) {
+                                                const TemplateArgument &TA) {
   switch (TA.getKind()) {
   case TemplateArgument::Null:
     llvm_unreachable("Can't mangle null template arguments!");
+  case TemplateArgument::TemplateExpansion:
+    llvm_unreachable("Can't mangle template expansion arguments!");
   case TemplateArgument::Type: {
     QualType T = TA.getAsType();
     mangleType(T, SourceRange(), QMM_Escape);
@@ -936,28 +936,14 @@ void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
     break;
   case TemplateArgument::Pack:
     // Unlike Itanium, there is no character code to indicate an argument pack.
-    // FIXME: ArgIndex will be off, but we only use if for diagnostics that
-    // should ultimately be removed.
     for (TemplateArgument::pack_iterator I = TA.pack_begin(), E = TA.pack_end();
          I != E; ++I)
-      mangleTemplateArg(TD, *I, ArgIndex);
+      mangleTemplateArg(TD, *I);
     break;
   case TemplateArgument::Template:
     mangleType(cast<TagDecl>(
         TA.getAsTemplate().getAsTemplateDecl()->getTemplatedDecl()));
     break;
-  case TemplateArgument::TemplateExpansion: {
-    // Issue a diagnostic.
-    DiagnosticsEngine &Diags = Context.getDiags();
-    unsigned DiagID = Diags.getCustomDiagID(DiagnosticsEngine::Error,
-      "cannot mangle template argument %0 of kind %select{ERROR|ERROR|"
-      "pointer/reference|nullptr|integral|template|template pack expansion|"
-      "ERROR|parameter pack}1 yet");
-    Diags.Report(TD->getLocation(), DiagID)
-      << ArgIndex + 1
-      << TA.getKind()
-      << TD->getSourceRange();
-  }
   }
 }
 
@@ -1294,7 +1280,7 @@ void MicrosoftCXXNameMangler::mangleFunctionType(const FunctionType *T,
       // However, the FunctionType generated has 0 arguments.
       // FIXME: This is a temporary hack.
       // Maybe should fix the FunctionType creation instead?
-      Out << "PAXI@Z";
+      Out << (PointersAre64Bit ? "PEAXI@Z" : "PAXI@Z");
       return;
     }
     Out << '@';
@@ -1405,20 +1391,11 @@ void MicrosoftCXXNameMangler::mangleCallingConvention(const FunctionType *T,
   // that they could be in a DLL and somebody from another module could call
   // them.)
   CallingConv CC = T->getCallConv();
-  if (CC == CC_Default) {
-    if (IsInstMethod) {
-      const FunctionProtoType *FPT =
-        T->getCanonicalTypeUnqualified().castAs<FunctionProtoType>();
-      bool isVariadic = FPT->isVariadic();
-      CC = getASTContext().getDefaultCXXMethodCallConv(isVariadic);
-    } else {
-      CC = CC_C;
-    }
-  }
   switch (CC) {
     default:
       llvm_unreachable("Unsupported CC for mangling");
-    case CC_Default:
+    case CC_X86_64Win64:
+    case CC_X86_64SysV:
     case CC_C: Out << 'A'; break;
     case CC_X86Pascal: Out << 'C'; break;
     case CC_X86ThisCall: Out << 'E'; break;

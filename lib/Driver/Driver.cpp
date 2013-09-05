@@ -58,7 +58,7 @@ Driver::Driver(StringRef ClangExecutable,
     CCPrintOptionsFilename(0), CCPrintHeadersFilename(0),
     CCLogDiagnosticsFilename(0),
     CCCPrintBindings(false),
-    CCPrintOptions(false), CCPrintHeaders(false), CCLogDiagnostics(false),
+    CCPrintHeaders(false), CCLogDiagnostics(false),
     CCGenDiagnostics(false), CCCGenericGCCName(""), CheckInputsExist(true),
     CCCUsePCH(true), SuppressMissingInputWarning(false) {
 
@@ -328,7 +328,7 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   // FIXME: What are we going to do with -V and -b?
 
   // FIXME: This stuff needs to go into the Compilation, not the driver.
-  bool CCCPrintOptions, CCCPrintActions;
+  bool CCCPrintActions;
 
   InputArgList *Args = ParseArgStrings(ArgList.slice(1));
 
@@ -344,7 +344,6 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   // should be outside in the client; the parts that aren't should have proper
   // options, either by introducing new ones or by overloading gcc ones like -V
   // or -b.
-  CCCPrintOptions = Args->hasArg(options::OPT_ccc_print_options);
   CCCPrintActions = Args->hasArg(options::OPT_ccc_print_phases);
   CCCPrintBindings = Args->hasArg(options::OPT_ccc_print_bindings);
   if (const Arg *A = Args->getLastArg(options::OPT_ccc_gcc_name))
@@ -387,12 +386,6 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
 
   // The compilation takes ownership of Args.
   Compilation *C = new Compilation(*this, TC, Args, TranslatedArgs);
-
-  // FIXME: This behavior shouldn't be here.
-  if (CCCPrintOptions) {
-    PrintOptions(C->getInputArgs());
-    return C;
-  }
 
   if (!HandleImmediateArgs(*C))
     return C;
@@ -640,23 +633,6 @@ int Driver::ExecuteCompilation(const Compilation &C,
     }
   }
   return 0;
-}
-
-void Driver::PrintOptions(const ArgList &Args) const {
-  unsigned i = 0;
-  for (ArgList::const_iterator it = Args.begin(), ie = Args.end();
-       it != ie; ++it, ++i) {
-    Arg *A = *it;
-    llvm::errs() << "Option " << i << " - "
-                 << "Name: \"" << A->getOption().getPrefixedName() << "\", "
-                 << "Values: {";
-    for (unsigned j = 0; j < A->getNumValues(); ++j) {
-      if (j)
-        llvm::errs() << ", ";
-      llvm::errs() << '"' << A->getValue(j) << '"';
-    }
-    llvm::errs() << "}\n";
-  }
 }
 
 void Driver::PrintHelp(bool ShowHidden) const {
@@ -1172,6 +1148,10 @@ void Driver::BuildActions(const ToolChain &TC, DerivedArgList &Args,
   Arg *FinalPhaseArg;
   phases::ID FinalPhase = getFinalPhase(Args, &FinalPhaseArg);
 
+  if (FinalPhase == phases::Link && Args.hasArg(options::OPT_emit_llvm)) {
+    Diag(clang::diag::err_drv_emit_llvm_link);
+  }
+
   // Reject -Z* at the top level, these options should never have been exposed
   // by gcc.
   if (Arg *A = Args.getLastArg(options::OPT_Z_Joined))
@@ -1343,6 +1323,10 @@ Action *Driver::ConstructPhaseAction(const ArgList &Args, phases::ID Phase,
       types::ID Output =
         Args.hasArg(options::OPT_S) ? types::TY_LTO_IR : types::TY_LTO_BC;
       return new CompileJobAction(Input, Output);
+    } else if (Args.hasArg(options::OPT_emit_llvm)) {
+      types::ID Output =
+        Args.hasArg(options::OPT_S) ? types::TY_LLVM_IR : types::TY_LLVM_BC;
+      return new CompileJobAction(Input, Output);
     } else {
       return new CompileJobAction(Input, types::TY_PP_Asm);
     }
@@ -1355,14 +1339,8 @@ Action *Driver::ConstructPhaseAction(const ArgList &Args, phases::ID Phase,
 }
 
 bool Driver::IsUsingLTO(const ArgList &Args) const {
-  // Check for -emit-llvm or -flto.
-  if (Args.hasArg(options::OPT_emit_llvm) ||
-      Args.hasFlag(options::OPT_flto, options::OPT_fno_lto, false))
+  if (Args.hasFlag(options::OPT_flto, options::OPT_fno_lto, false))
     return true;
-
-  // Check for -O4.
-  if (const Arg *A = Args.getLastArg(options::OPT_O_Group))
-      return A->getOption().matches(options::OPT_O4);
 
   return false;
 }

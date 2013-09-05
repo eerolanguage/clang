@@ -261,7 +261,8 @@ pushTemporaryCleanup(CodeGenFunction &CGF, const MaterializeTemporaryExpr *M,
     if (E->getType()->isArrayType()) {
       CleanupFn = CodeGenFunction(CGF.CGM).generateDestroyHelper(
           cast<llvm::Constant>(ReferenceTemporary), E->getType(),
-          CodeGenFunction::destroyCXXObject, CGF.getLangOpts().Exceptions);
+          CodeGenFunction::destroyCXXObject, CGF.getLangOpts().Exceptions,
+          dyn_cast_or_null<VarDecl>(M->getExtendingDecl()));
       CleanupArg = llvm::Constant::getNullValue(CGF.Int8PtrTy);
     } else {
       CleanupFn =
@@ -1972,6 +1973,10 @@ LValue CodeGenFunction::EmitPredefinedLValue(const PredefinedExpr *E) {
       // Blocks use the mangled function name.
       // FIXME: ComputeName should handle blocks.
       FunctionName = FnName.str();
+    } else if (isa<CapturedDecl>(CurDecl)) {
+      // For a captured statement, the function name is its enclosing
+      // function name not the one compiler generated.
+      FunctionName = PredefinedExpr::ComputeName(IdentType, CurDecl);
     } else {
       FunctionName = PredefinedExpr::ComputeName(IdentType, CurDecl);
       assert(cast<ConstantArrayType>(E->getType())->getSize() - 1 ==

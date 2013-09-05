@@ -795,6 +795,14 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
                     options::OPT_mno_implicit_float,
                     true))
     CmdArgs.push_back("-no-implicit-float");
+
+    // llvm does not support reserving registers in general. There is support
+    // for reserving r9 on ARM though (defined as a platform-specific register
+    // in ARM EABI).
+    if (Args.hasArg(options::OPT_ffixed_r9)) {
+      CmdArgs.push_back("-backend-option");
+      CmdArgs.push_back("-arm-reserve-r9");
+    }
 }
 
 // Translate MIPS CPU name alias option to CPU name.
@@ -1864,9 +1872,9 @@ static bool shouldEnableVectorizerAtOLevel(const ArgList &Args) {
 
     assert(A->getOption().matches(options::OPT_O) && "Must have a -O flag");
 
-    // Vectorize -O (which really is -O2), -Os.
+    // Vectorize -Os.
     StringRef S(A->getValue());
-    if (S == "s" || S.empty())
+    if (S == "s")
       return true;
 
     // Don't vectorize -Oz.
@@ -2619,10 +2627,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Manually translate -O4 to -O3; let clang reject others.
   if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
-    if (A->getOption().matches(options::OPT_O4))
+    if (A->getOption().matches(options::OPT_O4)) {
       CmdArgs.push_back("-O3");
-    else
+      D.Diag(diag::warn_O4_is_O3);
+    } else {
       A->render(Args, CmdArgs);
+    }
   }
 
   // Don't warn about unused -flto.  This can happen when we're preprocessing or
@@ -2669,13 +2679,24 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     Args.AddLastArg(CmdArgs, options::OPT_trigraphs);
   }
 
-  // Map the bizarre '-Wwrite-strings' flag to a more sensible
-  // '-fconst-strings'; this better indicates its actual behavior.
-  if (Args.hasFlag(options::OPT_Wwrite_strings, options::OPT_Wno_write_strings,
-                   false)) {
-    // For perfect compatibility with GCC, we do this even in the presence of
-    // '-w'. This flag names something other than a warning for GCC.
-    CmdArgs.push_back("-fconst-strings");
+  // GCC's behavior for -Wwrite-strings is a bit strange:
+  //  * In C, this "warning flag" changes the types of string literals from
+  //    'char[N]' to 'const char[N]', and thus triggers an unrelated warning
+  //    for the discarded qualifier.
+  //  * In C++, this is just a normal warning flag.
+  //
+  // Implementing this warning correctly in C is hard, so we follow GCC's
+  // behavior for now. FIXME: Directly diagnose uses of a string literal as
+  // a non-const char* in C, rather than using this crude hack.
+  if (!types::isCXX(InputType)) {
+    // FIXME: This should behave just like a warning flag, and thus should also
+    // respect -Weverything, -Wno-everything, -Werror=write-strings, and so on.
+    Arg *WriteStrings =
+        Args.getLastArg(options::OPT_Wwrite_strings,
+                        options::OPT_Wno_write_strings, options::OPT_w);
+    if (WriteStrings &&
+        WriteStrings->getOption().matches(options::OPT_Wwrite_strings))
+      CmdArgs.push_back("-fconst-strings");
   }
 
   // GCC provides a macro definition '__DEPRECATED' when -Wdeprecated is active
@@ -2935,9 +2956,17 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString("-mstack-alignment=" + alignment));
   }
   // -mkernel implies -mstrict-align; don't add the redundant option.
-  if (Args.hasArg(options::OPT_mstrict_align) && !KernelOrKext) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-arm-strict-align");
+  if (!KernelOrKext) {
+    if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
+                                 options::OPT_munaligned_access)) {
+      if (A->getOption().matches(options::OPT_mno_unaligned_access)) {
+        CmdArgs.push_back("-backend-option");
+        CmdArgs.push_back("-arm-strict-align");
+      } else {
+        CmdArgs.push_back("-backend-option");
+        CmdArgs.push_back("-arm-no-strict-align");
+      }
+    }
   }
 
   // Forward -f options with positive and negative forms; we translate
@@ -3555,8 +3584,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Claim ignored clang-cl options.
   Args.ClaimAllArgs(options::OPT_cl_ignored_Group);
 
-  // Disable warnings for clang -E -use-gold-plugin -emit-llvm foo.c
-  Args.ClaimAllArgs(options::OPT_use_gold_plugin);
+  // Disable warnings for clang -E -emit-llvm foo.c
   Args.ClaimAllArgs(options::OPT_emit_llvm);
 }
 
@@ -3747,8 +3775,6 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   Args.ClaimAllArgs(options::OPT_w);
   // and "clang -emit-llvm -c foo.s"
   Args.ClaimAllArgs(options::OPT_emit_llvm);
-  // and "clang -use-gold-plugin -c foo.s"
-  Args.ClaimAllArgs(options::OPT_use_gold_plugin);
 
   // Invoke ourselves in -cc1as mode.
   //
@@ -6170,7 +6196,7 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   // Tell the linker to load the plugin. This has to come before AddLinkerInputs
   // as gold requires -plugin to come before any -plugin-opt that -Wl might
   // forward.
-  if (D.IsUsingLTO(Args) || Args.hasArg(options::OPT_use_gold_plugin)) {
+  if (D.IsUsingLTO(Args)) {
     CmdArgs.push_back("-plugin");
     std::string Plugin = ToolChain.getDriver().Dir + "/../lib/LLVMgold.so";
     CmdArgs.push_back(Args.MakeArgString(Plugin));
@@ -6554,6 +6580,16 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   CmdArgs.push_back("-nologo");
+
+  if (getToolChain().getDriver().getOrParseSanitizerArgs(Args).needsAsanRt()) {
+    CmdArgs.push_back(Args.MakeArgString("-debug"));
+    CmdArgs.push_back(Args.MakeArgString("-incremental:no"));
+    SmallString<128> LibSanitizer(getToolChain().getDriver().ResourceDir);
+    // FIXME: Handle 64-bit. Use asan_dll_thunk.dll when building a DLL.
+    llvm::sys::path::append(
+        LibSanitizer, "lib", "windows", "clang_rt.asan-i386.lib");
+    CmdArgs.push_back(Args.MakeArgString(LibSanitizer));
+  }
 
   Args.AddAllArgValues(CmdArgs, options::OPT_l);
   Args.AddAllArgValues(CmdArgs, options::OPT__SLASH_link);

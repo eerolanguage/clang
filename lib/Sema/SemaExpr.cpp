@@ -2770,6 +2770,8 @@ ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
     currentDecl = BSI->TheDecl;
   else if (const LambdaScopeInfo *LSI = getCurLambda())
     currentDecl = LSI->CallOperator;
+  else if (const CapturedRegionScopeInfo *CSI = getCurCapturedRegion())
+    currentDecl = CSI->TheCapturedDecl;
   else
     currentDecl = getCurFunctionOrMethodDecl();
 
@@ -5477,9 +5479,18 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   VK = VK_RValue;
   OK = OK_Ordinary;
 
+  // First, check the condition.
   Cond = UsualUnaryConversions(Cond.take());
   if (Cond.isInvalid())
     return QualType();
+  if (checkCondition(*this, Cond.get()))
+    return QualType();
+
+  // Now check the two expressions.
+  if (LHS.get()->getType()->isVectorType() ||
+      RHS.get()->getType()->isVectorType())
+    return CheckVectorOperands(LHS, RHS, QuestionLoc, /*isCompAssign*/false);
+
   UsualArithmeticConversions(LHS, RHS);
   if (LHS.isInvalid() || RHS.isInvalid())
     return QualType();
@@ -5487,14 +5498,6 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   QualType CondTy = Cond.get()->getType();
   QualType LHSTy = LHS.get()->getType();
   QualType RHSTy = RHS.get()->getType();
-
-  // first, check the condition.
-  if (checkCondition(*this, Cond.get()))
-    return QualType();
-
-  // Now check the two expressions.
-  if (LHSTy->isVectorType() || RHSTy->isVectorType())
-    return CheckVectorOperands(LHS, RHS, QuestionLoc, /*isCompAssign*/false);
 
   // If the condition is a vector, and both operands are scalar,
   // attempt to implicity convert them to the vector type to act like the
@@ -9707,7 +9710,7 @@ ExprResult Sema::ActOnUnaryOp(Scope *S, SourceLocation OpLoc,
 /// ActOnAddrLabel - Parse the GNU address of label extension: "&&foo".
 ExprResult Sema::ActOnAddrLabel(SourceLocation OpLoc, SourceLocation LabLoc,
                                 LabelDecl *TheDecl) {
-  TheDecl->setUsed();
+  TheDecl->markUsed(Context);
   // Create the AST node.  The address of a label always has type 'void*'.
   return Owned(new (Context) AddrLabelExpr(OpLoc, LabLoc, TheDecl,
                                        Context.getPointerType(Context.VoidTy)));
@@ -10320,7 +10323,7 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
     computeNRVO(Body, getCurBlock());
   
   BlockExpr *Result = new (Context) BlockExpr(BSI->TheDecl, BlockTy);
-  const AnalysisBasedWarnings::Policy &WP = AnalysisWarnings.getDefaultPolicy();
+  AnalysisBasedWarnings::Policy WP = AnalysisWarnings.getDefaultPolicy();
   PopFunctionScopeInfo(&WP, Result->getBlockDecl(), Result);
 
   // If the block isn't obviously global, i.e. it captures anything at
@@ -11181,7 +11184,7 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
   // decl in the middle of a decl chain. We loop to maintain the invariant
   // that once a decl is used, all decls after it are also used.
   for (FunctionDecl *F = Func->getMostRecentDecl();; F = F->getPreviousDecl()) {
-    F->setUsed(true);
+    F->markUsed(Context);
     if (F == Func)
       break;
   }
@@ -11256,7 +11259,7 @@ static ExprResult captureInCapturedRegion(Sema &S, CapturedRegionScopeInfo *RSI,
   Expr *Ref = new (S.Context) DeclRefExpr(Var, RefersToEnclosingLocal,
                                           DeclRefType, VK_LValue, Loc);
   Var->setReferenced(true);
-  Var->setUsed(true);
+  Var->markUsed(S.Context);
 
   return Ref;
 }
@@ -11298,7 +11301,7 @@ static ExprResult captureInLambda(Sema &S, LambdaScopeInfo *LSI,
   Expr *Ref = new (S.Context) DeclRefExpr(Var, RefersToEnclosingLocal, 
                                           DeclRefType, VK_LValue, Loc);
   Var->setReferenced(true);
-  Var->setUsed(true);
+  Var->markUsed(S.Context);
 
   // When the field has array type, create index variables for each
   // dimension of the array. We use these index variables to subscript
@@ -11744,7 +11747,7 @@ static void MarkVarDeclODRUsed(Sema &SemaRef, VarDecl *Var,
 
   SemaRef.tryCaptureVariable(Var, Loc);
 
-  Var->setUsed(true);
+  Var->markUsed(SemaRef.Context);
 }
 
 void Sema::UpdateMarkingForLValueToRValue(Expr *E) {

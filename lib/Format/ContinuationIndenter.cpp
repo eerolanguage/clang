@@ -38,6 +38,21 @@ static unsigned getLengthToMatchingParen(const FormatToken &Tok) {
   return End->TotalLength - Tok.TotalLength + 1;
 }
 
+// Returns \c true if \c Tok starts a binary expression.
+static bool startsBinaryExpression(const FormatToken &Tok) {
+  for (unsigned i = 0, e = Tok.FakeLParens.size(); i != e; ++i) {
+    if (Tok.FakeLParens[i] > prec::Unknown)
+      return true;
+  }
+  return false;
+}
+
+// Returns \c true if \c Tok is the "." or "->" of a call and starts the next
+// segment of a builder type call.
+static bool startsSegmentOfBuilderTypeCall(const FormatToken &Tok) {
+  return Tok.isMemberAccess() && Tok.Previous && Tok.Previous->closesScope();
+}
+
 ContinuationIndenter::ContinuationIndenter(const FormatStyle &Style,
                                            SourceManager &SourceMgr,
                                            const AnnotatedLine &Line,
@@ -90,6 +105,8 @@ bool ContinuationIndenter::canBreak(const LineState &State) {
   // As they hide "DoSomething" and are generally bad for readability.
   if (Previous.opensScope() && State.LowestLevelOnLine < State.StartOfLineLevel)
     return false;
+  if (Current.isMemberAccess() && State.Stack.back().ContainsUnwrappedBuilder)
+    return false;
   return !State.Stack.back().NoLineBreak;
 }
 
@@ -116,12 +133,9 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
       !Current.isOneOf(tok::r_paren, tok::r_brace))
     return true;
   if (Style.AlwaysBreakBeforeMultilineStrings &&
-      State.Column > State.Stack.back().Indent &&
-      Current.is(tok::string_literal) && Previous.isNot(tok::lessless) &&
-      Previous.Type != TT_InlineASMColon &&
-      ((Current.getNextNonComment() &&
-        Current.getNextNonComment()->is(tok::string_literal)) ||
-       (Current.TokenText.find("\\\n") != StringRef::npos)))
+      State.Column > State.Stack.back().Indent && // Breaking saves columns.
+      Previous.isNot(tok::lessless) && Previous.Type != TT_InlineASMColon &&
+      NextIsMultilineString(State))
     return true;
 
   if (!Style.BreakBeforeBinaryOperators) {
@@ -171,6 +185,11 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
   if ((Current.Type == TT_StartOfName || Current.is(tok::kw_operator)) &&
       Line.MightBeFunctionDecl && State.Stack.back().BreakBeforeParameter &&
       State.ParenLevel == 0)
+    return true;
+  if (startsSegmentOfBuilderTypeCall(Current) &&
+      (State.Stack.back().CallContinuation != 0 ||
+       (State.Stack.back().BreakBeforeParameter &&
+        State.Stack.back().ContainsUnwrappedBuilder)))
     return true;
   return false;
 }
@@ -226,8 +245,7 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
     } else if (Current.is(tok::lessless) &&
                State.Stack.back().FirstLessLess != 0) {
       State.Column = State.Stack.back().FirstLessLess;
-    } else if (Current.isOneOf(tok::period, tok::arrow) &&
-               Current.Type != TT_DesignatedInitializerPeriod) {
+    } else if (Current.isMemberAccess()) {
       if (State.Stack.back().CallContinuation == 0) {
         State.Column = ContinuationIndent;
         State.Stack.back().CallContinuation = State.Column;
@@ -293,8 +311,7 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
 
     if (!Current.isTrailingComment())
       State.Stack.back().LastSpace = State.Column;
-    if (Current.isOneOf(tok::arrow, tok::period) &&
-        Current.Type != TT_DesignatedInitializerPeriod)
+    if (Current.isMemberAccess())
       State.Stack.back().LastSpace += Current.CodePointCount;
     State.StartOfLineLevel = State.ParenLevel;
     State.LowestLevelOnLine = State.ParenLevel;
@@ -363,6 +380,8 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
     if (Previous.is(tok::comma) && !Current.isTrailingComment() &&
         State.Stack.back().AvoidBinPacking)
       State.Stack.back().NoLineBreak = true;
+    if (startsSegmentOfBuilderTypeCall(Current))
+      State.Stack.back().ContainsUnwrappedBuilder = true;
 
     State.Column += Spaces;
     if (Current.is(tok::l_paren) && Previous.isOneOf(tok::kw_if, tok::kw_for))
@@ -375,8 +394,8 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
               Previous.Type == TT_ConditionalExpr ||
               Previous.Type == TT_UnaryOperator ||
               Previous.Type == TT_CtorInitializerColon) &&
-             !(Previous.getPrecedence() == prec::Assignment &&
-               Current.FakeLParens.empty()))
+             (Previous.getPrecedence() != prec::Assignment ||
+              startsBinaryExpression(Current)))
       // Always indent relative to the RHS of the expression unless this is a
       // simple assignment without binary expression on the RHS. Also indent
       // relative to unary operators and the colons of constructor initializers.
@@ -391,14 +410,14 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
       //   OuterFunction(InnerFunctionCall(
       //       ParameterToInnerFunction),
       //                 SecondParameterToOuterFunction);
-      bool HasMultipleParameters = !Current.FakeLParens.empty();
       bool HasTrailingCall = false;
       if (Previous.MatchingParen) {
         const FormatToken *Next = Previous.MatchingParen->getNextNonComment();
-        if (Next && Next->isOneOf(tok::period, tok::arrow))
-          HasTrailingCall = true;
+        HasTrailingCall = Next && Next->isMemberAccess();
       }
-      if (HasMultipleParameters || HasTrailingCall)
+      if (startsBinaryExpression(Current) ||
+          (HasTrailingCall &&
+           State.Stack[State.Stack.size() - 2].CallContinuation == 0))
         State.Stack.back().LastSpace = State.Column;
     }
   }
@@ -423,8 +442,7 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   if (!Current.opensScope() && !Current.closesScope())
     State.LowestLevelOnLine =
         std::min(State.LowestLevelOnLine, State.ParenLevel);
-  if (Current.isOneOf(tok::period, tok::arrow) &&
-      Line.Type == LT_BuilderTypeCall && State.ParenLevel == 0)
+  if (Current.isMemberAccess())
     State.Stack.back().StartOfFunctionCall =
         Current.LastInChainOfCalls ? 0 : State.Column + Current.CodePointCount;
   if (Current.Type == TT_CtorInitializerColon) {
@@ -441,7 +459,7 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   }
 
   // If return returns a binary expression, align after it.
-  if (Current.is(tok::kw_return) && !Current.FakeLParens.empty())
+  if (Current.is(tok::kw_return) && startsBinaryExpression(Current))
     State.Stack.back().LastSpace = State.Column + 7;
 
   // In ObjC method declaration we align on the ":" of parameters, but we need
@@ -519,9 +537,10 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
 
   // If we encounter a closing ), ], } or >, we can remove a level from our
   // stacks.
-  if (Current.isOneOf(tok::r_paren, tok::r_square) ||
-      (Current.is(tok::r_brace) && State.NextToken != Line.First) ||
-      State.NextToken->Type == TT_TemplateCloser) {
+  if (State.Stack.size() > 1 &&
+      (Current.isOneOf(tok::r_paren, tok::r_square) ||
+       (Current.is(tok::r_brace) && State.NextToken != Line.First) ||
+       State.NextToken->Type == TT_TemplateCloser)) {
     State.Stack.pop_back();
     --State.ParenLevel;
   }
@@ -547,13 +566,8 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   }
 
   State.Column += Current.CodePointCount;
-
   State.NextToken = State.NextToken->Next;
-
-  unsigned Penalty = 0;
-  if (Newline || !Style.AlwaysBreakBeforeMultilineStrings ||
-      Current.isNot(tok::string_literal) || !Current.CanBreakBefore)
-    Penalty += breakProtrudingToken(Current, State, DryRun);
+  unsigned Penalty = breakProtrudingToken(Current, State, DryRun);
 
   // If the previous has a special role, let it consume tokens as appropriate.
   // It is necessary to start at the previous token for the only implemented
@@ -566,23 +580,43 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   return Penalty;
 }
 
+unsigned
+ContinuationIndenter::addMultilineStringLiteral(const FormatToken &Current,
+                                                LineState &State) {
+  // Break before further function parameters on all levels.
+  for (unsigned i = 0, e = State.Stack.size(); i != e; ++i)
+    State.Stack[i].BreakBeforeParameter = true;
+
+  unsigned ColumnsUsed =
+      State.Column - Current.CodePointCount + Current.CodePointsInFirstLine;
+  // We can only affect layout of the first and the last line, so the penalty
+  // for all other lines is constant, and we ignore it.
+  State.Column = Current.CodePointsInLastLine;
+
+  if (ColumnsUsed > getColumnLimit())
+    return Style.PenaltyExcessCharacter * (ColumnsUsed - getColumnLimit());
+  return 0;
+}
+
 unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
                                                     LineState &State,
                                                     bool DryRun) {
+  if (!Current.isOneOf(tok::string_literal, tok::comment))
+    return 0;
+
   llvm::OwningPtr<BreakableToken> Token;
   unsigned StartColumn = State.Column - Current.CodePointCount;
-  unsigned OriginalStartColumn =
-      SourceMgr.getSpellingColumnNumber(Current.getStartOfNonWhitespace()) - 1;
 
   if (Current.is(tok::string_literal) &&
       Current.Type != TT_ImplicitStringLiteral) {
+    // Don't break string literals with (in case of non-raw strings, escaped)
+    // newlines. As clang-format must not change the string's content, it is
+    // unlikely that we'll end up with a better format.
+    if (Current.isMultiline())
+      return addMultilineStringLiteral(Current, State);
+
     // Only break up default narrow strings.
     if (!Current.TokenText.startswith("\""))
-      return 0;
-    // Don't break string literals with escaped newlines. As clang-format must
-    // not change the string's content, it is unlikely that we'll end up with
-    // a better format.
-    if (Current.TokenText.find("\\\n") != StringRef::npos)
       return 0;
     // Exempts unterminated string literals from line breaking. The user will
     // likely want to terminate the string before any line breaking is done.
@@ -592,6 +626,9 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
     Token.reset(new BreakableStringLiteral(Current, StartColumn,
                                            Line.InPPDirective, Encoding));
   } else if (Current.Type == TT_BlockComment && Current.isTrailingComment()) {
+    unsigned OriginalStartColumn =
+        SourceMgr.getSpellingColumnNumber(Current.getStartOfNonWhitespace()) -
+        1;
     Token.reset(new BreakableBlockComment(
         Style, Current, StartColumn, OriginalStartColumn, !Current.Previous,
         Line.InPPDirective, Encoding));
@@ -605,13 +642,8 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
     // FIXME: If we want to handle them correctly, we'll need to adjust
     // leading whitespace in consecutive lines when changing indentation of
     // the first line similar to what we do with block comments.
-    StringRef::size_type EscapedNewlinePos = Current.TokenText.find("\\\n");
-    if (EscapedNewlinePos != StringRef::npos) {
-      State.Column =
-          StartColumn +
-          encoding::getCodePointCount(
-              Current.TokenText.substr(0, EscapedNewlinePos), Encoding) +
-          1;
+    if (Current.isMultiline()) {
+      State.Column = StartColumn + Current.CodePointsInFirstLine;
       return 0;
     }
 
@@ -650,8 +682,7 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
       assert(NewRemainingTokenColumns < RemainingTokenColumns);
       if (!DryRun)
         Token->insertBreak(LineIndex, TailOffset, Split, Whitespaces);
-      Penalty += Current.is(tok::string_literal) ? Style.PenaltyBreakString
-                                                 : Style.PenaltyBreakComment;
+      Penalty += Current.SplitPenalty;
       unsigned ColumnsUsed =
           Token->getLineLengthAfterSplit(LineIndex, TailOffset, Split.first);
       if (ColumnsUsed > getColumnLimit()) {
@@ -675,6 +706,9 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
         State.Stack[i].BreakBeforeParameter = true;
     }
 
+    Penalty += Current.is(tok::string_literal) ? Style.PenaltyBreakString
+                                               : Style.PenaltyBreakComment;
+
     State.Stack.back().LastSpace = StartColumn;
   }
   return Penalty;
@@ -683,6 +717,25 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
 unsigned ContinuationIndenter::getColumnLimit() const {
   // In preprocessor directives reserve two chars for trailing " \"
   return Style.ColumnLimit - (Line.InPPDirective ? 2 : 0);
+}
+
+bool ContinuationIndenter::NextIsMultilineString(const LineState &State) {
+  const FormatToken &Current = *State.NextToken;
+  if (!Current.is(tok::string_literal))
+    return false;
+  // We never consider raw string literals "multiline" for the purpose of
+  // AlwaysBreakBeforeMultilineStrings implementation.
+  if (Current.TokenText.startswith("R\""))
+    return false;
+  if (Current.isMultiline())
+    return true;
+  if (Current.getNextNonComment() &&
+      Current.getNextNonComment()->is(tok::string_literal))
+    return true; // Implicit concatenation.
+  if (State.Column + Current.CodePointCount + Current.UnbreakableTailLength >
+      Style.ColumnLimit)
+    return true; // String will be split.
+  return false;
 }
 
 } // namespace format

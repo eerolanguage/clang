@@ -1847,9 +1847,9 @@ public:
                                     unsigned AttrSpellingListIndex);
   DLLExportAttr *mergeDLLExportAttr(Decl *D, SourceRange Range,
                                     unsigned AttrSpellingListIndex);
-  FormatAttr *mergeFormatAttr(Decl *D, SourceRange Range, StringRef Format,
-                              int FormatIdx, int FirstArg,
-                              unsigned AttrSpellingListIndex);
+  FormatAttr *mergeFormatAttr(Decl *D, SourceRange Range,
+                              IdentifierInfo *Format, int FormatIdx,
+                              int FirstArg, unsigned AttrSpellingListIndex);
   SectionAttr *mergeSectionAttr(Decl *D, SourceRange Range, StringRef Name,
                                 unsigned AttrSpellingListIndex);
 
@@ -1874,8 +1874,7 @@ public:
   bool MergeCompatibleFunctionDecls(FunctionDecl *New, FunctionDecl *Old,
                                     Scope *S, bool MergeTypeWithOld);
   void mergeObjCMethodDecls(ObjCMethodDecl *New, ObjCMethodDecl *Old);
-  void MergeVarDecl(VarDecl *New, LookupResult &Previous,
-                    bool MergeTypeWithPrevious);
+  void MergeVarDecl(VarDecl *New, LookupResult &Previous);
   void MergeVarDeclTypes(VarDecl *New, VarDecl *Old, bool MergeTypeWithOld);
   void MergeVarDeclExceptionSpecs(VarDecl *New, VarDecl *Old);
   bool MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old, Scope *S);
@@ -2513,7 +2512,7 @@ public:
                             bool ConsiderLinkage,
                             bool ExplicitInstantiationOrSpecialization);
 
-  bool DiagnoseAmbiguousLookup(LookupResult &Result);
+  void DiagnoseAmbiguousLookup(LookupResult &Result);
   //@}
 
   ObjCInterfaceDecl *getObjCInterfaceDecl(IdentifierInfo *&Id,
@@ -2530,12 +2529,8 @@ public:
 
   void ProcessPragmaWeak(Scope *S, Decl *D);
   // Decl attributes - this routine is the top level dispatcher.
-  void ProcessDeclAttributes(Scope *S, Decl *D, const Declarator &PD,
-                             bool NonInheritable = true,
-                             bool Inheritable = true);
+  void ProcessDeclAttributes(Scope *S, Decl *D, const Declarator &PD);
   void ProcessDeclAttributeList(Scope *S, Decl *D, const AttributeList *AL,
-                                bool NonInheritable = true,
-                                bool Inheritable = true,
                                 bool IncludeCXX11Attributes = true);
   bool ProcessAccessDeclAttributeList(AccessSpecDecl *ASDecl,
                                       const AttributeList *AttrList);
@@ -2547,6 +2542,15 @@ public:
                             const FunctionDecl *FD = 0);
   bool CheckNoReturnAttr(const AttributeList &attr);
   void CheckAlignasUnderalignment(Decl *D);
+
+  /// Adjust the calling convention of a method to be the ABI default if it
+  /// wasn't specified explicitly.  This handles method types formed from
+  /// function type typedefs and typename template arguments.
+  void adjustMemberFunctionCC(QualType &T);
+
+  /// Get the outermost AttributedType node that sets a calling convention.
+  /// Valid types should not have multiple attributes with different CCs.
+  const AttributedType *getCallingConvAttributedType(QualType T) const;
 
   /// \brief Stmt attributes - this routine is the top level dispatcher.
   StmtResult ProcessStmtAttributes(Stmt *Stmt, AttributeList *Attrs,

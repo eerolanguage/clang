@@ -4314,6 +4314,7 @@ void ASTWriter::ResolveDeclUpdatesBlocks() {
         break;
 
       case UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER:
+      case UPD_DECL_MARKED_USED:
         ++Idx;
         break;
 
@@ -4623,11 +4624,6 @@ DeclID ASTWriter::getDeclID(const Decl *D) {
   return DeclIDs[D];
 }
 
-static inline bool compLocDecl(std::pair<unsigned, serialization::DeclID> L,
-                               std::pair<unsigned, serialization::DeclID> R) {
-  return L.first < R.first;
-}
-
 void ASTWriter::associateDeclWithFile(const Decl *D, DeclID ID) {
   assert(ID);
   assert(D);
@@ -4666,8 +4662,8 @@ void ASTWriter::associateDeclWithFile(const Decl *D, DeclID ID) {
     return;
   }
 
-  LocDeclIDsTy::iterator
-    I = std::upper_bound(Decls.begin(), Decls.end(), LocDecl, compLocDecl);
+  LocDeclIDsTy::iterator I =
+      std::upper_bound(Decls.begin(), Decls.end(), LocDecl, llvm::less_first());
 
   Decls.insert(I, LocDecl);
 }
@@ -5122,8 +5118,8 @@ void ASTWriter::AddCXXDefinitionData(const CXXRecordDecl *D, RecordDataImpl &Rec
     AddCXXBaseSpecifiersRef(Data.getVBases(), Data.getVBases() + Data.NumVBases, 
                             Record);
 
-  AddUnresolvedSet(Data.Conversions, Record);
-  AddUnresolvedSet(Data.VisibleConversions, Record);
+  AddUnresolvedSet(Data.Conversions.get(*Context), Record);
+  AddUnresolvedSet(Data.VisibleConversions.get(*Context), Record);
   // Data.Definition is the owning decl, no need to write it. 
   AddDeclRef(D->getFirstFriend(), Record);
   
@@ -5374,4 +5370,13 @@ void ASTWriter::AddedObjCPropertyInClassExtension(const ObjCPropertyDecl *Prop,
     return; // Declaration not imported from PCH.
 
   RewriteDecl(D);
+}
+
+void ASTWriter::DeclarationMarkedUsed(const Decl *D) {
+  assert(!WritingAST && "Already writing the AST!");
+  if (!D->isFromASTFile())
+    return;
+
+  UpdateRecord &Record = DeclUpdates[D];
+  Record.push_back(UPD_DECL_MARKED_USED);
 }

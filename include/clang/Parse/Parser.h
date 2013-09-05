@@ -2015,6 +2015,7 @@ private:
                              IdentifierInfo *ScopeName,
                              SourceLocation ScopeLoc,
                              AttributeList::Syntax Syntax);
+  IdentifierLoc *ParseIdentifierLoc();
 
   void MaybeParseCXX11Attributes(Declarator &D) {
     if (getLangOpts().CPlusPlus11 && isCXX11AttributeSpecifier()) {

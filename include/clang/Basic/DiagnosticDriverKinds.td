@@ -77,8 +77,6 @@ def err_drv_invalid_mfloat_abi : Error<
   "invalid float ABI '%0'">;
 def err_drv_invalid_libcxx_deployment : Error<
   "invalid deployment target for -stdlib=libc++ (requires %0 or later)">;
-def err_drv_invalid_feature : Error<
-  "invalid feature '%0' for CPU '%1'">;
 def err_drv_malformed_sanitizer_blacklist : Error<
   "malformed sanitizer blacklist: '%0'">;
 
@@ -109,7 +107,10 @@ def err_drv_mg_requires_m_or_mm : Error<
   "option '-MG' requires '-M' or '-MM'">;
 def err_drv_unknown_objc_runtime : Error<
   "unknown or ill-formed Objective-C runtime '%0'">;
+def err_drv_emit_llvm_link : Error<
+   "-emit-llvm cannot be used when linking">;
 
+def warn_O4_is_O3 : Warning<"-O4 is equivalent to -O3">, InGroup<Deprecated>;
 def warn_c_kext : Warning<
   "ignoring -fapple-kext which is valid for C++ and Objective-C++ only">;
 def warn_drv_input_file_unused : Warning<

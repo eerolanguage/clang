@@ -65,7 +65,7 @@ StmtResult Sema::ActOnNullStmt(SourceLocation SemiLoc,
 
 StmtResult Sema::ActOnDeclStmt(DeclGroupPtrTy dg, SourceLocation StartLoc,
                                SourceLocation EndLoc) {
-  DeclGroupRef DG = dg.getAsVal<DeclGroupRef>();
+  DeclGroupRef DG = dg.get();
 
   // If we have an invalid decl, just return an error.
   if (DG.isNull()) return StmtError();
@@ -74,7 +74,7 @@ StmtResult Sema::ActOnDeclStmt(DeclGroupPtrTy dg, SourceLocation StartLoc,
 }
 
 void Sema::ActOnForEachDeclStmt(DeclGroupPtrTy dg) {
-  DeclGroupRef DG = dg.getAsVal<DeclGroupRef>();
+  DeclGroupRef DG = dg.get();
 
   // If we don't have a declaration, or we have an invalid declaration,
   // just return.
@@ -2210,7 +2210,7 @@ Sema::BuildCXXForRangeStmt(SourceLocation ForLoc, SourceLocation ColonLoc,
 
   if (RangeVarType->isDependentType()) {
     // The range is implicitly used as a placeholder when it is dependent.
-    RangeVar->setUsed();
+    RangeVar->markUsed(Context);
 
     // Deduce any 'auto's in the loop variable as 'DependentTy'. We'll fill
     // them in properly when we instantiate the loop.
@@ -2453,7 +2453,7 @@ StmtResult Sema::ActOnGotoStmt(SourceLocation GotoLoc,
                                SourceLocation LabelLoc,
                                LabelDecl *TheDecl) {
   getCurFunction()->setHasBranchIntoScope();
-  TheDecl->setUsed();
+  TheDecl->markUsed(Context);
   return Owned(new (Context) GotoStmt(TheDecl, GotoLoc, LabelLoc));
 }
 
