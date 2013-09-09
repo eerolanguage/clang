@@ -1669,8 +1669,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
                                        Type, TInfo, SC_None);
     Actions.CheckShadow(S, TheDecl);
     if (D.hasAttributes())
-      Actions.ProcessDeclAttributeList(S, TheDecl, D.getAttributes(),
-                                       true, true);
+      Actions.ProcessDeclAttributeList(S, TheDecl, D.getAttributes());
     Actions.PushOnScopeChains(TheDecl, S);
     Actions.AddInitializerToDecl(TheDecl,
                                  FuncAsBlock.take(), 
