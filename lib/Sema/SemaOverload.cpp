@@ -509,6 +509,8 @@ void UserDefinedConversionSequence::DebugPrint() const {
 /// error. Useful for debugging overloading issues.
 void ImplicitConversionSequence::DebugPrint() const {
   raw_ostream &OS = llvm::errs();
+  if (isStdInitializerListElement())
+    OS << "Worst std::initializer_list element conversion: ";
   switch (ConversionKind) {
   case StandardConversion:
     OS << "Standard conversion: ";
@@ -3015,7 +3017,7 @@ IsUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
       unsigned NumArgs = 1;
       bool ListInitializing = false;
       if (InitListExpr *InitList = dyn_cast<InitListExpr>(From)) {
-        // But first, see if there is an init-list-contructor that will work.
+        // But first, see if there is an init-list-constructor that will work.
         OverloadingResult Result = IsInitializerListConstructorConversion(
             S, From, ToType, ToRecordDecl, User, CandidateSet, AllowExplicit);
         if (Result != OR_No_Viable_Function)
@@ -3316,9 +3318,7 @@ CompareImplicitConversionSequences(Sema &S,
   // list-initialization sequence L2 if L1 converts to std::initializer_list<X>
   // for some X and L2 does not.
   if (Result == ImplicitConversionSequence::Indistinguishable &&
-      !ICS1.isBad() &&
-      ICS1.isListInitializationSequence() &&
-      ICS2.isListInitializationSequence()) {
+      !ICS1.isBad()) {
     if (ICS1.isStdInitializerListElement() &&
         !ICS2.isStdInitializerListElement())
       return ImplicitConversionSequence::Better;
@@ -4397,7 +4397,6 @@ TryListConversion(Sema &S, InitListExpr *From, QualType ToType,
 
   ImplicitConversionSequence Result;
   Result.setBad(BadConversionSequence::no_conversion, From, ToType);
-  Result.setListInitializationSequence();
 
   // We need a complete type for what follows. Incomplete types can never be
   // initialized from init lists.
@@ -4443,7 +4442,6 @@ TryListConversion(Sema &S, InitListExpr *From, QualType ToType,
       Result.Standard.setAllToTypes(ToType);
     }
 
-    Result.setListInitializationSequence();
     Result.setStdInitializerListElement(toStdInitializerList);
     return Result;
   }
@@ -4456,12 +4454,10 @@ TryListConversion(Sema &S, InitListExpr *From, QualType ToType,
   //   implicit conversion sequence is a user-defined conversion sequence.
   if (ToType->isRecordType() && !ToType->isAggregateType()) {
     // This function can deal with initializer lists.
-    Result = TryUserDefinedConversion(S, From, ToType, SuppressUserConversions,
-                                      /*AllowExplicit=*/false,
-                                      InOverloadResolution, /*CStyle=*/false,
-                                      AllowObjCWritebackConversion);
-    Result.setListInitializationSequence();
-    return Result;
+    return TryUserDefinedConversion(S, From, ToType, SuppressUserConversions,
+                                    /*AllowExplicit=*/false,
+                                    InOverloadResolution, /*CStyle=*/false,
+                                    AllowObjCWritebackConversion);
   }
 
   // C++11 [over.ics.list]p4:
@@ -4524,11 +4520,11 @@ TryListConversion(Sema &S, InitListExpr *From, QualType ToType,
         = S.CompareReferenceRelationship(From->getLocStart(), T1, T2, dummy1,
                                          dummy2, dummy3);
 
-      if (RefRelationship >= Sema::Ref_Related)
-        return TryReferenceInit(S, Init, ToType,
-                                /*FIXME:*/From->getLocStart(),
+      if (RefRelationship >= Sema::Ref_Related) {
+        return TryReferenceInit(S, Init, ToType, /*FIXME*/From->getLocStart(),
                                 SuppressUserConversions,
                                 /*AllowExplicit=*/false);
+      }
     }
 
     // Otherwise, we bind the reference to a temporary created from the
@@ -4578,7 +4574,6 @@ TryListConversion(Sema &S, InitListExpr *From, QualType ToType,
       Result.Standard.setFromType(ToType);
       Result.Standard.setAllToTypes(ToType);
     }
-    Result.setListInitializationSequence();
     return Result;
   }
 

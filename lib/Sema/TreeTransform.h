@@ -598,14 +598,19 @@ public:
   ExprResult TransformDependentScopeDeclRefExpr(DependentScopeDeclRefExpr *E,
                                                 bool IsAddressOfOperand);
 
+// FIXME: We use LLVM_ATTRIBUTE_NOINLINE because inlining causes a ridiculous
+// amount of stack usage with clang.
 #define STMT(Node, Parent)                        \
+  LLVM_ATTRIBUTE_NOINLINE \
   StmtResult Transform##Node(Node *S);
 #define EXPR(Node, Parent)                        \
+  LLVM_ATTRIBUTE_NOINLINE \
   ExprResult Transform##Node(Node *E);
 #define ABSTRACT_STMT(Stmt)
 #include "clang/AST/StmtNodes.inc"
 
 #define OPENMP_CLAUSE(Name, Class)                        \
+  LLVM_ATTRIBUTE_NOINLINE \
   OMPClause *Transform ## Class(Class *S);
 #include "clang/Basic/OpenMPKinds.def"
 
@@ -1305,6 +1310,14 @@ public:
                                      SourceLocation EndLoc) {
     return getSema().ActOnOpenMPPrivateClause(VarList, StartLoc, LParenLoc,
                                               EndLoc);
+  }
+
+  OMPClause *RebuildOMPSharedClause(ArrayRef<Expr *> VarList,
+                                    SourceLocation StartLoc,
+                                    SourceLocation LParenLoc,
+                                    SourceLocation EndLoc) {
+    return getSema().ActOnOpenMPSharedClause(VarList, StartLoc, LParenLoc,
+                                             EndLoc);
   }
 
   /// \brief Rebuild the operand to an Objective-C \@synchronized statement.
@@ -2747,7 +2760,7 @@ ExprResult TreeTransform<Derived>::TransformInitializer(Expr *Init,
                                         Construct->getType());
 
   // Build a ParenListExpr to represent anything else.
-  SourceRange Parens = Construct->getParenRange();
+  SourceRange Parens = Construct->getParenOrBraceRange();
   return getDerived().RebuildParenListExpr(Parens.getBegin(), NewArgs,
                                            Parens.getEnd());
 }
@@ -6249,33 +6262,44 @@ TreeTransform<Derived>::TransformSEHHandler(Stmt *Handler) {
 template<typename Derived>
 StmtResult
 TreeTransform<Derived>::TransformOMPParallelDirective(OMPParallelDirective *D) {
+  DeclarationNameInfo DirName;
+  getSema().StartOpenMPDSABlock(OMPD_parallel, DirName, 0);
+
   // Transform the clauses
-  SmallVector<OMPClause *, 5> TClauses;
+  llvm::SmallVector<OMPClause *, 16> TClauses;
   ArrayRef<OMPClause *> Clauses = D->clauses();
   TClauses.reserve(Clauses.size());
   for (ArrayRef<OMPClause *>::iterator I = Clauses.begin(), E = Clauses.end();
        I != E; ++I) {
     if (*I) {
       OMPClause *Clause = getDerived().TransformOMPClause(*I);
-      if (!Clause)
+      if (!Clause) {
+        getSema().EndOpenMPDSABlock(0);
         return StmtError();
+      }
       TClauses.push_back(Clause);
     }
     else {
       TClauses.push_back(0);
     }
   }
-  if (!D->getAssociatedStmt())
+  if (!D->getAssociatedStmt()) {
+    getSema().EndOpenMPDSABlock(0);
     return StmtError();
+  }
   StmtResult AssociatedStmt =
     getDerived().TransformStmt(D->getAssociatedStmt());
-  if (AssociatedStmt.isInvalid())
+  if (AssociatedStmt.isInvalid()) {
+    getSema().EndOpenMPDSABlock(0);
     return StmtError();
+  }
 
-  return getDerived().RebuildOMPParallelDirective(TClauses,
-                                                  AssociatedStmt.take(),
-                                                  D->getLocStart(),
-                                                  D->getLocEnd());
+  StmtResult Res = getDerived().RebuildOMPParallelDirective(TClauses,
+                                                            AssociatedStmt.take(),
+                                                            D->getLocStart(),
+                                                            D->getLocEnd());
+  getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
 }
 
 template<typename Derived>
@@ -6291,7 +6315,7 @@ TreeTransform<Derived>::TransformOMPDefaultClause(OMPDefaultClause *C) {
 template<typename Derived>
 OMPClause *
 TreeTransform<Derived>::TransformOMPPrivateClause(OMPPrivateClause *C) {
-  SmallVector<Expr *, 5> Vars;
+  llvm::SmallVector<Expr *, 16> Vars;
   Vars.reserve(C->varlist_size());
   for (OMPVarList<OMPPrivateClause>::varlist_iterator I = C->varlist_begin(),
                                                       E = C->varlist_end();
@@ -6305,6 +6329,25 @@ TreeTransform<Derived>::TransformOMPPrivateClause(OMPPrivateClause *C) {
                                               C->getLocStart(),
                                               C->getLParenLoc(),
                                               C->getLocEnd());
+}
+
+template<typename Derived>
+OMPClause *
+TreeTransform<Derived>::TransformOMPSharedClause(OMPSharedClause *C) {
+  llvm::SmallVector<Expr *, 16> Vars;
+  Vars.reserve(C->varlist_size());
+  for (OMPVarList<OMPSharedClause>::varlist_iterator I = C->varlist_begin(),
+                                                     E = C->varlist_end();
+       I != E; ++I) {
+    ExprResult EVar = getDerived().TransformExpr(cast<Expr>(*I));
+    if (EVar.isInvalid())
+      return 0;
+    Vars.push_back(EVar.take());
+  }
+  return getDerived().RebuildOMPSharedClause(Vars,
+                                             C->getLocStart(),
+                                             C->getLParenLoc(),
+                                             C->getLocEnd());
 }
 
 //===----------------------------------------------------------------------===//
@@ -8133,7 +8176,7 @@ TreeTransform<Derived>::TransformCXXConstructExpr(CXXConstructExpr *E) {
                                               E->isListInitialization(),
                                               E->requiresZeroInitialization(),
                                               E->getConstructionKind(),
-                                              E->getParenRange());
+                                              E->getParenOrBraceRange());
 }
 
 /// \brief Transform a C++ temporary-binding expression.

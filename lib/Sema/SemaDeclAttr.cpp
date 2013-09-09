@@ -968,7 +968,30 @@ static void handleLocksExcludedAttr(Sema &S, Decl *D,
 }
 
 static void handleConsumableAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  if (!checkAttributeNumArgs(S, Attr, 0)) return;
+  if (!checkAttributeNumArgs(S, Attr, 1))
+    return;
+
+  ConsumableAttr::ConsumedState DefaultState;
+
+  if (Attr.isArgIdent(0)) {
+    StringRef Param = Attr.getArgAsIdent(0)->Ident->getName();
+
+    if (Param == "unknown")
+      DefaultState = ConsumableAttr::Unknown;
+    else if (Param == "consumed")
+      DefaultState = ConsumableAttr::Consumed;
+    else if (Param == "unconsumed")
+      DefaultState = ConsumableAttr::Unconsumed;
+    else {
+      S.Diag(Attr.getLoc(), diag::warn_unknown_consumed_state) << Param;
+      return;
+    }
+
+  } else {
+    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
+        << Attr.getName() << AANT_ArgumentIdentifier;
+    return;
+  }
 
   if (!isa<CXXRecordDecl>(D)) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type) <<
@@ -977,7 +1000,7 @@ static void handleConsumableAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   }
   
   D->addAttr(::new (S.Context)
-             ConsumableAttr(Attr.getRange(), S.Context,
+             ConsumableAttr(Attr.getRange(), S.Context, DefaultState,
                             Attr.getAttributeSpellingListIndex()));
 }
 
@@ -2415,9 +2438,10 @@ static void handleVisibilityAttr(Sema &S, Decl *D, const AttributeList &Attr,
   if (!checkAttributeNumArgs(S, Attr, 1))
     return;
 
-  Expr *Arg = Attr.getArgAsExpr(0);
-  Arg = Arg->IgnoreParenCasts();
-  StringLiteral *Str = dyn_cast<StringLiteral>(Arg);
+  // Check that the argument is a string literal.
+  StringLiteral *Str = 0;
+  if (Attr.isArgExpr(0))
+    Str = dyn_cast<StringLiteral>(Attr.getArgAsExpr(0)->IgnoreParenCasts());
 
   if (!Str || !Str->isAscii()) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
@@ -2877,24 +2901,6 @@ static void handleVecTypeHint(Sema &S, Decl *D, const AttributeList &Attr) {
 
   D->addAttr(::new (S.Context) VecTypeHintAttr(Attr.getLoc(), S.Context,
                                                ParmType, Attr.getLoc()));
-}
-
-static void handleEndianAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  if (!Attr.isArgIdent(0)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
-     << Attr.getName() << 1 << AANT_ArgumentIdentifier;
-    return;
-  }
-  
-  if (!checkAttributeNumArgs(S, Attr, 1))
-    return;
-
-  if (!dyn_cast<VarDecl>(D))
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
-      << Attr.getName() << ExpectedVariable;
-  StringRef EndianType = Attr.getArgAsIdent(0)->Ident->getName();
-  if (EndianType != "host" && EndianType != "device")
-    S.Diag(Attr.getLoc(), diag::warn_attribute_unknown_endian) << EndianType;
 }
 
 SectionAttr *Sema::mergeSectionAttr(Decl *D, SourceRange Range,
@@ -4893,10 +4899,6 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
 
   case AttributeList::AT_VecTypeHint:
     handleVecTypeHint(S, D, Attr); break;
-
-  case AttributeList::AT_Endian:
-    handleEndianAttr(S, D, Attr);
-    break;
 
   case AttributeList::AT_InitPriority: 
       handleInitPriorityAttr(S, D, Attr); break;

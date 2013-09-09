@@ -158,7 +158,7 @@ llvm::DIScope CGDebugInfo::getContextDescriptor(const Decl *Context) {
 }
 
 /// getFunctionName - Get function name for the given FunctionDecl. If the
-/// name is constructred on demand (e.g. C++ destructor) then the name
+/// name is constructed on demand (e.g. C++ destructor) then the name
 /// is stored on the side.
 StringRef CGDebugInfo::getFunctionName(const FunctionDecl *FD) {
   assert (FD && "Invalid FunctionDecl!");
@@ -184,10 +184,7 @@ StringRef CGDebugInfo::getFunctionName(const FunctionDecl *FD) {
   }
 
   // Copy this name on the side and use its reference.
-  OS.flush();
-  char *StrPtr = DebugInfoNames.Allocate<char>(NS.size());
-  memcpy(StrPtr, NS.data(), NS.size());
-  return StringRef(StrPtr, NS.size());
+  return internString(OS.str());
 }
 
 StringRef CGDebugInfo::getObjCMethodName(const ObjCMethodDecl *OMD) {
@@ -215,18 +212,13 @@ StringRef CGDebugInfo::getObjCMethodName(const ObjCMethodDecl *OMD) {
   }
   OS << ' ' << OMD->getSelector().getAsString() << ']';
 
-  char *StrPtr = DebugInfoNames.Allocate<char>(OS.tell());
-  memcpy(StrPtr, MethodName.begin(), OS.tell());
-  return StringRef(StrPtr, OS.tell());
+  return internString(OS.str());
 }
 
 /// getSelectorName - Return selector name. This is used for debugging
 /// info.
 StringRef CGDebugInfo::getSelectorName(Selector S) {
-  const std::string &SName = S.getAsString();
-  char *StrPtr = DebugInfoNames.Allocate<char>(SName.size());
-  memcpy(StrPtr, SName.data(), SName.size());
-  return StringRef(StrPtr, SName.size());
+  return internString(S.getAsString());
 }
 
 /// getClassName - Get class name including template argument list.
@@ -259,11 +251,7 @@ CGDebugInfo::getClassName(const RecordDecl *RD) {
   }
 
   // Copy this name on the side and use its reference.
-  size_t Length = Name.size() + TemplateArgList.size();
-  char *StrPtr = DebugInfoNames.Allocate<char>(Length);
-  memcpy(StrPtr, Name.data(), Name.size());
-  memcpy(StrPtr + Name.size(), TemplateArgList.data(), TemplateArgList.size());
-  return StringRef(StrPtr, Length);
+  return internString(Name, TemplateArgList);
 }
 
 /// getOrCreateFile - Get the file debug info descriptor for the input location.
@@ -333,9 +321,7 @@ StringRef CGDebugInfo::getCurrentDirname() {
     return CWDName;
   SmallString<256> CWD;
   llvm::sys::fs::current_path(CWD);
-  char *CompDirnamePtr = DebugInfoNames.Allocate<char>(CWD.size());
-  memcpy(CompDirnamePtr, CWD.data(), CWD.size());
-  return CWDName = StringRef(CompDirnamePtr, CWD.size());
+  return CWDName = internString(CWD);
 }
 
 /// CreateCompileUnit - Create new compile unit.
@@ -359,15 +345,11 @@ void CGDebugInfo::CreateCompileUnit() {
   }
 
   // Save filename string.
-  char *FilenamePtr = DebugInfoNames.Allocate<char>(MainFileName.length());
-  memcpy(FilenamePtr, MainFileName.c_str(), MainFileName.length());
-  StringRef Filename(FilenamePtr, MainFileName.length());
+  StringRef Filename = internString(MainFileName);
 
   // Save split dwarf file string.
   std::string SplitDwarfFile = CGM.getCodeGenOpts().SplitDwarfFile;
-  char *SplitDwarfPtr = DebugInfoNames.Allocate<char>(SplitDwarfFile.length());
-  memcpy(SplitDwarfPtr, SplitDwarfFile.c_str(), SplitDwarfFile.length());
-  StringRef SplitDwarfFilename(SplitDwarfPtr, SplitDwarfFile.length());
+  StringRef SplitDwarfFilename = internString(SplitDwarfFile);
 
   unsigned LangTag;
   const LangOptions &LO = CGM.getLangOpts();
@@ -650,32 +632,6 @@ CGDebugInfo::getOrCreateRecordFwdDecl(const RecordType *Ty,
                                     FullName);
 }
 
-// Walk up the context chain and create forward decls for record decls,
-// and normal descriptors for namespaces.
-llvm::DIDescriptor CGDebugInfo::createContextChain(const Decl *Context) {
-  if (!Context)
-    return TheCU;
-
-  // See if we already have the parent.
-  llvm::DenseMap<const Decl *, llvm::WeakVH>::iterator
-    I = RegionMap.find(Context);
-  if (I != RegionMap.end()) {
-    llvm::Value *V = I->second;
-    return llvm::DIDescriptor(dyn_cast_or_null<llvm::MDNode>(V));
-  }
-
-  // Check namespace.
-  if (const NamespaceDecl *NSDecl = dyn_cast<NamespaceDecl>(Context))
-    return llvm::DIDescriptor(getOrCreateNameSpace(NSDecl));
-
-  if (const RecordDecl *RD = dyn_cast<RecordDecl>(Context))
-    if (!RD->isDependentType())
-      return getOrCreateLimitedType(
-          CGM.getContext().getRecordType(RD)->castAs<RecordType>(),
-          getOrCreateMainFile());
-  return TheCU;
-}
-
 llvm::DIType CGDebugInfo::CreatePointerLikeType(unsigned Tag,
                                                 const Type *Ty,
                                                 QualType PointeeTy,
@@ -814,7 +770,7 @@ llvm::DIType CGDebugInfo::createFieldType(StringRef name,
                                           AccessSpecifier AS,
                                           uint64_t offsetInBits,
                                           llvm::DIFile tunit,
-                                          llvm::DIDescriptor scope) {
+                                          llvm::DIScope scope) {
   llvm::DIType debugType = getOrCreateType(type, tunit);
 
   // Get the location for the field.
@@ -1415,13 +1371,8 @@ llvm::DIType CGDebugInfo::getOrCreateVTablePtrType(llvm::DIFile Unit) {
 
 /// getVTableName - Get vtable name for the given Class.
 StringRef CGDebugInfo::getVTableName(const CXXRecordDecl *RD) {
-  // Construct gdb compatible name name.
-  std::string Name = "_vptr$" + RD->getNameAsString();
-
-  // Copy this name on the side and use its reference.
-  char *StrPtr = DebugInfoNames.Allocate<char>(Name.length());
-  memcpy(StrPtr, Name.data(), Name.length());
-  return StringRef(StrPtr, Name.length());
+  // Copy the gdb compatible name on the side and use its reference.
+  return internString("_vptr$", RD->getNameAsString());
 }
 
 
@@ -1507,20 +1458,23 @@ llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty) {
   // `completeRequiredType`.
   // If the type is dynamic, only emit the definition in TUs that require class
   // data. This is handled by `completeClassData`.
-  if ((DebugKind <= CodeGenOptions::LimitedDebugInfo &&
+  llvm::DICompositeType T(getTypeOrNull(QualType(Ty, 0)));
+  // If we've already emitted the type, just use that, even if it's only a
+  // declaration. The completeType, completeRequiredType, and completeClassData
+  // callbacks will handle promoting the declaration to a definition.
+  if (T ||
+      (DebugKind <= CodeGenOptions::LimitedDebugInfo &&
+       // Under -flimit-debug-info, emit only a declaration unless the type is
+       // required to be complete.
        !RD->isCompleteDefinitionRequired() && CGM.getLangOpts().CPlusPlus) ||
-      (CXXDecl && CXXDecl->hasDefinition() && CXXDecl->isDynamicClass())) {
+      // If the class is dynamic, only emit a declaration. A definition will be
+      // emitted whenever the vtable is emitted.
+      (CXXDecl && CXXDecl->hasDefinition() && CXXDecl->isDynamicClass()) || T) {
     llvm::DIDescriptor FDContext =
       getContextDescriptor(cast<Decl>(RD->getDeclContext()));
-    llvm::DIType RetTy = getOrCreateRecordFwdDecl(Ty, FDContext);
-    // FIXME: This is conservatively correct. If we return a non-forward decl
-    // that's not a full definition (such as those created by
-    // createContextChain) then getOrCreateType will record is as a complete
-    // type and we'll never record all its members. But this means we're
-    // emitting full debug info in TUs where GCC successfully emits a partial
-    // definition of the type.
-    if (RetTy.isForwardDecl())
-      return RetTy;
+    if (!T)
+      T = getOrCreateRecordFwdDecl(Ty, FDContext);
+    return T;
   }
 
   return CreateTypeDefinition(Ty);
@@ -2271,10 +2225,7 @@ llvm::DICompositeType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
   StringRef RDName = getClassName(RD);
 
   llvm::DIDescriptor RDContext;
-  if (DebugKind == CodeGenOptions::LimitedDebugInfo)
-    RDContext = createContextChain(cast<Decl>(RD->getDeclContext()));
-  else
-    RDContext = getContextDescriptor(cast<Decl>(RD->getDeclContext()));
+  RDContext = getContextDescriptor(cast<Decl>(RD->getDeclContext()));
 
   // If we ended up creating the type during the context chain construction,
   // just return that.

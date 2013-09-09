@@ -51,6 +51,7 @@ class ObjCMigrateASTConsumer : public ASTConsumer {
   void migrateMethods(ASTContext &Ctx, ObjCContainerDecl *CDecl);
   void migrateMethodInstanceType(ASTContext &Ctx, ObjCContainerDecl *CDecl,
                                  ObjCMethodDecl *OM);
+  bool migrateProperty(ASTContext &Ctx, ObjCInterfaceDecl *D, ObjCMethodDecl *OM);
   void migrateNsReturnsInnerPointer(ASTContext &Ctx, ObjCMethodDecl *OM);
   void migrateFactoryMethod(ASTContext &Ctx, ObjCContainerDecl *CDecl,
                             ObjCMethodDecl *OM,
@@ -316,8 +317,13 @@ static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
   }
   else
     PropertyString += PropertyNameString;
+  SourceLocation StartGetterSelectorLoc = Getter->getSelectorStartLoc();
+  Selector GetterSelector = Getter->getSelector();
+  
+  SourceLocation EndGetterSelectorLoc =
+    StartGetterSelectorLoc.getLocWithOffset(GetterSelector.getNameForSlot(0).size());
   commit.replace(CharSourceRange::getCharRange(Getter->getLocStart(),
-                                               Getter->getDeclaratorEndLoc()),
+                                               EndGetterSelectorLoc),
                  PropertyString);
   if (Setter) {
     SourceLocation EndLoc = Setter->getDeclaratorEndLoc();
@@ -333,64 +339,8 @@ void ObjCMigrateASTConsumer::migrateObjCInterfaceDecl(ASTContext &Ctx,
   for (ObjCContainerDecl::method_iterator M = D->meth_begin(), MEnd = D->meth_end();
        M != MEnd; ++M) {
     ObjCMethodDecl *Method = (*M);
-    if (Method->isPropertyAccessor() || !Method->isInstanceMethod() ||
-        Method->param_size() != 0)
-      continue;
-    // Is this method candidate to be a getter?
-    QualType GRT = Method->getResultType();
-    if (GRT->isVoidType())
-      continue;
-    // FIXME. Don't know what todo with attributes, skip for now.
-    if (Method->hasAttrs())
-      continue;
-    
-    Selector GetterSelector = Method->getSelector();
-    IdentifierInfo *getterName = GetterSelector.getIdentifierInfoForSlot(0);
-    Selector SetterSelector =
-      SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
-                                             PP.getSelectorTable(),
-                                             getterName);
-    ObjCMethodDecl *SetterMethod = D->lookupMethod(SetterSelector, true);
-    bool GetterHasIsPrefix = false;
-    if (!SetterMethod) {
-      // try a different naming convention for getter: isXxxxx
-      StringRef getterNameString = getterName->getName();
-      if (getterNameString.startswith("is") && !GRT->isObjCRetainableType()) {
-        GetterHasIsPrefix = true;
-        const char *CGetterName = getterNameString.data() + 2;
-        if (CGetterName[0] && isUppercase(CGetterName[0])) {
-          getterName = &Ctx.Idents.get(CGetterName);
-          SetterSelector =
-            SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
-                                                   PP.getSelectorTable(),
-                                                   getterName);
-          SetterMethod = D->lookupMethod(SetterSelector, true);
-        }
-      }
-    }
-    if (SetterMethod) {
-      // Is this a valid setter, matching the target getter?
-      QualType SRT = SetterMethod->getResultType();
-      if (!SRT->isVoidType())
-        continue;
-      const ParmVarDecl *argDecl = *SetterMethod->param_begin();
-      QualType ArgType = argDecl->getType();
-      if (!Ctx.hasSameUnqualifiedType(ArgType, GRT) ||
-          SetterMethod->hasAttrs())
-          continue;
-        edit::Commit commit(*Editor);
-        rewriteToObjCProperty(Method, SetterMethod, *NSAPIObj, commit,
-                              GetterHasIsPrefix);
-        Editor->commit(commit);
-    }
-    else if (MigrateReadonlyProperty) {
-      // Try a non-void method with no argument (and no setter or property of same name
-      // as a 'readonly' property.
-      edit::Commit commit(*Editor);
-      rewriteToObjCProperty(Method, 0 /*SetterMethod*/, *NSAPIObj, commit,
-                            false /*GetterHasIsPrefix*/);
-      Editor->commit(commit);
-    }
+    if (!migrateProperty(Ctx, D, Method))
+      migrateNsReturnsInnerPointer(Ctx, Method);
   }
 }
 
@@ -747,6 +697,72 @@ static bool TypeIsInnerPointer(QualType T) {
   return true;
 }
 
+bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
+                             ObjCInterfaceDecl *D,
+                             ObjCMethodDecl *Method) {
+  if (Method->isPropertyAccessor() || !Method->isInstanceMethod() ||
+      Method->param_size() != 0)
+    return false;
+  // Is this method candidate to be a getter?
+  QualType GRT = Method->getResultType();
+  if (GRT->isVoidType())
+    return false;
+  // FIXME. Don't know what todo with attributes, skip for now.
+  if (Method->hasAttrs())
+    return false;
+  
+  Selector GetterSelector = Method->getSelector();
+  IdentifierInfo *getterName = GetterSelector.getIdentifierInfoForSlot(0);
+  Selector SetterSelector =
+  SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
+                                         PP.getSelectorTable(),
+                                         getterName);
+  ObjCMethodDecl *SetterMethod = D->lookupMethod(SetterSelector, true);
+  bool GetterHasIsPrefix = false;
+  if (!SetterMethod) {
+    // try a different naming convention for getter: isXxxxx
+    StringRef getterNameString = getterName->getName();
+    if (getterNameString.startswith("is") && !GRT->isObjCRetainableType()) {
+      GetterHasIsPrefix = true;
+      const char *CGetterName = getterNameString.data() + 2;
+      if (CGetterName[0] && isUppercase(CGetterName[0])) {
+        getterName = &Ctx.Idents.get(CGetterName);
+        SetterSelector =
+        SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
+                                               PP.getSelectorTable(),
+                                               getterName);
+        SetterMethod = D->lookupMethod(SetterSelector, true);
+      }
+    }
+  }
+  if (SetterMethod) {
+    // Is this a valid setter, matching the target getter?
+    QualType SRT = SetterMethod->getResultType();
+    if (!SRT->isVoidType())
+      return false;
+    const ParmVarDecl *argDecl = *SetterMethod->param_begin();
+    QualType ArgType = argDecl->getType();
+    if (!Ctx.hasSameUnqualifiedType(ArgType, GRT) ||
+        SetterMethod->hasAttrs())
+      return false;
+    edit::Commit commit(*Editor);
+    rewriteToObjCProperty(Method, SetterMethod, *NSAPIObj, commit,
+                          GetterHasIsPrefix);
+    Editor->commit(commit);
+    return true;
+  }
+  else if (MigrateReadonlyProperty) {
+    // Try a non-void method with no argument (and no setter or property of same name
+    // as a 'readonly' property.
+    edit::Commit commit(*Editor);
+    rewriteToObjCProperty(Method, 0 /*SetterMethod*/, *NSAPIObj, commit,
+                          false /*GetterHasIsPrefix*/);
+    Editor->commit(commit);
+    return true;
+  }
+  return false;
+}
+
 void ObjCMigrateASTConsumer::migrateNsReturnsInnerPointer(ASTContext &Ctx,
                                                           ObjCMethodDecl *OM) {
   if (OM->hasAttr<ObjCReturnsInnerPointerAttr>())
@@ -770,7 +786,6 @@ void ObjCMigrateASTConsumer::migrateMethods(ASTContext &Ctx,
        M != MEnd; ++M) {
     ObjCMethodDecl *Method = (*M);
     migrateMethodInstanceType(Ctx, CDecl, Method);
-    migrateNsReturnsInnerPointer(Ctx, Method);
   }
 }
 
@@ -996,7 +1011,8 @@ ObjCMigrateASTConsumer::CF_BRIDGING_KIND
   bool FuncIsReturnAnnotated = (FuncDecl->getAttr<CFReturnsRetainedAttr>() ||
                                 FuncDecl->getAttr<CFReturnsNotRetainedAttr>() ||
                                 FuncDecl->getAttr<NSReturnsRetainedAttr>() ||
-                                FuncDecl->getAttr<NSReturnsNotRetainedAttr>());
+                                FuncDecl->getAttr<NSReturnsNotRetainedAttr>() ||
+                                FuncDecl->getAttr<NSReturnsAutoreleasedAttr>());
   
   // Trivial case of when funciton is annotated and has no argument.
   if (FuncIsReturnAnnotated && FuncDecl->getNumParams() == 0)
@@ -1072,12 +1088,24 @@ void ObjCMigrateASTConsumer::AddCFAnnotations(ASTContext &Ctx,
         AnnotationString = " CF_RETURNS_NOT_RETAINED";
     }
     else if (Ret.getObjKind() == RetEffect::ObjC) {
-      if (Ret.isOwned() &&
-          Ctx.Idents.get("NS_RETURNS_RETAINED").hasMacroDefinition())
-        AnnotationString = " NS_RETURNS_RETAINED";
-      else if (Ret.notOwned() &&
-               Ctx.Idents.get("NS_RETURNS_NOT_RETAINED").hasMacroDefinition())
-        AnnotationString = " NS_RETURNS_NOT_RETAINED";
+      ObjCMethodFamily OMF = MethodDecl->getMethodFamily();
+      switch (OMF) {
+        case clang::OMF_alloc:
+        case clang::OMF_new:
+        case clang::OMF_copy:
+        case clang::OMF_init:
+        case clang::OMF_mutableCopy:
+          break;
+          
+        default:
+          if (Ret.isOwned() &&
+              Ctx.Idents.get("NS_RETURNS_RETAINED").hasMacroDefinition())
+            AnnotationString = " NS_RETURNS_RETAINED";
+          else if (Ret.notOwned() &&
+                   Ctx.Idents.get("NS_RETURNS_NOT_RETAINED").hasMacroDefinition())
+            AnnotationString = " NS_RETURNS_NOT_RETAINED";
+          break;
+      }
     }
     
     if (AnnotationString) {
@@ -1111,7 +1139,18 @@ void ObjCMigrateASTConsumer::migrateAddMethodAnnotation(
   bool MethodIsReturnAnnotated = (MethodDecl->getAttr<CFReturnsRetainedAttr>() ||
                                   MethodDecl->getAttr<CFReturnsNotRetainedAttr>() ||
                                   MethodDecl->getAttr<NSReturnsRetainedAttr>() ||
-                                  MethodDecl->getAttr<NSReturnsNotRetainedAttr>());
+                                  MethodDecl->getAttr<NSReturnsNotRetainedAttr>() ||
+                                  MethodDecl->getAttr<NSReturnsAutoreleasedAttr>());
+  
+  if (CE.getReceiver() ==  DecRefMsg &&
+      !MethodDecl->getAttr<NSConsumesSelfAttr>() &&
+      MethodDecl->getMethodFamily() != OMF_init &&
+      MethodDecl->getMethodFamily() != OMF_release &&
+      Ctx.Idents.get("NS_CONSUMES_SELF").hasMacroDefinition()) {
+    edit::Commit commit(*Editor);
+    commit.insertBefore(MethodDecl->getLocEnd(), " NS_CONSUMES_SELF");
+    Editor->commit(commit);
+  }
   
   // Trivial case of when funciton is annotated and has no argument.
   if (MethodIsReturnAnnotated &&

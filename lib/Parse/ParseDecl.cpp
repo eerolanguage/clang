@@ -4348,6 +4348,15 @@ bool Parser::isConstructorDeclarator() {
     return true;
   }
 
+  // A C++11 attribute here signals that we have a constructor, and is an
+  // attribute on the first constructor parameter.
+  if (getLangOpts().CPlusPlus11 &&
+      isCXX11AttributeSpecifier(/*Disambiguate*/ false,
+                                /*OuterMightBeMessageSend*/ true)) {
+    TPA.Revert();
+    return true;
+  }
+
   // If we need to, enter the specified scope.
   DeclaratorScopeObj DeclScopeObj(*this, SS);
   if (SS.isSet() && Actions.ShouldEnterDeclaratorScope(getCurScope(), SS))
@@ -4893,8 +4902,15 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
     else if (getLangOpts().CPlusPlus) {
       if (Tok.is(tok::period) || Tok.is(tok::arrow))
         Diag(Tok, diag::err_invalid_operator_on_type) << Tok.is(tok::arrow);
-      else
-        Diag(Tok, diag::err_expected_unqualified_id) << getLangOpts().CPlusPlus;
+      else {
+        SourceLocation Loc = D.getCXXScopeSpec().getEndLoc();
+        if (Tok.isAtStartOfLine() && Loc.isValid())
+          Diag(PP.getLocForEndOfToken(Loc), diag::err_expected_unqualified_id)
+              << getLangOpts().CPlusPlus;
+        else
+          Diag(Tok, diag::err_expected_unqualified_id)
+              << getLangOpts().CPlusPlus;
+      }
     } else
       Diag(Tok, diag::err_expected_ident_lparen);
     D.SetIdentifier(0, Tok.getLocation());

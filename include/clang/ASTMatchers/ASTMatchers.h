@@ -1269,6 +1269,16 @@ const internal::VariadicDynCastAllOfMatcher<
   Stmt,
   CXXFunctionalCastExpr> functionalCastExpr;
 
+/// \brief Matches functional cast expressions having N != 1 arguments
+///
+/// Example: Matches Foo(bar, bar)
+/// \code
+///   Foo h = Foo(bar, bar);
+/// \endcode
+const internal::VariadicDynCastAllOfMatcher<
+  Stmt,
+  CXXTemporaryObjectExpr> temporaryObjectExpr;
+
 /// \brief Matches \c QualTypes in the clang AST.
 const internal::VariadicAllOfMatcher<QualType> qualType;
 
@@ -2100,7 +2110,7 @@ AST_MATCHER_P(CXXCtorInitializer, withInitializer,
       InnerMatcher.matches(*NodeAsExpr, Finder, Builder));
 }
 
-/// \brief Matches a contructor initializer if it is explicitly written in
+/// \brief Matches a constructor initializer if it is explicitly written in
 /// code (as opposed to implicitly added by the compiler).
 ///
 /// Given

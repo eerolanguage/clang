@@ -82,10 +82,15 @@ typedef SomeTemplate<int&> SomeTemplateIntRef;
 SomeTemplate<char*> some_template_char_ptr;
 SomeTemplate<char&> some_template_char_ref;
 
-// FIXME: There should only be two 'f's here.
+void testImplicitSpecialMembers(SomeTemplate<char[1]> &a,
+                                const SomeTemplate<char[1]> &b,
+                                SomeTemplate<char[2]> &c,
+                                const SomeTemplate<char[2]> &d) {
+  a = b;
+  c = d;
+}
+
 // CHECK-GLOBAL:      DeclarationName 'f'
-// CHECK-GLOBAL-NEXT: |-FunctionTemplate {{.*}} 'f'
-// CHECK-GLOBAL-NEXT: |-FunctionTemplate {{.*}} 'f'
 // CHECK-GLOBAL-NEXT: |-FunctionTemplate {{.*}} 'f'
 // CHECK-GLOBAL-NEXT: `-FunctionTemplate {{.*}} 'f'
 

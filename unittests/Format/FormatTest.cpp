@@ -110,7 +110,7 @@ TEST_F(FormatTest, MessUp) {
 // Basic function tests.
 //===----------------------------------------------------------------------===//
 
-TEST_F(FormatTest, DoesNotChangeCorrectlyFormatedCode) {
+TEST_F(FormatTest, DoesNotChangeCorrectlyFormattedCode) {
   EXPECT_EQ(";", format(";"));
 }
 
@@ -564,6 +564,17 @@ TEST_F(FormatTest, FormatsSwitchStatement) {
                      "  }\n"
                      "#undef OPERATION_CASE\n"
                      "}");
+  verifyFormat("DEBUG({\n"
+               "  switch (x) {\n"
+               "  case A:\n"
+               "    f();\n"
+               "    break;\n"
+               "  // On B:\n"
+               "  case B:\n"
+               "    g();\n"
+               "    break;\n"
+               "  }\n"
+               "});");
 }
 
 TEST_F(FormatTest, FormatsLabels) {
@@ -778,6 +789,8 @@ TEST_F(FormatTest, RemovesTrailingWhitespaceOfComments) {
   EXPECT_EQ("int aaaaaaa, bbbbbbb; // comment",
             format("int aaaaaaa, bbbbbbb; // comment                   ",
                    getLLVMStyleWithColumns(33)));
+  EXPECT_EQ("// comment\\\n", format("// comment\\\n  \t \v   \f   "));
+  EXPECT_EQ("// comment    \\\n", format("// comment    \\\n  \t \v   \f   "));
 }
 
 TEST_F(FormatTest, UnderstandsBlockComments) {
@@ -1496,7 +1509,9 @@ TEST_F(FormatTest, FormatsClasses) {
                "                     public G {};");
 
   verifyFormat("class\n"
-               "    ReallyReallyLongClassName {\n};",
+               "    ReallyReallyLongClassName {\n"
+               "  int i;\n"
+               "};",
                getLLVMStyleWithColumns(32));
 }
 
@@ -1569,6 +1584,17 @@ TEST_F(FormatTest, FormatsEnumClass) {
   verifyFormat("enum class __attribute__((...)) E {\n} d;");
   verifyFormat("enum class __declspec__((...)) E {\n} d;");
   verifyFormat("enum class X f() {\n  a();\n  return 42;\n}");
+}
+
+TEST_F(FormatTest, FormatsEnumTypes) {
+  verifyFormat("enum X : int {\n"
+               "  A,\n"
+               "  B\n"
+               "};");
+  verifyFormat("enum X : std::uint32_t {\n"
+               "  A,\n"
+               "  B\n"
+               "};");
 }
 
 TEST_F(FormatTest, FormatsBitfields) {
@@ -2184,23 +2210,37 @@ TEST_F(FormatTest, LayoutStatementsAroundPreprocessorDirectives) {
 }
 
 TEST_F(FormatTest, LayoutBlockInsideParens) {
+  EXPECT_EQ("functionCall({ int i; });", format(" functionCall ( {int i;} );"));
   EXPECT_EQ("functionCall({\n"
             "  int i;\n"
+            "  int j;\n"
             "});",
-            format(" functionCall ( {int i;} );"));
-
-  // FIXME: This is bad, find a better and more generic solution.
+            format(" functionCall ( {int i;int j;} );"));
   EXPECT_EQ("functionCall({\n"
-            "  int i;\n"
-            "},\n"
+            "               int i;\n"
+            "               int j;\n"
+            "             },\n"
             "             aaaa, bbbb, cccc);",
-            format(" functionCall ( {int i;},  aaaa,   bbbb, cccc);"));
+            format(" functionCall ( {int i;int j;},  aaaa,   bbbb, cccc);"));
+  EXPECT_EQ("functionCall(aaaa, bbbb, { int i; });",
+            format(" functionCall (aaaa,   bbbb, {int i;});"));
+  EXPECT_EQ("functionCall(aaaa, bbbb, {\n"
+            "  int i;\n"
+            "  int j;\n"
+            "});",
+            format(" functionCall (aaaa,   bbbb, {int i;int j;});"));
+  EXPECT_EQ("functionCall(aaaa, bbbb, { int i; });",
+            format(" functionCall (aaaa,   bbbb, {int i;});"));
   verifyFormat(
       "Aaa({\n"
-      "  int i;\n"
-      "},\n"
+      "      int i; // break\n"
+      "    },\n"
       "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,\n"
       "                                     ccccccccccccccccc));");
+  verifyFormat("DEBUG({\n"
+               "  if (a)\n"
+               "    f();\n"
+               "});");
 }
 
 TEST_F(FormatTest, LayoutBlockInsideStatement) {
@@ -2218,6 +2258,37 @@ TEST_F(FormatTest, LayoutNestedBlocks) {
                "  for (int i = 0; i < 10; ++i)\n"
                "    return;\n"
                "}");
+  verifyFormat("call(parameter, {\n"
+               "  something();\n"
+               "  // Comment using all columns.\n"
+               "  somethingelse();\n"
+               "});",
+               getLLVMStyleWithColumns(40));
+  EXPECT_EQ("call(parameter, {\n"
+            "  something();\n"
+            "  // Comment too\n"
+            "  // looooooooooong.\n"
+            "  somethingElse();\n"
+            "});",
+            format("call(parameter, {\n"
+                   "  something();\n"
+                   "  // Comment too looooooooooong.\n"
+                   "  somethingElse();\n"
+                   "});",
+                   getLLVMStyleWithColumns(29)));
+  EXPECT_EQ("DEBUG({ int i; });", format("DEBUG({ int   i; });"));
+  EXPECT_EQ("DEBUG({\n"
+            "  int i;\n"
+            "\n"
+            "  // comment\n"
+            "  int j;\n"
+            "});",
+            format("DEBUG({\n"
+                   "  int  i;\n"
+                   "\n"
+                   "  // comment\n"
+                   "  int  j;\n"
+                   "});"));
 }
 
 TEST_F(FormatTest, PutEmptyBlocksIntoOneLine) {
@@ -2287,6 +2358,10 @@ TEST_F(FormatTest, LineBreakingInBinaryExpressions) {
       "}");
   verifyFormat(
       "if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+      "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) == 5) {\n"
+      "}");
+  verifyFormat(
+      "if (aaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaa(\n"
       "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) == 5) {\n"
       "}");
   // Even explicit parentheses stress the precedence enough to make the
@@ -2433,6 +2508,10 @@ TEST_F(FormatTest, ConstructorInitializers) {
   verifyFormat("Constructor(int Parameter = 0)\n"
                "    : aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaa),\n"
                "      aaaaaaaaaaaa(aaaaaaaaaaaaaaaaa) {}");
+  verifyFormat("Constructor()\n"
+               "    : aaaaaaaaaaaaaaaaaaaa(a), bbbbbbbbbbbbbbbbbbbbbbbb(b) {\n"
+               "}",
+               getLLVMStyleWithColumns(60));
 
   // Here a line could be saved by splitting the second initializer onto two
   // lines, but that is not desireable.
@@ -2914,6 +2993,10 @@ TEST_F(FormatTest, FormatsBuilderPattern) {
   verifyFormat("aaaaaaaaaaaaa->aaaaaaaaaaaaaaaaaaaaaaaa()\n"
                "    ->aaaaaaaaaaaaaae(0)\n"
                "    ->aaaaaaaaaaaaaaa();");
+
+  // Prefer not to break after empty parentheses.
+  verifyFormat("FirstToken->WhitespaceRange.getBegin().getLocWithOffset(\n"
+               "    First->LastNewlineOffset);");
 }
 
 TEST_F(FormatTest, BreaksAccordingToOperatorPrecedence) {
@@ -3681,7 +3764,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyGoogleFormat("return sizeof(int**);");
   verifyIndependentOfContext("Type **A = static_cast<Type **>(P);");
   verifyGoogleFormat("Type** A = static_cast<Type**>(P);");
-  verifyFormat("auto a = [](int **&, int ***) {\n};");
+  verifyFormat("auto a = [](int **&, int ***) {};");
 
   verifyIndependentOfContext("InvalidRegions[*R] = 0;");
 
@@ -3865,7 +3948,7 @@ TEST_F(FormatTest, FormatsCasts) {
   verifyFormat("f(foo).b;");
   verifyFormat("f(foo)(b);");
   verifyFormat("f(foo)[b];");
-  verifyFormat("[](foo) {\n  return 4;\n}(bar);");
+  verifyFormat("[](foo) { return 4; }(bar);");
   verifyFormat("(*funptr)(foo)[4];");
   verifyFormat("funptrs[4](foo)[4];");
   verifyFormat("void f(int *);");
@@ -5622,9 +5705,41 @@ TEST_F(FormatTest, ConfigurableUseOfTab) {
                    "}",
                    21, 0, Tab));
 
+  Tab.TabWidth = 4;
+  Tab.IndentWidth = 8;
+  verifyFormat("class TabWidth4Indent8 {\n"
+               "\t\tvoid f() {\n"
+               "\t\t\t\tsomeFunction(parameter1,\n"
+               "\t\t\t\t\t\t\t parameter2);\n"
+               "\t\t}\n"
+               "};",
+               Tab);
+
+  Tab.TabWidth = 4;
+  Tab.IndentWidth = 4;
+  verifyFormat("class TabWidth4Indent4 {\n"
+               "\tvoid f() {\n"
+               "\t\tsomeFunction(parameter1,\n"
+               "\t\t\t\t\t parameter2);\n"
+               "\t}\n"
+               "};",
+               Tab);
+
+  Tab.TabWidth = 8;
+  Tab.IndentWidth = 4;
+  verifyFormat("class TabWidth8Indent4 {\n"
+               "    void f() {\n"
+               "\tsomeFunction(parameter1,\n"
+               "\t\t     parameter2);\n"
+               "    }\n"
+               "};",
+               Tab);
+
   // FIXME: To correctly count mixed whitespace we need to
   // also correctly count mixed whitespace in front of the comment.
-  //
+
+  // Tab.TabWidth = 8;
+  // Tab.IndentWidth = 8;
   // EXPECT_EQ("/*\n"
   //           "\t      a\t\tcomment\n"
   //           "\t      in multiple lines\n"
@@ -6058,15 +6173,15 @@ TEST_F(FormatTest, CountsUTF8CharactersProperly) {
   verifyFormat("\"Однажды в студёную зимнюю пору...\"",
                getLLVMStyleWithColumns(35));
   verifyFormat("\"一 二 三 四 五 六 七 八 九 十\"",
-               getLLVMStyleWithColumns(21));
+               getLLVMStyleWithColumns(31));
   verifyFormat("// Однажды в студёную зимнюю пору...",
                getLLVMStyleWithColumns(36));
   verifyFormat("// 一 二 三 四 五 六 七 八 九 十",
-               getLLVMStyleWithColumns(22));
+               getLLVMStyleWithColumns(32));
   verifyFormat("/* Однажды в студёную зимнюю пору... */",
                getLLVMStyleWithColumns(39));
   verifyFormat("/* 一 二 三 四 五 六 七 八 九 十 */",
-               getLLVMStyleWithColumns(25));
+               getLLVMStyleWithColumns(35));
 }
 
 TEST_F(FormatTest, SplitsUTF8Strings) {
@@ -6077,11 +6192,29 @@ TEST_F(FormatTest, SplitsUTF8Strings) {
       "\"пору,\"",
       format("\"Однажды, в студёную зимнюю пору,\"",
              getLLVMStyleWithColumns(13)));
-  EXPECT_EQ("\"一 二 三 四 \"\n"
-            "\"五 六 七 八 \"\n"
-            "\"九 十\"",
-            format("\"一 二 三 四 五 六 七 八 九 十\"",
-                   getLLVMStyleWithColumns(10)));
+  EXPECT_EQ("\"一 二 三 \"\n"
+            "\"四 五六 \"\n"
+            "\"七 八 九 \"\n"
+            "\"十\"",
+            format("\"一 二 三 四 五六 七 八 九 十\"",
+                   getLLVMStyleWithColumns(11)));
+  EXPECT_EQ("\"一\t二 \"\n"
+            "\"\t三 \"\n"
+            "\"四 五\t六 \"\n"
+            "\"\t七 \"\n"
+            "\"八九十\tqq\"",
+            format("\"一\t二 \t三 四 五\t六 \t七 八九十\tqq\"",
+                   getLLVMStyleWithColumns(11)));
+}
+
+
+TEST_F(FormatTest, HandlesDoubleWidthCharsInMultiLineStrings) {
+  EXPECT_EQ("const char *sssss =\n"
+            "    \"一二三四五六七八\\\n"
+            " 九 十\";",
+            format("const char *sssss = \"一二三四五六七八\\\n"
+                   " 九 十\";",
+                   getLLVMStyleWithColumns(30)));
 }
 
 TEST_F(FormatTest, SplitsUTF8LineComments) {
@@ -6093,9 +6226,9 @@ TEST_F(FormatTest, SplitsUTF8LineComments) {
                    getLLVMStyleWithColumns(13)));
   EXPECT_EQ("// 一二三\n"
             "// 四五六七\n"
-            "// 八\n"
-            "// 九 十",
-            format("// 一二三 四五六七 八  九 十", getLLVMStyleWithColumns(6)));
+            "// 八  九\n"
+            "// 十",
+            format("// 一二三 四五六七 八  九 十", getLLVMStyleWithColumns(9)));
 }
 
 TEST_F(FormatTest, SplitsUTF8BlockComments) {
@@ -6110,17 +6243,19 @@ TEST_F(FormatTest, SplitsUTF8BlockComments) {
             format("/* Гляжу, поднимается медленно в гору\n"
                    " * Лошадка, везущая хворосту воз. */",
                    getLLVMStyleWithColumns(13)));
-  EXPECT_EQ("/* 一二三\n"
-            " * 四五六七\n"
-            " * 八\n"
-            " * 九 十\n"
-            " */",
-            format("/* 一二三 四五六七 八  九 十 */", getLLVMStyleWithColumns(6)));
+  EXPECT_EQ(
+      "/* 一二三\n"
+      " * 四五六七\n"
+      " * 八  九\n"
+      " * 十  */",
+      format("/* 一二三 四五六七 八  九 十  */", getLLVMStyleWithColumns(9)));
   EXPECT_EQ("/* 𝓣𝓮𝓼𝓽 𝔣𝔬𝔲𝔯\n"
             " * 𝕓𝕪𝕥𝕖\n"
             " * 𝖀𝕿𝕱-𝟠 */",
             format("/* 𝓣𝓮𝓼𝓽 𝔣𝔬𝔲𝔯 𝕓𝕪𝕥𝕖 𝖀𝕿𝕱-𝟠 */", getLLVMStyleWithColumns(12)));
 }
+
+#endif // _MSC_VER
 
 TEST_F(FormatTest, ConstructorInitializerIndentWidth) {
   FormatStyle Style = getLLVMStyle();
@@ -6168,8 +6303,6 @@ TEST_F(FormatTest, ConstructorInitializerIndentWidth) {
                ", c(c) {}",
                Style);
 }
-
-#endif
 
 TEST_F(FormatTest, FormatsWithWebKitStyle) {
   FormatStyle Style = getWebKitStyle();
@@ -6260,68 +6393,43 @@ TEST_F(FormatTest, FormatsProtocolBufferDefinitions) {
 }
 
 TEST_F(FormatTest, FormatsLambdas) {
-  verifyFormat(
-      "int c = [b]() mutable {\n"
-      "  return [&b] {\n"
-      "    return b++;\n"
-      "  }();\n"
-      "}();\n");
-  verifyFormat(
-      "int c = [&] {\n"
-      "  [=] {\n"
-      "    return b++;\n"
-      "  }();\n"
-      "}();\n");
-  verifyFormat(
-      "int c = [&, &a, a] {\n"
-      "  [=, c, &d] {\n"
-      "    return b++;\n"
-      "  }();\n"
-      "}();\n");
-  verifyFormat(
-      "int c = [&a, &a, a] {\n"
-      "  [=, a, b, &c] {\n"
-      "    return b++;\n"
-      "  }();\n"
-      "}();\n");
-  verifyFormat(
-      "auto c = {[&a, &a, a] {\n"
-      "  [=, a, b, &c] {\n"
-      "    return b++;\n"
-      "  }();\n"
-      "} }\n");
-  verifyFormat(
-      "auto c = {[&a, &a, a] {\n"
-      "  [=, a, b, &c] {\n"
-      "  }();\n"
-      "} }\n");
-  verifyFormat(
-      "void f() {\n"
-      "  other(x.begin(), x.end(), [&](int, int) {\n"
-      "    return 1;\n"
-      "  });\n"
-      "}\n");
-  // FIXME: The formatting is incorrect; this test currently checks that
-  // parsing of the unwrapped lines doesn't regress.
-  verifyFormat(
-      "void f() {\n"
-      "  other(x.begin(), //\n"
-      "        x.end(),   //\n"
-      "                     [&](int, int) {\n"
-      "    return 1;\n"
-      "  });\n"
-      "}\n");
+  verifyFormat("int c = [b]() mutable {\n"
+               "  return [&b] { return b++; }();\n"
+               "}();\n");
+  verifyFormat("int c = [&] {\n"
+               "  [=] { return b++; }();\n"
+               "}();\n");
+  verifyFormat("int c = [&, &a, a] {\n"
+               "  [=, c, &d] { return b++; }();\n"
+               "}();\n");
+  verifyFormat("int c = [&a, &a, a] {\n"
+               "  [=, a, b, &c] { return b++; }();\n"
+               "}();\n");
+  verifyFormat("auto c = { [&a, &a, a] {\n"
+               "  [=, a, b, &c] { return b++; }();\n"
+               "} }\n");
+  verifyFormat("auto c = { [&a, &a, a] { [=, a, b, &c] {}(); } }\n");
+  verifyFormat("void f() {\n"
+               "  other(x.begin(), x.end(), [&](int, int) { return 1; });\n"
+               "}\n");
+  verifyFormat("void f() {\n"
+               "  other(x.begin(), //\n"
+               "        x.end(),   //\n"
+               "        [&](int, int) { return 1; });\n"
+               "}\n");
+
+  // Not lambdas.
+  verifyFormat("constexpr char hello[]{ \"hello\" };");
+  verifyFormat("double &operator[](int i) { return 0; }\n"
+               "int i;");
 }
 
 TEST_F(FormatTest, FormatsBlocks) {
   // FIXME: Make whitespace formatting consistent. Ask a ObjC dev how
   // it would ideally look.
-  verifyFormat("[operation setCompletionBlock:^{\n"
-               "  [self onOperationDone];\n"
-               "}];\n");
-  verifyFormat("int i = {[operation setCompletionBlock : ^{\n"
-               "  [self onOperationDone];\n"
-               "}] };\n");
+  verifyFormat("[operation setCompletionBlock:^{ [self onOperationDone]; }];");
+  verifyFormat("int i = {[operation setCompletionBlock : ^{ [self "
+               "onOperationDone]; }] };");
 }
 
 } // end namespace tooling

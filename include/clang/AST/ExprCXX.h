@@ -735,8 +735,10 @@ public:
     return T->getStmtClass() == CXXUuidofExprClass;
   }
 
-  /// Grabs __declspec(uuid()) off a type, or returns 0 if there is none.
-  static UuidAttr *GetUuidAttrOfType(QualType QT);
+  /// Grabs __declspec(uuid()) off a type, or returns 0 if we cannot resolve to
+  /// a single GUID.
+  static UuidAttr *GetUuidAttrOfType(QualType QT,
+                                     bool *HasMultipleGUIDsPtr = 0);
 
   // Iterators
   child_range children() {
@@ -1070,7 +1072,7 @@ private:
   CXXConstructorDecl *Constructor;
 
   SourceLocation Loc;
-  SourceRange ParenRange;
+  SourceRange ParenOrBraceRange;
   unsigned NumArgs : 16;
   bool Elidable : 1;
   bool HadMultipleCandidates : 1;
@@ -1088,7 +1090,7 @@ protected:
                    bool ListInitialization,
                    bool ZeroInitialization,
                    ConstructionKind ConstructKind,
-                   SourceRange ParenRange);
+                   SourceRange ParenOrBraceRange);
 
   /// \brief Construct an empty C++ construction expression.
   CXXConstructExpr(StmtClass SC, EmptyShell Empty)
@@ -1114,7 +1116,7 @@ public:
                                   bool ListInitialization,
                                   bool ZeroInitialization,
                                   ConstructionKind ConstructKind,
-                                  SourceRange ParenRange);
+                                  SourceRange ParenOrBraceRange);
 
   CXXConstructorDecl* getConstructor() const { return Constructor; }
   void setConstructor(CXXConstructorDecl *C) { Constructor = C; }
@@ -1180,8 +1182,8 @@ public:
 
   SourceLocation getLocStart() const LLVM_READONLY;
   SourceLocation getLocEnd() const LLVM_READONLY;
-  SourceRange getParenRange() const { return ParenRange; }
-  void setParenRange(SourceRange Range) { ParenRange = Range; }
+  SourceRange getParenOrBraceRange() const { return ParenOrBraceRange; }
+  void setParenOrBraceRange(SourceRange Range) { ParenOrBraceRange = Range; }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == CXXConstructExprClass ||
@@ -1264,7 +1266,7 @@ public:
   CXXTemporaryObjectExpr(const ASTContext &C, CXXConstructorDecl *Cons,
                          TypeSourceInfo *Type,
                          ArrayRef<Expr *> Args,
-                         SourceRange parenRange,
+                         SourceRange ParenOrBraceRange,
                          bool HadMultipleCandidates,
                          bool ListInitialization,
                          bool ZeroInitialization);
