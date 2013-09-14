@@ -1391,6 +1391,8 @@ static void AddFunctionSpecifiers(Sema::ParserCompletionContext CCC,
 }
 
 static void AddObjCExpressionResults(ResultBuilder &Results, bool NeedAt);
+static void AddEeroExpressionResults(ResultBuilder &Results,
+                                     CodeCompletionBuilder &Builder);
 static void AddObjCStatementResults(ResultBuilder &Results, bool NeedAt);
 static void AddObjCVisibilityResults(const LangOptions &LangOpts,
                                      ResultBuilder &Results,
@@ -2767,8 +2769,9 @@ CodeCompletionResult::CreateCodeCompletionString(ASTContext &Ctx,
 
       std::string Arg;
       
-      if (PP.getLangOpts().Eero)
+      if (PP.getLangOpts().Eero) {
         Result.AddTextChunk(" ");
+      }
 
       if ((*P)->getType()->isBlockPointerType() && !DeclaringEntity)
         Arg = FormatFunctionParameter(Ctx, Policy, *P, true);
@@ -2801,8 +2804,9 @@ CodeCompletionResult::CreateCodeCompletionString(ASTContext &Ctx,
       else
         Result.AddPlaceholderChunk(Result.getAllocator().CopyString(Arg));
 
-      if (PP.getLangOpts().Eero && (P + 1) != PEnd)
+      if (PP.getLangOpts().Eero && (P + 1) != PEnd) {
         Result.AddTextChunk(",");
+      }
     }
 
     if (Method->isVariadic()) {
@@ -4432,6 +4436,9 @@ void Sema::CodeCompleteLambdaIntroducer(Scope *S, LambdaIntroducer &Intro,
 static void AddObjCImplementationResults(const LangOptions &LangOpts,
                                          ResultBuilder &Results,
                                          bool NeedAt) {
+  if (LangOpts.Eero) {
+    NeedAt = false;
+  }
   typedef CodeCompletionResult Result;
   // Since we have an implementation, we can end it.
   Results.AddResult(Result(OBJC_AT_KEYWORD_NAME(NeedAt,"end")));
@@ -4456,6 +4463,9 @@ static void AddObjCImplementationResults(const LangOptions &LangOpts,
 static void AddObjCInterfaceResults(const LangOptions &LangOpts,
                                     ResultBuilder &Results,
                                     bool NeedAt) {
+  if (LangOpts.Eero) {
+    NeedAt = false;
+  } 
   typedef CodeCompletionResult Result;
   
   // Since we have an interface or protocol, we can end it.
@@ -4463,7 +4473,9 @@ static void AddObjCInterfaceResults(const LangOptions &LangOpts,
   
   if (LangOpts.ObjC2) {
     // @property
-    Results.AddResult(Result(OBJC_AT_KEYWORD_NAME(NeedAt,"property")));
+    if (!LangOpts.Eero) {
+      Results.AddResult(Result(OBJC_AT_KEYWORD_NAME(NeedAt,"property")));
+    }
   
     // @required
     Results.AddResult(Result(OBJC_AT_KEYWORD_NAME(NeedAt,"required")));
@@ -4474,6 +4486,9 @@ static void AddObjCInterfaceResults(const LangOptions &LangOpts,
 }
 
 static void AddObjCTopLevelResults(ResultBuilder &Results, bool NeedAt) {
+  if (Results.getSema().getLangOpts().Eero) {
+    NeedAt = false;
+  }
   typedef CodeCompletionResult Result;
   CodeCompletionBuilder Builder(Results.getAllocator(),
                                 Results.getCodeCompletionTUInfo());
@@ -4545,6 +4560,11 @@ static void AddObjCExpressionResults(ResultBuilder &Results, bool NeedAt) {
   CodeCompletionBuilder Builder(Results.getAllocator(),
                                 Results.getCodeCompletionTUInfo());
 
+  if (Results.getSema().getLangOpts().Eero) {
+    AddEeroExpressionResults(Results, Builder);
+    return;
+  }
+
   // @encode ( type-name )
   const char *EncodeType = "char[]";
   if (Results.getSema().getLangOpts().CPlusPlus ||
@@ -4605,6 +4625,67 @@ static void AddObjCExpressionResults(ResultBuilder &Results, bool NeedAt) {
   Results.AddResult(Result(Builder.TakeString()));
 }
 
+static void AddEeroExpressionResults(ResultBuilder &Results,
+                                     CodeCompletionBuilder &Builder) {
+  typedef CodeCompletionResult Result;
+
+  // encode ( type-name )
+  const char *EncodeType = "char[]";
+  if (Results.getSema().getLangOpts().CPlusPlus ||
+      Results.getSema().getLangOpts().ConstStrings)
+    EncodeType = "const char[]";
+  Builder.AddResultTypeChunk(EncodeType);
+  Builder.AddTypedTextChunk("encode");
+  Builder.AddChunk(CodeCompletionString::CK_LeftParen);
+  Builder.AddPlaceholderChunk("type-name");
+  Builder.AddChunk(CodeCompletionString::CK_RightParen);
+  Results.AddResult(Result(Builder.TakeString()));
+  
+  // <protocol-name>
+  Builder.AddResultTypeChunk("Protocol");
+  Builder.AddTypedTextChunk("<");
+  Builder.AddPlaceholderChunk("protocol-name");
+  Builder.AddChunk(CodeCompletionString::CK_RightAngle);
+  Results.AddResult(Result(Builder.TakeString()));
+
+  // |selector|
+  Builder.AddResultTypeChunk("SEL");
+  Builder.AddTypedTextChunk("|");
+  Builder.AddPlaceholderChunk("selector");
+  Builder.AddTextChunk("|");
+  Results.AddResult(Result(Builder.TakeString()));
+
+  // 'string'
+  Builder.AddResultTypeChunk("NSString");
+  Builder.AddTypedTextChunk("'");
+  Builder.AddPlaceholderChunk("string");
+  Builder.AddTextChunk("'");
+  Results.AddResult(Result(Builder.TakeString()));
+
+  // [objects, ...]
+  Builder.AddResultTypeChunk("NSArray");
+  Builder.AddTypedTextChunk("[");
+  Builder.AddPlaceholderChunk("objects, ...");
+  Builder.AddChunk(CodeCompletionString::CK_RightBracket);
+  Results.AddResult(Result(Builder.TakeString()));
+
+  // {key : object, ...}
+  Builder.AddResultTypeChunk("NSDictionary");
+  Builder.AddTypedTextChunk("{");
+  Builder.AddPlaceholderChunk("key");
+  Builder.AddChunk(CodeCompletionString::CK_Colon);
+  Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+  Builder.AddPlaceholderChunk("object, ...");
+  Builder.AddChunk(CodeCompletionString::CK_RightBrace);
+  Results.AddResult(Result(Builder.TakeString()));
+
+  // @(expression)
+  Builder.AddResultTypeChunk("id");
+  Builder.AddTypedTextChunk("@(");
+  Builder.AddPlaceholderChunk("expression");
+  Builder.AddChunk(CodeCompletionString::CK_RightParen);
+  Results.AddResult(Result(Builder.TakeString()));
+}
 static void AddObjCStatementResults(ResultBuilder &Results, bool NeedAt) {
   typedef CodeCompletionResult Result;
   CodeCompletionBuilder Builder(Results.getAllocator(),
