@@ -809,8 +809,24 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
          (&II == Ident_super && getCurScope()->isInObjcMethodScope()))) {
       ConsumeToken();
       
-      if (isEero && (Tok.is(tok::kw_new) || Tok.is(tok::kw_class))) {
-        Tok.setKind(tok::identifier);
+      if (isEero) {
+        if (Tok.is(tok::kw_new) || Tok.is(tok::kw_class)) {
+          Tok.setKind(tok::identifier);
+        } else if (Tok.is(tok::code_completion)) {
+          if (&II == Ident_super) { // super with dot notation            
+            Actions.CodeCompleteObjCSuperMessage(getCurScope(), ILoc,
+                                                 None, false);
+            cutOffParsing();
+            return ExprError();
+          } else { // Class with dot notation
+            ParsedType ReceiverType = 
+                Actions.getTypeName(II, ILoc, getCurScope());
+            Actions.CodeCompleteObjCClassMessage(getCurScope(), ReceiverType,
+                                                 None, false);
+          }
+          cutOffParsing();
+          return ExprError();
+        }
       }
 
       // Allow either an identifier or the keyword 'class' (in C++).
@@ -1579,11 +1595,23 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           ObjectType = ParsedType();
       }
 
+      const QualType &LHSType = LHS.get()->getType();
+      const bool isEeroObjectExpr = 
+          isEero && (OpKind == tok::period) && !LHS.isInvalid() &&
+          (LHSType->isObjCObjectPointerType() ||
+           LHSType->isSpecificPlaceholderType(BuiltinType::PseudoObject) ||
+           LHSType->isBlockPointerType());
+
       if (Tok.is(tok::code_completion)) {
-        // Code completion for a member access expression.
-        Actions.CodeCompleteMemberReferenceExpr(getCurScope(), LHS.get(),
-                                                OpLoc, OpKind == tok::arrow);
-        
+        if (isEeroObjectExpr) 
+          // Code completion for object dot notation.
+          Actions.CodeCompleteObjCInstanceMessage(getCurScope(), 
+                                                  LHS.get(),
+                                                  None, false);
+        else
+          // Code completion for a member access expression.
+          Actions.CodeCompleteMemberReferenceExpr(getCurScope(), LHS.get(),
+                                                  OpLoc, OpKind == tok::arrow);        
         cutOffParsing();
         return ExprError();
       }
@@ -1618,10 +1646,11 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         IdentifierInfo *Id = Tok.getIdentifierInfo();
         SourceLocation Loc = ConsumeToken();
         Name.setIdentifier(Id, Loc);
-      } else if (isEero && (OpKind == tok::period) && !LHS.isInvalid() &&
-                 ((Tok.is(tok::identifier) && NextToken().is(tok::colon)) ||
-                  Tok.is(tok::colon))) {
-        LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(), SourceLocation(),
+      } else if (isEeroObjectExpr && ((Tok.is(tok::identifier) && 
+                                       NextToken().is(tok::colon)) ||
+                                      Tok.is(tok::colon))) {
+        LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(), 
+                                             SourceLocation(),
                                              ParsedType(), LHS.get());
         break;
       } else if (ParseUnqualifiedId(SS, 
@@ -1633,40 +1662,34 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         LHS = ExprError();
       
       // Universal dot notation, including for 'id' and block objects
-      if (isEero && (OpKind == tok::period) && !LHS.isInvalid()) {
-        const QualType LHSType = LHS.get()->getType();
-        if (LHSType->isObjCObjectPointerType() ||
-            LHSType->isSpecificPlaceholderType(BuiltinType::PseudoObject) ||
-            LHSType->isBlockPointerType()) {
-          const SourceLocation LHSLoc = LHS.get()->getLocStart();
-          Selector Sel;
-          SourceLocation MsgEndLoc;
-          MultiExprArg MsgExprArg;
-          // Distinguish between getter-like and setter-like methods
-          if (Tok.isNot(tok::equal)) { // it's a getter-like method with no args
-            Sel = PP.getSelectorTable().getNullarySelector(Name.Identifier);
-            MsgEndLoc = Name.getLocEnd();
-          } else { // it's effectively a setter
-            Sel = SelectorTable::constructSetterSelector(
-                PP.getIdentifierTable(),
-                PP.getSelectorTable(), Name.Identifier);
-            ConsumeToken(); // the '='
-            ExprResult SetterArgExpr = ParseAssignmentExpression();
-            if (!SetterArgExpr.isInvalid()) {
-              Expr* SetterArg = SetterArgExpr.take();
-              MsgExprArg = MultiExprArg(SetterArg);
-              MsgEndLoc = SetterArg->getLocEnd();
-            }
+      if (isEeroObjectExpr) {
+        Selector Sel;
+        SourceLocation MsgEndLoc;
+        MultiExprArg MsgExprArg;
+        // Distinguish between getter-like and setter-like methods
+        if (Tok.isNot(tok::equal)) { // it's a getter-like method with no args
+          Sel = PP.getSelectorTable().getNullarySelector(Name.Identifier);
+          MsgEndLoc = Name.getLocEnd();
+        } else { // it's effectively a setter
+          Sel = SelectorTable::constructSetterSelector(
+              PP.getIdentifierTable(),
+              PP.getSelectorTable(), Name.Identifier);
+          ConsumeToken(); // the '='
+          ExprResult SetterArgExpr = ParseAssignmentExpression();
+          if (!SetterArgExpr.isInvalid()) {
+            Expr* SetterArg = SetterArgExpr.take();
+            MsgExprArg = MultiExprArg(SetterArg);
+            MsgEndLoc = SetterArg->getLocEnd();
           }
-          LHS = Actions.ActOnInstanceMessage(getCurScope(),
-                                             LHS.take(),
-                                             Sel,
-                                             LHSLoc,
-                                             Name.getLocStart(),
-                                             MsgEndLoc,
-                                             MsgExprArg);
-          break;
         }
+        LHS = Actions.ActOnInstanceMessage(getCurScope(),
+                                           LHS.take(),
+                                           Sel,
+                                           LHS.get()->getLocStart(),
+                                           Name.getLocStart(),
+                                           MsgEndLoc,
+                                           MsgExprArg);
+        break;
       }
       
       if (!LHS.isInvalid())

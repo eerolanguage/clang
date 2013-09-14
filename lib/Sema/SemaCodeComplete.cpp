@@ -2767,12 +2767,25 @@ CodeCompletionResult::CreateCodeCompletionString(ASTContext &Ctx,
 
       std::string Arg;
       
+      if (PP.getLangOpts().Eero)
+        Result.AddTextChunk(" ");
+
       if ((*P)->getType()->isBlockPointerType() && !DeclaringEntity)
         Arg = FormatFunctionParameter(Ctx, Policy, *P, true);
       else {
         (*P)->getType().getAsStringInternal(Arg, Policy);
         Arg = "(" + formatObjCParamQualifiers((*P)->getObjCDeclQualifier()) 
             + Arg + ")";
+        if (PP.getLangOpts().Eero) {
+          const QualType &ArgType = (*P)->getType();
+          if (ArgType->isObjCObjectPointerType() ||
+              (ArgType->isPointerType() &&
+               ArgType->getPointeeType()->isObjCObjectPointerType())) {
+            const size_t pos = Arg.find(" *");
+            if (pos != std::string::npos)
+              Arg.erase(pos, 2);
+          }
+        }
         if (IdentifierInfo *II = (*P)->getIdentifier())
           if (DeclaringEntity || AllParametersAreInformative)
             Arg += II->getName();
@@ -2787,6 +2800,9 @@ CodeCompletionResult::CreateCodeCompletionString(ASTContext &Ctx,
         Result.AddInformativeChunk(Result.getAllocator().CopyString(Arg));
       else
         Result.AddPlaceholderChunk(Result.getAllocator().CopyString(Arg));
+
+      if (PP.getLangOpts().Eero && (P + 1) != PEnd)
+        Result.AddTextChunk(",");
     }
 
     if (Method->isVariadic()) {
