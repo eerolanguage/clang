@@ -1655,8 +1655,10 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
   case Sema::PCC_Statement: {
     AddTypedefResult(Results);
 
+    const bool isEero = SemaRef.getLangOpts().Eero;
+
     if (SemaRef.getLangOpts().CPlusPlus && Results.includeCodePatterns() &&
-        SemaRef.getLangOpts().CXXExceptions) {
+        SemaRef.getLangOpts().CXXExceptions && !isEero) {
       Builder.AddTypedTextChunk("try");
       Builder.AddChunk(CodeCompletionString::CK_LeftBrace);
       Builder.AddPlaceholderChunk("statements");
@@ -1675,7 +1677,7 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
     if (SemaRef.getLangOpts().ObjC1)
       AddObjCStatementResults(Results, true);
     
-    if (Results.includeCodePatterns()) {
+    if (Results.includeCodePatterns() && !isEero) {
       // if (condition) { statements }
       Builder.AddTypedTextChunk("if");
       Builder.AddChunk(CodeCompletionString::CK_LeftParen);
@@ -1705,7 +1707,7 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
     }
     
     // Switch-specific statements.
-    if (!SemaRef.getCurFunction()->SwitchStack.empty()) {
+    if (!SemaRef.getCurFunction()->SwitchStack.empty() && !isEero) {
       // case expression:
       Builder.AddTypedTextChunk("case");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
@@ -1719,7 +1721,7 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
       Results.AddResult(Result(Builder.TakeString()));
     }
 
-    if (Results.includeCodePatterns()) {
+    if (Results.includeCodePatterns() && !isEero) {
       /// while (condition) { statements }
       Builder.AddTypedTextChunk("while");
       Builder.AddChunk(CodeCompletionString::CK_LeftParen);
@@ -1765,7 +1767,122 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
       Builder.AddChunk(CodeCompletionString::CK_RightBrace);
       Results.AddResult(Result(Builder.TakeString()));
     }
+
+    // Eero
+    if (SemaRef.getLangOpts().Eero && Results.includeCodePatterns()) {
+      // try - catch - finally
+      Builder.AddTypedTextChunk("try");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddTextChunk("catch");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`declaration`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddTextChunk("finally");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Results.AddResult(Result(Builder.TakeString()));
+
+      // switch - case - default
+      Builder.AddTypedTextChunk("switch");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`integral-expression`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddTextChunk("case");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`const-expression, range, or list`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddTextChunk("default");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Results.AddResult(Result(Builder.TakeString()));
     
+      if (!SemaRef.getCurFunction()->SwitchStack.empty()) {
+        // case (by itself)
+        Builder.AddTypedTextChunk("case");
+        Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+        Builder.AddPlaceholderChunk("`const-expression, range, or list`");
+        Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+        Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+        Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+        Builder.AddPlaceholderChunk("`statements`");
+        Results.AddResult(Result(Builder.TakeString()));
+
+        // default (by itself)
+        Builder.AddTypedTextChunk("default");
+        Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+        Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+        Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+        Builder.AddPlaceholderChunk("`statements`");
+        Results.AddResult(Result(Builder.TakeString()));
+      }
+
+      // if
+      Builder.AddTypedTextChunk("if");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`condition`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Results.AddResult(Result(Builder.TakeString()));
+
+      // for
+      Builder.AddTypedTextChunk("for");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`condition`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Results.AddResult(Result(Builder.TakeString()));
+
+      // while
+      Builder.AddTypedTextChunk("while");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`condition`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Results.AddResult(Result(Builder.TakeString()));
+
+      // do - while
+      Builder.AddTypedTextChunk("do");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
+      Builder.AddTextChunk("while");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`expression`");
+      Results.AddResult(Result(Builder.TakeString()));
+    }    
+
     if (S->getContinueParent()) {
       // continue ;
       Builder.AddTypedTextChunk("continue");
@@ -1792,22 +1909,38 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
     Builder.AddTypedTextChunk("return");
     if (!isVoid) {
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("expression");
+      if (!isEero)
+        Builder.AddPlaceholderChunk("expression");
+      else
+        Builder.AddPlaceholderChunk("`expression`");
     }
     Results.AddResult(Result(Builder.TakeString()));
 
     // goto identifier ;
-    Builder.AddTypedTextChunk("goto");
-    Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-    Builder.AddPlaceholderChunk("label");
-    Results.AddResult(Result(Builder.TakeString()));    
+    if (!isEero) {
+      Builder.AddTypedTextChunk("goto");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("label");
+      Results.AddResult(Result(Builder.TakeString()));    
+    }
+
+    if (isEero) {
+      // using prefix
+      Builder.AddTypedTextChunk("using prefix");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`identifier`");
+      Results.AddResult(Result(Builder.TakeString()));
+    }
 
     // Using directives
     Builder.AddTypedTextChunk("using");
     Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
     Builder.AddTextChunk("namespace");
     Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-    Builder.AddPlaceholderChunk("identifier");
+    if (!isEero)
+      Builder.AddPlaceholderChunk("identifier");
+    else
+      Builder.AddPlaceholderChunk("`identifier`");
     Results.AddResult(Result(Builder.TakeString()));
   }
 
@@ -2777,9 +2910,12 @@ CodeCompletionResult::CreateCodeCompletionString(ASTContext &Ctx,
         Arg = FormatFunctionParameter(Ctx, Policy, *P, true);
       else {
         (*P)->getType().getAsStringInternal(Arg, Policy);
-        Arg = "(" + formatObjCParamQualifiers((*P)->getObjCDeclQualifier()) 
-            + Arg + ")";
-        if (PP.getLangOpts().Eero) {
+        if (!PP.getLangOpts().Eero) {
+          Arg = "(" + formatObjCParamQualifiers((*P)->getObjCDeclQualifier()) 
+              + Arg + ")";
+        } else {
+          Arg = "`" + formatObjCParamQualifiers((*P)->getObjCDeclQualifier()) 
+              + Arg + "`";
           const QualType &ArgType = (*P)->getType();
           if (ArgType->isObjCObjectPointerType() ||
               (ArgType->isPointerType() &&
