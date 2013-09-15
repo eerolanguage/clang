@@ -1523,6 +1523,14 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
   typedef CodeCompletionResult Result;
   switch (CCC) {
   case Sema::PCC_Namespace:
+    if (SemaRef.getLangOpts().Eero) {
+      // using prefix
+      Builder.AddTypedTextChunk("using prefix");
+      Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
+      Builder.AddPlaceholderChunk("`identifier`");
+      Results.AddResult(Result(Builder.TakeString()));
+    }
+
     if (SemaRef.getLangOpts().CPlusPlus) {
       if (Results.includeCodePatterns()) {
         // namespace <identifier> { declarations }
