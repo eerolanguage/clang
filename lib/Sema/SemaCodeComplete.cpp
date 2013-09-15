@@ -3451,7 +3451,7 @@ void Sema::CodeCompleteExpression(Scope *S,
 }
 
 void Sema::CodeCompletePostfixExpression(Scope *S, ExprResult E) {
-  if (E.isInvalid())
+  if (E.isInvalid() || getLangOpts().Eero)
     CodeCompleteOrdinaryName(S, PCC_RecoveryInFunction);
   else if (getLangOpts().ObjC1)
     CodeCompleteObjCInstanceMessage(S, E.take(), None, false);
