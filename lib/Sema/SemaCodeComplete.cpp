@@ -1527,7 +1527,7 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
       // using prefix
       Builder.AddTypedTextChunk("using prefix");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`identifier`");
+      Builder.AddPlaceholderChunk("identifier");
       Results.AddResult(Result(Builder.TakeString()));
     }
 
@@ -1783,39 +1783,39 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddTextChunk("catch");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`declaration`");
+      Builder.AddPlaceholderChunk("declaration");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddTextChunk("finally");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Results.AddResult(Result(Builder.TakeString()));
 
       // switch - case - default
       Builder.AddTypedTextChunk("switch");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`integral-expression`");
+      Builder.AddPlaceholderChunk("integral-expression");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddTextChunk("case");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`const-expression, range, or list`");
+      Builder.AddPlaceholderChunk("const-expression, range, or list");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
@@ -1825,18 +1825,18 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Results.AddResult(Result(Builder.TakeString()));
     
       if (!SemaRef.getCurFunction()->SwitchStack.empty()) {
         // case (by itself)
         Builder.AddTypedTextChunk("case");
         Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-        Builder.AddPlaceholderChunk("`const-expression, range, or list`");
+        Builder.AddPlaceholderChunk("const-expression, range, or list");
         Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
         Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
         Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-        Builder.AddPlaceholderChunk("`statements`");
+        Builder.AddPlaceholderChunk("statements");
         Results.AddResult(Result(Builder.TakeString()));
 
         // default (by itself)
@@ -1844,38 +1844,38 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
         Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
         Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
         Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-        Builder.AddPlaceholderChunk("`statements`");
+        Builder.AddPlaceholderChunk("statements");
         Results.AddResult(Result(Builder.TakeString()));
       }
 
       // if
       Builder.AddTypedTextChunk("if");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`condition`");
+      Builder.AddPlaceholderChunk("condition");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Results.AddResult(Result(Builder.TakeString()));
 
       // for
       Builder.AddTypedTextChunk("for");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`condition`");
+      Builder.AddPlaceholderChunk("condition");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Results.AddResult(Result(Builder.TakeString()));
 
       // while
       Builder.AddTypedTextChunk("while");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`condition`");
+      Builder.AddPlaceholderChunk("condition");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Results.AddResult(Result(Builder.TakeString()));
 
       // do - while
@@ -1883,11 +1883,11 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`statements`");
+      Builder.AddPlaceholderChunk("statements");
       Builder.AddChunk(CodeCompletionString::CK_VerticalSpace);
       Builder.AddTextChunk("while");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`expression`");
+      Builder.AddPlaceholderChunk("expression");
       Results.AddResult(Result(Builder.TakeString()));
     }    
 
@@ -1917,10 +1917,7 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
     Builder.AddTypedTextChunk("return");
     if (!isVoid) {
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      if (!isEero)
-        Builder.AddPlaceholderChunk("expression");
-      else
-        Builder.AddPlaceholderChunk("`expression`");
+      Builder.AddPlaceholderChunk("expression");
     }
     Results.AddResult(Result(Builder.TakeString()));
 
@@ -1936,7 +1933,7 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
       // using prefix
       Builder.AddTypedTextChunk("using prefix");
       Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-      Builder.AddPlaceholderChunk("`identifier`");
+      Builder.AddPlaceholderChunk("identifier");
       Results.AddResult(Result(Builder.TakeString()));
     }
 
@@ -1945,10 +1942,7 @@ static void AddOrdinaryNameResults(Sema::ParserCompletionContext CCC,
     Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
     Builder.AddTextChunk("namespace");
     Builder.AddChunk(CodeCompletionString::CK_HorizontalSpace);
-    if (!isEero)
-      Builder.AddPlaceholderChunk("identifier");
-    else
-      Builder.AddPlaceholderChunk("`identifier`");
+    Builder.AddPlaceholderChunk("identifier");
     Results.AddResult(Result(Builder.TakeString()));
   }
 

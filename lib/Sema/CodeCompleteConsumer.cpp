@@ -356,7 +356,14 @@ void CodeCompletionBuilder::AddOptionalChunk(CodeCompletionString *Optional) {
 }
 
 void CodeCompletionBuilder::AddPlaceholderChunk(const char *Placeholder) {
-  Chunks.push_back(Chunk::CreatePlaceholder(Placeholder));
+  if (!isalpha(Placeholder[0])) {
+    Chunks.push_back(Chunk::CreatePlaceholder(Placeholder));
+  } else {
+    std::string str = "`";
+    str.append(Placeholder);
+    str.append("`");
+    Chunks.push_back(Chunk::CreatePlaceholder(getAllocator().CopyString(str)));
+  }
 }
 
 void CodeCompletionBuilder::AddInformativeChunk(const char *Text) {
