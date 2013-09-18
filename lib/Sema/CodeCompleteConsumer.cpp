@@ -356,7 +356,7 @@ void CodeCompletionBuilder::AddOptionalChunk(CodeCompletionString *Optional) {
 }
 
 void CodeCompletionBuilder::AddPlaceholderChunk(const char *Placeholder) {
-  if (!isalpha(Placeholder[0])) {
+  if (Placeholder[0] == '`') {
     Chunks.push_back(Chunk::CreatePlaceholder(Placeholder));
   } else {
     std::string str = "`";
