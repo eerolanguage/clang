@@ -1242,6 +1242,66 @@ bool ResultBuilder::IsObjCIvar(const NamedDecl *ND) const {
   return isa<ObjCIvarDecl>(ND);
 }
 
+// Support Eero namespace-like prefixes
+//
+static NamedDecl *FindPrefixAlias(NamedDecl *ND, 
+                                  Sema &SemaRef, 
+                                  ResultBuilder &Results) {
+  NamedDecl *Alias = 0;
+  std::string name = ND->getName();
+
+  if (name.find("NS") == 0) { // TODO: check user prefixes too
+    name.erase(0, 2);;
+    IdentifierInfo &II = SemaRef.getASTContext().Idents.get(name);
+
+    if (ObjCInterfaceDecl* ID = dyn_cast<ObjCInterfaceDecl>(ND)) {
+      Alias = ObjCInterfaceDecl::Create(SemaRef.getASTContext(), 
+                                        ID->getDeclContext(),
+                                        SourceLocation(), &II, 0);
+
+    } else if (ObjCProtocolDecl* PD = dyn_cast<ObjCProtocolDecl>(ND)) {
+      Alias = ObjCProtocolDecl::Create(SemaRef.getASTContext(), 
+                                       PD->getDeclContext(),
+                                       &II,
+                                       SourceLocation(), SourceLocation(),
+                                       0);
+
+    } else if (TypedefDecl* TD = dyn_cast<TypedefDecl>(ND)) {
+      Alias = TypedefDecl::Create(SemaRef.getASTContext(), 
+                                  TD->getDeclContext(),
+                                  SourceLocation(), SourceLocation(),
+                                  &II, TD->getTypeSourceInfo());
+
+    } else if (FunctionDecl* FD = dyn_cast<FunctionDecl>(ND)) {
+      FunctionDecl *AliasFD = 
+          FunctionDecl::Create(SemaRef.getASTContext(), 
+                               FD->getDeclContext(),
+                               SourceLocation(), 
+                               SourceLocation(),
+                               &II, 
+                               FD->getType(),
+                               FD->getTypeSourceInfo(),
+                               FD->getStorageClass());
+      SmallVector<ParmVarDecl*, 16> Params;
+      for (unsigned i = 0; i < FD->getNumParams(); ++i) {
+        ParmVarDecl *parm = FD->getParamDecl(i);
+        Params.push_back(parm);
+      }
+      AliasFD->setParams(Params);
+      Alias = AliasFD;
+
+    } else if (EnumConstantDecl* ED = dyn_cast<EnumConstantDecl>(ND)) {
+      Alias = EnumConstantDecl::Create(SemaRef.getASTContext(), 
+                                       cast<EnumDecl>(ED->getDeclContext()),
+                                       SourceLocation(), 
+                                       &II, ED->getType(),
+                                       ED->getInitExpr(), ED->getInitVal());
+    }
+  }
+  return Alias;
+}
+
+
 namespace {
   /// \brief Visible declaration consumer that adds a code-completion result
   /// for each visible declaration.
@@ -1262,6 +1322,14 @@ namespace {
       ResultBuilder::Result Result(ND, Results.getBasePriority(ND), 0, false,
                                    Accessible);
       Results.AddResult(Result, CurContext, Hiding, InBaseClass);
+
+      // Handle Eero namespace-like prefixes
+      Sema &SemaRef = Results.getSema();
+      if (SemaRef.getLangOpts().Eero && ND) {
+        if (NamedDecl *Alias = FindPrefixAlias(ND, SemaRef, Results)) {
+          FoundDecl(Alias, Hiding, Ctx, InBaseClass);          
+        }
+      }
     }
   };
 }
