@@ -723,17 +723,8 @@ public:
   /// caching of tokens is on.
   bool isBacktrackEnabled() const { return !BacktrackPositions.empty(); }
 
-  /// Lex - To lex a token from the preprocessor, just pull a token from the
-  /// current lexer or macro object.
-  void Lex(Token &Result) {
-    switch (CurLexerKind) {
-    case CLK_Lexer: CurLexer->Lex(Result); break;
-    case CLK_PTHLexer: CurPTHLexer->Lex(Result); break;
-    case CLK_TokenLexer: CurTokenLexer->Lex(Result); break;
-    case CLK_CachingLexer: CachingLex(Result); break;
-    case CLK_LexAfterModuleImport: LexAfterModuleImport(Result); break;
-    }
-  }
+  /// Lex - Lex the next token for this preprocessor.
+  void Lex(Token &Result);
 
   void LexAfterModuleImport(Token &Result);
 
@@ -1175,7 +1166,10 @@ public:
   /// identifier and has filled in the tokens IdentifierInfo member.  This
   /// callback potentially macro expands it or turns it into a named token (like
   /// 'for').
-  void HandleIdentifier(Token &Identifier);
+  ///
+  /// \returns true if we actually computed a token, false if we need to
+  /// lex again.
+  bool HandleIdentifier(Token &Identifier);
 
 
   /// HandleEndOfFile - This callback is invoked when the lexer hits the end of
@@ -1302,6 +1296,8 @@ private:
     IncludeMacroStack.pop_back();
   }
 
+  void PropagateLineStartLeadingSpaceInfo(Token &Result);
+
   /// \brief Allocate a new MacroInfo object.
   MacroInfo *AllocateMacroInfo();
 
@@ -1358,7 +1354,7 @@ private:
 
   /// HandleMacroExpandedIdentifier - If an identifier token is read that is to
   /// be expanded as a macro, handle it and return the next token as 'Tok'.  If
-  /// the macro should not be expanded return true, otherwise return false.
+  /// we lexed a token, return true; otherwise the caller should lex again.
   bool HandleMacroExpandedIdentifier(Token &Tok, MacroDirective *MD);
 
   /// \brief Cache macro expanded tokens for TokenLexers.

@@ -166,9 +166,13 @@ static llvm::Constant *createAtExitStub(CodeGenModule &CGM, const VarDecl &VD,
                                         llvm::Constant *addr) {
   // Get the destructor function type, void(*)(void).
   llvm::FunctionType *ty = llvm::FunctionType::get(CGM.VoidTy, false);
+  SmallString<256> FnName;
+  {
+    llvm::raw_svector_ostream Out(FnName);
+    CGM.getCXXABI().getMangleContext().mangleDynamicAtExitDestructor(&VD, Out);
+  }
   llvm::Function *fn =
-    CreateGlobalInitOrDestructFunction(CGM, ty,
-                                       Twine("__dtor_", addr->getName()));
+      CreateGlobalInitOrDestructFunction(CGM, ty, FnName.str());
 
   CodeGenFunction CGF(CGM);
 
@@ -255,10 +259,15 @@ CodeGenModule::EmitCXXGlobalVarDeclInitFunc(const VarDecl *D,
                                             llvm::GlobalVariable *Addr,
                                             bool PerformInit) {
   llvm::FunctionType *FTy = llvm::FunctionType::get(VoidTy, false);
+  SmallString<256> FnName;
+  {
+    llvm::raw_svector_ostream Out(FnName);
+    getCXXABI().getMangleContext().mangleDynamicInitializer(D, Out);
+  }
 
   // Create a variable initialization function.
   llvm::Function *Fn =
-    CreateGlobalInitOrDestructFunction(*this, FTy, "__cxx_global_var_init");
+      CreateGlobalInitOrDestructFunction(*this, FTy, FnName.str());
 
   CodeGenFunction(*this).GenerateCXXGlobalVarDeclInitFunc(Fn, D, Addr,
                                                           PerformInit);

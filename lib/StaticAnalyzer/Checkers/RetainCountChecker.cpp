@@ -417,8 +417,6 @@ template <> struct DenseMapInfo<ObjCSummaryKey> {
   }
 
 };
-template <>
-struct isPodLike<ObjCSummaryKey> { static const bool value = true; };
 } // end llvm namespace
 
 namespace {
@@ -3355,6 +3353,16 @@ void RetainCountChecker::checkBind(SVal loc, SVal val, const Stmt *S,
       // assigned to a struct field, so be conservative here and let the symbol
       // go. TODO: This could definitely be improved upon.
       escapes = !isa<VarRegion>(regionLoc->getRegion());
+    }
+  }
+
+  // If we are storing the value into an auto function scope variable annotated
+  // with (__attribute__((cleanup))), stop tracking the value to avoid leak
+  // false positives.
+  if (const VarRegion *LVR = dyn_cast_or_null<VarRegion>(loc.getAsRegion())) {
+    const VarDecl *VD = LVR->getDecl();
+    if (VD->getAttr<CleanupAttr>()) {
+      escapes = true;
     }
   }
 

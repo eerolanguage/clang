@@ -235,26 +235,6 @@ namespace {
       savedAttrs.back()->setNext(0);
     }
   };
-
-  /// Basically std::pair except that we really want to avoid an
-  /// implicit operator= for safety concerns.  It's also a minor
-  /// link-time optimization for this to be a private type.
-  struct AttrAndList {
-    /// The attribute.
-    AttributeList &first;
-
-    /// The head of the list the attribute is currently in.
-    AttributeList *&second;
-
-    AttrAndList(AttributeList &attr, AttributeList *&head)
-      : first(attr), second(head) {}
-  };
-}
-
-namespace llvm {
-  template <> struct isPodLike<AttrAndList> {
-    static const bool value = true;
-  };
 }
 
 static void spliceAttrIntoList(AttributeList &attr, AttributeList *&head) {
@@ -4042,7 +4022,7 @@ static bool handleObjCOwnershipTypeAttr(TypeProcessingState &state,
     lifetime = Qualifiers::OCL_Autoreleasing;
   else {
     S.Diag(AttrLoc, diag::warn_attribute_type_not_supported)
-      << "objc_ownership" << II;
+      << attr.getName() << II;
     attr.setInvalid();
     return true;
   }
@@ -4176,7 +4156,7 @@ static bool handleObjCGCTypeAttr(TypeProcessingState &state,
     GCAttr = Qualifiers::Strong;
   else {
     S.Diag(attr.getLoc(), diag::warn_attribute_type_not_supported)
-      << "objc_gc" << II;
+      << attr.getName() << II;
     attr.setInvalid();
     return true;
   }
@@ -4401,9 +4381,15 @@ static AttributedType::Kind getCCTypeAttrKind(AttributeList &Attr) {
   case AttributeList::AT_Pascal:
     return AttributedType::attr_pascal;
   case AttributeList::AT_Pcs: {
-    // We know attr is valid so it can only have one of two strings args.
-    StringLiteral *Str = cast<StringLiteral>(Attr.getArgAsExpr(0));
-    return llvm::StringSwitch<AttributedType::Kind>(Str->getString())
+    // The attribute may have had a fixit applied where we treated an
+    // identifier as a string literal.  The contents of the string are valid,
+    // but the form may not be.
+    StringRef Str;
+    if (Attr.isArgExpr(0))
+      Str = cast<StringLiteral>(Attr.getArgAsExpr(0))->getString();
+    else
+      Str = Attr.getArgAsIdent(0)->Ident->getName();
+    return llvm::StringSwitch<AttributedType::Kind>(Str)
         .Case("aapcs", AttributedType::attr_pcs)
         .Case("aapcs-vfp", AttributedType::attr_pcs_vfp);
   }
@@ -4638,8 +4624,9 @@ static void HandleVectorSizeAttr(QualType& CurType, const AttributeList &Attr,
     Attr.setInvalid();
     return;
   }
-  // the base type must be integer or float, and can't already be a vector.
-  if (!CurType->isBuiltinType() ||
+  // The base type must be integer (not Boolean or enumeration) or float, and
+  // can't already be a vector.
+  if (!CurType->isBuiltinType() || CurType->isBooleanType() ||
       (!CurType->isIntegerType() && !CurType->isRealFloatingType())) {
     S.Diag(Attr.getLoc(), diag::err_attribute_invalid_vector_type) << CurType;
     Attr.setInvalid();
@@ -4758,6 +4745,12 @@ static bool isPermittedNeonBaseType(QualType &Ty,
 static void HandleNeonVectorTypeAttr(QualType& CurType,
                                      const AttributeList &Attr, Sema &S,
                                      VectorType::VectorKind VecKind) {
+  // Target must have NEON
+  if (!S.Context.getTargetInfo().hasFeature("neon")) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_unsupported) << Attr.getName();
+    Attr.setInvalid();
+    return;
+  }
   // Check the attribute arguments.
   if (Attr.getNumArgs() != 1) {
     S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
@@ -4944,38 +4937,42 @@ bool Sema::RequireCompleteExprType(Expr *E, TypeDiagnoser &Diagnoser){
     return false;
 
   // Incomplete array types may be completed by the initializer attached to
-  // their definitions. For static data members of class templates we need to
-  // instantiate the definition to get this initializer and complete the type.
+  // their definitions. For static data members of class templates and for
+  // variable templates, we need to instantiate the definition to get this
+  // initializer and complete the type.
   if (T->isIncompleteArrayType()) {
     if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E->IgnoreParens())) {
       if (VarDecl *Var = dyn_cast<VarDecl>(DRE->getDecl())) {
-        if (Var->isStaticDataMember() &&
-            Var->getInstantiatedFromStaticDataMember()) {
+        if (isTemplateInstantiation(Var->getTemplateSpecializationKind())) {
+          SourceLocation PointOfInstantiation = E->getExprLoc();
 
-          MemberSpecializationInfo *MSInfo = Var->getMemberSpecializationInfo();
-          assert(MSInfo && "Missing member specialization information?");
-          if (MSInfo->getTemplateSpecializationKind()
-                != TSK_ExplicitSpecialization) {
+          if (MemberSpecializationInfo *MSInfo =
+                  Var->getMemberSpecializationInfo()) {
             // If we don't already have a point of instantiation, this is it.
             if (MSInfo->getPointOfInstantiation().isInvalid()) {
-              MSInfo->setPointOfInstantiation(E->getLocStart());
+              MSInfo->setPointOfInstantiation(PointOfInstantiation);
 
               // This is a modification of an existing AST node. Notify
               // listeners.
               if (ASTMutationListener *L = getASTMutationListener())
                 L->StaticDataMemberInstantiated(Var);
             }
+          } else {
+            VarTemplateSpecializationDecl *VarSpec =
+                cast<VarTemplateSpecializationDecl>(Var);
+            if (VarSpec->getPointOfInstantiation().isInvalid())
+              VarSpec->setPointOfInstantiation(PointOfInstantiation);
+          }
 
-            InstantiateStaticDataMemberDefinition(E->getExprLoc(), Var);
+          InstantiateVariableDefinition(PointOfInstantiation, Var);
 
-            // Update the type to the newly instantiated definition's type both
-            // here and within the expression.
-            if (VarDecl *Def = Var->getDefinition()) {
-              DRE->setDecl(Def);
-              T = Def->getType();
-              DRE->setType(T);
-              E->setType(T);
-            }
+          // Update the type to the newly instantiated definition's type both
+          // here and within the expression.
+          if (VarDecl *Def = Var->getDefinition()) {
+            DRE->setDecl(Def);
+            T = Def->getType();
+            DRE->setType(T);
+            E->setType(T);
           }
 
           // We still go on to try to complete the type independently, as it

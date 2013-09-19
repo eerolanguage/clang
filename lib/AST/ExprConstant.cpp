@@ -3742,8 +3742,12 @@ public:
     { return StmtVisitorTy::Visit(E->getReplacement()); }
   RetTy VisitCXXDefaultArgExpr(const CXXDefaultArgExpr *E)
     { return StmtVisitorTy::Visit(E->getExpr()); }
-  RetTy VisitCXXDefaultInitExpr(const CXXDefaultInitExpr *E)
-    { return StmtVisitorTy::Visit(E->getExpr()); }
+  RetTy VisitCXXDefaultInitExpr(const CXXDefaultInitExpr *E) {
+    // The initializer may not have been parsed yet, or might be erroneous.
+    if (!E->getExpr())
+      return Error(E);
+    return StmtVisitorTy::Visit(E->getExpr());
+  }
   // We cannot create any objects for which cleanups are required, so there is
   // nothing to do here; all cleanups must come from unevaluated subexpressions.
   RetTy VisitExprWithCleanups(const ExprWithCleanups *E)
@@ -5258,7 +5262,7 @@ VectorExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
   while (CountElts < NumElements) {
     // Handle nested vector initialization.
     if (CountInits < NumInits 
-        && E->getInit(CountInits)->getType()->isExtVectorType()) {
+        && E->getInit(CountInits)->getType()->isVectorType()) {
       APValue v;
       if (!EvaluateVector(E->getInit(CountInits), v, Info))
         return Error(E);
@@ -6569,6 +6573,15 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
         CharUnits ElementSize;
         if (!HandleSizeof(Info, E->getExprLoc(), ElementType, ElementSize))
           return false;
+
+        // As an extension, a type may have zero size (empty struct or union in
+        // C, array of zero length). Pointer subtraction in such cases has
+        // undefined behavior, so is not constant.
+        if (ElementSize.isZero()) {
+          Info.Diag(E, diag::note_constexpr_pointer_subtraction_zero_size)
+            << ElementType;
+          return false;
+        }
 
         // FIXME: LLVM and GCC both compute LHSOffset - RHSOffset at runtime,
         // and produce incorrect results when it overflows. Such behavior
@@ -8132,6 +8145,7 @@ static ICEDiag CheckICE(const Expr* E, const ASTContext &Ctx) {
   case Expr::ObjCSubscriptRefExprClass:
   case Expr::ObjCIsaExprClass:
   case Expr::ShuffleVectorExprClass:
+  case Expr::ConvertVectorExprClass:
   case Expr::BlockExprClass:
   case Expr::NoStmtClass:
   case Expr::OpaqueValueExprClass:

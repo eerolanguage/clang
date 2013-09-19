@@ -36,13 +36,14 @@ unsigned CommaSeparatedList::format(LineState &State,
   // Ensure that we start on the opening brace.
   const FormatToken *LBrace = State.NextToken->Previous->Previous;
   if (LBrace->isNot(tok::l_brace) ||
+      LBrace->BlockKind == BK_Block ||
       LBrace->Next->Type == TT_DesignatedInitializerPeriod)
     return 0;
 
   // Calculate the number of code points we have to format this list. As the
   // first token is already placed, we have to subtract it.
   unsigned RemainingCodePoints = Style.ColumnLimit - State.Column +
-                                 State.NextToken->Previous->CodePointCount;
+                                 State.NextToken->Previous->ColumnWidth;
 
   // Find the best ColumnFormat, i.e. the best number of columns to use.
   const ColumnFormat *Format = getColumnFormat(RemainingCodePoints);
@@ -82,7 +83,7 @@ unsigned CommaSeparatedList::format(LineState &State,
 static unsigned CodePointsBetween(const FormatToken *Begin,
                                   const FormatToken *End) {
   assert(End->TotalLength >= Begin->TotalLength);
-  return End->TotalLength - Begin->TotalLength + Begin->CodePointCount;
+  return End->TotalLength - Begin->TotalLength + Begin->ColumnWidth;
 }
 
 void CommaSeparatedList::precomputeFormattingInfos(const FormatToken *Token) {

@@ -6,6 +6,7 @@
 #define WEBKIT_OBJC_METHOD_ANNOTATION(ANNOTATION) ANNOTATION
 #define WEAK_IMPORT_ATTRIBUTE __attribute__((objc_arc_weak_reference_unavailable))
 #define AVAILABLE_WEBKIT_VERSION_3_0_AND_LATER
+#define DEPRECATED  __attribute__((deprecated)) 
 
 typedef char BOOL;
 @class NSString;
@@ -29,8 +30,8 @@ typedef char BOOL;
 - (NSString *) UnavailProp  __attribute__((unavailable));
 - (void) setUnavailProp  : (NSString *)Val;
 
-- (NSString *) UnavailProp1  __attribute__((unavailable));
-- (void) setUnavailProp1  : (NSString *)Val  __attribute__((unavailable));
+@property(nonatomic, retain) NSString * UnavailProp1  __attribute__((unavailable));
+
 
 - (NSString *) UnavailProp2;
 - (void) setUnavailProp2  : (NSString *)Val  __attribute__((unavailable));
@@ -86,10 +87,10 @@ typedef char BOOL;
 @property(nonatomic, getter=isContinuous) BOOL continuous;
 
 
-@property(nonatomic, readonly) id isAnObject;
+- (id) isAnObject;
 - (void)setAnObject : (id) object;
 
-@property(nonatomic, readonly) BOOL isinValid;
+@property(nonatomic, getter=isinValid, readonly) BOOL inValid;
 - (void) setInValid : (BOOL) arg;
 
 - (void) Nothing;
@@ -97,6 +98,113 @@ typedef char BOOL;
 @property(nonatomic, readonly) id object;
 + (double) D;
 @property(nonatomic, readonly) void * JSObject WEBKIT_OBJC_METHOD_ANNOTATION(AVAILABLE_WEBKIT_VERSION_3_0_AND_LATER);
+@property(nonatomic, getter=isIgnoringInteractionEvents, readonly) BOOL ignoringInteractionEvents;
+
+@property(nonatomic, getter=getStringValue, retain) NSString * stringValue;
+@property(nonatomic, getter=getCounterValue, readonly) BOOL counterValue;
+
+@property(nonatomic, getter=getns_dixtionary, readonly) NSDictionary * ns_dixtionary;
+
+- (BOOL)is3bar; // watch out
+- (NSString *)get3foo; // watch out
+
+@property(nonatomic, getter=getM, readonly) BOOL m;
+@property(nonatomic, getter=getMA, readonly) BOOL MA;
+@property(nonatomic, getter=getALL, readonly) BOOL ALL;
+@property(nonatomic, getter=getMANY, readonly) BOOL MANY;
+@property(nonatomic, getter=getSome, readonly) BOOL some;
 @end
 
 
+@interface NSInvocation(CAT)
+@property(nonatomic, unsafe_unretained) id target;
+
+
+@property(nonatomic, unsafe_unretained) id dataSource;
+
+@property(nonatomic, unsafe_unretained) id xxxdelegateYYY;
+
+
+
+
+@property(nonatomic, retain) id MYtarget;
+
+
+@property(nonatomic, retain) id targetX;
+
+
+@property(nonatomic) int value;
+
+
+@property(nonatomic, getter=isContinuous) BOOL continuous;
+
+
+- (id) isAnObject;
+- (void)setAnObject : (id) object;
+
+@property(nonatomic, getter=isinValid, readonly) BOOL inValid;
+- (void) setInValid : (BOOL) arg;
+
+- (void) Nothing;
+@property(nonatomic, readonly) int Length;
+@property(nonatomic, readonly) id object;
++ (double) D;
+
+- (BOOL)is3bar; // watch out
+- (NSString *)get3foo; // watch out
+
+@property(nonatomic, getter=getM, readonly) BOOL m;
+@property(nonatomic, getter=getMA, readonly) BOOL MA;
+@property(nonatomic, getter=getALL, readonly) BOOL ALL;
+@property(nonatomic, getter=getMANY, readonly) BOOL MANY;
+@property(nonatomic, getter=getSome, readonly) BOOL some;
+@end
+
+DEPRECATED
+@interface I_DEP
+- (BOOL) isinValid;
+- (void) setInValid : (BOOL) arg;
+@end
+
+@interface AnotherOne
+- (BOOL) isinValid DEPRECATED;
+- (void) setInValid : (BOOL) arg;
+- (id)MYtarget;
+- (void)setMYtarget: (id)target DEPRECATED;
+- (BOOL) getM DEPRECATED;
+
+- (id)xxxdelegateYYY DEPRECATED;
+- (void)setXxxdelegateYYY:(id)delegate DEPRECATED;
+@end
+
+// rdar://14987909
+#define NS_AVAILABLE __attribute__((availability(macosx,introduced=10.0)))
+#define NORETURN __attribute__((noreturn))
+#define ALIGNED __attribute__((aligned(16)))
+
+@interface NSURL
+// Do not infer a property.
+- (NSURL *)appStoreReceiptURL NS_AVAILABLE;
+- (void) setAppStoreReceiptURL : (NSURL *)object;
+
+@property(nonatomic, retain) NSURL * appStoreReceiptURLX NS_AVAILABLE;
+
+
+// Do not infer a property.
+- (NSURL *)appStoreReceiptURLY ;
+- (void) setAppStoreReceiptURLY : (NSURL *)object NS_AVAILABLE;
+
+@property(nonatomic, readonly) id OkToInfer NS_AVAILABLE;
+
+// Do not infer a property.
+- (NSURL *)appStoreReceiptURLZ ;
+- (void) setAppStoreReceiptURLZ : (NSURL *)object NS_AVAILABLE;
+
+// Do not infer a property.
+- (id) t1 NORETURN NS_AVAILABLE;
+- (void) setT1 : (id) arg NS_AVAILABLE;
+
+@property(nonatomic, retain) id method1 ALIGNED NS_AVAILABLE;
+
+
+@end

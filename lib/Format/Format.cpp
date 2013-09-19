@@ -529,7 +529,7 @@ private:
                E = LBrace.Children.end();
            I != E; ++I) {
         unsigned Indent =
-            ParentIndent + ((*I)->Level - Line.Level) * Style.IndentWidth;
+            ParentIndent + ((*I)->Level - Line.Level - 1) * Style.IndentWidth;
         if (!DryRun) {
           unsigned Newlines = std::min((*I)->First->NewlinesBefore,
                                        Style.MaxEmptyLinesToKeep + 1);
@@ -591,6 +591,7 @@ public:
     assert(Tokens.empty());
     do {
       Tokens.push_back(getNextToken());
+      maybeJoinPreviousTokens();
     } while (Tokens.back()->Tok.isNot(tok::eof));
     return Tokens;
   }
@@ -598,6 +599,40 @@ public:
   IdentifierTable &getIdentTable() { return IdentTable; }
 
 private:
+  void maybeJoinPreviousTokens() {
+    if (Tokens.size() < 4)
+      return;
+    FormatToken *Last = Tokens.back();
+    if (!Last->is(tok::r_paren))
+      return;
+
+    FormatToken *String = Tokens[Tokens.size() - 2];
+    if (!String->is(tok::string_literal) || String->IsMultiline)
+      return;
+
+    if (!Tokens[Tokens.size() - 3]->is(tok::l_paren))
+      return;
+
+    FormatToken *Macro = Tokens[Tokens.size() - 4];
+    if (Macro->TokenText != "_T")
+      return;
+
+    const char *Start = Macro->TokenText.data();
+    const char *End = Last->TokenText.data() + Last->TokenText.size();
+    String->TokenText = StringRef(Start, End - Start);
+    String->IsFirst = Macro->IsFirst;
+    String->LastNewlineOffset = Macro->LastNewlineOffset;
+    String->WhitespaceRange = Macro->WhitespaceRange;
+    String->OriginalColumn = Macro->OriginalColumn;
+    String->ColumnWidth = encoding::columnWidthWithTabs(
+        String->TokenText, String->OriginalColumn, Style.TabWidth, Encoding);
+
+    Tokens.pop_back();
+    Tokens.pop_back();
+    Tokens.pop_back();
+    Tokens.back() = String;
+  }
+
   FormatToken *getNextToken() {
     if (GreaterStashed) {
       // Create a synthesized second '>' token.
@@ -610,7 +645,7 @@ private:
       FormatTok->WhitespaceRange =
           SourceRange(GreaterLocation, GreaterLocation);
       FormatTok->TokenText = ">";
-      FormatTok->CodePointCount = 1;
+      FormatTok->ColumnWidth = 1;
       GreaterStashed = false;
       return FormatTok;
     }
@@ -631,7 +666,9 @@ private:
           ++FormatTok->NewlinesBefore;
           // FIXME: This is technically incorrect, as it could also
           // be a literal backslash at the end of the line.
-          if (i == 0 || FormatTok->TokenText[i - 1] != '\\')
+          if (i == 0 || (FormatTok->TokenText[i - 1] != '\\' &&
+                         (FormatTok->TokenText[i - 1] != '\r' || i == 1 ||
+                          FormatTok->TokenText[i - 2] != '\\')))
             FormatTok->HasUnescapedNewline = true;
           FormatTok->LastNewlineOffset = WhitespaceLength + i + 1;
           Column = 0;
@@ -656,8 +693,6 @@ private:
     // In case the token starts with escaped newlines, we want to
     // take them into account as whitespace - this pattern is quite frequent
     // in macro definitions.
-    // FIXME: What do we want to do with other escaped spaces, and escaped
-    // spaces or newlines in the middle of tokens?
     // FIXME: Add a more explicit test.
     while (FormatTok->TokenText.size() > 1 && FormatTok->TokenText[0] == '\\' &&
            FormatTok->TokenText[1] == '\n') {
@@ -666,6 +701,10 @@ private:
       Column = 0;
       FormatTok->TokenText = FormatTok->TokenText.substr(2);
     }
+
+    FormatTok->WhitespaceRange = SourceRange(
+        WhitespaceStart, WhitespaceStart.getLocWithOffset(WhitespaceLength));
+
     FormatTok->OriginalColumn = Column;
 
     TrailingWhitespace = 0;
@@ -685,24 +724,30 @@ private:
     }
 
     // Now FormatTok is the next non-whitespace token.
-    FormatTok->CodePointCount =
-        encoding::getCodePointCount(FormatTok->TokenText, Encoding);
 
-    if (FormatTok->isOneOf(tok::string_literal, tok::comment)) {
-      StringRef Text = FormatTok->TokenText;
-      size_t FirstNewlinePos = Text.find('\n');
-      if (FirstNewlinePos != StringRef::npos) {
-        // FIXME: Handle embedded tabs.
-        FormatTok->FirstLineColumnWidth = encoding::columnWidthWithTabs(
-            Text.substr(0, FirstNewlinePos), 0, Style.TabWidth, Encoding);
-        FormatTok->LastLineColumnWidth = encoding::columnWidthWithTabs(
-            Text.substr(Text.find_last_of('\n') + 1), 0, Style.TabWidth,
-            Encoding);
-      }
+    StringRef Text = FormatTok->TokenText;
+    size_t FirstNewlinePos = Text.find('\n');
+    if (FirstNewlinePos == StringRef::npos) {
+      // FIXME: ColumnWidth actually depends on the start column, we need to
+      // take this into account when the token is moved.
+      FormatTok->ColumnWidth =
+          encoding::columnWidthWithTabs(Text, Column, Style.TabWidth, Encoding);
+      Column += FormatTok->ColumnWidth;
+    } else {
+      FormatTok->IsMultiline = true;
+      // FIXME: ColumnWidth actually depends on the start column, we need to
+      // take this into account when the token is moved.
+      FormatTok->ColumnWidth = encoding::columnWidthWithTabs(
+          Text.substr(0, FirstNewlinePos), Column, Style.TabWidth, Encoding);
+
+      // The last line of the token always starts in column 0.
+      // Thus, the length can be precomputed even in the presence of tabs.
+      FormatTok->LastLineColumnWidth = encoding::columnWidthWithTabs(
+          Text.substr(Text.find_last_of('\n') + 1), 0, Style.TabWidth,
+          Encoding);
+      Column = FormatTok->LastLineColumnWidth;
     }
-    // FIXME: Add the CodePointCount to Column.
-    FormatTok->WhitespaceRange = SourceRange(
-        WhitespaceStart, WhitespaceStart.getLocWithOffset(WhitespaceLength));
+
     return FormatTok;
   }
 
@@ -737,8 +782,8 @@ public:
   Formatter(const FormatStyle &Style, Lexer &Lex, SourceManager &SourceMgr,
             const std::vector<CharSourceRange> &Ranges)
       : Style(Style), Lex(Lex), SourceMgr(SourceMgr),
-        Whitespaces(SourceMgr, Style), Ranges(Ranges),
-        Encoding(encoding::detectEncoding(Lex.getBuffer())) {
+        Whitespaces(SourceMgr, Style, inputUsesCRLF(Lex.getBuffer())),
+        Ranges(Ranges), Encoding(encoding::detectEncoding(Lex.getBuffer())) {
     DEBUG(llvm::dbgs() << "File encoding: "
                        << (Encoding == encoding::Encoding_UTF8 ? "UTF8"
                                                                : "unknown")
@@ -875,6 +920,10 @@ public:
   }
 
 private:
+  static bool inputUsesCRLF(StringRef Text) {
+    return Text.count('\r') * 2 > Text.count('\n');
+  }
+
   void deriveLocalStyle() {
     unsigned CountBoundToVariable = 0;
     unsigned CountBoundToType = 0;
@@ -1121,7 +1170,8 @@ private:
     CharSourceRange LineRange = CharSourceRange::getCharRange(
         First->WhitespaceRange.getBegin().getLocWithOffset(
             First->LastNewlineOffset),
-        Last->Tok.getLocation().getLocWithOffset(Last->TokenText.size() - 1));
+        Last->getStartOfNonWhitespace().getLocWithOffset(
+            Last->TokenText.size() - 1));
     return touchesRanges(LineRange);
   }
 

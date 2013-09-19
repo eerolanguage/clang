@@ -139,7 +139,7 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
   }
 
   // Set the appropriate OS version define.
-  if (Triple.getOS() == llvm::Triple::IOS) {
+  if (Triple.isiOS()) {
     assert(Maj < 10 && Min < 100 && Rev < 100 && "Invalid version!");
     char Str[6];
     Str[0] = '0' + Maj;
@@ -1266,6 +1266,7 @@ namespace {
       TLSSupported = false;
       LongWidth = LongAlign = 64;
       AddrSpaceMap = &NVPTXAddrSpaceMap;
+      UseAddrSpaceMapMangling = true;
       // Define available target features
       // These must be defined in sorted order!
       NoAsmVariants = true;
@@ -1424,6 +1425,7 @@ public:
       : TargetInfo(Triple), GPU(GK_R600) {
     DescriptionString = DescriptionStringR600;
     AddrSpaceMap = &R600AddrSpaceMap;
+    UseAddrSpaceMapMangling = true;
   }
 
   virtual const char * getClobbers() const {
@@ -1587,6 +1589,7 @@ class X86TargetInfo : public TargetInfo {
   bool HasFMA;
   bool HasF16C;
   bool HasAVX512CD, HasAVX512ER, HasAVX512PF;
+  bool HasSHA;
 
   /// \brief Enumeration of all of the X86 CPUs supported by Clang.
   ///
@@ -1660,7 +1663,7 @@ class X86TargetInfo : public TargetInfo {
     /// Atom processors
     //@{
     CK_Atom,
-    CK_SLM,
+    CK_Silvermont,
     //@}
 
     /// \name Nehalem
@@ -1747,7 +1750,7 @@ public:
         HasRDRND(false), HasBMI(false), HasBMI2(false), HasPOPCNT(false),
         HasRTM(false), HasPRFCHW(false), HasRDSEED(false), HasFMA(false),
         HasF16C(false), HasAVX512CD(false), HasAVX512ER(false),
-        HasAVX512PF(false), CPU(CK_Generic), FPMath(FP_Default) {
+        HasAVX512PF(false), HasSHA(false), CPU(CK_Generic), FPMath(FP_Default) {
     BigEndian = false;
     LongDoubleFormat = &llvm::APFloat::x87DoubleExtended;
   }
@@ -1783,15 +1786,20 @@ public:
   }
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const;
-  void setSSELevel(llvm::StringMap<bool> &Features, X86SSEEnum Level,
-                   bool Enabled) const;
-  void setMMXLevel(llvm::StringMap<bool> &Features, MMX3DNowEnum Level,
-                   bool Enabled) const;
-  void setXOPLevel(llvm::StringMap<bool> &Features, XOPEnum Level,
-                   bool Enabled) const;
+  static void setSSELevel(llvm::StringMap<bool> &Features, X86SSEEnum Level,
+                          bool Enabled);
+  static void setMMXLevel(llvm::StringMap<bool> &Features, MMX3DNowEnum Level,
+                          bool Enabled);
+  static void setXOPLevel(llvm::StringMap<bool> &Features, XOPEnum Level,
+                          bool Enabled);
   virtual void setFeatureEnabled(llvm::StringMap<bool> &Features,
-                                 StringRef Name,
-                                 bool Enabled) const;
+                                 StringRef Name, bool Enabled) const {
+    setFeatureEnabledImpl(Features, Name, Enabled);
+  }
+  // This exists purely to cut down on the number of virtual calls in
+  // getDefaultFeatures which calls this repeatedly.
+  static void setFeatureEnabledImpl(llvm::StringMap<bool> &Features,
+                                    StringRef Name, bool Enabled);
   virtual void getDefaultFeatures(llvm::StringMap<bool> &Features) const;
   virtual bool hasFeature(StringRef Feature) const;
   virtual bool HandleTargetFeatures(std::vector<std::string> &Features,
@@ -1829,7 +1837,7 @@ public:
       .Case("core2", CK_Core2)
       .Case("penryn", CK_Penryn)
       .Case("atom", CK_Atom)
-      .Case("slm", CK_SLM)
+      .Case("slm", CK_Silvermont)
       .Case("corei7", CK_Corei7)
       .Case("corei7-avx", CK_Corei7AVX)
       .Case("core-avx-i", CK_CoreAVXi)
@@ -1905,7 +1913,7 @@ public:
     case CK_Core2:
     case CK_Penryn:
     case CK_Atom:
-    case CK_SLM:
+    case CK_Silvermont:
     case CK_Corei7:
     case CK_Corei7AVX:
     case CK_CoreAVXi:
@@ -1963,7 +1971,7 @@ void X86TargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
 
   // X86_64 always has SSE2.
   if (getTriple().getArch() == llvm::Triple::x86_64)
-    setFeatureEnabled(Features, "sse2", true);
+    setFeatureEnabledImpl(Features, "sse2", true);
 
   switch (CPU) {
   case CK_Generic:
@@ -1976,154 +1984,158 @@ void X86TargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
     break;
   case CK_PentiumMMX:
   case CK_Pentium2:
-    setFeatureEnabled(Features, "mmx", true);
+    setFeatureEnabledImpl(Features, "mmx", true);
     break;
   case CK_Pentium3:
   case CK_Pentium3M:
-    setFeatureEnabled(Features, "sse", true);
+    setFeatureEnabledImpl(Features, "sse", true);
     break;
   case CK_PentiumM:
   case CK_Pentium4:
   case CK_Pentium4M:
   case CK_x86_64:
-    setFeatureEnabled(Features, "sse2", true);
+    setFeatureEnabledImpl(Features, "sse2", true);
     break;
   case CK_Yonah:
   case CK_Prescott:
   case CK_Nocona:
-    setFeatureEnabled(Features, "sse3", true);
+    setFeatureEnabledImpl(Features, "sse3", true);
     break;
   case CK_Core2:
-    setFeatureEnabled(Features, "ssse3", true);
+    setFeatureEnabledImpl(Features, "ssse3", true);
     break;
   case CK_Penryn:
-    setFeatureEnabled(Features, "sse4.1", true);
+    setFeatureEnabledImpl(Features, "sse4.1", true);
     break;
   case CK_Atom:
-    setFeatureEnabled(Features, "ssse3", true);
+    setFeatureEnabledImpl(Features, "ssse3", true);
+    break;
+  case CK_Silvermont:
+    setFeatureEnabledImpl(Features, "sse4.2", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
     break;
   case CK_Corei7:
-  case CK_SLM:
-    setFeatureEnabled(Features, "sse4.2", true);
+    setFeatureEnabledImpl(Features, "sse4.2", true);
     break;
   case CK_Corei7AVX:
-    setFeatureEnabled(Features, "avx", true);
-    setFeatureEnabled(Features, "aes", true);
-    setFeatureEnabled(Features, "pclmul", true);
+    setFeatureEnabledImpl(Features, "avx", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
     break;
   case CK_CoreAVXi:
-    setFeatureEnabled(Features, "avx", true);
-    setFeatureEnabled(Features, "aes", true);
-    setFeatureEnabled(Features, "pclmul", true);
-    setFeatureEnabled(Features, "rdrnd", true);
-    setFeatureEnabled(Features, "f16c", true);
+    setFeatureEnabledImpl(Features, "avx", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
+    setFeatureEnabledImpl(Features, "rdrnd", true);
+    setFeatureEnabledImpl(Features, "f16c", true);
     break;
   case CK_CoreAVX2:
-    setFeatureEnabled(Features, "avx2", true);
-    setFeatureEnabled(Features, "aes", true);
-    setFeatureEnabled(Features, "pclmul", true);
-    setFeatureEnabled(Features, "lzcnt", true);
-    setFeatureEnabled(Features, "rdrnd", true);
-    setFeatureEnabled(Features, "f16c", true);
-    setFeatureEnabled(Features, "bmi", true);
-    setFeatureEnabled(Features, "bmi2", true);
-    setFeatureEnabled(Features, "rtm", true);
-    setFeatureEnabled(Features, "fma", true);
+    setFeatureEnabledImpl(Features, "avx2", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
+    setFeatureEnabledImpl(Features, "lzcnt", true);
+    setFeatureEnabledImpl(Features, "rdrnd", true);
+    setFeatureEnabledImpl(Features, "f16c", true);
+    setFeatureEnabledImpl(Features, "bmi", true);
+    setFeatureEnabledImpl(Features, "bmi2", true);
+    setFeatureEnabledImpl(Features, "rtm", true);
+    setFeatureEnabledImpl(Features, "fma", true);
     break;
   case CK_KNL:
-    setFeatureEnabled(Features, "avx512f", true);
-    setFeatureEnabled(Features, "avx512cd", true);
-    setFeatureEnabled(Features, "avx512er", true);
-    setFeatureEnabled(Features, "avx512pf", true);
-    setFeatureEnabled(Features, "aes", true);
-    setFeatureEnabled(Features, "pclmul", true);
-    setFeatureEnabled(Features, "lzcnt", true);
-    setFeatureEnabled(Features, "rdrnd", true);
-    setFeatureEnabled(Features, "f16c", true);
-    setFeatureEnabled(Features, "bmi", true);
-    setFeatureEnabled(Features, "bmi2", true);
-    setFeatureEnabled(Features, "rtm", true);
-    setFeatureEnabled(Features, "fma", true);
+    setFeatureEnabledImpl(Features, "avx512f", true);
+    setFeatureEnabledImpl(Features, "avx512cd", true);
+    setFeatureEnabledImpl(Features, "avx512er", true);
+    setFeatureEnabledImpl(Features, "avx512pf", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
+    setFeatureEnabledImpl(Features, "lzcnt", true);
+    setFeatureEnabledImpl(Features, "rdrnd", true);
+    setFeatureEnabledImpl(Features, "f16c", true);
+    setFeatureEnabledImpl(Features, "bmi", true);
+    setFeatureEnabledImpl(Features, "bmi2", true);
+    setFeatureEnabledImpl(Features, "rtm", true);
+    setFeatureEnabledImpl(Features, "fma", true);
     break;
   case CK_K6:
   case CK_WinChipC6:
-    setFeatureEnabled(Features, "mmx", true);
+    setFeatureEnabledImpl(Features, "mmx", true);
     break;
   case CK_K6_2:
   case CK_K6_3:
   case CK_WinChip2:
   case CK_C3:
-    setFeatureEnabled(Features, "3dnow", true);
+    setFeatureEnabledImpl(Features, "3dnow", true);
     break;
   case CK_Athlon:
   case CK_AthlonThunderbird:
   case CK_Geode:
-    setFeatureEnabled(Features, "3dnowa", true);
+    setFeatureEnabledImpl(Features, "3dnowa", true);
     break;
   case CK_Athlon4:
   case CK_AthlonXP:
   case CK_AthlonMP:
-    setFeatureEnabled(Features, "sse", true);
-    setFeatureEnabled(Features, "3dnowa", true);
+    setFeatureEnabledImpl(Features, "sse", true);
+    setFeatureEnabledImpl(Features, "3dnowa", true);
     break;
   case CK_K8:
   case CK_Opteron:
   case CK_Athlon64:
   case CK_AthlonFX:
-    setFeatureEnabled(Features, "sse2", true);
-    setFeatureEnabled(Features, "3dnowa", true);
+    setFeatureEnabledImpl(Features, "sse2", true);
+    setFeatureEnabledImpl(Features, "3dnowa", true);
     break;
   case CK_K8SSE3:
   case CK_OpteronSSE3:
   case CK_Athlon64SSE3:
-    setFeatureEnabled(Features, "sse3", true);
-    setFeatureEnabled(Features, "3dnowa", true);
+    setFeatureEnabledImpl(Features, "sse3", true);
+    setFeatureEnabledImpl(Features, "3dnowa", true);
     break;
   case CK_AMDFAM10:
-    setFeatureEnabled(Features, "sse3", true);
-    setFeatureEnabled(Features, "sse4a", true);
-    setFeatureEnabled(Features, "3dnowa", true);
-    setFeatureEnabled(Features, "lzcnt", true);
-    setFeatureEnabled(Features, "popcnt", true);
+    setFeatureEnabledImpl(Features, "sse3", true);
+    setFeatureEnabledImpl(Features, "sse4a", true);
+    setFeatureEnabledImpl(Features, "3dnowa", true);
+    setFeatureEnabledImpl(Features, "lzcnt", true);
+    setFeatureEnabledImpl(Features, "popcnt", true);
     break;
   case CK_BTVER1:
-    setFeatureEnabled(Features, "ssse3", true);
-    setFeatureEnabled(Features, "sse4a", true);
-    setFeatureEnabled(Features, "lzcnt", true);
-    setFeatureEnabled(Features, "popcnt", true);
+    setFeatureEnabledImpl(Features, "ssse3", true);
+    setFeatureEnabledImpl(Features, "sse4a", true);
+    setFeatureEnabledImpl(Features, "lzcnt", true);
+    setFeatureEnabledImpl(Features, "popcnt", true);
     break;
   case CK_BTVER2:
-    setFeatureEnabled(Features, "avx", true);
-    setFeatureEnabled(Features, "sse4a", true);
-    setFeatureEnabled(Features, "lzcnt", true);
-    setFeatureEnabled(Features, "aes", true);
-    setFeatureEnabled(Features, "pclmul", true);
-    setFeatureEnabled(Features, "bmi", true);
-    setFeatureEnabled(Features, "f16c", true);
+    setFeatureEnabledImpl(Features, "avx", true);
+    setFeatureEnabledImpl(Features, "sse4a", true);
+    setFeatureEnabledImpl(Features, "lzcnt", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
+    setFeatureEnabledImpl(Features, "bmi", true);
+    setFeatureEnabledImpl(Features, "f16c", true);
     break;
   case CK_BDVER1:
-    setFeatureEnabled(Features, "xop", true);
-    setFeatureEnabled(Features, "lzcnt", true);
-    setFeatureEnabled(Features, "aes", true);
-    setFeatureEnabled(Features, "pclmul", true);
+    setFeatureEnabledImpl(Features, "xop", true);
+    setFeatureEnabledImpl(Features, "lzcnt", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
     break;
   case CK_BDVER2:
-    setFeatureEnabled(Features, "xop", true);
-    setFeatureEnabled(Features, "lzcnt", true);
-    setFeatureEnabled(Features, "aes", true);
-    setFeatureEnabled(Features, "pclmul", true);
-    setFeatureEnabled(Features, "bmi", true);
-    setFeatureEnabled(Features, "fma", true);
-    setFeatureEnabled(Features, "f16c", true);
+    setFeatureEnabledImpl(Features, "xop", true);
+    setFeatureEnabledImpl(Features, "lzcnt", true);
+    setFeatureEnabledImpl(Features, "aes", true);
+    setFeatureEnabledImpl(Features, "pclmul", true);
+    setFeatureEnabledImpl(Features, "bmi", true);
+    setFeatureEnabledImpl(Features, "fma", true);
+    setFeatureEnabledImpl(Features, "f16c", true);
     break;
   case CK_C3_2:
-    setFeatureEnabled(Features, "sse", true);
+    setFeatureEnabledImpl(Features, "sse", true);
     break;
   }
 }
 
 void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
-                                X86SSEEnum Level, bool Enabled) const {
+                                X86SSEEnum Level, bool Enabled) {
   if (Enabled) {
     switch (Level) {
     case AVX512F:
@@ -2133,7 +2145,7 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
     case AVX:
       Features["avx"] = true;
     case SSE42:
-      Features["popcnt"] = Features["sse4.2"] = true;
+      Features["sse4.2"] = true;
     case SSE41:
       Features["sse4.1"] = true;
     case SSSE3:
@@ -2143,8 +2155,6 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
     case SSE2:
       Features["sse2"] = true;
     case SSE1:
-      if (!Features.count("mmx"))
-        setMMXLevel(Features, MMX, Enabled);
       Features["sse"] = true;
     case NoSSE:
       break;
@@ -2157,7 +2167,8 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
   case SSE1:
     Features["sse"] = false;
   case SSE2:
-    Features["sse2"] = false;
+    Features["sse2"] = Features["pclmul"] = Features["aes"] =
+      Features["sha"] = false;
   case SSE3:
     Features["sse3"] = false;
     setXOPLevel(Features, NoXOP, false);
@@ -2166,9 +2177,9 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
   case SSE41:
     Features["sse4.1"] = false;
   case SSE42:
-    Features["popcnt"] = Features["sse4.2"] = false;
+    Features["sse4.2"] = false;
   case AVX:
-    Features["fma"] = Features["avx"] = false;
+    Features["fma"] = Features["avx"] = Features["f16c"] = false;
     setXOPLevel(Features, FMA4, false);
   case AVX2:
     Features["avx2"] = false;
@@ -2179,7 +2190,7 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
 }
 
 void X86TargetInfo::setMMXLevel(llvm::StringMap<bool> &Features,
-                                MMX3DNowEnum Level, bool Enabled) const {
+                                MMX3DNowEnum Level, bool Enabled) {
   if (Enabled) {
     switch (Level) {
     case AMD3DNowAthlon:
@@ -2206,7 +2217,7 @@ void X86TargetInfo::setMMXLevel(llvm::StringMap<bool> &Features,
 }
 
 void X86TargetInfo::setXOPLevel(llvm::StringMap<bool> &Features, XOPEnum Level,
-                                bool Enabled) const {
+                                bool Enabled) {
   if (Enabled) {
     switch (Level) {
     case XOP:
@@ -2234,9 +2245,8 @@ void X86TargetInfo::setXOPLevel(llvm::StringMap<bool> &Features, XOPEnum Level,
   }
 }
 
-void X86TargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
-                                      StringRef Name,
-                                      bool Enabled) const {
+void X86TargetInfo::setFeatureEnabledImpl(llvm::StringMap<bool> &Features,
+                                          StringRef Name, bool Enabled) {
   // FIXME: This *really* should not be here.  We need some way of translating
   // options into llvm subtarget features.
   if (Name == "sse4")
@@ -2244,37 +2254,37 @@ void X86TargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
 
   Features[Name] = Enabled;
 
-  if (Name == "mmx")
+  if (Name == "mmx") {
     setMMXLevel(Features, MMX, Enabled);
-  else if (Name == "sse")
+  } else if (Name == "sse") {
     setSSELevel(Features, SSE1, Enabled);
-  else if (Name == "sse2")
+  } else if (Name == "sse2") {
     setSSELevel(Features, SSE2, Enabled);
-  else if (Name == "sse3")
+  } else if (Name == "sse3") {
     setSSELevel(Features, SSE3, Enabled);
-  else if (Name == "ssse3")
+  } else if (Name == "ssse3") {
     setSSELevel(Features, SSSE3, Enabled);
-  else if (Name == "sse4.2")
+  } else if (Name == "sse4.2") {
     setSSELevel(Features, SSE42, Enabled);
-  else if (Name == "sse4.1")
+  } else if (Name == "sse4.1") {
     setSSELevel(Features, SSE41, Enabled);
-  else if (Name == "3dnow")
+  } else if (Name == "3dnow") {
     setMMXLevel(Features, AMD3DNow, Enabled);
-  else if (Name == "3dnowa")
+  } else if (Name == "3dnowa") {
     setMMXLevel(Features, AMD3DNowAthlon, Enabled);
-  else if (Name == "aes") {
+  } else if (Name == "aes") {
     if (Enabled)
       setSSELevel(Features, SSE2, Enabled);
   } else if (Name == "pclmul") {
     if (Enabled)
       setSSELevel(Features, SSE2, Enabled);
-  } else if (Name == "avx")
+  } else if (Name == "avx") {
     setSSELevel(Features, AVX, Enabled);
-  else if (Name == "avx2")
+  } else if (Name == "avx2") {
     setSSELevel(Features, AVX2, Enabled);
-  else if (Name == "avx512f")
+  } else if (Name == "avx512f") {
     setSSELevel(Features, AVX512F, Enabled);
-  else if (Name == "avx512cd" || Name == "avx512er" || Name == "avx512pf") {
+  } else if (Name == "avx512cd" || Name == "avx512er" || Name == "avx512pf") {
     if (Enabled)
       setSSELevel(Features, AVX512F, Enabled);
   } else if (Name == "fma") {
@@ -2286,6 +2296,12 @@ void X86TargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
     setXOPLevel(Features, XOP, Enabled);
   } else if (Name == "sse4a") {
     setXOPLevel(Features, SSE4A, Enabled);
+  } else if (Name == "f16c") {
+    if (Enabled)
+      setSSELevel(Features, AVX, Enabled);
+  } else if (Name == "sha") {
+    if (Enabled)
+      setSSELevel(Features, SSE2, Enabled);
   }
 }
 
@@ -2376,6 +2392,11 @@ bool X86TargetInfo::HandleTargetFeatures(std::vector<std::string> &Features,
       continue;
     }
 
+    if (Feature == "sha") {
+      HasSHA = true;
+      continue;
+    }
+
     assert(Features[i][0] == '+' && "Invalid target feature!");
     X86SSEEnum Level = llvm::StringSwitch<X86SSEEnum>(Feature)
       .Case("avx512f", AVX512F)
@@ -2406,6 +2427,15 @@ bool X86TargetInfo::HandleTargetFeatures(std::vector<std::string> &Features,
     XOPLevel = std::max(XOPLevel, XLevel);
   }
 
+  // Enable popcnt if sse4.2 is enabled and popcnt is not explicitly disabled.
+  // Can't do this earlier because we need to be able to explicitly enable
+  // popcnt and still disable sse4.2.
+  if (!HasPOPCNT && SSELevel >= SSE42 &&
+      std::find(Features.begin(), Features.end(), "-popcnt") == Features.end()){
+    HasPOPCNT = true;
+    Features.push_back("+popcnt");
+  }
+
   // LLVM doesn't have a separate switch for fpmath, so only accept it if it
   // matches the selected sse level.
   if (FPMath == FP_SSE && SSELevel < SSE1) {
@@ -2418,10 +2448,14 @@ bool X86TargetInfo::HandleTargetFeatures(std::vector<std::string> &Features,
 
   // Don't tell the backend if we're turning off mmx; it will end up disabling
   // SSE, which we don't want.
+  // Additionally, if SSE is enabled and mmx is not explicitly disabled,
+  // then enable MMX.
   std::vector<std::string>::iterator it;
   it = std::find(Features.begin(), Features.end(), "-mmx");
   if (it != Features.end())
     Features.erase(it);
+  else if (SSELevel > NoSSE)
+    MMX3DNowLevel = std::max(MMX3DNowLevel, MMX);
   return true;
 }
 
@@ -2500,7 +2534,7 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   case CK_Atom:
     defineCPUMacros(Builder, "atom");
     break;
-  case CK_SLM:
+  case CK_Silvermont:
     defineCPUMacros(Builder, "slm");
     break;
   case CK_Corei7:
@@ -2632,6 +2666,9 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   if (HasAVX512PF)
     Builder.defineMacro("__AVX512PF__");
 
+  if (HasSHA)
+    Builder.defineMacro("__SHA__");
+
   // Each case falls through to the previous one here.
   switch (SSELevel) {
   case AVX512F:
@@ -2722,6 +2759,7 @@ bool X86TargetInfo::hasFeature(StringRef Feature) const {
       .Case("rtm", HasRTM)
       .Case("prfchw", HasPRFCHW)
       .Case("rdseed", HasRDSEED)
+      .Case("sha", HasSHA)
       .Case("sse", SSELevel >= SSE1)
       .Case("sse2", SSELevel >= SSE2)
       .Case("sse3", SSELevel >= SSE3)
@@ -3511,7 +3549,7 @@ class ARMTargetInfo : public TargetInfo {
     // the kernel which on armv6 and newer uses ldrex and strex. The net result
     // is that if we assume the kernel is at least as recent as the hardware,
     // it is safe to use atomic instructions on armv6 and newer.
-    if (T.getOS() != llvm::Triple::Linux &&
+    if (!T.isOSLinux() &&
         T.getOS() != llvm::Triple::FreeBSD &&
         T.getOS() != llvm::Triple::Bitrig)
       return false;
@@ -3635,10 +3673,12 @@ public:
   void getDefaultFeatures(llvm::StringMap<bool> &Features) const {
     if (CPU == "arm1136jf-s" || CPU == "arm1176jzf-s" || CPU == "mpcore")
       Features["vfp2"] = true;
-    else if (CPU == "cortex-a8" || CPU == "cortex-a15" ||
-             CPU == "cortex-a9" || CPU == "cortex-a9-mp")
+    else if (CPU == "cortex-a8" || CPU == "cortex-a9" ||
+             CPU == "cortex-a9-mp") {
+      Features["vfp3"] = true;
       Features["neon"] = true;
-    else if (CPU == "swift" || CPU == "cortex-a7") {
+    } else if (CPU == "swift" || CPU == "cortex-a5" ||
+        CPU == "cortex-a7" || CPU == "cortex-a15") {
       Features["vfp4"] = true;
       Features["neon"] = true;
     }
@@ -3689,8 +3729,7 @@ public:
         .Case("arm", true)
         .Case("softfloat", SoftFloat)
         .Case("thumb", IsThumb)
-        .Case("neon", FPU == NeonFPU && !SoftFloat && 
-              StringRef(getCPUDefineSuffix(CPU)).startswith("7"))    
+        .Case("neon", (FPU & NeonFPU) && !SoftFloat)
         .Default(false);
   }
   // FIXME: Should we actually have some table instead of these switches?
@@ -3711,8 +3750,8 @@ public:
       .Cases("arm1136jf-s", "mpcorenovfp", "mpcore", "6K")
       .Cases("arm1156t2-s", "arm1156t2f-s", "6T2")
       .Cases("cortex-a5", "cortex-a7", "cortex-a8", "7A")
-      .Cases("cortex-a9", "cortex-a15", "7A")
-      .Case("cortex-r5", "7R")
+      .Cases("cortex-a9", "cortex-a12", "cortex-a15", "7A")
+      .Cases("cortex-r4", "cortex-r5", "7R")
       .Case("cortex-a9-mp", "7F")
       .Case("swift", "7S")
       .Cases("cortex-m3", "cortex-m4", "7M")
@@ -3722,9 +3761,10 @@ public:
   }
   static const char *getCPUProfile(StringRef Name) {
     return llvm::StringSwitch<const char*>(Name)
-      .Cases("cortex-a8", "cortex-a9", "A")
+      .Cases("cortex-a5", "cortex-a7", "cortex-a8", "A")
+      .Cases("cortex-a9", "cortex-a12", "cortex-a15", "A")
       .Cases("cortex-m3", "cortex-m4", "cortex-m0", "M")
-      .Case("cortex-r5", "R")
+      .Cases("cortex-r4", "cortex-r5", "R")
       .Default("");
   }
   virtual bool setCPU(const std::string &Name) {
@@ -3803,6 +3843,9 @@ public:
     // when Neon instructions are actually available.
     if ((FPU & NeonFPU) && !SoftFloat && IsARMv7)
       Builder.defineMacro("__ARM_NEON__");
+
+    if (CPUArch.startswith("8"))
+      Builder.defineMacro("__ARM_FEATURE_CRC32");
   }
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
                                  unsigned &NumRecords) const {
@@ -4566,6 +4609,7 @@ namespace {
                           "f32:32:32-f64:32:32-v64:32:32-"
                           "v128:32:32-a0:0:32-n32";
       AddrSpaceMap = &TCEOpenCLAddrSpaceMap;
+      UseAddrSpaceMapMangling = true;
     }
 
     virtual void getTargetDefines(const LangOptions &Opts,
@@ -5118,8 +5162,6 @@ namespace {
     0     // cuda_shared
   };
   class SPIRTargetInfo : public TargetInfo {
-    static const char * const GCCRegNames[];
-    static const Builtin::Info BuiltinInfo[];
   public:
     SPIRTargetInfo(const llvm::Triple &Triple) : TargetInfo(Triple) {
       assert(getTriple().getOS() == llvm::Triple::UnknownOS &&
@@ -5130,6 +5172,7 @@ namespace {
       TLSSupported = false;
       LongWidth = LongAlign = 64;
       AddrSpaceMap = &SPIRAddrSpaceMap;
+      UseAddrSpaceMapMangling = true;
       // Define available target features
       // These must be defined in sorted order!
       NoAsmVariants = true;

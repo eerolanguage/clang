@@ -6403,16 +6403,29 @@ bool Sema::CheckFunctionTemplateSpecialization(
       // it will be a static member function until we know which template it
       // specializes), so adjust it now assuming it specializes this template.
       QualType FT = FD->getType();
+      const FunctionProtoType *FPT = FT->castAs<FunctionProtoType>();
+      FunctionDecl *TmplFD = FunTmpl->getTemplatedDecl();
       if (FD->isConstexpr()) {
-        CXXMethodDecl *OldMD =
-          dyn_cast<CXXMethodDecl>(FunTmpl->getTemplatedDecl());
+        CXXMethodDecl *OldMD = dyn_cast<CXXMethodDecl>(TmplFD);
         if (OldMD && OldMD->isConst()) {
-          const FunctionProtoType *FPT = FT->castAs<FunctionProtoType>();
           FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
           EPI.TypeQuals |= Qualifiers::Const;
           FT = Context.getFunctionType(FPT->getResultType(), FPT->getArgTypes(),
                                        EPI);
         }
+      }
+
+      // Ignore differences in calling convention and noreturn until decl
+      // merging.
+      const FunctionProtoType *TmplFT =
+          TmplFD->getType()->castAs<FunctionProtoType>();
+      if (FPT->getCallConv() != TmplFT->getCallConv() ||
+          FPT->getNoReturnAttr() != TmplFT->getNoReturnAttr()) {
+        FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
+        EPI.ExtInfo = EPI.ExtInfo.withCallingConv(TmplFT->getCallConv());
+        EPI.ExtInfo = EPI.ExtInfo.withNoReturn(TmplFT->getNoReturnAttr());
+        FT = Context.getFunctionType(FPT->getResultType(), FPT->getArgTypes(),
+                                     EPI);
       }
 
       // C++ [temp.expl.spec]p11:
@@ -6443,7 +6456,7 @@ bool Sema::CheckFunctionTemplateSpecialization(
 
   // Find the most specialized function template.
   UnresolvedSetIterator Result = getMostSpecialized(
-      Candidates.begin(), Candidates.end(), FailedCandidates, TPOC_Other, 0,
+      Candidates.begin(), Candidates.end(), FailedCandidates,
       FD->getLocation(),
       PDiag(diag::err_function_template_spec_no_match) << FD->getDeclName(),
       PDiag(diag::err_function_template_spec_ambiguous)
@@ -7230,16 +7243,26 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
         return true;
       }
 
-      TemplateArgumentListInfo TemplateArgs;
-      if (D.getName().getKind() == UnqualifiedId::IK_TemplateId) {
-        // Translate the parser's template argument list into our AST format.
-        TemplateIdAnnotation *TemplateId = D.getName().TemplateId;
-        TemplateArgs.setLAngleLoc(TemplateId->LAngleLoc);
-        TemplateArgs.setRAngleLoc(TemplateId->RAngleLoc);
-        ASTTemplateArgsPtr TemplateArgsPtr(TemplateId->getTemplateArgs(),
-                                           TemplateId->NumArgs);
-        translateTemplateArguments(TemplateArgsPtr, TemplateArgs);
+      if (D.getName().getKind() != UnqualifiedId::IK_TemplateId) {
+        // C++1y [temp.explicit]p3:
+        //   If the explicit instantiation is for a variable, the unqualified-id
+        //   in the declaration shall be a template-id.
+        Diag(D.getIdentifierLoc(),
+             diag::err_explicit_instantiation_without_template_id)
+          << PrevTemplate;
+        Diag(PrevTemplate->getLocation(),
+             diag::note_explicit_instantiation_here);
+        return true;
       }
+
+      // Translate the parser's template argument list into our AST format.
+      TemplateArgumentListInfo TemplateArgs;
+      TemplateIdAnnotation *TemplateId = D.getName().TemplateId;
+      TemplateArgs.setLAngleLoc(TemplateId->LAngleLoc);
+      TemplateArgs.setRAngleLoc(TemplateId->RAngleLoc);
+      ASTTemplateArgsPtr TemplateArgsPtr(TemplateId->getTemplateArgs(),
+                                         TemplateId->NumArgs);
+      translateTemplateArguments(TemplateArgsPtr, TemplateArgs);
 
       DeclResult Res = CheckVarTemplateId(PrevTemplate, TemplateLoc,
                                           D.getIdentifierLoc(), TemplateArgs);
@@ -7259,12 +7282,9 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
     //
     // C++98 has the same restriction, just worded differently.
     //
-    // C++1y If the explicit instantiation is for a variable, the
-    // unqualified-id in the declaration shall be a template-id.
-    if (!ScopeSpecifierHasTemplateId(D.getCXXScopeSpec()) &&
-        (!PrevTemplate ||
-         (D.getName().getKind() != UnqualifiedId::IK_TemplateId &&
-          D.getCXXScopeSpec().isSet())))
+    // This does not apply to variable template specializations, where the
+    // template-id is in the unqualified-id instead.
+    if (!ScopeSpecifierHasTemplateId(D.getCXXScopeSpec()) && !PrevTemplate)
       Diag(D.getIdentifierLoc(),
            diag::ext_explicit_instantiation_without_qualified_id)
         << Prev << D.getCXXScopeSpec().getRange();
@@ -7371,7 +7391,7 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
 
   // Find the most specialized function template specialization.
   UnresolvedSetIterator Result = getMostSpecialized(
-      Matches.begin(), Matches.end(), FailedCandidates, TPOC_Other, 0,
+      Matches.begin(), Matches.end(), FailedCandidates,
       D.getIdentifierLoc(),
       PDiag(diag::err_explicit_instantiation_not_known) << Name,
       PDiag(diag::err_explicit_instantiation_ambiguous) << Name,

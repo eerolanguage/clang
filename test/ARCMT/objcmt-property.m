@@ -6,6 +6,7 @@
 #define WEBKIT_OBJC_METHOD_ANNOTATION(ANNOTATION) ANNOTATION
 #define WEAK_IMPORT_ATTRIBUTE __attribute__((objc_arc_weak_reference_unavailable))
 #define AVAILABLE_WEBKIT_VERSION_3_0_AND_LATER
+#define DEPRECATED  __attribute__((deprecated)) 
 
 typedef char BOOL;
 @class NSString;
@@ -97,6 +98,113 @@ typedef char BOOL;
 - (id) object;
 + (double) D;
 - (void *)JSObject WEBKIT_OBJC_METHOD_ANNOTATION(AVAILABLE_WEBKIT_VERSION_3_0_AND_LATER);
+- (BOOL)isIgnoringInteractionEvents;
+
+- (NSString *)getStringValue;
+- (BOOL)getCounterValue;
+- (void)setStringValue:(NSString *)stringValue AVAILABLE_WEBKIT_VERSION_3_0_AND_LATER;
+- (NSDictionary *)getns_dixtionary;
+
+- (BOOL)is3bar; // watch out
+- (NSString *)get3foo; // watch out
+
+- (BOOL) getM;
+- (BOOL) getMA;
+- (BOOL) getALL;
+- (BOOL) getMANY;
+- (BOOL) getSome;
 @end
 
 
+@interface NSInvocation(CAT)
+- (id)target;
+- (void)setTarget:(id)target;
+
+- (id) dataSource;
+
+- (id)xxxdelegateYYY;
+- (void)setXxxdelegateYYY:(id)delegate;
+
+- (void)setDataSource:(id)source;
+
+- (id)MYtarget;
+- (void)setMYtarget: (id)target;
+
+- (id)targetX;
+- (void)setTargetX: (id)t;
+
+- (int)value;
+- (void)setValue: (int)val;
+
+-(BOOL) isContinuous;
+-(void) setContinuous:(BOOL)value;
+
+- (id) isAnObject;
+- (void)setAnObject : (id) object;
+
+- (BOOL) isinValid;
+- (void) setInValid : (BOOL) arg;
+
+- (void) Nothing;
+- (int) Length;
+- (id) object;
++ (double) D;
+
+- (BOOL)is3bar; // watch out
+- (NSString *)get3foo; // watch out
+
+- (BOOL) getM;
+- (BOOL) getMA;
+- (BOOL) getALL;
+- (BOOL) getMANY;
+- (BOOL) getSome;
+@end
+
+DEPRECATED
+@interface I_DEP
+- (BOOL) isinValid;
+- (void) setInValid : (BOOL) arg;
+@end
+
+@interface AnotherOne
+- (BOOL) isinValid DEPRECATED;
+- (void) setInValid : (BOOL) arg;
+- (id)MYtarget;
+- (void)setMYtarget: (id)target DEPRECATED;
+- (BOOL) getM DEPRECATED;
+
+- (id)xxxdelegateYYY DEPRECATED;
+- (void)setXxxdelegateYYY:(id)delegate DEPRECATED;
+@end
+
+// rdar://14987909
+#define NS_AVAILABLE __attribute__((availability(macosx,introduced=10.0)))
+#define NORETURN __attribute__((noreturn))
+#define ALIGNED __attribute__((aligned(16)))
+
+@interface NSURL
+// Do not infer a property.
+- (NSURL *)appStoreReceiptURL NS_AVAILABLE;
+- (void) setAppStoreReceiptURL : (NSURL *)object;
+
+- (NSURL *)appStoreReceiptURLX NS_AVAILABLE;
+- (void) setAppStoreReceiptURLX : (NSURL *)object NS_AVAILABLE;
+
+// Do not infer a property.
+- (NSURL *)appStoreReceiptURLY ;
+- (void) setAppStoreReceiptURLY : (NSURL *)object NS_AVAILABLE;
+
+- (id)OkToInfer NS_AVAILABLE;
+
+// Do not infer a property.
+- (NSURL *)appStoreReceiptURLZ ;
+- (void) setAppStoreReceiptURLZ : (NSURL *)object NS_AVAILABLE;
+
+// Do not infer a property.
+- (id) t1 NORETURN NS_AVAILABLE;
+- (void) setT1 : (id) arg NS_AVAILABLE;
+
+- (id)method1 ALIGNED NS_AVAILABLE;
+- (void) setMethod1 : (id) object NS_AVAILABLE ALIGNED;
+
+@end

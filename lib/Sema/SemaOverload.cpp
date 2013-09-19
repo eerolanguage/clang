@@ -21,6 +21,7 @@
 #include "clang/AST/TypeOrdering.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/PartialDiagnostic.h"
+#include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
@@ -977,6 +978,10 @@ bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
                       bool UseUsingDeclRules) {
   // C++ [basic.start.main]p2: This function shall not be overloaded.
   if (New->isMain())
+    return false;
+
+  // MSVCRT user defined entry points cannot be overloaded.
+  if (New->isMSVCRTEntryPoint())
     return false;
 
   FunctionTemplateDecl *OldTemplate = Old->getDescribedFunctionTemplate();
@@ -7962,7 +7967,8 @@ isBetterOverloadCandidate(Sema &S,
                                          Loc,
                        isa<CXXConversionDecl>(Cand1.Function)? TPOC_Conversion
                                                              : TPOC_Call,
-                                         Cand1.ExplicitCallArguments))
+                                         Cand1.ExplicitCallArguments,
+                                         Cand2.ExplicitCallArguments))
       return BetterTemplate == Cand1.Function->getPrimaryTemplate();
   }
 
@@ -9491,7 +9497,7 @@ private:
     // TODO: It looks like FailedCandidates does not serve much purpose
     // here, since the no_viable diagnostic has index 0.
     UnresolvedSetIterator Result = S.getMostSpecialized(
-        MatchesCopy.begin(), MatchesCopy.end(), FailedCandidates, TPOC_Other, 0,
+        MatchesCopy.begin(), MatchesCopy.end(), FailedCandidates,
         SourceExpr->getLocStart(), S.PDiag(),
         S.PDiag(diag::err_addr_ovl_ambiguous) << Matches[0]
                                                      .second->getDeclName(),

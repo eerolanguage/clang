@@ -1038,7 +1038,8 @@ ExprResult Sema::SemaAtomicOpsOverloaded(ExprResult TheCallResult,
     return ExprError();
   }
 
-  if (!IsC11 && !AtomTy.isTriviallyCopyableType(Context)) {
+  if (!IsC11 && !AtomTy.isTriviallyCopyableType(Context) &&
+      !AtomTy->isScalarType()) {
     // For GNU atomics, require a trivially-copyable type. This is not part of
     // the GNU atomics specification, but we enforce it for sanity.
     Diag(DRE->getLocStart(), diag::err_atomic_op_needs_trivial_copy)
@@ -1815,6 +1816,37 @@ ExprResult Sema::SemaBuiltinShuffleVector(CallExpr *TheCall) {
   return Owned(new (Context) ShuffleVectorExpr(Context, exprs, resType,
                                             TheCall->getCallee()->getLocStart(),
                                             TheCall->getRParenLoc()));
+}
+
+/// SemaConvertVectorExpr - Handle __builtin_convertvector
+ExprResult Sema::SemaConvertVectorExpr(Expr *E, TypeSourceInfo *TInfo,
+                                       SourceLocation BuiltinLoc,
+                                       SourceLocation RParenLoc) {
+  ExprValueKind VK = VK_RValue;
+  ExprObjectKind OK = OK_Ordinary;
+  QualType DstTy = TInfo->getType();
+  QualType SrcTy = E->getType();
+
+  if (!SrcTy->isVectorType() && !SrcTy->isDependentType())
+    return ExprError(Diag(BuiltinLoc,
+                          diag::err_convertvector_non_vector)
+                     << E->getSourceRange());
+  if (!DstTy->isVectorType() && !DstTy->isDependentType())
+    return ExprError(Diag(BuiltinLoc,
+                          diag::err_convertvector_non_vector_type));
+
+  if (!SrcTy->isDependentType() && !DstTy->isDependentType()) {
+    unsigned SrcElts = SrcTy->getAs<VectorType>()->getNumElements();
+    unsigned DstElts = DstTy->getAs<VectorType>()->getNumElements();
+    if (SrcElts != DstElts)
+      return ExprError(Diag(BuiltinLoc,
+                            diag::err_convertvector_incompatible_vector)
+                       << E->getSourceRange());
+  }
+
+  return Owned(new (Context) ConvertVectorExpr(E, TInfo, DstTy, VK, OK,
+               BuiltinLoc, RParenLoc));
+
 }
 
 /// SemaBuiltinPrefetch - Handle __builtin_prefetch.

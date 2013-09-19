@@ -921,8 +921,8 @@ enabled.
 C11 ``_Thread_local``
 ^^^^^^^^^^^^^^^^^^^^^
 
-Use ``__has_feature(c_thread_local)`` to determine if support for
-``_Thread_local`` variables is enabled.
+Use ``__has_feature(c_thread_local)`` or ``__has_extension(c_thread_local)``
+to determine if support for ``_Thread_local`` variables is enabled.
 
 Checks for Type Traits
 ======================
@@ -1255,23 +1255,6 @@ Further examples of these attributes are available in the static analyzer's `lis
 Query for these features with ``__has_attribute(ns_consumed)``,
 ``__has_attribute(ns_returns_retained)``, etc.
 
-objc_msg_lookup_stret
----------------------
-
-Traditionally, if a runtime is used that follows the GNU Objective-C ABI, a
-call to objc_msg_lookup() would be emitted for each message send, which would
-return a pointer to the actual implementation of the method. However,
-objc_msg_lookup() has no information at all about the method signature of the
-actual method. Therefore, certain features like forwarding messages cannot be
-correctly implemented for methods returning structs using objc_msg_lookup(), as
-methods returning structs use a slightly different calling convention.
-
-To work around this, Clang emits calls to objc_msg_lookup_stret() instead for
-methods that return structs if the runtime supports this, allowing the runtime
-to use a different forwarding handler for methods returning structs.
-
-To check if Clang emits calls to objc_msg_lookup_stret(),
-__has_feature(objc_msg_lookup_stret) can be used.
 
 Function Overloading in C
 =========================
@@ -1490,6 +1473,50 @@ indices specified.
 
 Query for this feature with ``__has_builtin(__builtin_shufflevector)``.
 
+``__builtin_convertvector``
+---------------------------
+
+``__builtin_convertvector`` is used to express generic vector
+type-conversion operations. The input vector and the output vector
+type must have the same number of elements.
+
+**Syntax**:
+
+.. code-block:: c++
+
+  __builtin_convertvector(src_vec, dst_vec_type)
+
+**Examples**:
+
+.. code-block:: c++
+
+  typedef double vector4double __attribute__((__vector_size__(32)));
+  typedef float  vector4float  __attribute__((__vector_size__(16)));
+  typedef short  vector4short  __attribute__((__vector_size__(8)));
+  vector4float vf; vector4short vs;
+
+  // convert from a vector of 4 floats to a vector of 4 doubles.
+  __builtin_convertvector(vf, vector4double)
+  // equivalent to:
+  (vector4double) { (double) vf[0], (double) vf[1], (double) vf[2], (double) vf[3] }
+
+  // convert from a vector of 4 shorts to a vector of 4 floats.
+  __builtin_convertvector(vs, vector4float)
+  // equivalent to:
+  (vector4float) { (float) vf[0], (float) vf[1], (float) vf[2], (float) vf[3] }
+
+**Description**:
+
+The first argument to ``__builtin_convertvector`` is a vector, and the second
+argument is a vector type with the same number of elements as the first
+argument.
+
+The result of ``__builtin_convertvector`` is a vector with the same element
+type as the second argument, with a value defined in terms of the action of a
+C-style cast applied to each element of the first argument.
+
+Query for this feature with ``__has_builtin(__builtin_convertvector)``.
+
 ``__builtin_unreachable``
 -------------------------
 
@@ -1682,6 +1709,7 @@ Clang provides overloaded builtins giving direct access to the three key ARM
 instructions for implementing atomic operations.
 
 .. code-block:: c
+
   T __builtin_arm_ldrex(const volatile T *addr);
   int __builtin_arm_strex(T val, volatile T *addr);
   void __builtin_arm_clrex(void);

@@ -152,7 +152,9 @@ public:
   void mangleCXXDtor(const CXXDestructorDecl *D, CXXDtorType Type,
                      raw_ostream &);
 
-  void mangleItaniumGuardVariable(const VarDecl *D, raw_ostream &);
+  void mangleStaticGuardVariable(const VarDecl *D, raw_ostream &);
+  void mangleDynamicInitializer(const VarDecl *D, raw_ostream &Out);
+  void mangleDynamicAtExitDestructor(const VarDecl *D, raw_ostream &Out);
   void mangleItaniumThreadLocalInit(const VarDecl *D, raw_ostream &);
   void mangleItaniumThreadLocalWrapper(const VarDecl *D, raw_ostream &);
 
@@ -1753,15 +1755,32 @@ void CXXNameMangler::mangleQualifiers(Qualifiers Quals) {
     Out << 'K';
 
   if (Quals.hasAddressSpace()) {
-    // Extension:
+    // Address space extension:
     //
-    //   <type> ::= U <address-space-number>
-    // 
-    // where <address-space-number> is a source name consisting of 'AS' 
-    // followed by the address space <number>.
+    //   <type> ::= U <target-addrspace>
+    //   <type> ::= U <OpenCL-addrspace>
+    //   <type> ::= U <CUDA-addrspace>
+
     SmallString<64> ASString;
-    ASString = "AS" + llvm::utostr_32(
-        Context.getASTContext().getTargetAddressSpace(Quals.getAddressSpace()));
+    unsigned AS = Quals.getAddressSpace();
+
+    if (Context.getASTContext().addressSpaceMapManglingFor(AS)) {
+      //  <target-addrspace> ::= "AS" <address-space-number>
+      unsigned TargetAS = Context.getASTContext().getTargetAddressSpace(AS);
+      ASString = "AS" + llvm::utostr_32(TargetAS);
+    } else {
+      switch (AS) {
+      default: llvm_unreachable("Not a language specific address space");
+      //  <OpenCL-addrspace> ::= "CL" [ "global" | "local" | "constant" ]
+      case LangAS::opencl_global:   ASString = "CLglobal";   break;
+      case LangAS::opencl_local:    ASString = "CLlocal";    break;
+      case LangAS::opencl_constant: ASString = "CLconstant"; break;
+      //  <CUDA-addrspace> ::= "CU" [ "device" | "constant" | "shared" ]
+      case LangAS::cuda_device:     ASString = "CUdevice";   break;
+      case LangAS::cuda_constant:   ASString = "CUconstant"; break;
+      case LangAS::cuda_shared:     ASString = "CUshared";   break;
+      }
+    }
     Out << 'U' << ASString.size() << ASString;
   }
   
@@ -2584,6 +2603,7 @@ recurse:
   case Expr::OffsetOfExprClass:
   case Expr::PredefinedExprClass:
   case Expr::ShuffleVectorExprClass:
+  case Expr::ConvertVectorExprClass:
   case Expr::StmtExprClass:
   case Expr::UnaryTypeTraitExprClass:
   case Expr::BinaryTypeTraitExprClass:
@@ -3691,13 +3711,32 @@ ItaniumMangleContext::mangleCXXDtorThunk(const CXXDestructorDecl *DD,
 
 /// mangleGuardVariable - Returns the mangled name for a guard variable
 /// for the passed in VarDecl.
-void ItaniumMangleContext::mangleItaniumGuardVariable(const VarDecl *D,
-                                                      raw_ostream &Out) {
+void ItaniumMangleContext::mangleStaticGuardVariable(const VarDecl *D,
+                                                     raw_ostream &Out) {
   //  <special-name> ::= GV <object name>       # Guard variable for one-time
   //                                            # initialization
   CXXNameMangler Mangler(*this, Out);
   Mangler.getStream() << "_ZGV";
   Mangler.mangleName(D);
+}
+
+void ItaniumMangleContext::mangleDynamicInitializer(const VarDecl *MD,
+                                                    raw_ostream &Out) {
+  // These symbols are internal in the Itanium ABI, so the names don't matter.
+  // Clang has traditionally used this symbol and allowed LLVM to adjust it to
+  // avoid duplicate symbols.
+  Out << "__cxx_global_var_init";
+}
+
+void ItaniumMangleContext::mangleDynamicAtExitDestructor(const VarDecl *D,
+                                                         raw_ostream &Out) {
+  // Prefix the mangling of D with __dtor_.
+  CXXNameMangler Mangler(*this, Out);
+  Mangler.getStream() << "__dtor_";
+  if (shouldMangleDeclName(D))
+    Mangler.mangle(D);
+  else
+    Mangler.getStream() << D->getName();
 }
 
 void ItaniumMangleContext::mangleItaniumThreadLocalInit(const VarDecl *D,

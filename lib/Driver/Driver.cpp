@@ -285,26 +285,6 @@ DerivedArgList *Driver::TranslateInputArgs(const InputArgList &Args) const {
   return DAL;
 }
 
-/// \brief Check whether there are multiple instances of OptionID in Args, and
-/// if so, issue a diagnostics about it.
-static void DiagnoseOptionOverride(const Driver &D, const DerivedArgList &Args,
-                                   unsigned OptionID) {
-  assert(Args.hasArg(OptionID));
-
-  arg_iterator it = Args.filtered_begin(OptionID);
-  arg_iterator ie = Args.filtered_end();
-  Arg *Previous = *it;
-  ++it;
-
-  while (it != ie) {
-    D.Diag(clang::diag::warn_drv_overriding_joined_option)
-        << Previous->getSpelling() << Previous->getValue()
-        << (*it)->getSpelling() << (*it)->getValue();
-    Previous = *it;
-    ++it;
-  }
-}
-
 Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   llvm::PrettyStackTraceString CrashInfo("Compilation construction");
 
@@ -442,11 +422,11 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
   std::string Cmd;
   llvm::raw_string_ostream OS(Cmd);
   if (FailingCommand)
-    C.PrintDiagnosticJob(OS, *FailingCommand);
+    FailingCommand->Print(OS, "\n", /*Quote*/ false, /*CrashReport*/ true);
   else
     // Crash triggered by FORCE_CLANG_DIAGNOSTICS_CRASH, which doesn't have an
     // associated FailingCommand, so just pass all jobs.
-    C.PrintDiagnosticJob(OS, C.getJobs());
+    C.getJobs().Print(OS, "\n", /*Quote*/ false, /*CrashReport*/ true);
   OS.flush();
 
   // Keep track of whether we produce any errors while trying to produce
@@ -579,7 +559,7 @@ int Driver::ExecuteCompilation(const Compilation &C,
     SmallVectorImpl< std::pair<int, const Command *> > &FailingCommands) const {
   // Just print if -### was present.
   if (C.getArgs().hasArg(options::OPT__HASH_HASH_HASH)) {
-    C.PrintJob(llvm::errs(), C.getJobs(), "\n", true);
+    C.getJobs().Print(llvm::errs(), "\n", true);
     return 0;
   }
 
@@ -1012,8 +992,8 @@ void Driver::BuildInputs(const ToolChain &TC, const DerivedArgList &Args,
     Arg *Previous = *it++;
     bool ShowNote = false;
     while (it != ie) {
-      Diag(clang::diag::warn_drv_overriding_t_option) << Previous->getSpelling()
-          << (*it)->getSpelling();
+      Diag(clang::diag::warn_drv_overriding_flag_option)
+          << Previous->getSpelling() << (*it)->getSpelling();
       Previous = *it++;
       ShowNote = true;
     }
@@ -1159,7 +1139,6 @@ void Driver::BuildActions(const ToolChain &TC, DerivedArgList &Args,
 
   // Diagnose misuse of /Fo.
   if (Arg *A = Args.getLastArg(options::OPT__SLASH_Fo)) {
-    DiagnoseOptionOverride(*this, Args, options::OPT__SLASH_Fo);
     StringRef V = A->getValue();
     if (V.empty()) {
       // It has to have a value.
@@ -1175,7 +1154,6 @@ void Driver::BuildActions(const ToolChain &TC, DerivedArgList &Args,
 
   // Diagnose misuse of /Fe.
   if (Arg *A = Args.getLastArg(options::OPT__SLASH_Fe)) {
-    DiagnoseOptionOverride(*this, Args, options::OPT__SLASH_Fe);
     if (A->getValue()[0] == '\0') {
       // It has to have a value.
       Diag(clang::diag::err_drv_missing_argument) << A->getSpelling() << 1;
@@ -1269,8 +1247,13 @@ void Driver::BuildActions(const ToolChain &TC, DerivedArgList &Args,
 
   // If we are linking, claim any options which are obviously only used for
   // compilation.
-  if (FinalPhase == phases::Link && PL.size() == 1)
+  if (FinalPhase == phases::Link && PL.size() == 1) {
     Args.ClaimAllArgs(options::OPT_CompileOnly_Group);
+    Args.ClaimAllArgs(options::OPT_cl_compile_Group);
+  }
+
+  // Claim ignored clang-cl options.
+  Args.ClaimAllArgs(options::OPT_cl_ignored_Group);
 }
 
 Action *Driver::ConstructPhaseAction(const ArgList &Args, phases::ID Phase,
@@ -1588,9 +1571,11 @@ void Driver::BuildJobsForAction(Compilation &C,
 static const char *MakeCLOutputFilename(const ArgList &Args, StringRef ArgValue,
                                         StringRef BaseName, types::ID FileType) {
   SmallString<128> Filename = ArgValue;
-  assert(!ArgValue.empty() && "Output filename argument must not be empty.");
   
-  if (llvm::sys::path::is_separator(Filename.back())) {
+  if (ArgValue.empty()) {
+    // If the argument is empty, output to BaseName in the current dir.
+    Filename = BaseName;
+  } else if (llvm::sys::path::is_separator(Filename.back())) {
     // If the argument is a directory, output to BaseName in that dir.
     llvm::sys::path::append(Filename, BaseName);
   }
@@ -1598,6 +1583,13 @@ static const char *MakeCLOutputFilename(const ArgList &Args, StringRef ArgValue,
   if (!llvm::sys::path::has_extension(ArgValue)) {
     // If the argument didn't provide an extension, then set it.
     const char *Extension = types::getTypeTempSuffix(FileType, true);
+
+    if (FileType == types::TY_Image &&
+        Args.hasArg(options::OPT__SLASH_LD, options::OPT__SLASH_LDd)) {
+      // The output file is a dll.
+      Extension = "dll";
+    }
+
     llvm::sys::path::replace_extension(Filename, Extension);
   }
 
@@ -1659,12 +1651,11 @@ const char *Driver::GetNamedOutputPath(Compilation &C,
     StringRef Val = C.getArgs().getLastArg(options::OPT__SLASH_Fe)->getValue();
     NamedOutput = MakeCLOutputFilename(C.getArgs(), Val, BaseName,
                                        types::TY_Image);
-  } else if (JA.getType() == types::TY_Image) {    
+  } else if (JA.getType() == types::TY_Image) {
     if (IsCLMode()) {
       // clang-cl uses BaseName for the executable name.
-      SmallString<128> Filename = BaseName;
-      llvm::sys::path::replace_extension(Filename, "exe");
-      NamedOutput = C.getArgs().MakeArgString(Filename.c_str());
+      NamedOutput = MakeCLOutputFilename(C.getArgs(), "", BaseName,
+                                         types::TY_Image);
     } else if (MultipleArchs && BoundArch) {
       SmallString<128> Output(DefaultImageName.c_str());
       Output += "-";

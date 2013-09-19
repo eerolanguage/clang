@@ -73,6 +73,14 @@ static cl::opt<std::string>
                    "parameters, e.g.:\n"
                    "  -style=\"{BasedOnStyle: llvm, IndentWidth: 8}\""),
           cl::init("file"), cl::cat(ClangFormatCategory));
+
+static cl::opt<std::string>
+AssumeFilename("assume-filename",
+               cl::desc("When reading from stdin, clang-format assumes this\n"
+                        "filename to look for a style config file (with\n"
+                        "-style=file)."),
+               cl::cat(ClangFormatCategory));
+
 static cl::opt<bool> Inplace("i",
                              cl::desc("Inplace edit <file>s, if specified."),
                              cl::cat(ClangFormatCategory));
@@ -126,18 +134,32 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
     return Style;
   }
 
+  if (FileName == "-")
+    FileName = AssumeFilename;
   SmallString<128> Path(FileName);
   llvm::sys::fs::make_absolute(Path);
-  for (StringRef Directory = llvm::sys::path::parent_path(Path);
+  for (StringRef Directory = Path;
        !Directory.empty();
        Directory = llvm::sys::path::parent_path(Directory)) {
+    if (!llvm::sys::fs::is_directory(Directory))
+      continue;
     SmallString<128> ConfigFile(Directory);
+
     llvm::sys::path::append(ConfigFile, ".clang-format");
     DEBUG(llvm::dbgs() << "Trying " << ConfigFile << "...\n");
     bool IsFile = false;
     // Ignore errors from is_regular_file: we only need to know if we can read
     // the file or not.
     llvm::sys::fs::is_regular_file(Twine(ConfigFile), IsFile);
+
+    if (!IsFile) {
+      // Try _clang-format too, since dotfiles are not commonly used on Windows.
+      ConfigFile = Directory;
+      llvm::sys::path::append(ConfigFile, "_clang-format");
+      DEBUG(llvm::dbgs() << "Trying " << ConfigFile << "...\n");
+      llvm::sys::fs::is_regular_file(Twine(ConfigFile), IsFile);
+    }
+
     if (IsFile) {
       OwningPtr<MemoryBuffer> Text;
       if (error_code ec = MemoryBuffer::getFile(ConfigFile, Text)) {

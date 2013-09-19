@@ -459,8 +459,8 @@ static const char *getLLVMArchSuffixForARM(StringRef CPU) {
     .Cases("arm1176jzf-s",  "mpcorenovfp",  "mpcore", "v6")
     .Cases("arm1156t2-s",  "arm1156t2f-s", "v6t2")
     .Cases("cortex-a5", "cortex-a7", "cortex-a8", "v7")
-    .Cases("cortex-a9", "cortex-a15", "v7")
-    .Case("cortex-r5", "v7r")
+    .Cases("cortex-a9", "cortex-a12", "cortex-a15", "v7")
+    .Cases("cortex-r4", "cortex-r5", "v7r")
     .Case("cortex-m0", "v6m")
     .Case("cortex-m3", "v7m")
     .Case("cortex-m4", "v7em")
@@ -592,10 +592,13 @@ static void getFPUFeatures(const Driver &D, const Arg *A, const ArgList &Args,
     Features.push_back("+vfp3");
     Features.push_back("-neon");
   } else if (FPU == "fp-armv8") {
-    Features.push_back("+v8fp");
+    Features.push_back("+fp-armv8");
   } else if (FPU == "neon-fp-armv8") {
-    Features.push_back("+v8fp");
+    Features.push_back("+fp-armv8");
     Features.push_back("+neon");
+  } else if (FPU == "crypto-neon-fp-armv8") {
+    Features.push_back("+crypto");
+    Features.push_back("+fp-armv8");
   } else if (FPU == "neon") {
     Features.push_back("+neon");
   } else
@@ -770,7 +773,7 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
 
   // Kernel code has more strict alignment requirements.
   if (KernelOrKext) {
-    if (Triple.getOS() != llvm::Triple::IOS || Triple.isOSVersionLT(6)) {
+    if (!Triple.isiOS() || Triple.isOSVersionLT(6)) {
       CmdArgs.push_back("-backend-option");
       CmdArgs.push_back("-arm-long-calls");
     }
@@ -1768,7 +1771,7 @@ static bool shouldUseFramePointer(const ArgList &Args,
   if ((Triple.getArch() == llvm::Triple::x86_64 ||
        Triple.getArch() == llvm::Triple::x86 ||
        Triple.getArch() == llvm::Triple::systemz) &&
-      Triple.getOS() == llvm::Triple::Linux) {
+      Triple.isOSLinux()) {
     if (Arg *A = Args.getLastArg(options::OPT_O_Group))
       if (!A->getOption().matches(options::OPT_O0))
         return false;
@@ -1790,7 +1793,7 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
   if ((Triple.getArch() == llvm::Triple::x86_64 ||
        Triple.getArch() == llvm::Triple::x86 ||
        Triple.getArch() == llvm::Triple::systemz) &&
-      Triple.getOS() == llvm::Triple::Linux) {
+      Triple.isOSLinux()) {
     if (Arg *A = Args.getLastArg(options::OPT_O_Group))
       if (!A->getOption().matches(options::OPT_O0))
         return false;
@@ -2093,8 +2096,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // PIC or PIE options above, if these show up, PIC is disabled.
   llvm::Triple Triple(TripleStr);
   if (KernelOrKext &&
-      (Triple.getOS() != llvm::Triple::IOS ||
-       Triple.isOSVersionLT(6)))
+      (!Triple.isiOS() || Triple.isOSVersionLT(6)))
     PIC = PIE = false;
   if (Args.hasArg(options::OPT_static))
     PIC = PIE = false;
@@ -2501,16 +2503,22 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_gcolumn_info))
     CmdArgs.push_back("-dwarf-column-info");
 
+  // FIXME: Move backend command line options to the module.
   // -gsplit-dwarf should turn on -g and enable the backend dwarf
   // splitting and extraction.
   // FIXME: Currently only works on Linux.
-  if (getToolChain().getTriple().getOS() == llvm::Triple::Linux &&
+  if (getToolChain().getTriple().isOSLinux() &&
       Args.hasArg(options::OPT_gsplit_dwarf)) {
     CmdArgs.push_back("-g");
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-split-dwarf=Enable");
   }
 
+  // -ggnu-pubnames turns on gnu style pubnames in the backend.
+  if (Args.hasArg(options::OPT_ggnu_pubnames)) {
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-generate-gnu-dwarf-pub-sections");
+  }
 
   Args.AddAllArgs(CmdArgs, options::OPT_fdebug_types_section);
 
@@ -2560,7 +2568,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_working_directory);
 
   bool ARCMTEnabled = false;
-  if (!Args.hasArg(options::OPT_fno_objc_arc)) {
+  if (!Args.hasArg(options::OPT_fno_objc_arc, options::OPT_fobjc_arc)) {
     if (const Arg *A = Args.getLastArg(options::OPT_ccc_arcmt_check,
                                        options::OPT_ccc_arcmt_modify,
                                        options::OPT_ccc_arcmt_migrate)) {
@@ -3113,13 +3121,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                                  true))))
     CmdArgs.push_back("-fms-compatibility");
 
-  // -fmsc-version=1300 is default.
+  // -fmsc-version=1700 is default.
   if (Args.hasFlag(options::OPT_fms_extensions, options::OPT_fno_ms_extensions,
                    getToolChain().getTriple().getOS() == llvm::Triple::Win32) ||
       Args.hasArg(options::OPT_fmsc_version)) {
     StringRef msc_ver = Args.getLastArgValue(options::OPT_fmsc_version);
     if (msc_ver.empty())
-      CmdArgs.push_back("-fmsc-version=1300");
+      CmdArgs.push_back("-fmsc-version=1700");
     else
       CmdArgs.push_back(Args.MakeArgString("-fmsc-version=" + msc_ver));
   }
@@ -3372,6 +3380,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       (ShowColors == Colors_Auto && llvm::sys::Process::StandardErrHasColors()))
     CmdArgs.push_back("-fcolor-diagnostics");
 
+  if (Args.hasArg(options::OPT_fansi_escape_codes))
+    CmdArgs.push_back("-fansi-escape-codes");
+
   if (!Args.hasFlag(options::OPT_fshow_source_location,
                     options::OPT_fno_show_source_location))
     CmdArgs.push_back("-fno-show-source-location");
@@ -3546,7 +3557,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Add the split debug info name to the command lines here so we
   // can propagate it to the backend.
   bool SplitDwarf = Args.hasArg(options::OPT_gsplit_dwarf) &&
-    (getToolChain().getTriple().getOS() == llvm::Triple::Linux) &&
+    getToolChain().getTriple().isOSLinux() &&
     (isa<AssembleJobAction>(JA) || isa<CompileJobAction>(JA));
   const char *SplitDwarfOut;
   if (SplitDwarf) {
@@ -3580,9 +3591,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // care to warn the user about.
   Args.ClaimAllArgs(options::OPT_clang_ignored_f_Group);
   Args.ClaimAllArgs(options::OPT_clang_ignored_m_Group);
-
-  // Claim ignored clang-cl options.
-  Args.ClaimAllArgs(options::OPT_cl_ignored_Group);
 
   // Disable warnings for clang -E -emit-llvm foo.c
   Args.ClaimAllArgs(options::OPT_emit_llvm);
@@ -3716,15 +3724,18 @@ ObjCRuntime Clang::AddObjCRuntimeArgs(const ArgList &args,
 void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
   unsigned RTOptionID = options::OPT__SLASH_MT;
 
-  if (Arg *A = Args.getLastArg(options::OPT__SLASH_MD,
-                               options::OPT__SLASH_MDd,
-                               options::OPT__SLASH_MT,
-                               options::OPT__SLASH_MTd)) {
+  if (Args.hasArg(options::OPT__SLASH_LDd))
+    // The /LDd option implies /MTd. The dependent lib part can be overridden,
+    // but defining _DEBUG is sticky.
+    RTOptionID = options::OPT__SLASH_MTd;
+
+  if (Arg *A = Args.getLastArg(options::OPT__SLASH_M_Group))
     RTOptionID = A->getOption().getID();
-  }
 
   switch(RTOptionID) {
     case options::OPT__SLASH_MD:
+      if (Args.hasArg(options::OPT__SLASH_LDd))
+        CmdArgs.push_back("-D_DEBUG");
       CmdArgs.push_back("-D_MT");
       CmdArgs.push_back("-D_DLL");
       CmdArgs.push_back("--dependent-lib=msvcrt");
@@ -3736,6 +3747,8 @@ void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
       CmdArgs.push_back("--dependent-lib=msvcrtd");
       break;
     case options::OPT__SLASH_MT:
+      if (Args.hasArg(options::OPT__SLASH_LDd))
+        CmdArgs.push_back("-D_DEBUG");
       CmdArgs.push_back("-D_MT");
       CmdArgs.push_back("--dependent-lib=libcmt");
       break;
@@ -3759,6 +3772,11 @@ void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
 
   if (Arg *A = Args.getLastArg(options::OPT_show_includes))
     A->render(Args, CmdArgs);
+
+  if (!Args.hasArg(options::OPT_fdiagnostics_format_EQ)) {
+    CmdArgs.push_back("-fdiagnostics-format");
+    CmdArgs.push_back("msvc");
+  }
 }
 
 void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
@@ -3877,7 +3895,7 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   // creating an object.
   // TODO: Currently only works on linux with newer objcopy.
   if (Args.hasArg(options::OPT_gsplit_dwarf) &&
-      (getToolChain().getTriple().getOS() == llvm::Triple::Linux))
+      getToolChain().getTriple().isOSLinux())
     SplitDebugInfo(getToolChain(), C, *this, JA, Args, Output,
                    SplitDebugName(Args, Inputs));
 }
@@ -5972,7 +5990,7 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   // creating an object.
   // TODO: Currently only works on linux with newer objcopy.
   if (Args.hasArg(options::OPT_gsplit_dwarf) &&
-      (getToolChain().getTriple().getOS() == llvm::Triple::Linux))
+      getToolChain().getTriple().isOSLinux())
     SplitDebugInfo(getToolChain(), C, *this, JA, Args, Output,
                    SplitDebugName(Args, Inputs));
 }
@@ -6581,13 +6599,28 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   CmdArgs.push_back("-nologo");
 
+  bool DLL = Args.hasArg(options::OPT__SLASH_LD, options::OPT__SLASH_LDd);
+
+  if (DLL) {
+    CmdArgs.push_back(Args.MakeArgString("-dll"));
+
+    SmallString<128> ImplibName(Output.getFilename());
+    llvm::sys::path::replace_extension(ImplibName, "lib");
+    CmdArgs.push_back(Args.MakeArgString(std::string("-implib:") +
+                                         ImplibName.str()));
+  }
+
   if (getToolChain().getDriver().getOrParseSanitizerArgs(Args).needsAsanRt()) {
     CmdArgs.push_back(Args.MakeArgString("-debug"));
     CmdArgs.push_back(Args.MakeArgString("-incremental:no"));
     SmallString<128> LibSanitizer(getToolChain().getDriver().ResourceDir);
-    // FIXME: Handle 64-bit. Use asan_dll_thunk.dll when building a DLL.
-    llvm::sys::path::append(
-        LibSanitizer, "lib", "windows", "clang_rt.asan-i386.lib");
+    llvm::sys::path::append(LibSanitizer, "lib", "windows");
+    if (DLL) {
+      llvm::sys::path::append(LibSanitizer, "clang_rt.asan_dll_thunk-i386.lib");
+    } else {
+      llvm::sys::path::append(LibSanitizer, "clang_rt.asan-i386.lib");
+    }
+    // FIXME: Handle 64-bit.
     CmdArgs.push_back(Args.MakeArgString(LibSanitizer));
   }
 

@@ -2204,6 +2204,33 @@ bool FunctionDecl::isMain() const {
          isNamed(this, "main");
 }
 
+bool FunctionDecl::isMSVCRTEntryPoint() const {
+  const TranslationUnitDecl *TUnit =
+      dyn_cast<TranslationUnitDecl>(getDeclContext()->getRedeclContext());
+  if (!TUnit)
+    return false;
+
+  // Even though we aren't really targeting MSVCRT if we are freestanding,
+  // semantic analysis for these functions remains the same.
+
+  // MSVCRT entry points only exist on MSVCRT targets.
+  if (!TUnit->getASTContext().getTargetInfo().getTriple().isOSMSVCRT())
+    return false;
+
+  // Nameless functions like constructors cannot be entry points.
+  if (!getIdentifier())
+    return false;
+
+  return llvm::StringSwitch<bool>(getName())
+      .Cases("main",     // an ANSI console app
+             "wmain",    // a Unicode console App
+             "WinMain",  // an ANSI GUI app
+             "wWinMain", // a Unicode GUI app
+             "DllMain",  // a DLL
+             true)
+      .Default(false);
+}
+
 bool FunctionDecl::isReservedGlobalPlacementOperator() const {
   assert(getDeclName().getNameKind() == DeclarationName::CXXOperatorName);
   assert(getDeclName().getCXXOverloadedOperator() == OO_New ||
@@ -3057,7 +3084,7 @@ TagDecl* TagDecl::getCanonicalDecl() {
 }
 
 void TagDecl::setTypedefNameForAnonDecl(TypedefNameDecl *TDD) {
-  TypedefNameDeclOrQualifier = TDD;
+  NamedDeclOrQualifier = TDD;
   if (TypeForDecl)
     assert(TypeForDecl->isLinkageValid());
   assert(isLinkageValid());
@@ -3114,7 +3141,7 @@ void TagDecl::setQualifierInfo(NestedNameSpecifierLoc QualifierLoc) {
   if (QualifierLoc) {
     // Make sure the extended qualifier info is allocated.
     if (!hasExtInfo())
-      TypedefNameDeclOrQualifier = new (getASTContext()) ExtInfo;
+      NamedDeclOrQualifier = new (getASTContext()) ExtInfo;
     // Set qualifier info.
     getExtInfo()->QualifierLoc = QualifierLoc;
   } else {
@@ -3122,7 +3149,7 @@ void TagDecl::setQualifierInfo(NestedNameSpecifierLoc QualifierLoc) {
     if (hasExtInfo()) {
       if (getExtInfo()->NumTemplParamLists == 0) {
         getASTContext().Deallocate(getExtInfo());
-        TypedefNameDeclOrQualifier = (TypedefNameDecl*) 0;
+        NamedDeclOrQualifier = (TypedefNameDecl*) 0;
       }
       else
         getExtInfo()->QualifierLoc = QualifierLoc;
@@ -3137,7 +3164,7 @@ void TagDecl::setTemplateParameterListsInfo(ASTContext &Context,
   // Make sure the extended decl info is allocated.
   if (!hasExtInfo())
     // Allocate external info struct.
-    TypedefNameDeclOrQualifier = new (getASTContext()) ExtInfo;
+    NamedDeclOrQualifier = new (getASTContext()) ExtInfo;
   // Set the template parameter lists info.
   getExtInfo()->setTemplateParameterListsInfo(Context, NumTPLists, TPLists);
 }
