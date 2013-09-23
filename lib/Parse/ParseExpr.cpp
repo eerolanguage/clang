@@ -1307,7 +1307,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   }
   case tok::kw_encode:    // only exist in eero
   case tok::kw_protocol:  //
-  case tok::kw_selector:  //
     return ParseObjCAtExpression(Tok.getLocation());
   case tok::caret:
     if (isEero) { // disable block literals with '^'
@@ -1632,11 +1631,10 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       // FIXME: Add support for explicit call of template constructor.
       SourceLocation TemplateKWLoc;
       UnqualifiedId Name;
-      if (isEero && Tok.is(tok::kw_end)) {
+      if (isEero && Tok.getObjCKeywordID() != tok::objc_not_keyword) {
         Tok.setKind(tok::identifier);
       }
-      if (getLangOpts().ObjC2 && OpKind == tok::period && 
-          (Tok.is(tok::kw_class) || Tok.is(tok::kw_selector))) {
+      if (getLangOpts().ObjC2 && OpKind == tok::period && Tok.is(tok::kw_class)) {
         // Objective-C++:
         //   After a '.' in a member access expression, treat the keyword
         //   'class' as if it were an identifier.

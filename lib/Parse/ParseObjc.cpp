@@ -893,7 +893,6 @@ IdentifierInfo *Parser::ParseObjCSelectorPiece(SourceLocation &SelectorLoc) {
   case tok::kw_while:
   case tok::kw_protocol: // eero
   case tok::kw_end:      //
-  case tok::kw_selector: //
   case tok::kw__Bool:
   case tok::kw__Complex:
   case tok::kw___alignof:
