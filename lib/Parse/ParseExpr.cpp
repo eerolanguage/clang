@@ -351,6 +351,15 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     NextTokPrec = getBinOpPrecedence(Tok.getKind(), GreaterThanIsOperator,
                                      getLangOpts().CPlusPlus11, isEero);
 
+    // Catches cases where the next line looks like the RHS of a bin op,  
+    // but it really isn't.
+    if (getLangOpts().OptionalSemicolons && !PP.isInLegacyHeader() &&
+        Tok.isAtStartOfLine() && 
+        (ParenCount == 0) && (BracketCount == 0)) {
+      NextTokPrec = getBinOpPrecedence(tok::semi, GreaterThanIsOperator,
+                                       getLangOpts().CPlusPlus11, isEero);
+    }
+
     // Assignment and conditional expressions are right-associative.
     bool isRightAssoc = ThisPrec == prec::Conditional ||
                         ThisPrec == prec::Assignment;
