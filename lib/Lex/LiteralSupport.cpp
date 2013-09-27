@@ -490,12 +490,6 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
   } else { // the first digit is non-zero
     radix = 10;
     s = SkipDigits(s);
-    const LangOptions& Features = PP.getLangOpts();
-    if (Features.UnderscoresInNumerals) {     // Accept and ignore
-      while (s < ThisTokEnd-1 && *s == '_') { // underscores in the middle
-        s = SkipDigits(++s);
-      }
-    }
     if (s == ThisTokEnd) {
       // Done.
     } else if (isHexDigit(*s) && !(*s == 'e' || *s == 'E')) {
@@ -509,11 +503,6 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
       saw_period = true;
       checkSeparator(TokLoc, s, CSK_BeforeDigits);
       s = SkipDigits(s);
-      if (Features.UnderscoresInNumerals) {
-        while (s < ThisTokEnd-1 && *s == '_') {
-          s = SkipDigits(++s);
-        }
-      }
     }
     if ((*s == 'e' || *s == 'E')) { // exponent
       checkSeparator(TokLoc, s, CSK_AfterDigits);
@@ -716,20 +705,12 @@ void NumericLiteralParser::checkSeparator(SourceLocation TokLoc,
 void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   assert(s[0] == '0' && "Invalid method call");
   s++;
-  const LangOptions& Features = PP.getLangOpts();
 
   // Handle a hex number like 0x1234.
-  if ((*s == 'x' || *s == 'X') && (isHexDigit(s[1]) || s[1] == '.' ||
-                                   (Features.UnderscoresInNumerals && 
-                                    s[1] == '_'))) {
+  if ((*s == 'x' || *s == 'X') && (isHexDigit(s[1]) || s[1] == '.')) {
     s++;
     radix = 16;
     DigitsBegin = s;
-    if (Features.UnderscoresInNumerals) {
-      while (s < ThisTokEnd-1 && *s == '_') {
-        s = SkipHexDigits(++s);
-      }
-    }
     s = SkipHexDigits(s);
     bool noSignificand = (s == DigitsBegin);
     if (s == ThisTokEnd) {
@@ -739,11 +720,6 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
       saw_period = true;
       const char *floatDigitsBegin = s;
       s = SkipHexDigits(s);
-      if (Features.UnderscoresInNumerals) {
-        while (s < ThisTokEnd-1 && *s == '_') {
-          s = SkipHexDigits(++s);
-        }
-      }
       noSignificand &= (floatDigitsBegin == s);
     }
 
@@ -793,11 +769,6 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
     radix = 2;
     DigitsBegin = s;
     s = SkipBinaryDigits(s);
-    if (Features.UnderscoresInNumerals) {
-      while (s < ThisTokEnd-1 && *s == '_') {
-        s = SkipBinaryDigits(++s);
-      }
-    }
     if (s == ThisTokEnd) {
       // Done.
     } else if (isHexDigit(*s)) {
@@ -815,11 +786,6 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   radix = 8;
   DigitsBegin = s;
   s = SkipOctalDigits(s);
-  if (Features.UnderscoresInNumerals) {
-    while (s < ThisTokEnd-1 && *s == '_') {
-      s = SkipOctalDigits(++s);
-    }
-  }
   if (s == ThisTokEnd)
     return; // Done, simple octal number like 01234
 
@@ -885,8 +851,6 @@ static bool alwaysFitsInto64Bits(unsigned Radix, unsigned NumDigits) {
 /// matches Val's input width.  If there is an overflow, set Val to the low bits
 /// of the result and return true.  Otherwise, return false.
 bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
-  const LangOptions& Features(PP.getLangOpts());
-
   // Fast path: Compute a conservative bound on the maximum number of
   // bits per digit in this radix. If we can't possibly overflow a
   // uint64 based on that bound then do the simple conversion to

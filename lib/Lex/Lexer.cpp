@@ -1889,7 +1889,7 @@ bool Lexer::LexCharConstant(Token &Result, const char *CurPtr,
   if (C == '\'' && 
       (!getLangOpts().Eero || // Eero needs to allow empty '', since an objc string
        Legacy != LS_False)) { // if either "true" or "unknown"
-    if (!isLexingRawMode() && !getLangOpts().AsmPreprocessor)
+    if (!isLexingRawMode() && !LangOpts.AsmPreprocessor)
       Diag(BufferPtr, diag::ext_empty_character);
     FormTokenWithChars(Result, CurPtr, tok::unknown);
     return true;
