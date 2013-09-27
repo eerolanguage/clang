@@ -586,8 +586,10 @@ public:
   bool AllowExplicit() const { return !isCopyInit(); }
 
   /// \brief Retrieve whether this initialization allows the use of explicit
-  /// conversion functions.
-  bool allowExplicitConversionFunctions() const {
+  /// conversion functions when binding a reference. If the reference is the
+  /// first parameter in a copy or move constructor, such conversions are
+  /// permitted even though we are performing copy-initialization.
+  bool allowExplicitConversionFunctionsInRefBinding() const {
     return !isCopyInit() || Context == IC_ExplicitConvs;
   }
   
@@ -652,6 +654,8 @@ public:
     SK_LValueToRValue,
     /// \brief Perform an implicit conversion sequence.
     SK_ConversionSequence,
+    /// \brief Perform an implicit conversion sequence without narrowing.
+    SK_ConversionSequenceNoNarrowing,
     /// \brief Perform list-initialization without a constructor
     SK_ListInitialization,
     /// \brief Perform list-initialization with a constructor.
@@ -840,11 +844,19 @@ public:
   /// \param Kind the kind of initialization being performed.
   ///
   /// \param Args the argument(s) provided for initialization.
+  ///
+  /// \param InInitList true if we are initializing from an expression within
+  ///        an initializer list. This disallows narrowing conversions in C++11
+  ///        onwards.
   InitializationSequence(Sema &S, 
                          const InitializedEntity &Entity,
                          const InitializationKind &Kind,
-                         MultiExprArg Args);
-  
+                         MultiExprArg Args,
+                         bool InInitList = false);
+  void InitializeFrom(Sema &S, const InitializedEntity &Entity,
+                      const InitializationKind &Kind, MultiExprArg Args,
+                      bool InInitList);
+
   ~InitializationSequence();
   
   /// \brief Perform the actual initialization of the given entity based on
@@ -979,7 +991,7 @@ public:
 
   /// \brief Add a new step that applies an implicit conversion sequence.
   void AddConversionSequenceStep(const ImplicitConversionSequence &ICS,
-                                 QualType T);
+                                 QualType T, bool TopLevelOfInitList = false);
 
   /// \brief Add a list-initialization step.
   void AddListInitializationStep(QualType T);

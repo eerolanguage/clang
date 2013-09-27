@@ -29,6 +29,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/CodeCompletionHandler.h"
 #include "clang/Lex/LexDiagnostic.h"
+#include "clang/Lex/LiteralSupport.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -1607,6 +1608,18 @@ bool Lexer::LexNumericConstant(Token &Result, const char *CurPtr) {
       return LexNumericConstant(Result, ConsumeChar(CurPtr, Size, Result));
   }
 
+  // If we have a digit separator, continue.
+  if (C == '\'' && getLangOpts().CPlusPlus1y) {
+    unsigned NextSize;
+    char Next = getCharAndSizeNoWarn(CurPtr + Size, NextSize, getLangOpts());
+    if (isIdentifierBody(Next)) {
+      if (!isLexingRawMode())
+        Diag(CurPtr, diag::warn_cxx11_compat_digit_separator);
+      CurPtr = ConsumeChar(CurPtr, Size, Result);
+      return LexNumericConstant(Result, CurPtr);
+    }
+  }
+
   // Update the location of token as well as BufferPtr.
   const char *TokStart = BufferPtr;
   FormTokenWithChars(Result, CurPtr, tok::numeric_constant);
@@ -1640,12 +1653,33 @@ const char *Lexer::LexUDSuffix(Token &Result, const char *CurPtr,
     bool IsUDSuffix = false;
     if (C == '_')
       IsUDSuffix = true;
-    else if (IsStringLiteral && C == 's' && getLangOpts().CPlusPlus1y) {
-      // In C++1y, "s" is a valid ud-suffix for a string literal.
-      unsigned NextSize;
-      if (!isIdentifierBody(getCharAndSizeNoWarn(CurPtr + Size, NextSize,
-                                                 getLangOpts())))
-        IsUDSuffix = true;
+    else if (IsStringLiteral && getLangOpts().CPlusPlus1y) {
+      // In C++1y, we need to look ahead a few characters to see if this is a
+      // valid suffix for a string literal or a numeric literal (this could be
+      // the 'operator""if' defining a numeric literal operator).
+      const unsigned MaxStandardSuffixLength = 3;
+      char Buffer[MaxStandardSuffixLength] = { C };
+      unsigned Consumed = Size;
+      unsigned Chars = 1;
+      while (true) {
+        unsigned NextSize;
+        char Next = getCharAndSizeNoWarn(CurPtr + Consumed, NextSize,
+                                         getLangOpts());
+        if (!isIdentifierBody(Next)) {
+          // End of suffix. Check whether this is on the whitelist.
+          IsUDSuffix = (Chars == 1 && Buffer[0] == 's') ||
+                       NumericLiteralParser::isValidUDSuffix(
+                           getLangOpts(), StringRef(Buffer, Chars));
+          break;
+        }
+
+        if (Chars == MaxStandardSuffixLength)
+          // Too long: can't be a standard suffix.
+          break;
+
+        Buffer[Chars++] = Next;
+        Consumed += NextSize;
+      }
     }
 
     if (!IsUDSuffix) {

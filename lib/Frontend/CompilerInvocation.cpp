@@ -589,7 +589,10 @@ bool clang::ParseDiagnosticArgs(DiagnosticOptions &Opts, ArgList &Args,
     Opts.setFormat(DiagnosticOptions::Clang);
   else if (Format == "msvc")
     Opts.setFormat(DiagnosticOptions::Msvc);
-  else if (Format == "vi")
+  else if (Format == "msvc-fallback") {
+    Opts.setFormat(DiagnosticOptions::Msvc);
+    Opts.CLFallbackMode = true;
+  } else if (Format == "vi")
     Opts.setFormat(DiagnosticOptions::Vi);
   else {
     Success = false;
@@ -897,6 +900,9 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
     StringRef MacroDef = (*it)->getValue();
     Opts.ModulesIgnoreMacros.insert(MacroDef.split('=').first);
   }
+  std::vector<std::string> ModuleMapFiles =
+      Args.getAllArgValues(OPT_fmodule_map_file);
+  Opts.ModuleMapFiles.insert(ModuleMapFiles.begin(), ModuleMapFiles.end());
 
   // Add -I..., -F..., and -index-header-map options in order.
   bool IsIndexHeaderMap = false;
@@ -1293,6 +1299,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.Blocks = Args.hasArg(OPT_fblocks);
   Opts.BlocksRuntimeOptional = Args.hasArg(OPT_fblocks_runtime_optional);
   Opts.Modules = Args.hasArg(OPT_fmodules);
+  Opts.ModulesDeclUse = Args.hasArg(OPT_fmodules_decluse);
   Opts.CharIsSigned = Opts.OpenCL || !Args.hasArg(OPT_fno_signed_char);
   Opts.WChar = Opts.CPlusPlus && !Args.hasArg(OPT_fno_wchar);
   Opts.ShortWChar = Args.hasArg(OPT_fshort_wchar);

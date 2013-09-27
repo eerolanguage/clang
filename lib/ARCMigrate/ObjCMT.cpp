@@ -53,6 +53,7 @@ class ObjCMigrateASTConsumer : public ASTConsumer {
                                  ObjCMethodDecl *OM);
   bool migrateProperty(ASTContext &Ctx, ObjCContainerDecl *D, ObjCMethodDecl *OM);
   void migrateNsReturnsInnerPointer(ASTContext &Ctx, ObjCMethodDecl *OM);
+  void migratePropertyNsReturnsInnerPointer(ASTContext &Ctx, ObjCPropertyDecl *P);
   void migrateFactoryMethod(ASTContext &Ctx, ObjCContainerDecl *CDecl,
                             ObjCMethodDecl *OM,
                             ObjCInstanceTypeFamily OIT_Family = OIT_None);
@@ -251,7 +252,7 @@ static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
                                   const NSAPI &NS, edit::Commit &commit,
                                   unsigned LengthOfPrefix) {
   ASTContext &Context = NS.getASTContext();
-  std::string PropertyString = "@property(nonatomic";
+  std::string PropertyString = "@property (nonatomic";
   std::string PropertyNameString = Getter->getNameAsString();
   StringRef PropertyName(PropertyNameString);
   if (LengthOfPrefix > 0) {
@@ -304,7 +305,9 @@ static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
   }
   PropertyString += " ";
   PropertyString += RT.getAsString(Context.getPrintingPolicy());
-  PropertyString += " ";
+  char LastChar = PropertyString[PropertyString.size()-1];
+  if (LastChar != '*')
+    PropertyString += " ";
   if (LengthOfPrefix > 0) {
     // property name must strip off "is" and lower case the first character
     // after that; e.g. isContinuous will become continuous.
@@ -348,8 +351,14 @@ void ObjCMigrateASTConsumer::migrateObjCInterfaceDecl(ASTContext &Ctx,
     ObjCMethodDecl *Method = (*M);
     if (Method->isDeprecated())
       continue;
-    if (!migrateProperty(Ctx, D, Method))
-      migrateNsReturnsInnerPointer(Ctx, Method);
+    migrateProperty(Ctx, D, Method);
+    migrateNsReturnsInnerPointer(Ctx, Method);
+  }
+  for (ObjCContainerDecl::prop_iterator P = D->prop_begin(),
+       E = D->prop_end(); P != E; ++P) {
+    ObjCPropertyDecl *Prop = *P;
+    if (!P->isDeprecated())
+      migratePropertyNsReturnsInnerPointer(Ctx, Prop);
   }
 }
 
@@ -498,7 +507,7 @@ static bool rewriteToNSMacroDecl(const EnumDecl *EnumDcl,
 static bool UseNSOptionsMacro(Preprocessor &PP, ASTContext &Ctx,
                               const EnumDecl *EnumDcl) {
   bool PowerOfTwo = true;
-  bool FoundHexdecimalEnumerator = false;
+  bool AllHexdecimalEnumerator = true;
   uint64_t MaxPowerOfTwoVal = 0;
   for (EnumDecl::enumerator_iterator EI = EnumDcl->enumerator_begin(),
        EE = EnumDcl->enumerator_end(); EI != EE; ++EI) {
@@ -506,6 +515,7 @@ static bool UseNSOptionsMacro(Preprocessor &PP, ASTContext &Ctx,
     const Expr *InitExpr = Enumerator->getInitExpr();
     if (!InitExpr) {
       PowerOfTwo = false;
+      AllHexdecimalEnumerator = false;
       continue;
     }
     InitExpr = InitExpr->IgnoreParenCasts();
@@ -520,7 +530,8 @@ static bool UseNSOptionsMacro(Preprocessor &PP, ASTContext &Ctx,
       else if (EnumVal > MaxPowerOfTwoVal)
         MaxPowerOfTwoVal = EnumVal;
     }
-    if (!FoundHexdecimalEnumerator) {
+    if (AllHexdecimalEnumerator && EnumVal) {
+      bool FoundHexdecimalEnumerator = false;
       SourceLocation EndLoc = Enumerator->getLocEnd();
       Token Tok;
       if (!PP.getRawToken(EndLoc, Tok, /*IgnoreWhiteSpace=*/true))
@@ -529,9 +540,11 @@ static bool UseNSOptionsMacro(Preprocessor &PP, ASTContext &Ctx,
             FoundHexdecimalEnumerator =
               (StringLit[0] == '0' && (toLowercase(StringLit[1]) == 'x'));
         }
+      if (!FoundHexdecimalEnumerator)
+        AllHexdecimalEnumerator = false;
     }
   }
-  return FoundHexdecimalEnumerator || (PowerOfTwo && (MaxPowerOfTwoVal > 2));
+  return AllHexdecimalEnumerator || (PowerOfTwo && (MaxPowerOfTwoVal > 2));
 }
 
 void ObjCMigrateASTConsumer::migrateProtocolConformance(ASTContext &Ctx,   
@@ -759,6 +772,12 @@ bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
     return false;
   
   Selector GetterSelector = Method->getSelector();
+  ObjCInstanceTypeFamily OIT_Family =
+    Selector::getInstTypeMethodFamily(GetterSelector);
+  
+  if (OIT_Family != OIT_None)
+    return false;
+  
   IdentifierInfo *getterName = GetterSelector.getIdentifierInfoForSlot(0);
   Selector SetterSelector =
   SelectorTable::constructSetterSelector(PP.getIdentifierTable(),
@@ -825,7 +844,8 @@ bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
 
 void ObjCMigrateASTConsumer::migrateNsReturnsInnerPointer(ASTContext &Ctx,
                                                           ObjCMethodDecl *OM) {
-  if (OM->hasAttr<ObjCReturnsInnerPointerAttr>())
+  if (OM->isImplicit() ||
+      OM->hasAttr<ObjCReturnsInnerPointerAttr>())
     return;
   
   QualType RT = OM->getResultType();
@@ -835,6 +855,18 @@ void ObjCMigrateASTConsumer::migrateNsReturnsInnerPointer(ASTContext &Ctx,
   
   edit::Commit commit(*Editor);
   commit.insertBefore(OM->getLocEnd(), " NS_RETURNS_INNER_POINTER");
+  Editor->commit(commit);
+}
+
+void ObjCMigrateASTConsumer::migratePropertyNsReturnsInnerPointer(ASTContext &Ctx,
+                                                                  ObjCPropertyDecl *P) {
+  QualType T = P->getType();
+  
+  if (!TypeIsInnerPointer(T) ||
+      !Ctx.Idents.get("NS_RETURNS_INNER_POINTER").hasMacroDefinition())
+    return;
+  edit::Commit commit(*Editor);
+  commit.insertBefore(P->getLocEnd(), " NS_RETURNS_INNER_POINTER ");
   Editor->commit(commit);
 }
 

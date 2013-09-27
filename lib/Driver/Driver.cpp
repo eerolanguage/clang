@@ -144,6 +144,11 @@ InputArgList *Driver::ParseArgStrings(ArrayRef<const char *> ArgList) {
     }
   }
 
+  for (arg_iterator it = Args->filtered_begin(options::OPT_UNKNOWN),
+         ie = Args->filtered_end(); it != ie; ++it) {
+    Diags.Report(diag::err_drv_unknown_argument) << (*it) ->getAsString(*Args);
+  }
+
   return Args;
 }
 
@@ -2012,7 +2017,7 @@ bool Driver::GetReleaseVersion(const char *Str, unsigned &Major,
 
 std::pair<unsigned, unsigned> Driver::getIncludeExcludeOptionFlagMasks() const {
   unsigned IncludedFlagsBitmask = 0;
-  unsigned ExcludedFlagsBitmask = 0;
+  unsigned ExcludedFlagsBitmask = options::NoDriverOption;
 
   if (Mode == CLMode) {
     // Include CL and Core options.

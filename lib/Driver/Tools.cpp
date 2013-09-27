@@ -22,6 +22,7 @@
 #include "clang/Driver/ToolChain.h"
 #include "clang/Driver/Util.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Option/Arg.h"
@@ -31,6 +32,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Host.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/raw_ostream.h"
@@ -944,6 +946,11 @@ static void getMIPSTargetFeatures(const Driver &D, const ArgList &Args,
     // mode to the MipsTargetInfoBase to define appropriate macros there.
     // Now it is the only method.
     Features.push_back("+soft-float");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mnan_EQ)) {
+    if (StringRef(A->getValue()) == "2008")
+      Features.push_back("+nan2008");
   }
 
   AddTargetFeature(Args, Features, options::OPT_msingle_float,
@@ -3029,6 +3036,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fmodule-maps");
   }
 
+  // -fmodule-decluse checks that modules used are declared so (off by default).
+  if (Args.hasFlag(options::OPT_fmodules_decluse,
+                   options::OPT_fno_modules_decluse,
+                   false)) {
+    CmdArgs.push_back("-fmodule-decluse");
+  }
+
   // If a module path was provided, pass it along. Otherwise, use a temporary
   // directory.
   if (Arg *A = Args.getLastArg(options::OPT_fmodules_cache_path)) {
@@ -3567,7 +3581,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Finally add the compile command to the compilation.
-  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
+  if (Args.hasArg(options::OPT__SLASH_fallback)) {
+    tools::visualstudio::Compile CL(getToolChain());
+    Command *CLCommand = CL.GetCommand(C, JA, Output, Inputs, Args,
+                                       LinkingOutput);
+    C.addCommand(new FallbackCommand(JA, *this, Exec, CmdArgs, CLCommand));
+  } else {
+    C.addCommand(new Command(JA, *this, Exec, CmdArgs));
+  }
+
 
   // Handle the debug info splitting at object creation time if we're
   // creating an object.
@@ -3775,7 +3797,10 @@ void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
 
   if (!Args.hasArg(options::OPT_fdiagnostics_format_EQ)) {
     CmdArgs.push_back("-fdiagnostics-format");
-    CmdArgs.push_back("msvc");
+    if (Args.hasArg(options::OPT__SLASH_fallback))
+      CmdArgs.push_back("msvc-fallback");
+    else
+      CmdArgs.push_back("msvc");
   }
 }
 
@@ -4706,7 +4731,6 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
   Args.AddAllArgs(CmdArgs, options::OPT_u_Group);
   Args.AddLastArg(CmdArgs, options::OPT_e);
-  Args.AddAllArgs(CmdArgs, options::OPT_m_Separate);
   Args.AddAllArgs(CmdArgs, options::OPT_r);
 
   // Forward -ObjC when either -ObjC or -ObjC++ is used, to force loading
@@ -4810,20 +4834,6 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
-
-  const SanitizerArgs &Sanitize =
-      getToolChain().getDriver().getOrParseSanitizerArgs(Args);
-  // If we're building a dynamic lib with -fsanitize=address,
-  // unresolved symbols may appear. Mark all
-  // of them as dynamic_lookup. Linking executables is handled in
-  // lib/Driver/ToolChains.cpp.
-  if (Sanitize.needsAsanRt()) {
-    if (Args.hasArg(options::OPT_dynamiclib) ||
-        Args.hasArg(options::OPT_bundle)) {
-      CmdArgs.push_back("-undefined");
-      CmdArgs.push_back("dynamic_lookup");
-    }
-  }
 
   if (Args.hasArg(options::OPT_fopenmp))
     // This is more complicated in gcc...
@@ -5946,6 +5956,11 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("-EL");
 
+    if (Arg *A = Args.getLastArg(options::OPT_mnan_EQ)) {
+      if (StringRef(A->getValue()) == "2008")
+        CmdArgs.push_back(Args.MakeArgString("-mnan=2008"));
+    }
+
     Args.AddLastArg(CmdArgs, options::OPT_mips16, options::OPT_mno_mips16);
     Args.AddLastArg(CmdArgs, options::OPT_mmicromips,
                     options::OPT_mno_micromips);
@@ -6639,4 +6654,117 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("link.exe"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
+}
+
+void visualstudio::Compile::ConstructJob(Compilation &C, const JobAction &JA,
+                                         const InputInfo &Output,
+                                         const InputInfoList &Inputs,
+                                         const ArgList &Args,
+                                         const char *LinkingOutput) const {
+  C.addCommand(GetCommand(C, JA, Output, Inputs, Args, LinkingOutput));
+}
+
+// Try to find FallbackName on PATH that is not identical to ClangProgramPath.
+// If one cannot be found, return FallbackName.
+// We do this special search to prevent clang-cl from falling back onto itself
+// if it's available as cl.exe on the path.
+static std::string FindFallback(const char *FallbackName,
+                                const char *ClangProgramPath) {
+  llvm::Optional<std::string> OptPath = llvm::sys::Process::GetEnv("PATH");
+  if (!OptPath.hasValue())
+    return FallbackName;
+
+#ifdef LLVM_ON_WIN32
+  const StringRef PathSeparators = ";";
+#else
+  const StringRef PathSeparators = ":";
+#endif
+
+  SmallVector<StringRef, 8> PathSegments;
+  llvm::SplitString(OptPath.getValue(), PathSegments, PathSeparators);
+
+  for (size_t i = 0, e = PathSegments.size(); i != e; ++i) {
+    const StringRef &PathSegment = PathSegments[i];
+    if (PathSegment.empty())
+      continue;
+
+    SmallString<128> FilePath(PathSegment);
+    llvm::sys::path::append(FilePath, FallbackName);
+    if (llvm::sys::fs::can_execute(Twine(FilePath)) &&
+        !llvm::sys::fs::equivalent(Twine(FilePath), ClangProgramPath))
+      return FilePath.str();
+  }
+
+  return FallbackName;
+}
+
+Command *visualstudio::Compile::GetCommand(Compilation &C, const JobAction &JA,
+                                           const InputInfo &Output,
+                                           const InputInfoList &Inputs,
+                                           const ArgList &Args,
+                                           const char *LinkingOutput) const {
+  ArgStringList CmdArgs;
+  CmdArgs.push_back("/nologo");
+  CmdArgs.push_back("/c"); // Compile only.
+  CmdArgs.push_back("/W0"); // No warnings.
+
+  // The goal is to be able to invoke this tool correctly based on
+  // any flag accepted by clang-cl.
+
+  // These are spelled the same way in clang and cl.exe,.
+  Args.AddAllArgs(CmdArgs, options::OPT_D, options::OPT_U);
+  Args.AddAllArgs(CmdArgs, options::OPT_I);
+
+  // Optimization level.
+  if (Arg *A = Args.getLastArg(options::OPT_O, options::OPT_O0)) {
+    if (A->getOption().getID() == options::OPT_O0) {
+      CmdArgs.push_back("/Od");
+    } else {
+      StringRef OptLevel = A->getValue();
+      if (OptLevel == "1" || OptLevel == "2" || OptLevel == "s")
+        A->render(Args, CmdArgs);
+      else if (OptLevel == "3")
+        CmdArgs.push_back("/Ox");
+    }
+  }
+
+  // Flags for which clang-cl have an alias.
+  // FIXME: How can we ensure this stays in sync with relevant clang-cl options?
+
+  if (Arg *A = Args.getLastArg(options::OPT_frtti, options::OPT_fno_rtti))
+    CmdArgs.push_back(A->getOption().getID() == options::OPT_frtti ? "/GR"
+                                                                   : "/GR-");
+  if (Args.hasArg(options::OPT_fsyntax_only))
+    CmdArgs.push_back("/Zs");
+
+  // Flags that can simply be passed through.
+  Args.AddAllArgs(CmdArgs, options::OPT__SLASH_LD);
+  Args.AddAllArgs(CmdArgs, options::OPT__SLASH_LDd);
+
+  // The order of these flags is relevant, so pick the last one.
+  if (Arg *A = Args.getLastArg(options::OPT__SLASH_MD, options::OPT__SLASH_MDd,
+                               options::OPT__SLASH_MT, options::OPT__SLASH_MTd))
+    A->render(Args, CmdArgs);
+
+
+  // Input filename.
+  assert(Inputs.size() == 1);
+  const InputInfo &II = Inputs[0];
+  assert(II.getType() == types::TY_C || II.getType() == types::TY_CXX);
+  CmdArgs.push_back(II.getType() == types::TY_C ? "/Tc" : "/Tp");
+  if (II.isFilename())
+    CmdArgs.push_back(II.getFilename());
+  else
+    II.getInputArg().renderAsInput(Args, CmdArgs);
+
+  // Output filename.
+  assert(Output.getType() == types::TY_Object);
+  const char *Fo = Args.MakeArgString(std::string("/Fo") +
+                                      Output.getFilename());
+  CmdArgs.push_back(Fo);
+
+  const Driver &D = getToolChain().getDriver();
+  std::string Exec = FindFallback("cl.exe", D.getClangProgramPath());
+
+  return new Command(JA, *this, Args.MakeArgString(Exec), CmdArgs);
 }

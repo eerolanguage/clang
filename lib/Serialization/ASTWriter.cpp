@@ -1861,12 +1861,10 @@ public:
 };
 } // end anonymous namespace
 
-static int compareMacroDirectives(const void *XPtr, const void *YPtr) {
-  const std::pair<const IdentifierInfo *, MacroDirective *> &X =
-    *(const std::pair<const IdentifierInfo *, MacroDirective *>*)XPtr;
-  const std::pair<const IdentifierInfo *, MacroDirective *> &Y =
-    *(const std::pair<const IdentifierInfo *, MacroDirective *>*)YPtr;
-  return X.first->getName().compare(Y.first->getName());
+static int compareMacroDirectives(
+    const std::pair<const IdentifierInfo *, MacroDirective *> *X,
+    const std::pair<const IdentifierInfo *, MacroDirective *> *Y) {
+  return X->first->getName().compare(Y->first->getName());
 }
 
 static bool shouldIgnoreMacro(MacroDirective *MD, bool IsModule,
@@ -2422,6 +2420,10 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
       }
       Stream.EmitRecord(SUBMODULE_EXPORTS, Record);
     }
+
+    //FIXME: How do we emit the 'use'd modules?  They may not be submodules.
+    // Might be unnecessary as use declarations are only used to build the
+    // module itself.
 
     // Emit the link libraries.
     for (unsigned I = 0, N = Mod->LinkLibraries.size(); I != N; ++I) {
@@ -5132,6 +5134,7 @@ void ASTWriter::AddCXXDefinitionData(const CXXRecordDecl *D, RecordDataImpl &Rec
     Record.push_back(Lambda.ManglingNumber);
     AddDeclRef(Lambda.ContextDecl, Record);
     AddTypeSourceInfo(Lambda.MethodTyInfo, Record);
+    AddStmt(Lambda.TheLambdaExpr);
     for (unsigned I = 0, N = Lambda.NumCaptures; I != N; ++I) {
       LambdaExpr::Capture &Capture = Lambda.Captures[I];
       AddSourceLocation(Capture.getLocation(), Record);

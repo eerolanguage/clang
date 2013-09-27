@@ -245,8 +245,7 @@ class InitListChecker {
                              unsigned &StructuredIndex);
   void CheckExplicitInitList(const InitializedEntity &Entity,
                              InitListExpr *IList, QualType &T,
-                             unsigned &Index, InitListExpr *StructuredList,
-                             unsigned &StructuredIndex,
+                             InitListExpr *StructuredList,
                              bool TopLevelObject = false);
   void CheckListElementTypes(const InitializedEntity &Entity,
                              InitListExpr *IList, QualType &DeclType,
@@ -561,12 +560,9 @@ InitListChecker::InitListChecker(Sema &S, const InitializedEntity &Entity,
   : SemaRef(S), VerifyOnly(VerifyOnly) {
   hadError = false;
 
-  unsigned newIndex = 0;
-  unsigned newStructuredIndex = 0;
-  FullyStructuredList
-    = getStructuredSubobjectInit(IL, newIndex, T, 0, 0, IL->getSourceRange());
-  CheckExplicitInitList(Entity, IL, T, newIndex,
-                        FullyStructuredList, newStructuredIndex,
+  FullyStructuredList =
+      getStructuredSubobjectInit(IL, 0, T, 0, 0, IL->getSourceRange());
+  CheckExplicitInitList(Entity, IL, T, FullyStructuredList,
                         /*TopLevelObject=*/true);
 
   if (!hadError && !VerifyOnly) {
@@ -603,6 +599,12 @@ int InitListChecker::numStructUnionElements(QualType DeclType) {
   return InitializableMembers - structDecl->hasFlexibleArrayMember();
 }
 
+/// Check whether the range of the initializer \p ParentIList from element
+/// \p Index onwards can be used to initialize an object of type \p T. Update
+/// \p Index to indicate how many elements of the list were consumed.
+///
+/// This also fills in \p StructuredList, from element \p StructuredIndex
+/// onwards, with the fully-braced, desugared form of the initialization.
 void InitListChecker::CheckImplicitInitList(const InitializedEntity &Entity,
                                             InitListExpr *ParentIList,
                                             QualType T, unsigned &Index,
@@ -670,17 +672,22 @@ void InitListChecker::CheckImplicitInitList(const InitializedEntity &Entity,
   }
 }
 
+/// Check whether the initializer \p IList (that was written with explicit
+/// braces) can be used to initialize an object of type \p T.
+///
+/// This also fills in \p StructuredList with the fully-braced, desugared
+/// form of the initialization.
 void InitListChecker::CheckExplicitInitList(const InitializedEntity &Entity,
                                             InitListExpr *IList, QualType &T,
-                                            unsigned &Index,
                                             InitListExpr *StructuredList,
-                                            unsigned &StructuredIndex,
                                             bool TopLevelObject) {
   assert(IList->isExplicit() && "Illegal Implicit InitListExpr");
   if (!VerifyOnly) {
     SyntacticToSemantic[IList] = StructuredList;
     StructuredList->setSyntacticForm(IList);
   }
+
+  unsigned Index = 0, StructuredIndex = 0;
   CheckListElementTypes(Entity, IList, T, /*SubobjectIsDesignatorContext=*/true,
                         Index, StructuredList, StructuredIndex, TopLevelObject);
   if (!VerifyOnly) {
@@ -820,14 +827,12 @@ void InitListChecker::CheckSubElementType(const InitializedEntity &Entity,
 
   if (InitListExpr *SubInitList = dyn_cast<InitListExpr>(expr)) {
     if (!ElemType->isRecordType() || ElemType->isAggregateType()) {
-      unsigned newIndex = 0;
-      unsigned newStructuredIndex = 0;
-      InitListExpr *newStructuredList
+      InitListExpr *InnerStructuredList
         = getStructuredSubobjectInit(IList, Index, ElemType,
                                      StructuredList, StructuredIndex,
                                      SubInitList->getSourceRange());
-      CheckExplicitInitList(Entity, SubInitList, ElemType, newIndex,
-                            newStructuredList, newStructuredIndex);
+      CheckExplicitInitList(Entity, SubInitList, ElemType,
+                            InnerStructuredList);
       ++StructuredIndex;
       ++Index;
       return;
@@ -2638,6 +2643,7 @@ void InitializationSequence::Step::Destroy() {
     break;
 
   case SK_ConversionSequence:
+  case SK_ConversionSequenceNoNarrowing:
     delete ICS;
   }
 }
@@ -2777,10 +2783,11 @@ void InitializationSequence::AddLValueToRValueStep(QualType Ty) {
 }
 
 void InitializationSequence::AddConversionSequenceStep(
-                                       const ImplicitConversionSequence &ICS,
-                                                       QualType T) {
+    const ImplicitConversionSequence &ICS, QualType T,
+    bool TopLevelOfInitList) {
   Step S;
-  S.Kind = SK_ConversionSequence;
+  S.Kind = TopLevelOfInitList ? SK_ConversionSequenceNoNarrowing
+                              : SK_ConversionSequence;
   S.Type = T;
   S.ICS = new ImplicitConversionSequence(ICS);
   Steps.push_back(S);
@@ -3006,9 +3013,19 @@ ResolveConstructorOverload(Sema &S, SourceLocation DeclLoc,
     else {
       Constructor = cast<CXXConstructorDecl>(D);
 
-      // If we're performing copy initialization using a copy constructor, we
-      // suppress user-defined conversions on the arguments. We do the same for
-      // move constructors.
+      // C++11 [over.best.ics]p4:
+      //   However, when considering the argument of a constructor or
+      //   user-defined conversion function that is a candidate:
+      //    -- by 13.3.1.3 when invoked for the copying/moving of a temporary
+      //       in the second step of a class copy-initialization,
+      //    -- by 13.3.1.7 when passing the initializer list as a single
+      //       argument or when the initializer list has exactly one elementand
+      //       a conversion to some class X or reference to (possibly
+      //       cv-qualified) X is considered for the first parameter of a
+      //       constructor of X, or
+      //    -- by 13.3.1.4, 13.3.1.5, or 13.3.1.6 in all cases,
+      //   only standard conversion sequences and ellipsis conversion sequences
+      //   are considered.
       if ((CopyInitializing || (InitListSyntax && Args.size() == 1)) &&
           Constructor->isCopyOrMoveConstructor())
         SuppressUserConversions = true;
@@ -3329,6 +3346,33 @@ static void TryListInitialization(Sema &S,
       return;
     }
   }
+  if (S.getLangOpts().CPlusPlus && !DestType->isAggregateType() &&
+      InitList->getNumInits() == 1 &&
+      InitList->getInit(0)->getType()->isRecordType()) {
+    //   - Otherwise, if the initializer list has a single element of type E
+    //     [...references are handled above...], the object or reference is
+    //     initialized from that element; if a narrowing conversion is required
+    //     to convert the element to T, the program is ill-formed.
+    //
+    // Per core-24034, this is direct-initialization if we were performing
+    // direct-list-initialization and copy-initialization otherwise.
+    // We can't use InitListChecker for this, because it always performs
+    // copy-initialization. This only matters if we might use an 'explicit'
+    // conversion operator, so we only need to handle the cases where the source
+    // is of record type.
+    InitializationKind SubKind =
+        Kind.getKind() == InitializationKind::IK_DirectList
+            ? InitializationKind::CreateDirect(Kind.getLocation(),
+                                               InitList->getLBraceLoc(),
+                                               InitList->getRBraceLoc())
+            : Kind;
+    Expr *SubInit[1] = { InitList->getInit(0) };
+    Sequence.InitializeFrom(S, Entity, SubKind, SubInit,
+                            /*TopLevelOfInitList*/true);
+    if (Sequence)
+      Sequence.RewrapReferenceInitList(Entity.getType(), InitList);
+    return;
+  }
 
   InitListChecker CheckInitList(S, Entity, InitList,
           DestType, /*VerifyOnly=*/true);
@@ -3375,8 +3419,8 @@ static OverloadingResult TryRefInitWithConversionFunction(Sema &S,
   // Determine whether we are allowed to call explicit constructors or
   // explicit conversion operators.
   bool AllowExplicit = Kind.AllowExplicit();
-  bool AllowExplicitConvs = Kind.allowExplicitConversionFunctions();
-  
+  bool AllowExplicitConvs = Kind.allowExplicitConversionFunctionsInRefBinding();
+
   const RecordType *T1RecordType = 0;
   if (AllowRValues && (T1RecordType = T1->getAs<RecordType>()) &&
       !S.RequireCompleteType(Kind.getLocation(), T1, 0)) {
@@ -3643,7 +3687,7 @@ static void TryReferenceInitializationCore(Sema &S,
   //
   //     - If the reference is an lvalue reference and the initializer
   //       expression
-  // Note the analogous bullet points for rvlaue refs to functions. Because
+  // Note the analogous bullet points for rvalue refs to functions. Because
   // there are no function rvalues in C++, rvalue refs to functions are treated
   // like lvalue refs.
   OverloadingResult ConvOvlResult = OR_Success;
@@ -3684,20 +3728,17 @@ static void TryReferenceInitializationCore(Sema &S,
     //       applicable conversion functions (13.3.1.6) and choosing the best
     //       one through overload resolution (13.3)),
     // If we have an rvalue ref to function type here, the rhs must be
-    // an rvalue.
+    // an rvalue. DR1287 removed the "implicitly" here.
     if (RefRelationship == Sema::Ref_Incompatible && T2->isRecordType() &&
         (isLValueRef || InitCategory.isRValue())) {
-      ConvOvlResult = TryRefInitWithConversionFunction(S, Entity, Kind,
-                                                       Initializer,
-                                                   /*AllowRValues=*/isRValueRef,
-                                                       Sequence);
+      ConvOvlResult = TryRefInitWithConversionFunction(
+          S, Entity, Kind, Initializer, /*AllowRValues*/isRValueRef, Sequence);
       if (ConvOvlResult == OR_Success)
         return;
-      if (ConvOvlResult != OR_No_Viable_Function) {
+      if (ConvOvlResult != OR_No_Viable_Function)
         Sequence.SetOverloadFailure(
-                      InitializationSequence::FK_ReferenceInitOverloadFailed,
-                                    ConvOvlResult);
-      }
+            InitializationSequence::FK_ReferenceInitOverloadFailed,
+            ConvOvlResult);
     }
   }
 
@@ -3769,16 +3810,16 @@ static void TryReferenceInitializationCore(Sema &S,
   //         reference-related to T2, and can be implicitly converted to an
   //         xvalue, class prvalue, or function lvalue of type "cv3 T3",
   //         where "cv1 T1" is reference-compatible with "cv3 T3",
+  //
+  // DR1287 removes the "implicitly" here.
   if (T2->isRecordType()) {
     if (RefRelationship == Sema::Ref_Incompatible) {
-      ConvOvlResult = TryRefInitWithConversionFunction(S, Entity,
-                                                       Kind, Initializer,
-                                                       /*AllowRValues=*/true,
-                                                       Sequence);
+      ConvOvlResult = TryRefInitWithConversionFunction(
+          S, Entity, Kind, Initializer, /*AllowRValues*/true, Sequence);
       if (ConvOvlResult)
         Sequence.SetOverloadFailure(
-                      InitializationSequence::FK_ReferenceInitOverloadFailed,
-                                    ConvOvlResult);
+            InitializationSequence::FK_ReferenceInitOverloadFailed,
+            ConvOvlResult);
 
       return;
     }
@@ -3986,7 +4027,8 @@ static void TryUserDefinedConversion(Sema &S,
                                      const InitializedEntity &Entity,
                                      const InitializationKind &Kind,
                                      Expr *Initializer,
-                                     InitializationSequence &Sequence) {
+                                     InitializationSequence &Sequence,
+                                     bool TopLevelOfInitList) {
   QualType DestType = Entity.getType();
   assert(!DestType->isReferenceType() && "References are handled elsewhere");
   QualType SourceType = Initializer->getType();
@@ -4137,7 +4179,7 @@ static void TryUserDefinedConversion(Sema &S,
     ImplicitConversionSequence ICS;
     ICS.setStandard();
     ICS.Standard = Best->FinalConversion;
-    Sequence.AddConversionSequenceStep(ICS, DestType);
+    Sequence.AddConversionSequenceStep(ICS, DestType, TopLevelOfInitList);
   }
 }
 
@@ -4348,8 +4390,17 @@ static bool TryOCLZeroEventInitialization(Sema &S,
 InitializationSequence::InitializationSequence(Sema &S,
                                                const InitializedEntity &Entity,
                                                const InitializationKind &Kind,
-                                               MultiExprArg Args)
+                                               MultiExprArg Args,
+                                               bool TopLevelOfInitList)
     : FailedCandidateSet(Kind.getLocation()) {
+  InitializeFrom(S, Entity, Kind, Args, TopLevelOfInitList);
+}
+
+void InitializationSequence::InitializeFrom(Sema &S,
+                                            const InitializedEntity &Entity,
+                                            const InitializationKind &Kind,
+                                            MultiExprArg Args,
+                                            bool TopLevelOfInitList) {
   ASTContext &Context = S.Context;
 
   // Eliminate non-overload placeholder types in the arguments.  We
@@ -4539,7 +4590,8 @@ InitializationSequence::InitializationSequence(Sema &S,
     //       13.3.1.4, and the best one is chosen through overload resolution
     //       (13.3).
     else
-      TryUserDefinedConversion(S, Entity, Kind, Initializer, *this);
+      TryUserDefinedConversion(S, Entity, Kind, Initializer, *this,
+                               TopLevelOfInitList);
     return;
   }
 
@@ -4552,7 +4604,8 @@ InitializationSequence::InitializationSequence(Sema &S,
   //    - Otherwise, if the source type is a (possibly cv-qualified) class
   //      type, conversion functions are considered.
   if (!SourceType.isNull() && SourceType->isRecordType()) {
-    TryUserDefinedConversion(S, Entity, Kind, Initializer, *this);
+    TryUserDefinedConversion(S, Entity, Kind, Initializer, *this,
+                             TopLevelOfInitList);
     MaybeProduceObjCObject(S, *this, Entity);
     return;
   }
@@ -4604,7 +4657,7 @@ InitializationSequence::InitializationSequence(Sema &S,
     else
       SetFailed(InitializationSequence::FK_ConversionFailed);
   } else {
-    AddConversionSequenceStep(ICS, Entity.getType());
+    AddConversionSequenceStep(ICS, Entity.getType(), TopLevelOfInitList);
 
     MaybeProduceObjCObject(S, *this, Entity);
   }
@@ -5433,6 +5486,12 @@ static void warnOnLifetimeExtension(Sema &S, const InitializedEntity &Entity,
   }
 }
 
+static void DiagnoseNarrowingInInitList(Sema &S,
+                                        const ImplicitConversionSequence &ICS,
+                                        QualType PreNarrowingType,
+                                        QualType EntityType,
+                                        const Expr *PostInit);
+
 ExprResult
 InitializationSequence::Perform(Sema &S,
                                 const InitializedEntity &Entity,
@@ -5550,6 +5609,7 @@ InitializationSequence::Perform(Sema &S,
   case SK_QualificationConversionRValue:
   case SK_LValueToRValue:
   case SK_ConversionSequence:
+  case SK_ConversionSequenceNoNarrowing:
   case SK_ListInitialization:
   case SK_UnwrapInitList:
   case SK_RewrapInitList:
@@ -5848,8 +5908,9 @@ InitializationSequence::Perform(Sema &S,
       break;
     }
 
-    case SK_ConversionSequence: {
-      Sema::CheckedConversionKind CCK 
+    case SK_ConversionSequence:
+    case SK_ConversionSequenceNoNarrowing: {
+      Sema::CheckedConversionKind CCK
         = Kind.isCStyleCast()? Sema::CCK_CStyleCast
         : Kind.isFunctionalCast()? Sema::CCK_FunctionalCast
         : Kind.isExplicitCast()? Sema::CCK_OtherCast
@@ -5860,6 +5921,11 @@ InitializationSequence::Perform(Sema &S,
       if (CurInitExprRes.isInvalid())
         return ExprError();
       CurInit = CurInitExprRes;
+
+      if (Step->Kind == SK_ConversionSequenceNoNarrowing &&
+          S.getLangOpts().CPlusPlus && !CurInit.get()->isValueDependent())
+        DiagnoseNarrowingInInitList(S, *Step->ICS, SourceType, Entity.getType(),
+                                    CurInit.get());
       break;
     }
 
@@ -6775,6 +6841,12 @@ void InitializationSequence::dump(raw_ostream &OS) const {
       OS << ")";
       break;
 
+    case SK_ConversionSequenceNoNarrowing:
+      OS << "implicit conversion sequence with narrowing prohibited (";
+      S->ICS->DebugPrint(); // FIXME: use OS
+      OS << ")";
+      break;
+
     case SK_ListInitialization:
       OS << "list aggregate initialization";
       break;
@@ -6854,20 +6926,11 @@ void InitializationSequence::dump() const {
   dump(llvm::errs());
 }
 
-static void DiagnoseNarrowingInInitList(Sema &S, InitializationSequence &Seq,
+static void DiagnoseNarrowingInInitList(Sema &S,
+                                        const ImplicitConversionSequence &ICS,
+                                        QualType PreNarrowingType,
                                         QualType EntityType,
-                                        const Expr *PreInit,
                                         const Expr *PostInit) {
-  if (Seq.step_begin() == Seq.step_end() || PreInit->isValueDependent())
-    return;
-
-  // A narrowing conversion can only appear as the final implicit conversion in
-  // an initialization sequence.
-  const InitializationSequence::Step &LastStep = Seq.step_end()[-1];
-  if (LastStep.Kind != InitializationSequence::SK_ConversionSequence)
-    return;
-
-  const ImplicitConversionSequence &ICS = *LastStep.ICS;
   const StandardConversionSequence *SCS = 0;
   switch (ICS.getKind()) {
   case ImplicitConversionSequence::StandardConversion:
@@ -6881,13 +6944,6 @@ static void DiagnoseNarrowingInInitList(Sema &S, InitializationSequence &Seq,
   case ImplicitConversionSequence::BadConversion:
     return;
   }
-
-  // Determine the type prior to the narrowing conversion. If a conversion
-  // operator was used, this may be different from both the type of the entity
-  // and of the pre-initialization expression.
-  QualType PreNarrowingType = PreInit->getType();
-  if (Seq.step_begin() + 1 != Seq.step_end())
-    PreNarrowingType = Seq.step_end()[-2].Type;
 
   // C++11 [dcl.init.list]p7: Check whether this is a narrowing conversion.
   APValue ConstantValue;
@@ -7001,14 +7057,10 @@ Sema::PerformCopyInitialization(const InitializedEntity &Entity,
   InitializationKind Kind = InitializationKind::CreateCopy(InitE->getLocStart(),
                                                            EqualLoc,
                                                            AllowExplicit);
-  InitializationSequence Seq(*this, Entity, Kind, InitE);
+  InitializationSequence Seq(*this, Entity, Kind, InitE, TopLevelOfInitList);
   Init.release();
 
   ExprResult Result = Seq.Perform(*this, Entity, Kind, InitE);
-
-  if (!Result.isInvalid() && TopLevelOfInitList)
-    DiagnoseNarrowingInInitList(*this, Seq, Entity.getType(),
-                                InitE, Result.get());
 
   return Result;
 }

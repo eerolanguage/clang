@@ -1215,26 +1215,30 @@ Microsoft extensions
 
 clang has some experimental support for extensions from Microsoft Visual
 C++; to enable it, use the -fms-extensions command-line option. This is
-the default for Windows targets. Note that the support is incomplete;
-enabling Microsoft extensions will silently drop certain constructs
-(including ``__declspec`` and Microsoft-style asm statements).
+the default for Windows targets. Note that the support is incomplete.
+Some constructs such as dllexport on classes are ignored with a warning,
+and others such as `Microsoft IDL annotations
+<http://msdn.microsoft.com/en-us/library/8tesw2eh.aspx>`_ are silently
+ignored.
 
 clang has a -fms-compatibility flag that makes clang accept enough
-invalid C++ to be able to parse most Microsoft headers. This flag is
-enabled by default for Windows targets.
+invalid C++ to be able to parse most Microsoft headers. For example, it
+allows `unqualified lookup of dependent base class members
+<http://clang.llvm.org/compatibility.html#dep_lookup_bases>`_, which is
+a common compatibility issue with clang. This flag is enabled by default
+for Windows targets.
 
 -fdelayed-template-parsing lets clang delay all template instantiation
 until the end of a translation unit. This flag is enabled by default for
 Windows targets.
 
 -  clang allows setting ``_MSC_VER`` with ``-fmsc-version=``. It defaults to
-   1300 which is the same as Visual C/C++ 2003. Any number is supported
+   1700 which is the same as Visual C/C++ 2012. Any number is supported
    and can greatly affect what Windows SDK and c++stdlib headers clang
-   can compile. This option will be removed when clang supports the full
-   set of MS extensions required for these headers.
+   can compile.
 -  clang does not support the Microsoft extension where anonymous record
    members can be declared using user defined typedefs.
--  clang supports the Microsoft "#pragma pack" feature for controlling
+-  clang supports the Microsoft ``#pragma pack`` feature for controlling
    record layout. GCC also contains support for this feature, however
    where MSVC and GCC are incompatible clang follows the MSVC
    definition.

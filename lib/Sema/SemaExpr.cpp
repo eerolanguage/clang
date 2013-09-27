@@ -2464,7 +2464,7 @@ bool Sema::UseArgumentDependentLookup(const CXXScopeSpec &SS,
     // turn off ADL anyway).
     if (isa<UsingShadowDecl>(D))
       D = cast<UsingShadowDecl>(D)->getTargetDecl();
-    else if (D->getDeclContext()->isFunctionOrMethod())
+    else if (D->getLexicalDeclContext()->isFunctionOrMethod())
       return false;
 
     // C++0x [basic.lookup.argdep]p3:
@@ -3983,10 +3983,12 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   // arguments for the remaining parameters), don't make the call.
   if (Args.size() < NumArgsInProto) {
     if (Args.size() < MinArgs) {
+      MemberExpr *ME = dyn_cast<MemberExpr>(Fn);
       TypoCorrection TC;
       if (FDecl && (TC = TryTypoCorrectionForCall(
                         *this, DeclarationNameInfo(FDecl->getDeclName(),
-                                                   Fn->getLocStart()),
+                                                   (ME ? ME->getMemberLoc()
+                                                       : Fn->getLocStart())),
                         Args))) {
         unsigned diag_id =
             MinArgs == NumArgsInProto && !Proto->isVariadic()

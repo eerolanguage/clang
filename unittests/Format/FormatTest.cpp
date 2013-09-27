@@ -3851,6 +3851,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyIndependentOfContext("if (*b[i])");
   verifyIndependentOfContext("if (int *a = (&b))");
   verifyIndependentOfContext("while (int *a = &b)");
+  verifyIndependentOfContext("size = sizeof *a;");
   verifyFormat("void f() {\n"
                "  for (const int &v : Values) {\n"
                "  }\n"
@@ -5995,6 +5996,18 @@ TEST_F(FormatTest, ConfigurableSpacesInParentheses) {
                "}", Spaces);
 }
 
+TEST_F(FormatTest, ConfigurableSpaceBeforeAssignmentOperators) {
+  verifyFormat("int a = 5;");
+  verifyFormat("a += 42;");
+  verifyFormat("a or_eq 8;");
+
+  FormatStyle Spaces = getLLVMStyle();
+  Spaces.SpaceBeforeAssignmentOperators = false;
+  verifyFormat("int a= 5;", Spaces);
+  verifyFormat("a+= 42;", Spaces);
+  verifyFormat("a or_eq 8;", Spaces);
+}
+
 TEST_F(FormatTest, LinuxBraceBreaking) {
   FormatStyle BreakBeforeBrace = getLLVMStyle();
   BreakBeforeBrace.BreakBeforeBraces = FormatStyle::BS_Linux;
@@ -6236,6 +6249,7 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(SpaceInEmptyParentheses);
   CHECK_PARSE_BOOL(SpacesInCStyleCastParentheses);
   CHECK_PARSE_BOOL(SpaceAfterControlStatementKeyword);
+  CHECK_PARSE_BOOL(SpaceBeforeAssignmentOperators);
 
   CHECK_PARSE("AccessModifierOffset: -1234", AccessModifierOffset, -1234);
   CHECK_PARSE("ConstructorInitializerIndentWidth: 1234",

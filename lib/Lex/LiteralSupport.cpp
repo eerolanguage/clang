@@ -504,8 +504,10 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
       hadError = true;
       return;
     } else if (*s == '.') {
+      checkSeparator(TokLoc, s, CSK_AfterDigits);
       s++;
       saw_period = true;
+      checkSeparator(TokLoc, s, CSK_BeforeDigits);
       s = SkipDigits(s);
       if (Features.UnderscoresInNumerals) {
         while (s < ThisTokEnd-1 && *s == '_') {
@@ -514,10 +516,12 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
       }
     }
     if ((*s == 'e' || *s == 'E')) { // exponent
+      checkSeparator(TokLoc, s, CSK_AfterDigits);
       const char *Exponent = s;
       s++;
       saw_exponent = true;
       if (*s == '+' || *s == '-')  s++; // sign
+      checkSeparator(TokLoc, s, CSK_BeforeDigits);
       const char *first_non_digit = SkipDigits(s);
       if (first_non_digit != s) {
         s = first_non_digit;
@@ -531,6 +535,7 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
   }
 
   SuffixBegin = s;
+  checkSeparator(TokLoc, s, CSK_AfterDigits);
 
   // Parse the suffix.  At this point we can classify whether we have an FP or
   // integer constant.
@@ -615,6 +620,9 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
           break;
         }
       }
+      // "i", "if", and "il" are user-defined suffixes in C++1y.
+      if (PP.getLangOpts().CPlusPlus1y && *s == 'i')
+        break;
       // fall through.
     case 'j':
     case 'J':
@@ -676,10 +684,28 @@ bool NumericLiteralParser::isValidUDSuffix(const LangOptions &LangOpts,
     return false;
 
   // In C++1y, "s", "h", "min", "ms", "us", and "ns" are used in the library.
+  // Per tweaked N3660, "il", "i", and "if" are also used in the library.
   return llvm::StringSwitch<bool>(Suffix)
       .Cases("h", "min", "s", true)
       .Cases("ms", "us", "ns", true)
+      .Cases("il", "i", "if", true)
       .Default(false);
+}
+
+void NumericLiteralParser::checkSeparator(SourceLocation TokLoc,
+                                          const char *Pos,
+                                          CheckSeparatorKind IsAfterDigits) {
+  if (IsAfterDigits == CSK_AfterDigits) {
+    if (Pos == ThisTokBegin)
+      return;
+    --Pos;
+  } else if (Pos == ThisTokEnd)
+    return;
+
+  if (isDigitSeparator(*Pos))
+    PP.Diag(PP.AdvanceToTokenCharacter(TokLoc, Pos - ThisTokBegin),
+            diag::err_digit_separator_not_between_digits)
+      << IsAfterDigits;
 }
 
 /// ParseNumberStartingWithZero - This method is called when the first character
@@ -755,7 +781,7 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   }
 
   // Handle simple binary numbers 0b01010
-  if (*s == 'b' || *s == 'B') {
+  if ((*s == 'b' || *s == 'B') && (s[1] == '0' || s[1] == '1')) {
     // 0b101010 is a C++1y / GCC extension.
     PP.Diag(TokLoc,
             PP.getLangOpts().CPlusPlus1y
@@ -871,7 +897,7 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
   if (alwaysFitsInto64Bits(radix, NumDigits)) {
     uint64_t N = 0;
     for (const char *Ptr = DigitsBegin; Ptr != SuffixBegin; ++Ptr)
-      if (!Features.UnderscoresInNumerals || *Ptr != '_')
+      if (!isDigitSeparator(*Ptr))
         N = N * radix + llvm::hexDigitValue(*Ptr);
 
     // This will truncate the value to Val's input width. Simply check
@@ -889,10 +915,11 @@ bool NumericLiteralParser::GetIntegerValue(llvm::APInt &Val) {
 
   bool OverflowOccurred = false;
   while (Ptr < SuffixBegin) {
-    if (Features.UnderscoresInNumerals && *Ptr == '_') {
-      s++;
+    if (isDigitSeparator(*Ptr)) {
+      ++Ptr;
       continue;
     }
+
     unsigned C = llvm::hexDigitValue(*Ptr++);
 
     // If this letter is out of bound for this radix, reject it.
@@ -921,13 +948,17 @@ NumericLiteralParser::GetFloatValue(llvm::APFloat &Result) {
   using llvm::APFloat;
 
   unsigned n = std::min(SuffixBegin - ThisTokBegin, ThisTokEnd - ThisTokBegin);
-  std::string floatString(ThisTokBegin, n);
-  if (PP.getLangOpts().UnderscoresInNumerals) { // strip out underscores
-    floatString.erase(std::remove(floatString.begin(), floatString.end(), '_'),
-                      floatString.end());
+
+  llvm::SmallString<16> Buffer;
+  StringRef Str(ThisTokBegin, n);
+  if (Str.find('\'') != StringRef::npos) {
+    Buffer.reserve(n);
+    std::remove_copy_if(Str.begin(), Str.end(), std::back_inserter(Buffer),
+                        &isDigitSeparator);
+    Str = Buffer;
   }
-  return Result.convertFromString(floatString,
-                                  APFloat::rmNearestTiesToEven);
+
+  return Result.convertFromString(Str, APFloat::rmNearestTiesToEven);
 }
 
 

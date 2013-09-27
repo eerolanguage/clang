@@ -737,7 +737,7 @@ private:
 
     if (PrevToken->isOneOf(tok::l_paren, tok::l_square, tok::l_brace,
                            tok::comma, tok::semi, tok::kw_return, tok::colon,
-                           tok::equal, tok::kw_delete) ||
+                           tok::equal, tok::kw_delete, tok::kw_sizeof) ||
         PrevToken->Type == TT_BinaryOperator ||
         PrevToken->Type == TT_UnaryOperator || PrevToken->Type == TT_CastRParen)
       return TT_UnaryOperator;
@@ -1317,6 +1317,9 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
   }
   if (Tok.isOneOf(tok::arrowstar, tok::periodstar) ||
       Tok.Previous->isOneOf(tok::arrowstar, tok::periodstar))
+    return false;
+  if (!Style.SpaceBeforeAssignmentOperators &&
+      Tok.getPrecedence() == prec::Assignment)
     return false;
   if ((Tok.Type == TT_BinaryOperator && !Tok.Previous->is(tok::l_paren)) ||
       Tok.Previous->Type == TT_BinaryOperator)

@@ -373,8 +373,6 @@ def arcmt_modify : Flag<["-"], "arcmt-modify">,
 def arcmt_migrate : Flag<["-"], "arcmt-migrate">,
   HelpText<"Apply modifications and produces temporary files that conform to ARC">;
 
-def relocatable_pch : Flag<["-", "--"], "relocatable-pch">,
-  HelpText<"Whether to build a relocatable precompiled header">;
 def print_stats : Flag<["-"], "print-stats">,
   HelpText<"Print performance metrics and statistics">;
 def fdump_record_layouts : Flag<["-"], "fdump-record-layouts">,
@@ -483,9 +481,12 @@ def fno_deprecated_macro : Flag<["-"], "fno-deprecated-macro">,
 
 def nostdsysteminc : Flag<["-"], "nostdsysteminc">,
   HelpText<"Disable standard system #include directories">;
-def fmodule_name : Joined<["-"], "fmodule-name=">, 
+def fmodule_name : Joined<["-"], "fmodule-name=">,
   MetaVarName<"<name>">,
-  HelpText<"Specify the name of the module to build">;           
+  HelpText<"Specify the name of the module to build">;
+def fmodule_map_file : Joined<["-"], "fmodule-map-file=">,
+  MetaVarName<"<file>">,
+  HelpText<"Load this module map file">;
 def fdisable_module_hash : Flag<["-"], "fdisable-module-hash">,
   HelpText<"Disable the module hash">;
 def c_isystem : JoinedOrSeparate<["-"], "c-isystem">, MetaVarName<"<directory>">,
