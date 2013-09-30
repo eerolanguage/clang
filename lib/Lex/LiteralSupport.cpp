@@ -707,7 +707,8 @@ void NumericLiteralParser::ParseNumberStartingWithZero(SourceLocation TokLoc) {
   s++;
 
   // Handle a hex number like 0x1234.
-  if ((*s == 'x' || *s == 'X') && (isHexDigit(s[1]) || s[1] == '.')) {
+  if ((*s == 'x' || *s == 'X') &&
+      (isHexDigit(s[1]) || s[1] == '.' || isDigitSeparator(s[1]))) {
     s++;
     radix = 16;
     DigitsBegin = s;
@@ -915,7 +916,7 @@ NumericLiteralParser::GetFloatValue(llvm::APFloat &Result) {
 
   llvm::SmallString<16> Buffer;
   StringRef Str(ThisTokBegin, n);
-  if (Str.find('\'') != StringRef::npos) {
+  if (Str.find(digitSeparator()) != StringRef::npos) {
     Buffer.reserve(n);
     std::remove_copy_if(Str.begin(), Str.end(), std::back_inserter(Buffer),
                         &isDigitSeparator);

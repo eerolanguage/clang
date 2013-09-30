@@ -100,7 +100,10 @@ private:
 
   void ParseNumberStartingWithZero(SourceLocation TokLoc);
 
-  static bool isDigitSeparator(char C) { return C == '\''; }
+  // TODO: this needs to be made langOpt-specific
+  static char digitSeparator() { return '_'; }
+
+  static bool isDigitSeparator(char C) { return C == digitSeparator(); }
 
   enum CheckSeparatorKind { CSK_BeforeDigits, CSK_AfterDigits };
 
