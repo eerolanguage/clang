@@ -2092,6 +2092,9 @@ QualType Sema::CheckTemplateIdType(TemplateName Name,
         Decl->setLexicalDeclContext(ClassTemplate->getLexicalDeclContext());
     }
 
+    // Diagnose uses of this specialization.
+    (void)DiagnoseUseOfDecl(Decl, TemplateLoc);
+
     CanonType = Context.getTypeDeclType(Decl);
     assert(isa<RecordType>(CanonType) &&
            "type of non-dependent specialization is not a RecordType");
@@ -7372,13 +7375,8 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
     CheckExplicitInstantiationScope(*this, Prev, D.getIdentifierLoc(), true);
 
     // Verify that it is okay to explicitly instantiate here.
-    MemberSpecializationInfo *MSInfo = Prev->getMemberSpecializationInfo();
-    TemplateSpecializationKind PrevTSK =
-        MSInfo ? MSInfo->getTemplateSpecializationKind()
-               : Prev->getTemplateSpecializationKind();
-    SourceLocation POI = MSInfo ? MSInfo->getPointOfInstantiation()
-                                : cast<VarTemplateSpecializationDecl>(Prev)
-                                      ->getPointOfInstantiation();
+    TemplateSpecializationKind PrevTSK = Prev->getTemplateSpecializationKind();
+    SourceLocation POI = Prev->getPointOfInstantiation();
     bool HasNoEffect = false;
     if (CheckSpecializationInstantiationRedecl(D.getIdentifierLoc(), TSK, Prev,
                                                PrevTSK, POI, HasNoEffect))

@@ -1577,7 +1577,9 @@ Sema::BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
 
   bool refersToEnclosingScope =
     (CurContext != D->getDeclContext() &&
-     D->getDeclContext()->isFunctionOrMethod());
+     D->getDeclContext()->isFunctionOrMethod()) ||
+    (isa<VarDecl>(D) &&
+     cast<VarDecl>(D)->isInitCapture());
 
   DeclRefExpr *E;
   if (isa<VarTemplateSpecializationDecl>(D)) {
@@ -8168,9 +8170,14 @@ static NonConstCaptureKind isReferenceToNonConstCapture(Sema &S, Expr *E) {
   assert(var->hasLocalStorage() && "capture added 'const' to non-local?");
 
   // Decide whether the first capture was for a block or a lambda.
-  DeclContext *DC = S.CurContext;
-  while (DC->getParent() != var->getDeclContext())
+  DeclContext *DC = S.CurContext, *Prev = 0;
+  while (DC != var->getDeclContext()) {
+    Prev = DC;
     DC = DC->getParent();
+  }
+  // Unless we have an init-capture, we've gone one step too far.
+  if (!var->isInitCapture())
+    DC = Prev;
   return (isa<BlockDecl>(DC) ? NCCK_Block : NCCK_Lambda);
 }
 
@@ -11097,7 +11104,8 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
     // However, they cannot be referenced if they are deleted, and they are
     // deleted whenever the implicit definition of the special member would
     // fail.
-    if (!Func->isConstexpr() || Func->getBody())
+    if (!(Func->isConstexpr() && !getLangOpts().DelayedTemplateParsing) ||
+        Func->getBody())
       return;
     CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(Func);
     if (!Func->isImplicitlyInstantiable() && (!MD || MD->isUserProvided()))
@@ -11188,13 +11196,14 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
       }
     }
 
-    if (!AlreadyInstantiated || Func->isConstexpr()) {
+    if (!AlreadyInstantiated ||
+        (Func->isConstexpr() && !getLangOpts().DelayedTemplateParsing)) {
       if (isa<CXXRecordDecl>(Func->getDeclContext()) &&
           cast<CXXRecordDecl>(Func->getDeclContext())->isLocalClass() &&
           ActiveTemplateInstantiations.size())
         PendingLocalImplicitInstantiations.push_back(
             std::make_pair(Func, PointOfInstantiation));
-      else if (Func->isConstexpr())
+      else if (Func->isConstexpr() && !getLangOpts().DelayedTemplateParsing)
         // Do not defer instantiations of constexpr functions, to avoid the
         // expression evaluator needing to call back into Sema if it sees a
         // call to such a function.
@@ -11438,7 +11447,7 @@ bool Sema::tryCaptureVariable(VarDecl *Var, SourceLocation Loc,
   bool Nested = false;
   
   DeclContext *DC = CurContext;
-  if (Var->getDeclContext() == DC) return true;
+  if (!Var->isInitCapture() && Var->getDeclContext() == DC) return true;
   if (!Var->hasLocalStorage()) return true;
 
   bool HasBlocksAttr = Var->hasAttr<BlocksAttr>();
@@ -11852,45 +11861,33 @@ static void DoMarkVarDeclReferenced(Sema &SemaRef, SourceLocation Loc,
 
   VarTemplateSpecializationDecl *VarSpec =
       dyn_cast<VarTemplateSpecializationDecl>(Var);
+  assert(!isa<VarTemplatePartialSpecializationDecl>(Var) &&
+         "Can't instantiate a partial template specialization.");
 
   // Implicit instantiation of static data members, static data member
   // templates of class templates, and variable template specializations.
   // Delay instantiations of variable templates, except for those
   // that could be used in a constant expression.
-  if (VarSpec || (Var->isStaticDataMember() &&
-                  Var->getInstantiatedFromStaticDataMember())) {
-    MemberSpecializationInfo *MSInfo = Var->getMemberSpecializationInfo();
-    if (VarSpec)
-      assert(!isa<VarTemplatePartialSpecializationDecl>(Var) &&
-             "Can't instantiate a partial template specialization.");
-    if (Var->isStaticDataMember())
-      assert(MSInfo && "Missing member specialization information?");
+  TemplateSpecializationKind TSK = Var->getTemplateSpecializationKind();
+  if (isTemplateInstantiation(TSK)) {
+    bool TryInstantiating = TSK == TSK_ImplicitInstantiation;
 
-    SourceLocation PointOfInstantiation;
-    bool InstantiationIsOkay = true;
-    if (MSInfo) {
-      bool AlreadyInstantiated = !MSInfo->getPointOfInstantiation().isInvalid();
-      TemplateSpecializationKind TSK = MSInfo->getTemplateSpecializationKind();
-
-      if (TSK == TSK_ImplicitInstantiation &&
-          (!AlreadyInstantiated ||
-           Var->isUsableInConstantExpressions(SemaRef.Context))) {
-        if (!AlreadyInstantiated) {
-          // This is a modification of an existing AST node. Notify listeners.
-          if (ASTMutationListener *L = SemaRef.getASTMutationListener())
-            L->StaticDataMemberInstantiated(Var);
-          MSInfo->setPointOfInstantiation(Loc);
-        }
-        PointOfInstantiation = MSInfo->getPointOfInstantiation();
-      } else
-        InstantiationIsOkay = false;
-    } else {
-      if (VarSpec->getPointOfInstantiation().isInvalid())
-        VarSpec->setPointOfInstantiation(Loc);
-      PointOfInstantiation = VarSpec->getPointOfInstantiation();
+    if (TryInstantiating && !isa<VarTemplateSpecializationDecl>(Var)) {
+      if (Var->getPointOfInstantiation().isInvalid()) {
+        // This is a modification of an existing AST node. Notify listeners.
+        if (ASTMutationListener *L = SemaRef.getASTMutationListener())
+          L->StaticDataMemberInstantiated(Var);
+      } else if (!Var->isUsableInConstantExpressions(SemaRef.Context))
+        // Don't bother trying to instantiate it again, unless we might need
+        // its initializer before we get to the end of the TU.
+        TryInstantiating = false;
     }
 
-    if (InstantiationIsOkay) {
+    if (Var->getPointOfInstantiation().isInvalid())
+      Var->setTemplateSpecializationKind(TSK, Loc);
+
+    if (TryInstantiating) {
+      SourceLocation PointOfInstantiation = Var->getPointOfInstantiation();
       bool InstantiationDependent = false;
       bool IsNonDependent =
           VarSpec ? !TemplateSpecializationType::anyDependentTemplateArguments(

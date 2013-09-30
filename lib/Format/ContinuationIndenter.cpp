@@ -192,6 +192,8 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
                                                unsigned ExtraSpaces) {
   const FormatToken &Current = *State.NextToken;
   const FormatToken &Previous = *State.NextToken->Previous;
+  const FormatToken *PreviousNonComment =
+      State.NextToken->getPreviousNonComment();
 
   // Extra penalty that needs to be added because of the way certain line
   // breaks are chosen.
@@ -253,7 +255,8 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
       State.Column = State.Stack.back().QuestionColumn;
     } else if (Previous.is(tok::comma) && State.Stack.back().VariablePos != 0) {
       State.Column = State.Stack.back().VariablePos;
-    } else if (Previous.ClosesTemplateDeclaration ||
+    } else if ((PreviousNonComment &&
+                PreviousNonComment->ClosesTemplateDeclaration) ||
                ((Current.Type == TT_StartOfName ||
                  Current.is(tok::kw_operator)) &&
                 State.ParenLevel == 0 &&
@@ -300,12 +303,13 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
       State.Stack.back().BreakBeforeParameter = false;
 
     if (!DryRun) {
-      unsigned NewLines = 1;
+      unsigned Newlines = 1;
       if (Current.is(tok::comment))
-        NewLines = std::max(NewLines, std::min(Current.NewlinesBefore,
+        Newlines = std::max(Newlines, std::min(Current.NewlinesBefore,
                                                Style.MaxEmptyLinesToKeep + 1));
-      Whitespaces.replaceWhitespace(Current, NewLines, State.Column,
-                                    State.Column, State.Line->InPPDirective);
+      Whitespaces.replaceWhitespace(Current, Newlines, State.Line->Level,
+                                    State.Column, State.Column,
+                                    State.Line->InPPDirective);
     }
 
     if (!Current.isTrailingComment())
@@ -360,7 +364,8 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
     unsigned Spaces = State.NextToken->SpacesRequiredBefore + ExtraSpaces;
 
     if (!DryRun)
-      Whitespaces.replaceWhitespace(Current, 0, Spaces, State.Column + Spaces);
+      Whitespaces.replaceWhitespace(Current, /*Newlines=*/0, /*IndentLevel=*/0,
+                                    Spaces, State.Column + Spaces);
 
     if (Current.Type == TT_ObjCSelectorName &&
         State.Stack.back().ColonPos == 0) {
@@ -454,10 +459,6 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
     State.Stack.back().BreakBeforeParameter = false;
   }
 
-  // If return returns a binary expression, align after it.
-  if (Current.is(tok::kw_return) && Current.StartsBinaryExpression)
-    State.Stack.back().LastSpace = State.Column + 7;
-
   // In ObjC method declaration we align on the ":" of parameters, but we need
   // to ensure that we indent parameters on subsequent lines by at least 4.
   if (Current.Type == TT_ObjCMethodSpecifier)
@@ -469,8 +470,7 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   // 'return', assignements or opening <({[. The indentation for these cases
   // is special cased.
   bool SkipFirstExtraIndent =
-      Current.is(tok::kw_return) ||
-      (Previous && (Previous->opensScope() ||
+      (Previous && (Previous->opensScope() || Previous->is(tok::kw_return) ||
                     Previous->getPrecedence() == prec::Assignment));
   for (SmallVectorImpl<prec::Level>::const_reverse_iterator
            I = Current.FakeLParens.rbegin(),
@@ -478,9 +478,15 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
        I != E; ++I) {
     ParenState NewParenState = State.Stack.back();
     NewParenState.ContainsLineBreak = false;
-    NewParenState.Indent =
-        std::max(std::max(State.Column, NewParenState.Indent),
-                 State.Stack.back().LastSpace);
+
+    // Indent from 'LastSpace' unless this the fake parentheses encapsulating a
+    // builder type call after 'return'. If such a call is line-wrapped, we
+    // commonly just want to indent from the start of the line.
+    if (!Previous || Previous->isNot(tok::kw_return) || *I > 0)
+      NewParenState.Indent =
+          std::max(std::max(State.Column, NewParenState.Indent),
+                   State.Stack.back().LastSpace);
+
     // Do not indent relative to the fake parentheses inserted for "." or "->".
     // This is a special case to make the following to statements consistent:
     //   OuterFunction(InnerFunctionCall( // break
@@ -690,21 +696,22 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
           Text.startswith(Prefix = "L\""))) ||
         (Text.startswith(Prefix = "_T(\"") && Text.endswith(Postfix = "\")")) ||
         getRawStringLiteralPrefixPostfix(Text, Prefix, Postfix)) {
-      Token.reset(new BreakableStringLiteral(Current, StartColumn, Prefix,
-                                             Postfix, State.Line->InPPDirective,
-                                             Encoding, Style));
+      Token.reset(new BreakableStringLiteral(
+          Current, State.Line->Level, StartColumn, Prefix, Postfix,
+          State.Line->InPPDirective, Encoding, Style));
     } else {
       return 0;
     }
   } else if (Current.Type == TT_BlockComment && Current.isTrailingComment()) {
     Token.reset(new BreakableBlockComment(
-        Current, StartColumn, Current.OriginalColumn, !Current.Previous,
-        State.Line->InPPDirective, Encoding, Style));
+        Current, State.Line->Level, StartColumn, Current.OriginalColumn,
+        !Current.Previous, State.Line->InPPDirective, Encoding, Style));
   } else if (Current.Type == TT_LineComment &&
              (Current.Previous == NULL ||
               Current.Previous->Type != TT_ImplicitStringLiteral)) {
-    Token.reset(new BreakableLineComment(
-        Current, StartColumn, State.Line->InPPDirective, Encoding, Style));
+    Token.reset(new BreakableLineComment(Current, State.Line->Level,
+                                         StartColumn, State.Line->InPPDirective,
+                                         Encoding, Style));
   } else {
     return 0;
   }

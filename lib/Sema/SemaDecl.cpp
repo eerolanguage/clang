@@ -8009,14 +8009,17 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
         // It isn't possible to write this directly, but it is possible to
         // end up in this situation with "auto x(some_pack...);"
         Diag(CXXDirectInit->getLocStart(),
-             diag::err_auto_var_init_no_expression)
+             VDecl->isInitCapture() ? diag::err_init_capture_no_expression
+                                    : diag::err_auto_var_init_no_expression)
           << VDecl->getDeclName() << VDecl->getType()
           << VDecl->getSourceRange();
         RealDecl->setInvalidDecl();
         return;
       } else if (CXXDirectInit->getNumExprs() > 1) {
         Diag(CXXDirectInit->getExpr(1)->getLocStart(),
-             diag::err_auto_var_init_multiple_expressions)
+             VDecl->isInitCapture()
+                 ? diag::err_init_capture_multiple_expressions
+                 : diag::err_auto_var_init_multiple_expressions)
           << VDecl->getDeclName() << VDecl->getType()
           << VDecl->getSourceRange();
         RealDecl->setInvalidDecl();
@@ -8379,7 +8382,8 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     if (VDecl->getStorageClass() == SC_Extern &&
         (!getLangOpts().CPlusPlus ||
          !(Context.getBaseElementType(VDecl->getType()).isConstQualified() ||
-           VDecl->isExternC())))
+           VDecl->isExternC())) &&
+        !isTemplateInstantiation(VDecl->getTemplateSpecializationKind()))
       Diag(VDecl->getLocation(), diag::warn_extern_init);
 
     // C99 6.7.8p4. All file scoped initializers need to be constant.
@@ -9386,7 +9390,7 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
   // a LambdaScopeInfo onto the function stack.  But use the information
   // that's already been calculated (ActOnLambdaExpr) when analyzing the
   // template version, to prime the current LambdaScopeInfo. 
-  if (isGenericLambdaCallOperatorSpecialization(D)) {
+  if (isGenericLambdaCallOperatorSpecialization(FD)) {
     CXXMethodDecl *CallOperator = cast<CXXMethodDecl>(D);
     CXXRecordDecl *LambdaClass = CallOperator->getParent();
     LambdaExpr    *LE = LambdaClass->getLambdaExpr();

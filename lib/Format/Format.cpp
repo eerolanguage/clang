@@ -27,6 +27,7 @@
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/YAMLTraits.h"
+#include "llvm/Support/Path.h"
 #include <queue>
 #include <string>
 
@@ -41,6 +42,19 @@ struct ScalarEnumerationTraits<clang::format::FormatStyle::LanguageStandard> {
     IO.enumCase(Value, "Cpp11", clang::format::FormatStyle::LS_Cpp11);
     IO.enumCase(Value, "C++11", clang::format::FormatStyle::LS_Cpp11);
     IO.enumCase(Value, "Auto", clang::format::FormatStyle::LS_Auto);
+  }
+};
+
+template <>
+struct ScalarEnumerationTraits<clang::format::FormatStyle::UseTabStyle> {
+  static void
+  enumeration(IO &IO, clang::format::FormatStyle::UseTabStyle &Value) {
+    IO.enumCase(Value, "Never", clang::format::FormatStyle::UT_Never);
+    IO.enumCase(Value, "false", clang::format::FormatStyle::UT_Never);
+    IO.enumCase(Value, "Always", clang::format::FormatStyle::UT_Always);
+    IO.enumCase(Value, "true", clang::format::FormatStyle::UT_Always);
+    IO.enumCase(Value, "ForIndentation",
+                clang::format::FormatStyle::UT_ForIndentation);
   }
 };
 
@@ -194,7 +208,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.PointerBindsToType = false;
   LLVMStyle.SpacesBeforeTrailingComments = 1;
   LLVMStyle.Standard = FormatStyle::LS_Cpp03;
-  LLVMStyle.UseTab = false;
+  LLVMStyle.UseTab = FormatStyle::UT_Never;
   LLVMStyle.SpacesInParentheses = false;
   LLVMStyle.SpaceInEmptyParentheses = false;
   LLVMStyle.SpacesInCStyleCastParentheses = false;
@@ -237,7 +251,7 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.PointerBindsToType = true;
   GoogleStyle.SpacesBeforeTrailingComments = 2;
   GoogleStyle.Standard = FormatStyle::LS_Auto;
-  GoogleStyle.UseTab = false;
+  GoogleStyle.UseTab = FormatStyle::UT_Never;
   GoogleStyle.SpacesInParentheses = false;
   GoogleStyle.SpaceInEmptyParentheses = false;
   GoogleStyle.SpacesInCStyleCastParentheses = false;
@@ -539,7 +553,7 @@ private:
                                        Style.MaxEmptyLinesToKeep + 1);
           Newlines = std::max(1u, Newlines);
           Whitespaces->replaceWhitespace(
-              *(*I)->First, Newlines, /*Spaces=*/Indent,
+              *(*I)->First, Newlines, (*I)->Level, /*Spaces=*/Indent,
               /*StartOfTokenColumn=*/Indent, Line.InPPDirective);
         }
         UnwrappedLineFormatter Formatter(Indenter, Whitespaces, Style, **I);
@@ -556,10 +570,10 @@ private:
       return false;
 
     if (!DryRun) {
-      Whitespaces->replaceWhitespace(*LBrace.Children[0]->First,
-                                     /*Newlines=*/0, /*Spaces=*/1,
-                                     /*StartOfTokenColumn=*/State.Column,
-                                     State.Line->InPPDirective);
+      Whitespaces->replaceWhitespace(
+          *LBrace.Children[0]->First,
+          /*Newlines=*/0, /*IndentLevel=*/1, /*Spaces=*/1,
+          /*StartOfTokenColumn=*/State.Column, State.Line->InPPDirective);
       UnwrappedLineFormatter Formatter(Indenter, Whitespaces, Style,
                                        *LBrace.Children[0]);
       Penalty += Formatter.format(State.Column + 1, DryRun);
@@ -847,8 +861,9 @@ public:
       if (TheLine.First->is(tok::eof)) {
         if (PreviousLineWasTouched) {
           unsigned NewLines = std::min(FirstTok->NewlinesBefore, 1u);
-          Whitespaces.replaceWhitespace(*TheLine.First, NewLines, /*Indent*/ 0,
-                                        /*TargetColumn*/ 0);
+          Whitespaces.replaceWhitespace(*TheLine.First, NewLines,
+                                        /*IndentLevel=*/0, /*Spaces=*/0,
+                                        /*TargetColumn=*/0);
         }
       } else if (TheLine.Type != LT_Invalid &&
                  (WasMoved || FormatPPDirective || touchesLine(TheLine))) {
@@ -1225,7 +1240,7 @@ private:
       ++Newlines;
 
     Whitespaces.replaceWhitespace(
-        RootToken, Newlines, Indent, Indent,
+        RootToken, Newlines, Indent / Style.IndentWidth, Indent, Indent,
         InPPDirective && !RootToken.HasUnescapedNewline);
   }
 
@@ -1289,6 +1304,83 @@ LangOptions getFormattingLangOpts(FormatStyle::LanguageStandard Standard) {
   LangOpts.ObjC1 = 1;
   LangOpts.ObjC2 = 1;
   return LangOpts;
+}
+
+const char *StyleOptionHelpDescription =
+    "Coding style, currently supports:\n"
+    "  LLVM, Google, Chromium, Mozilla, WebKit.\n"
+    "Use -style=file to load style configuration from\n"
+    ".clang-format file located in one of the parent\n"
+    "directories of the source file (or current\n"
+    "directory for stdin).\n"
+    "Use -style=\"{key: value, ...}\" to set specific\n"
+    "parameters, e.g.:\n"
+    "  -style=\"{BasedOnStyle: llvm, IndentWidth: 8}\"";
+
+FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
+  // Fallback style in case the rest of this function can't determine a style.
+  StringRef FallbackStyle = "LLVM";
+  FormatStyle Style;
+  getPredefinedStyle(FallbackStyle, &Style);
+
+  if (StyleName.startswith("{")) {
+    // Parse YAML/JSON style from the command line.
+    if (llvm::error_code ec = parseConfiguration(StyleName, &Style)) {
+      llvm::errs() << "Error parsing -style: " << ec.message()
+                   << ", using " << FallbackStyle << " style\n";
+    }
+    return Style;
+  }
+
+  if (!StyleName.equals_lower("file")) {
+    if (!getPredefinedStyle(StyleName, &Style))
+      llvm::errs() << "Invalid value for -style, using " << FallbackStyle
+                   << " style\n";
+    return Style;
+  }
+
+  SmallString<128> Path(FileName);
+  llvm::sys::fs::make_absolute(Path);
+  for (StringRef Directory = Path;
+       !Directory.empty();
+       Directory = llvm::sys::path::parent_path(Directory)) {
+    if (!llvm::sys::fs::is_directory(Directory))
+      continue;
+    SmallString<128> ConfigFile(Directory);
+
+    llvm::sys::path::append(ConfigFile, ".clang-format");
+    DEBUG(llvm::dbgs() << "Trying " << ConfigFile << "...\n");
+    bool IsFile = false;
+    // Ignore errors from is_regular_file: we only need to know if we can read
+    // the file or not.
+    llvm::sys::fs::is_regular_file(Twine(ConfigFile), IsFile);
+
+    if (!IsFile) {
+      // Try _clang-format too, since dotfiles are not commonly used on Windows.
+      ConfigFile = Directory;
+      llvm::sys::path::append(ConfigFile, "_clang-format");
+      DEBUG(llvm::dbgs() << "Trying " << ConfigFile << "...\n");
+      llvm::sys::fs::is_regular_file(Twine(ConfigFile), IsFile);
+    }
+
+    if (IsFile) {
+      OwningPtr<llvm::MemoryBuffer> Text;
+      if (llvm::error_code ec = llvm::MemoryBuffer::getFile(ConfigFile, Text)) {
+        llvm::errs() << ec.message() << "\n";
+        continue;
+      }
+      if (llvm::error_code ec = parseConfiguration(Text->getBuffer(), &Style)) {
+        llvm::errs() << "Error reading " << ConfigFile << ": " << ec.message()
+                     << "\n";
+        continue;
+      }
+      DEBUG(llvm::dbgs() << "Using configuration file " << ConfigFile << "\n");
+      return Style;
+    }
+  }
+  llvm::errs() << "Can't find usable .clang-format, using " << FallbackStyle
+               << " style\n";
+  return Style;
 }
 
 } // namespace format
