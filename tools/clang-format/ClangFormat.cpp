@@ -27,9 +27,6 @@
 
 using namespace llvm;
 
-// Fallback style when no style specified or found in a .clang-format file.
-static const char FallbackStyle[] = "LLVM";
-
 static cl::opt<bool> Help("h", cl::desc("Alias for -help"), cl::Hidden);
 
 // Mark all our options with this category, everything else (except for -version
@@ -189,7 +186,7 @@ static bool format(std::string FileName) {
     return true;
   }
   if (Code->getBufferSize() == 0)
-    return true; // Empty files are formatted correctly.
+    return false; // Empty files are formatted correctly.
   FileID ID = createInMemoryFile(FileName, Code.get(), Sources, Files);
   std::vector<CharSourceRange> Ranges;
   if (fillRanges(Sources, ID, Code.get(), Ranges))

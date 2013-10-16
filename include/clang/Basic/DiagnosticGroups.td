@@ -59,6 +59,8 @@ def GNUConditionalOmittedOperand : DiagGroup<"gnu-conditional-omitted-operand">;
 def ConfigMacros : DiagGroup<"config-macros">;
 def : DiagGroup<"ctor-dtor-privacy">;
 def GNUDesignator : DiagGroup<"gnu-designator">;
+def GNUStringLiteralOperatorTemplate :
+  DiagGroup<"gnu-string-literal-operator-template">;
 
 def DeleteNonVirtualDtor : DiagGroup<"delete-non-virtual-dtor">;
 def AbstractFinalClass : DiagGroup<"abstract-final-class">;
@@ -504,7 +506,6 @@ def ThreadSafetyBeta : DiagGroup<"thread-safety-beta">;
 
 // Uniqueness Analysis warnings
 def Consumed       : DiagGroup<"consumed">;
-def ConsumedStrict : DiagGroup<"consumed-strict", [Consumed]>;
 
 // Note that putting warnings in -Wall will not disable them by default. If a
 // warning should be active _only_ when -Wall is passed in, mark it as
@@ -561,6 +562,7 @@ def GNU : DiagGroup<"gnu", [GNUAlignofExpression, GNUAnonymousStruct,
                             GNUImaginaryConstant, GNULabelsAsValue,
                             RedeclaredClassMember, GNURedeclaredEnum,
                             GNUStatementExpression, GNUStaticFloatInit,
+                            GNUStringLiteralOperatorTemplate,
                             GNUUnionCast, GNUVariableSizedTypeNotAtEnd,
                             ZeroLengthArray, GNUZeroLineDirective,
                             GNUZeroVariadicMacroArguments]>;

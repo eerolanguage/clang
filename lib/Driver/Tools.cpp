@@ -573,8 +573,36 @@ static bool isNoCommonDefault(const llvm::Triple &Triple) {
 //
 // FIXME: Centralize feature selection, defaulting shouldn't be also in the
 // frontend target.
-static void getFPUFeatures(const Driver &D, const Arg *A, const ArgList &Args,
-                           std::vector<const char *> &Features) {
+static void getAArch64FPUFeatures(const Driver &D, const Arg *A,
+                                  const ArgList &Args,
+                                  std::vector<const char *> &Features) {
+  StringRef FPU = A->getValue();
+  if (FPU == "fp-armv8") {
+    Features.push_back("+fp-armv8");
+  } else if (FPU == "neon-fp-armv8") {
+    Features.push_back("+fp-armv8");
+    Features.push_back("+neon");
+  } else if (FPU == "crypto-neon-fp-armv8") {
+    Features.push_back("+fp-armv8");
+    Features.push_back("+neon");
+    Features.push_back("+crypto");
+  } else if (FPU == "neon") {
+    Features.push_back("+neon");
+  } else if (FPU == "none") {
+    Features.push_back("-fp-armv8");
+    Features.push_back("-crypto");
+    Features.push_back("-neon");
+  } else
+    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+}
+
+// Handle -mfpu=.
+//
+// FIXME: Centralize feature selection, defaulting shouldn't be also in the
+// frontend target.
+static void getARMFPUFeatures(const Driver &D, const Arg *A,
+                              const ArgList &Args,
+                              std::vector<const char *> &Features) {
   StringRef FPU = A->getValue();
 
   // Set the target features based on the FPU.
@@ -603,6 +631,13 @@ static void getFPUFeatures(const Driver &D, const Arg *A, const ArgList &Args,
     Features.push_back("+fp-armv8");
   } else if (FPU == "neon") {
     Features.push_back("+neon");
+  } else if (FPU == "none") {
+    Features.push_back("-vfp2");
+    Features.push_back("-vfp3");
+    Features.push_back("-vfp4");
+    Features.push_back("-fp-armv8");
+    Features.push_back("-crypto");
+    Features.push_back("-neon");
   } else
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
@@ -704,7 +739,7 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
 
   // Honor -mfpu=.
   if (const Arg *A = Args.getLastArg(options::OPT_mfpu_EQ))
-    getFPUFeatures(D, A, Args, Features);
+    getARMFPUFeatures(D, A, Args, Features);
 
   // Setting -msoft-float effectively disables NEON because of the GCC
   // implementation, although the same isn't true of VFP or VFP3.
@@ -730,7 +765,8 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
   } else if (Triple.isOSDarwin()) {
     // The backend is hardwired to assume AAPCS for M-class processors, ensure
     // the frontend matches that.
-    if (StringRef(CPUName).startswith("cortex-m")) {
+    if (Triple.getEnvironment() == llvm::Triple::EABI ||
+        StringRef(CPUName).startswith("cortex-m")) {
       ABIName = "aapcs";
     } else {
       ABIName = "apcs-gnu";
@@ -810,20 +846,6 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
     }
 }
 
-// Translate MIPS CPU name alias option to CPU name.
-static StringRef getMipsCPUFromAlias(const Arg &A) {
-  if (A.getOption().matches(options::OPT_mips32))
-    return "mips32";
-  if (A.getOption().matches(options::OPT_mips32r2))
-    return "mips32r2";
-  if (A.getOption().matches(options::OPT_mips64))
-    return "mips64";
-  if (A.getOption().matches(options::OPT_mips64r2))
-    return "mips64r2";
-  llvm_unreachable("Unexpected option");
-  return "";
-}
-
 // Get CPU and ABI names. They are not independent
 // so we have to calculate them together.
 static void getMipsCPUAndABI(const ArgList &Args,
@@ -834,13 +856,8 @@ static void getMipsCPUAndABI(const ArgList &Args,
   const char *DefMips64CPU = "mips64";
 
   if (Arg *A = Args.getLastArg(options::OPT_march_EQ,
-                               options::OPT_mcpu_EQ,
-                               options::OPT_mips_CPUs_Group)) {
-    if (A->getOption().matches(options::OPT_mips_CPUs_Group))
-      CPUName = getMipsCPUFromAlias(*A);
-    else
-      CPUName = A->getValue();
-  }
+                               options::OPT_mcpu_EQ))
+    CPUName = A->getValue();
 
   if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ)) {
     ABIName = A->getValue();
@@ -1384,7 +1401,7 @@ static void getAArch64TargetFeatures(const Driver &D, const ArgList &Args,
                                      std::vector<const char *> &Features) {
   // Honor -mfpu=.
   if (const Arg *A = Args.getLastArg(options::OPT_mfpu_EQ))
-    getFPUFeatures(D, A, Args, Features);
+    getAArch64FPUFeatures(D, A, Args, Features);
 }
 
 static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
@@ -1708,7 +1725,7 @@ static void addSanitizerRTLinkFlagsLinux(
 /// This needs to be called before we add the C run-time (malloc, etc).
 static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
                            ArgStringList &CmdArgs) {
-  if(TC.getTriple().getEnvironment() == llvm::Triple::Android) {
+  if (TC.getTriple().getEnvironment() == llvm::Triple::Android) {
     SmallString<128> LibAsan(TC.getDriver().ResourceDir);
     llvm::sys::path::append(LibAsan, "lib", "linux",
         (Twine("libclang_rt.asan-") +
@@ -1777,7 +1794,11 @@ static bool shouldUseFramePointer(const ArgList &Args,
   // Don't use a frame pointer on linux x86, x86_64 and z if optimizing.
   if ((Triple.getArch() == llvm::Triple::x86_64 ||
        Triple.getArch() == llvm::Triple::x86 ||
-       Triple.getArch() == llvm::Triple::systemz) &&
+       Triple.getArch() == llvm::Triple::systemz ||
+       Triple.getArch() == llvm::Triple::mips ||
+       Triple.getArch() == llvm::Triple::mipsel ||
+       Triple.getArch() == llvm::Triple::mips64 ||
+       Triple.getArch() == llvm::Triple::mips64el) &&
       Triple.isOSLinux()) {
     if (Arg *A = Args.getLastArg(options::OPT_O_Group))
       if (!A->getOption().matches(options::OPT_O0))
@@ -1799,7 +1820,11 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
   // Don't use a leaf frame pointer on linux x86, x86_64 and z if optimizing.
   if ((Triple.getArch() == llvm::Triple::x86_64 ||
        Triple.getArch() == llvm::Triple::x86 ||
-       Triple.getArch() == llvm::Triple::systemz) &&
+       Triple.getArch() == llvm::Triple::systemz ||
+       Triple.getArch() == llvm::Triple::mips ||
+       Triple.getArch() == llvm::Triple::mipsel ||
+       Triple.getArch() == llvm::Triple::mips64 ||
+       Triple.getArch() == llvm::Triple::mips64el) &&
       Triple.isOSLinux()) {
     if (Arg *A = Args.getLastArg(options::OPT_O_Group))
       if (!A->getOption().matches(options::OPT_O0))
@@ -2092,7 +2117,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  // Inroduce a Darwin-specific hack. If the default is PIC but the flags
+  // Introduce a Darwin-specific hack. If the default is PIC but the flags
   // specified while enabling PIC enabled level 1 PIC, just force it back to
   // level 2 PIC instead. This matches the behavior of Darwin GCC (based on my
   // informal testing).
@@ -2185,8 +2210,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_strict_aliasing,
                     getToolChain().IsStrictAliasingDefault()))
     CmdArgs.push_back("-relaxed-aliasing");
-  if (Args.hasArg(options::OPT_fstruct_path_tbaa))
-    CmdArgs.push_back("-struct-path-tbaa");
+  if (!Args.hasFlag(options::OPT_fstruct_path_tbaa,
+                    options::OPT_fno_struct_path_tbaa))
+    CmdArgs.push_back("-no-struct-path-tbaa");
   if (Args.hasFlag(options::OPT_fstrict_enums, options::OPT_fno_strict_enums,
                    false))
     CmdArgs.push_back("-fstrict-enums");
@@ -3179,8 +3205,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   ObjCRuntime objcRuntime = AddObjCRuntimeArgs(Args, CmdArgs, rewriteKind);
 
   // -fobjc-dispatch-method is only relevant with the nonfragile-abi, and
-  // legacy is the default.
-  if (objcRuntime.isNonFragile()) {
+  // legacy is the default. Next runtime is always legacy dispatch and
+  // -fno-objc-legacy-dispatch gets ignored silently.
+  if (objcRuntime.isNonFragile() && !objcRuntime.isNeXTFamily()) {
     if (!Args.hasFlag(options::OPT_fobjc_legacy_dispatch,
                       options::OPT_fno_objc_legacy_dispatch,
                       objcRuntime.isLegacyDispatchDefaultForArch(
@@ -5844,34 +5871,39 @@ void netbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
+  unsigned Major, Minor, Micro;
+  getToolChain().getTriple().getOSVersion(Major, Minor, Micro);
+  bool useLibgcc = true;
+  if (Major >= 7 || (Major == 6 && Minor == 99 && Micro >= 23) || Major == 0) {
+    if (getToolChain().getArch() == llvm::Triple::x86 ||
+        getToolChain().getArch() == llvm::Triple::x86_64)
+      useLibgcc = false;
+  }
+
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
     if (D.CCCIsCXX()) {
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
       CmdArgs.push_back("-lm");
     }
-    // FIXME: For some reason GCC passes -lgcc and -lgcc_s before adding
-    // the default system libraries. Just mimic this for now.
-    if (Args.hasArg(options::OPT_static)) {
-      CmdArgs.push_back("-lgcc_eh");
-    } else {
-      CmdArgs.push_back("--as-needed");
-      CmdArgs.push_back("-lgcc_s");
-      CmdArgs.push_back("--no-as-needed");
-    }
-    CmdArgs.push_back("-lgcc");
-
     if (Args.hasArg(options::OPT_pthread))
       CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-lc");
 
-    CmdArgs.push_back("-lgcc");
-    if (Args.hasArg(options::OPT_static)) {
-      CmdArgs.push_back("-lgcc_eh");
-    } else {
-      CmdArgs.push_back("--as-needed");
-      CmdArgs.push_back("-lgcc_s");
-      CmdArgs.push_back("--no-as-needed");
+    if (useLibgcc) {
+      if (Args.hasArg(options::OPT_static)) {
+        // libgcc_eh depends on libc, so resolve as much as possible,
+        // pull in any new requirements from libc and then get the rest
+        // of libgcc.
+        CmdArgs.push_back("-lgcc_eh");
+        CmdArgs.push_back("-lc");
+        CmdArgs.push_back("-lgcc");
+      } else {
+        CmdArgs.push_back("-lgcc");
+        CmdArgs.push_back("--as-needed");
+        CmdArgs.push_back("-lgcc_s");
+        CmdArgs.push_back("--no-as-needed");
+      }
     }
   }
 
@@ -6765,4 +6797,59 @@ Command *visualstudio::Compile::GetCommand(Compilation &C, const JobAction &JA,
   std::string Exec = FindFallback("cl.exe", D.getClangProgramPath());
 
   return new Command(JA, *this, Args.MakeArgString(Exec), CmdArgs);
+}
+
+
+/// XCore Tools
+// We pass assemble and link construction to the xcc tool.
+
+void XCore::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                       const InputInfo &Output,
+                                       const InputInfoList &Inputs,
+                                       const ArgList &Args,
+                                       const char *LinkingOutput) const {
+  ArgStringList CmdArgs;
+
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+
+  CmdArgs.push_back("-c");
+
+  if (Args.hasArg(options::OPT_g_Group)) {
+    CmdArgs.push_back("-g");
+  }
+
+  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
+                       options::OPT_Xassembler);
+
+  for (InputInfoList::const_iterator
+       it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    CmdArgs.push_back(II.getFilename());
+  }
+
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
+  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
+}
+
+void XCore::Link::ConstructJob(Compilation &C, const JobAction &JA,
+                                   const InputInfo &Output,
+                                   const InputInfoList &Inputs,
+                                   const ArgList &Args,
+                                   const char *LinkingOutput) const {
+  ArgStringList CmdArgs;
+
+  if (Output.isFilename()) {
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Output.getFilename());
+  } else {
+    assert(Output.isNothing() && "Invalid output.");
+  }
+
+  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
+  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }

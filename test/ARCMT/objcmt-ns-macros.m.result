@@ -1,5 +1,5 @@
 // RUN: rm -rf %t
-// RUN: %clang_cc1 -objcmt-migrate-property -mt-migrate-directory %t %s -x objective-c -fobjc-runtime-has-weak -fobjc-arc -triple x86_64-apple-darwin11
+// RUN: %clang_cc1 -objcmt-migrate-ns-macros -mt-migrate-directory %t %s -x objective-c -fobjc-runtime-has-weak -fobjc-arc -triple x86_64-apple-darwin11
 // RUN: c-arcmt-test -mt-migrate-directory %t | arcmt-test -verify-transformed-files %s.result
 // RUN: %clang_cc1 -triple x86_64-apple-darwin10 -fsyntax-only -x objective-c -fobjc-runtime-has-weak -fobjc-arc %s.result
 
@@ -15,7 +15,6 @@ typedef NS_ENUM(NSInteger, wibble) {
   blarg
 };
 
-
 typedef NS_ENUM(NSUInteger, UITableViewCellStyle) {
     UIViewAutoresizingNone                 = 0,
     UIViewAutoresizingFlexibleLeftMargin,
@@ -25,7 +24,6 @@ typedef NS_ENUM(NSUInteger, UITableViewCellStyle) {
     UIViewAutoresizingFlexibleHeight,
     UIViewAutoresizingFlexibleBottomMargin
 };
-
 
 typedef NS_ENUM(NSInteger, UIViewAnimationTransition) {
     UIViewAnimationTransitionNone,
@@ -52,7 +50,6 @@ typedef NS_OPTIONS(NSUInteger, UI) {
   UIFour = 0x100
 };
 
-
 typedef NS_OPTIONS(NSUInteger, UIPOWER2) {
   UIP2One = 0,
   UIP2Two = 0x1,
@@ -71,7 +68,6 @@ typedef NS_ENUM(NSInteger, UIK) {
   UIKTwo = 2,
 };
 
-
 typedef NS_ENUM(NSInteger, NSTickMarkPosition)  {
     NSTickMarkBelow = 0,
     NSTickMarkAbove = 1,
@@ -87,12 +83,10 @@ typedef NS_OPTIONS(NSUInteger, UITableStyle) {
     UIViewBottomMargin = 0xbadbeef
 };
 
-
 typedef NS_OPTIONS(NSUInteger, UIStyle) {
     UIView0         = 0,
     UIView1 = 0XBADBEEF
 };
-
 
 typedef NS_ENUM(NSUInteger, NSBitmapImageFileType) {
     NSTIFFFileType,
@@ -103,13 +97,11 @@ typedef NS_ENUM(NSUInteger, NSBitmapImageFileType) {
     NSJPEG2000FileType
 };
 
-
 typedef NS_ENUM(NSUInteger, NSAlertStyle) {
     NSWarningAlertStyle = 0,
     NSInformationalAlertStyle = 1,
     NSCriticalAlertStyle = 2
 };
-
 
 enum {
     D_NSTIFFFileType,
@@ -129,6 +121,7 @@ typedef enum  {
 
 #define NS_ENUM_AVAILABLE(X,Y)
 
+
 typedef NS_OPTIONS(NSUInteger, NSFOptions) {
     NSFStrongMemory NS_ENUM_AVAILABLE(10_5, 6_0) = (0UL << 0),       
     NSFOpaqueMemory NS_ENUM_AVAILABLE(10_5, 6_0) = (2UL << 0),
@@ -144,8 +137,6 @@ typedef NS_OPTIONS(NSUInteger, NSFOptions) {
     NSFIntegerPersonality NS_ENUM_AVAILABLE(10_5, 6_0) = (5UL << 8),        
     NSFCopyIn NS_ENUM_AVAILABLE(10_5, 6_0) = (1UL << 16),      
 };
-
-
 
 typedef NS_ENUM(NSInteger, UIP) {
   UIP0One = 0,
@@ -204,3 +195,64 @@ typedef NS_ENUM(NSInteger, UIP8_3) {
   Random5 = 0xbadbeef,
   Random6
 } ;
+
+// rdar://15200602
+#define NS_AVAILABLE_MAC(X)  __attribute__((availability(macosx,introduced=X)))
+#define NS_ENUM_AVAILABLE_MAC(X) __attribute__((availability(macosx,introduced=X)))
+
+typedef NS_ENUM(NSInteger, NSModalResponse) {
+    NSModalResponseStop                 = (-1000), // Also used as the default response for sheets
+    NSModalResponseAbort                = (-1001),
+    NSModalResponseContinue             = (-1002), 
+} NS_ENUM_AVAILABLE_MAC(10.9);
+
+// rdar://15201056
+typedef NS_OPTIONS(NSUInteger, FarAwayNSUInteger) {
+  FarAway1    = 1 << 1,
+  FarAway2    = 1 << 2
+};
+
+// rdar://15200915
+typedef NS_OPTIONS(NSUInteger, NSWorkspaceLaunchOptions) {
+     NSWorkspaceLaunchAndPrint =                 0x00000002,
+     NSWorkspaceLaunchWithErrorPresentation    = 0x00000040,
+     NSWorkspaceLaunchInhibitingBackgroundOnly = 0x00000080,
+     NSWorkspaceLaunchWithoutAddingToRecents   = 0x00000100,
+     NSWorkspaceLaunchWithoutActivation        = 0x00000200,
+     NSWorkspaceLaunchAsync                    = 0x00010000,
+     NSWorkspaceLaunchAllowingClassicStartup   = 0x00020000,
+     NSWorkspaceLaunchPreferringClassic        = 0x00040000,
+     NSWorkspaceLaunchNewInstance              = 0x00080000,
+     NSWorkspaceLaunchAndHide                  = 0x00100000,
+     NSWorkspaceLaunchAndHideOthers            = 0x00200000,
+     NSWorkspaceLaunchDefault = NSWorkspaceLaunchAsync | 
+NSWorkspaceLaunchAllowingClassicStartup
+};
+
+typedef NS_OPTIONS(NSUInteger, NSWorkspaceIconCreationOptions) {
+    NSExcludeQuickDrawElementsIconCreationOption    = 1 << 1,
+    NSExclude10_4ElementsIconCreationOption         = 1 << 2
+};
+
+typedef NS_OPTIONS(NSUInteger, NSWorkspaceCreationOptions) {
+    NSExcludeQuickDrawElementsCreationOption    = 1 << 1,
+    NSExclude10_4ElementsCreationOption         = 1 << 2
+};
+
+
+typedef NS_OPTIONS(NSUInteger, NSWorkspaceIconOptions) {
+    NSExcludeQuickDrawElementsIconOption    = 1 << 1,
+    NSExclude10_4ElementsIconOption         = 1 << 2
+};
+
+typedef NS_OPTIONS(NSUInteger, NSCollectionViewDropOperation) {
+  NotFarAway1    = 1 << 1,
+  NotFarAway2    = 1 << 2
+};
+
+@interface INTF {
+  NSCollectionViewDropOperation I1;
+  NSCollectionViewDropOperation I2;
+}
+@end
+

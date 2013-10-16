@@ -67,6 +67,9 @@ public:
   llvm::BasicBlock *EmitCtorCompleteObjectHandler(CodeGenFunction &CGF,
                                                   const CXXRecordDecl *RD);
 
+  void initializeHiddenVirtualInheritanceMembers(CodeGenFunction &CGF,
+                                                 const CXXRecordDecl *RD);
+
   void EmitCXXConstructors(const CXXConstructorDecl *D);
 
   // Background on MSVC destructors
@@ -173,7 +176,19 @@ public:
                                  CXXDtorType DtorType, SourceLocation CallLoc,
                                  llvm::Value *This);
 
+  void adjustCallArgsForDestructorThunk(CodeGenFunction &CGF, GlobalDecl GD,
+                                        CallArgList &CallArgs) {
+    assert(GD.getDtorType() == Dtor_Deleting &&
+           "Only deleting destructor thunks are available in this ABI");
+    CallArgs.add(RValue::get(getStructorImplicitParamValue(CGF)),
+                             CGM.getContext().IntTy);
+  }
+
   void emitVirtualInheritanceTables(const CXXRecordDecl *RD);
+
+  void setThunkLinkage(llvm::Function *Thunk, bool ForVTable) {
+    Thunk->setLinkage(llvm::GlobalValue::WeakAnyLinkage);
+  }
 
   void EmitGuardedInit(CodeGenFunction &CGF, const VarDecl &D,
                        llvm::GlobalVariable *DeclPtr,
@@ -215,6 +230,10 @@ public:
                                    CharUnits cookieSize);
 
 private:
+  MicrosoftMangleContext &getMangleContext() {
+    return cast<MicrosoftMangleContext>(CodeGen::CGCXXABI::getMangleContext());
+  }
+
   llvm::Constant *getZeroInt() {
     return llvm::ConstantInt::get(CGM.IntTy, 0);
   }
@@ -438,6 +457,61 @@ MicrosoftCXXABI::EmitCtorCompleteObjectHandler(CodeGenFunction &CGF,
   // CGF will put the base ctor calls in this basic block for us later.
 
   return SkipVbaseCtorsBB;
+}
+
+void MicrosoftCXXABI::initializeHiddenVirtualInheritanceMembers(
+    CodeGenFunction &CGF, const CXXRecordDecl *RD) {
+  // In most cases, an override for a vbase virtual method can adjust
+  // the "this" parameter by applying a constant offset.
+  // However, this is not enough while a constructor or a destructor of some
+  // class X is being executed if all the following conditions are met:
+  //  - X has virtual bases, (1)
+  //  - X overrides a virtual method M of a vbase Y, (2)
+  //  - X itself is a vbase of the most derived class.
+  //
+  // If (1) and (2) are true, the vtorDisp for vbase Y is a hidden member of X
+  // which holds the extra amount of "this" adjustment we must do when we use
+  // the X vftables (i.e. during X ctor or dtor).
+  // Outside the ctors and dtors, the values of vtorDisps are zero.
+
+  const ASTRecordLayout &Layout = getContext().getASTRecordLayout(RD);
+  typedef ASTRecordLayout::VBaseOffsetsMapTy VBOffsets;
+  const VBOffsets &VBaseMap = Layout.getVBaseOffsetsMap();
+  CGBuilderTy &Builder = CGF.Builder;
+
+  unsigned AS =
+      cast<llvm::PointerType>(getThisValue(CGF)->getType())->getAddressSpace();
+  llvm::Value *Int8This = 0;  // Initialize lazily.
+
+  for (VBOffsets::const_iterator I = VBaseMap.begin(), E = VBaseMap.end();
+        I != E; ++I) {
+    if (!I->second.hasVtorDisp())
+      continue;
+
+    llvm::Value *VBaseOffset = CGM.getCXXABI().GetVirtualBaseClassOffset(
+        CGF, getThisValue(CGF), RD, I->first);
+    // FIXME: it doesn't look right that we SExt in GetVirtualBaseClassOffset()
+    // just to Trunc back immediately.
+    VBaseOffset = Builder.CreateTruncOrBitCast(VBaseOffset, CGF.Int32Ty);
+    uint64_t ConstantVBaseOffset =
+        Layout.getVBaseClassOffset(I->first).getQuantity();
+
+    // vtorDisp_for_vbase = vbptr[vbase_idx] - offsetof(RD, vbase).
+    llvm::Value *VtorDispValue = Builder.CreateSub(
+        VBaseOffset, llvm::ConstantInt::get(CGM.Int32Ty, ConstantVBaseOffset),
+        "vtordisp.value");
+
+    if (!Int8This)
+      Int8This = Builder.CreateBitCast(getThisValue(CGF),
+                                       CGF.Int8Ty->getPointerTo(AS));
+    llvm::Value *VtorDispPtr = Builder.CreateInBoundsGEP(Int8This, VBaseOffset);
+    // vtorDisp is always the 32-bits before the vbase in the class layout.
+    VtorDispPtr = Builder.CreateConstGEP1_32(VtorDispPtr, -4);
+    VtorDispPtr = Builder.CreateBitCast(
+        VtorDispPtr, CGF.Int32Ty->getPointerTo(AS), "vtordisp.ptr");
+
+    Builder.CreateStore(VtorDispValue, VtorDispPtr);
+  }
 }
 
 void MicrosoftCXXABI::EmitCXXConstructors(const CXXConstructorDecl *D) {
@@ -678,11 +752,11 @@ llvm::Value *MicrosoftCXXABI::getVTableAddressPointInStructor(
   return VTableAddressPoint;
 }
 
-static void mangleVFTableName(CodeGenModule &CGM, const CXXRecordDecl *RD,
-                              const VFPtrInfo &VFPtr, SmallString<256> &Name) {
+static void mangleVFTableName(MicrosoftMangleContext &MangleContext,
+                              const CXXRecordDecl *RD, const VFPtrInfo &VFPtr,
+                              SmallString<256> &Name) {
   llvm::raw_svector_ostream Out(Name);
-  CGM.getCXXABI().getMangleContext().mangleCXXVFTable(
-      RD, VFPtr.PathToMangle, Out);
+  MangleContext.mangleCXXVFTable(RD, VFPtr.PathToMangle, Out);
 }
 
 llvm::Constant *MicrosoftCXXABI::getVTableAddressPointForConstExpr(
@@ -722,7 +796,7 @@ llvm::GlobalVariable *MicrosoftCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
     llvm::StringSet<> ObservedMangledNames;
     for (size_t J = 0, F = VFPtrs.size(); J != F; ++J) {
       SmallString<256> Name;
-      mangleVFTableName(CGM, RD, VFPtrs[J], Name);
+      mangleVFTableName(getMangleContext(), RD, VFPtrs[J], Name);
       if (!ObservedMangledNames.insert(Name.str()))
         llvm_unreachable("Already saw this mangling before?");
     }
@@ -739,7 +813,7 @@ llvm::GlobalVariable *MicrosoftCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
             .getNumVTableComponents());
 
     SmallString<256> Name;
-    mangleVFTableName(CGM, RD, VFPtrs[J], Name);
+    mangleVFTableName(getMangleContext(), RD, VFPtrs[J], Name);
     VTable = CGM.CreateOrReplaceCXXRuntimeVariable(
         Name.str(), ArrayType, llvm::GlobalValue::ExternalLinkage);
     VTable->setUnnamedAddr(true);
@@ -1082,8 +1156,10 @@ MicrosoftCXXABI::EmitFullMemberPointer(llvm::Constant *FirstField,
       CGM.IntTy, NonVirtualBaseAdjustment.getQuantity()));
 
   if (hasVBPtrOffsetField(Inheritance)) {
-    fields.push_back(llvm::ConstantInt::get(
-      CGM.IntTy, GetVBPtrOffsetFromBases(RD).getQuantity()));
+    CharUnits Offs = CharUnits::Zero();
+    if (RD->getNumVBases())
+      Offs = GetVBPtrOffsetFromBases(RD);
+    fields.push_back(llvm::ConstantInt::get(CGM.IntTy, Offs.getQuantity()));
   }
 
   // The rest of the fields are adjusted by conversions to a more derived class.

@@ -25,6 +25,15 @@
 namespace clang {
 namespace consumed {
   
+  enum ConsumedState {
+    // No state information for the given variable.
+    CS_None,
+    
+    CS_Unknown,
+    CS_Unconsumed,
+    CS_Consumed
+  };
+  
   class ConsumedStmtVisitor;
   
   typedef SmallVector<PartialDiagnosticAt, 1> OptionalNotes;
@@ -39,6 +48,16 @@ namespace consumed {
 
     /// \brief Emit the warnings and notes left by the analysis.
     virtual void emitDiagnostics() {}
+    
+    /// \brief Warn that a variable's state doesn't match at the entry and exit
+    /// of a loop.
+    ///
+    /// \param Loc -- The location of the end of the loop.
+    ///
+    /// \param VariableName -- The name of the variable that has a mismatched
+    /// state.
+    virtual void warnLoopStateMismatch(SourceLocation Loc,
+                                       StringRef VariableName) {}
     
     // FIXME: This can be removed when the attr propagation fix for templated
     //        classes lands.
@@ -55,66 +74,32 @@ namespace consumed {
     virtual void warnReturnTypestateMismatch(SourceLocation Loc,
                                              StringRef ExpectedState,
                                              StringRef ObservedState) {}
-    
-    /// \brief Warn about unnecessary-test errors.
-    /// \param VariableName -- The name of the variable that holds the unique
-    /// value.
-    ///
-    /// \param VariableState -- The known state of the value.
-    ///
-    /// \param Loc -- The SourceLocation of the unnecessary test.
-    virtual void warnUnnecessaryTest(StringRef VariableName,
-                                     StringRef VariableState,
-                                     SourceLocation Loc) {}
 
     /// \brief Warn about use-while-consumed errors.
     /// \param MethodName -- The name of the method that was incorrectly
     /// invoked.
     ///
-    /// \param Loc -- The SourceLocation of the method invocation.
-    virtual void warnUseOfTempWhileConsumed(StringRef MethodName,
-                                            SourceLocation Loc) {}
-
-    /// \brief Warn about use-in-unknown-state errors.
-    /// \param MethodName -- The name of the method that was incorrectly
-    /// invoked.
+    /// \param State -- The state the object was used in.
     ///
     /// \param Loc -- The SourceLocation of the method invocation.
-    virtual void warnUseOfTempInUnknownState(StringRef MethodName,
+    virtual void warnUseOfTempInInvalidState(StringRef MethodName,
+                                             StringRef State,
                                              SourceLocation Loc) {}
 
     /// \brief Warn about use-while-consumed errors.
     /// \param MethodName -- The name of the method that was incorrectly
     /// invoked.
     ///
-    /// \param VariableName -- The name of the variable that holds the unique
-    /// value.
-    ///
-    /// \param Loc -- The SourceLocation of the method invocation.
-    virtual void warnUseWhileConsumed(StringRef MethodName,
-                                      StringRef VariableName,
-                                      SourceLocation Loc) {}
-
-    /// \brief Warn about use-in-unknown-state errors.
-    /// \param MethodName -- The name of the method that was incorrectly
-    /// invoked.
+    /// \param State -- The state the object was used in.
     ///
     /// \param VariableName -- The name of the variable that holds the unique
     /// value.
     ///
     /// \param Loc -- The SourceLocation of the method invocation.
-    virtual void warnUseInUnknownState(StringRef MethodName,
+    virtual void warnUseInInvalidState(StringRef MethodName,
                                        StringRef VariableName,
+                                       StringRef State,
                                        SourceLocation Loc) {}
-  };
-
-  enum ConsumedState {
-    // No state information for the given variable.
-    CS_None,
-    
-    CS_Unknown,
-    CS_Unconsumed,
-    CS_Consumed
   };
 
   class ConsumedStateMap {
@@ -134,16 +119,17 @@ namespace consumed {
       : Reachable(Other.Reachable), From(Other.From), Map(Other.Map) {}
     
     /// \brief Get the consumed state of a given variable.
-    ConsumedState getState(const VarDecl *Var);
+    ConsumedState getState(const VarDecl *Var) const;
     
     /// \brief Merge this state map with another map.
     void intersect(const ConsumedStateMap *Other);
     
+    void intersectAtLoopHead(const CFGBlock *LoopHead, const CFGBlock *LoopBack,
+      const ConsumedStateMap *LoopBackStates,
+      ConsumedWarningsHandlerBase &WarningsHandler);
+    
     /// \brief Return true if this block is reachable.
     bool isReachable() const { return Reachable; }
-    
-    /// \brief Mark all variables as unknown.
-    void makeUnknown();
     
     /// \brief Mark the block as unreachable.
     void markUnreachable();
@@ -158,28 +144,45 @@ namespace consumed {
     
     /// \brief Remove the variable from our state map.
     void remove(const VarDecl *Var);
+    
+    /// \brief Tests to see if there is a mismatch in the states stored in two
+    /// maps.
+    ///
+    /// \param Other -- The second map to compare against.
+    bool operator!=(const ConsumedStateMap *Other) const;
   };
   
   class ConsumedBlockInfo {
-    
-    ConsumedStateMap **StateMapsArray;
-    PostOrderCFGView::CFGBlockSet VisitedBlocks;
+    std::vector<ConsumedStateMap*> StateMapsArray;
+    std::vector<unsigned int> VisitOrder;
     
   public:
+    ConsumedBlockInfo() { }
     
-    ConsumedBlockInfo() : StateMapsArray(NULL) {}
+    ConsumedBlockInfo(unsigned int NumBlocks, PostOrderCFGView *SortedGraph)
+        : StateMapsArray(NumBlocks, 0), VisitOrder(NumBlocks, 0) {
+      unsigned int VisitOrderCounter = 0;
+      for (PostOrderCFGView::iterator BI = SortedGraph->begin(),
+           BE = SortedGraph->end(); BI != BE; ++BI) {
+        VisitOrder[(*BI)->getBlockID()] = VisitOrderCounter++;
+      }
+    }
     
-    ConsumedBlockInfo(const CFG *CFGraph)
-      : StateMapsArray(new ConsumedStateMap*[CFGraph->getNumBlockIDs()]()),
-        VisitedBlocks(CFGraph) {}
+    bool allBackEdgesVisited(const CFGBlock *CurrBlock,
+                             const CFGBlock *TargetBlock);
     
     void addInfo(const CFGBlock *Block, ConsumedStateMap *StateMap,
                  bool &AlreadyOwned);
     void addInfo(const CFGBlock *Block, ConsumedStateMap *StateMap);
     
+    ConsumedStateMap* borrowInfo(const CFGBlock *Block);
+    
+    void discardInfo(const CFGBlock *Block);
+    
     ConsumedStateMap* getInfo(const CFGBlock *Block);
     
-    void markVisited(const CFGBlock *Block);
+    bool isBackEdge(const CFGBlock *From, const CFGBlock *To);
+    bool isBackEdgeTarget(const CFGBlock *Block);
   };
 
   /// A class that handles the analysis of uniqueness violations.

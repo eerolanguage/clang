@@ -1227,6 +1227,32 @@ bool Sema::isCurrentClassName(const IdentifierInfo &II, Scope *,
   return false;
 }
 
+/// \brief Determine whether the identifier II is a typo for the name of
+/// the class type currently being defined. If so, update it to the identifier
+/// that should have been used.
+bool Sema::isCurrentClassNameTypo(IdentifierInfo *&II, const CXXScopeSpec *SS) {
+  assert(getLangOpts().CPlusPlus && "No class names in C!");
+
+  if (!getLangOpts().SpellChecking)
+    return false;
+
+  CXXRecordDecl *CurDecl;
+  if (SS && SS->isSet() && !SS->isInvalid()) {
+    DeclContext *DC = computeDeclContext(*SS, true);
+    CurDecl = dyn_cast_or_null<CXXRecordDecl>(DC);
+  } else
+    CurDecl = dyn_cast_or_null<CXXRecordDecl>(CurContext);
+
+  if (CurDecl && CurDecl->getIdentifier() && II != CurDecl->getIdentifier() &&
+      3 * II->getName().edit_distance(CurDecl->getIdentifier()->getName())
+          < II->getLength()) {
+    II = CurDecl->getIdentifier();
+    return true;
+  }
+
+  return false;
+}
+
 /// \brief Determine whether the given class is a base class of the given
 /// class, including looking at dependent bases.
 static bool findCircularInheritance(const CXXRecordDecl *Class,
@@ -4451,6 +4477,13 @@ void Sema::CheckCompletedCXXClass(CXXRecordDecl *Record) {
     }
   }
 
+  // Check to see if we're trying to lay out a struct using the ms_struct
+  // attribute that is dynamic.
+  if (Record->isMsStruct(Context) && Record->isDynamicClass()) {
+    Diag(Record->getLocation(), diag::warn_pragma_ms_struct_failed);
+    Record->dropAttr<MsStructAttr>();
+  }
+
   // Declare inheriting constructors. We do this eagerly here because:
   // - The standard requires an eager diagnostic for conflicting inheriting
   //   constructors from different classes.
@@ -6934,7 +6967,7 @@ void Sema::PushUsingDirective(Scope *S, UsingDirectiveDecl *UDir) {
   // If the scope has an associated entity and the using directive is at
   // namespace or translation unit scope, add the UsingDirectiveDecl into
   // its lookup structure so qualified name lookup can find it.
-  DeclContext *Ctx = static_cast<DeclContext*>(S->getEntity());
+  DeclContext *Ctx = S->getEntity();
   if (Ctx && !Ctx->isFunctionOrMethod())
     Ctx->addDecl(UDir);
   else
@@ -10917,11 +10950,12 @@ bool Sema::CheckLiteralOperatorDeclaration(FunctionDecl *FnDecl) {
   if (!TpDecl)
     TpDecl = FnDecl->getPrimaryTemplate();
 
-  // template <char...> type operator "" name() is the only valid template
-  // signature, and the only valid signature with no parameters.
+  // template <char...> type operator "" name() and
+  // template <class T, T...> type operator "" name() are the only valid
+  // template signatures, and the only valid signatures with no parameters.
   if (TpDecl) {
     if (FnDecl->param_size() == 0) {
-      // Must have only one template parameter
+      // Must have one or two template parameters
       TemplateParameterList *Params = TpDecl->getTemplateParameters();
       if (Params->size() == 1) {
         NonTypeTemplateParmDecl *PmDecl =
@@ -10931,6 +10965,27 @@ bool Sema::CheckLiteralOperatorDeclaration(FunctionDecl *FnDecl) {
         if (PmDecl && PmDecl->isTemplateParameterPack() &&
             Context.hasSameType(PmDecl->getType(), Context.CharTy))
           Valid = true;
+      } else if (Params->size() == 2) {
+        TemplateTypeParmDecl *PmType =
+          dyn_cast<TemplateTypeParmDecl>(Params->getParam(0));
+        NonTypeTemplateParmDecl *PmArgs =
+          dyn_cast<NonTypeTemplateParmDecl>(Params->getParam(1));
+
+        // The second template parameter must be a parameter pack with the
+        // first template parameter as its type.
+        if (PmType && PmArgs &&
+            !PmType->isTemplateParameterPack() &&
+            PmArgs->isTemplateParameterPack()) {
+          const TemplateTypeParmType *TArgs =
+            PmArgs->getType()->getAs<TemplateTypeParmType>();
+          if (TArgs && TArgs->getDepth() == PmType->getDepth() &&
+              TArgs->getIndex() == PmType->getIndex()) {
+            Valid = true;
+            if (ActiveTemplateInstantiations.empty())
+              Diag(FnDecl->getLocation(),
+                   diag::ext_string_literal_operator_template);
+          }
+        }
       }
     }
   } else if (FnDecl->param_size()) {

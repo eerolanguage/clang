@@ -234,6 +234,12 @@ public:
   virtual llvm::BasicBlock *EmitCtorCompleteObjectHandler(CodeGenFunction &CGF,
                                                           const CXXRecordDecl *RD);
 
+  /// Emit the code to initialize hidden members required
+  /// to handle virtual inheritance, if needed by the ABI.
+  virtual void
+  initializeHiddenVirtualInheritanceMembers(CodeGenFunction &CGF,
+                                            const CXXRecordDecl *RD) {}
+
   /// Emit constructor variants required by this ABI.
   virtual void EmitCXXConstructors(const CXXConstructorDecl *D) = 0;
 
@@ -339,10 +345,16 @@ public:
                                          SourceLocation CallLoc,
                                          llvm::Value *This) = 0;
 
+  virtual void adjustCallArgsForDestructorThunk(CodeGenFunction &CGF,
+                                                GlobalDecl GD,
+                                                CallArgList &CallArgs) {}
+
   /// Emit any tables needed to implement virtual inheritance.  For Itanium,
   /// this emits virtual table tables.  For the MSVC++ ABI, this emits virtual
   /// base tables.
   virtual void emitVirtualInheritanceTables(const CXXRecordDecl *RD) = 0;
+
+  virtual void setThunkLinkage(llvm::Function *Thunk, bool ForVTable) = 0;
 
   virtual void EmitReturnFromThunk(CodeGenFunction &CGF,
                                    RValue RV, QualType ResultType);

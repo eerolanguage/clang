@@ -3115,7 +3115,15 @@ CheckPrintfHandler::checkFormatExpr(const analyze_printf::PrintfSpecifier &FS,
       // 'unichar' is defined as a typedef of unsigned short, but we should
       // prefer using the typedef if it is visible.
       IntendedTy = S.Context.UnsignedShortTy;
-      
+
+      // While we are here, check if the value is an IntegerLiteral that happens
+      // to be within the valid range.
+      if (const IntegerLiteral *IL = dyn_cast<IntegerLiteral>(E)) {
+        const llvm::APInt &V = IL->getValue();
+        if (V.getActiveBits() <= S.Context.getTypeSize(IntendedTy))
+          return true;
+      }
+
       LookupResult Result(S, &S.Context.Idents.get("unichar"), E->getLocStart(),
                           Sema::LookupOrdinaryName);
       if (S.LookupName(Result, S.getCurScope())) {
@@ -4664,6 +4672,9 @@ static IntRange GetExprRange(ASTContext &C, Expr *E, unsigned MaxWidth) {
       return GetExprRange(C, UO->getSubExpr(), MaxWidth);
     }
   }
+
+  if (OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(E))
+    return GetExprRange(C, OVE->getSourceExpr(), MaxWidth);
 
   if (FieldDecl *BitField = E->getSourceBitField())
     return IntRange(BitField->getBitWidthValue(C),

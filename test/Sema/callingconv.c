@@ -1,4 +1,5 @@
 // RUN: %clang_cc1 %s -fsyntax-only -triple i386-unknown-unknown -verify
+// RUN: %clang_cc1 %s -fsyntax-only -triple i386-unknown-unknown -fms-compatibility -DWIN -verify
 
 void __attribute__((fastcall)) foo(float *a) {
 }
@@ -15,7 +16,11 @@ void __attribute__((fastcall)) test0() { // expected-error {{function with no pr
 void __attribute__((fastcall)) test1(void) {
 }
 
-void __attribute__((fastcall)) test2(int a, ...) { // expected-error {{variadic function cannot use fastcall calling convention}}
+void __attribute__((fastcall)) test2(int a, ...) { // expected-warning {{fastcall calling convention ignored on variadic function}}
+}
+void __attribute__((stdcall)) test3(int a, ...) { // expected-warning {{stdcall calling convention ignored on variadic function}}
+}
+void __attribute__((thiscall)) test4(int a, ...) { // expected-error {{variadic function cannot use thiscall calling convention}}
 }
 
 void __attribute__((cdecl)) ctest0() {}

@@ -1477,6 +1477,13 @@ public:
     }
   }
   
+  void warnLoopStateMismatch(SourceLocation Loc, StringRef VariableName) {
+    PartialDiagnosticAt Warning(Loc, S.PDiag(diag::warn_loop_state_mismatch) <<
+      VariableName);
+    
+    Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
+  }
+  
   void warnReturnTypestateForUnconsumableType(SourceLocation Loc,
                                               StringRef TypeName) {
     PartialDiagnosticAt Warning(Loc, S.PDiag(
@@ -1494,45 +1501,20 @@ public:
     Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
   }
   
-  void warnUnnecessaryTest(StringRef VariableName, StringRef VariableState,
-                           SourceLocation Loc) {
-
-    PartialDiagnosticAt Warning(Loc, S.PDiag(diag::warn_unnecessary_test) <<
-                                 VariableName << VariableState);
-    
-    Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
-  }
-  
-  void warnUseOfTempWhileConsumed(StringRef MethodName, SourceLocation Loc) {
+  void warnUseOfTempInInvalidState(StringRef MethodName, StringRef State,
+                                   SourceLocation Loc) {
                                                     
     PartialDiagnosticAt Warning(Loc, S.PDiag(
-      diag::warn_use_of_temp_while_consumed) << MethodName);
+      diag::warn_use_of_temp_in_invalid_state) << MethodName << State);
     
     Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
   }
   
-  void warnUseOfTempInUnknownState(StringRef MethodName, SourceLocation Loc) {
+  void warnUseInInvalidState(StringRef MethodName, StringRef VariableName,
+                                  StringRef State, SourceLocation Loc) {
   
-    PartialDiagnosticAt Warning(Loc, S.PDiag(
-      diag::warn_use_of_temp_in_unknown_state) << MethodName);
-    
-    Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
-  }
-  
-  void warnUseWhileConsumed(StringRef MethodName, StringRef VariableName,
-                            SourceLocation Loc) {
-  
-    PartialDiagnosticAt Warning(Loc, S.PDiag(diag::warn_use_while_consumed) <<
-                                MethodName << VariableName);
-    
-    Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
-  }
-  
-  void warnUseInUnknownState(StringRef MethodName, StringRef VariableName,
-                             SourceLocation Loc) {
-
-    PartialDiagnosticAt Warning(Loc, S.PDiag(diag::warn_use_in_unknown_state) <<
-                                MethodName << VariableName);
+    PartialDiagnosticAt Warning(Loc, S.PDiag(diag::warn_use_in_invalid_state) <<
+                                MethodName << VariableName << State);
     
     Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
   }
@@ -1570,7 +1552,7 @@ clang::sema::AnalysisBasedWarnings::AnalysisBasedWarnings(Sema &s)
     (D.getDiagnosticLevel(diag::warn_double_lock, SourceLocation()) !=
      DiagnosticsEngine::Ignored);
   DefaultPolicy.enableConsumedAnalysis = (unsigned)
-    (D.getDiagnosticLevel(diag::warn_use_while_consumed, SourceLocation()) !=
+    (D.getDiagnosticLevel(diag::warn_use_in_invalid_state, SourceLocation()) !=
      DiagnosticsEngine::Ignored);
 }
 
@@ -1616,6 +1598,7 @@ AnalysisBasedWarnings::IssueWarnings(sema::AnalysisBasedWarnings::Policy P,
   const Stmt *Body = D->getBody();
   assert(Body);
 
+  // Construct the analysis context with the specified CFG build options.
   AnalysisDeclContext AC(/* AnalysisDeclContextManager */ 0, D);
 
   // Don't generate EH edges for CallExprs as we'd like to avoid the n^2
@@ -1649,8 +1632,7 @@ AnalysisBasedWarnings::IssueWarnings(sema::AnalysisBasedWarnings::Policy P,
       .setAlwaysAdd(Stmt::AttributedStmtClass);
   }
 
-  // Construct the analysis context with the specified CFG build options.
-  
+
   // Emit delayed diagnostics.
   if (!fscope->PossiblyUnreachableDiags.empty()) {
     bool analyzed = false;

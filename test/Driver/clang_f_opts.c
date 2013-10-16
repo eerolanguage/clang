@@ -121,9 +121,11 @@
 // RUN:     -fsee -fno-see                                                    \
 // RUN:     -ftracer -fno-tracer                                              \
 // RUN:     -funroll-all-loops -fno-unroll-all-loops                          \
+// RUN:     -fuse-ld=gold                                                     \
 // RUN:     -fno-builtin-foobar                                               \
 // RUN:     -fno-builtin-strcat -fno-builtin-strcpy                           \
 // RUN:     -fno-var-tracking                                                 \
 // RUN:     -fno-unsigned-char                                                \
 // RUN:     -fno-signed-char                                                  \
-// RUN:     %s
+// RUN:     %s 2>&1 | FileCheck --check-prefix=IGNORE %s
+// IGNORE-NOT: error: unknown argument

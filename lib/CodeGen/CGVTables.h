@@ -33,7 +33,7 @@ class CodeGenVTables {
 
   // FIXME: Consider moving VTContext and VFTContext into respective CXXABI
   // classes?
-  VTableContext VTContext;
+  ItaniumVTableContext VTContext;
   OwningPtr<MicrosoftVFTableContext> VFTContext;
   
   /// VTableAddressPointsMapTy - Address points for a single vtable.
@@ -52,15 +52,12 @@ class CodeGenVTables {
   /// indices.
   SecondaryVirtualPointerIndicesMapTy SecondaryVirtualPointerIndices;
 
-  /// EmitThunk - Emit a single thunk.
-  void EmitThunk(GlobalDecl GD, const ThunkInfo &Thunk, 
-                 bool UseAvailableExternallyLinkage);
+  /// emitThunk - Emit a single thunk.
+  void emitThunk(GlobalDecl GD, const ThunkInfo &Thunk, bool ForVTable);
 
-  /// MaybeEmitThunkAvailableExternally - Try to emit the given thunk with
-  /// available_externally linkage to allow for inlining of thunks.
-  /// This will be done iff optimizations are enabled and the member function
-  /// doesn't contain any incomplete types.
-  void MaybeEmitThunkAvailableExternally(GlobalDecl GD, const ThunkInfo &Thunk);
+  /// maybeEmitThunkForVTable - Emit the given thunk for the vtable if needed by
+  /// the ABI.
+  void maybeEmitThunkForVTable(GlobalDecl GD, const ThunkInfo &Thunk);
 
 public:
   /// CreateVTableInitializer - Create a vtable initializer for the given record
@@ -75,7 +72,7 @@ public:
 
   CodeGenVTables(CodeGenModule &CGM);
 
-  VTableContext &getVTableContext() { return VTContext; }
+  ItaniumVTableContext &getVTableContext() { return VTContext; }
 
   MicrosoftVFTableContext &getVFTableContext() { return *VFTContext.get(); }
 

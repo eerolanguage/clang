@@ -287,17 +287,16 @@ static bool checkFunctionOrMethodArgumentIndex(Sema &S, const Decl *D,
 /// If not emit an error and return false. If the argument is an identifier it
 /// will emit an error with a fixit hint and treat it as if it was a string
 /// literal.
-static bool checkStringLiteralArgument(Sema &S, StringRef &Str,
-                                       const AttributeList &Attr,
-                                       unsigned ArgNum,
-                                       SourceLocation *ArgLocation = 0) {
+bool Sema::checkStringLiteralArgumentAttr(const AttributeList &Attr,
+                                          unsigned ArgNum, StringRef &Str,
+                                          SourceLocation *ArgLocation) {
   // Look for identifiers. If we have one emit a hint to fix it to a literal.
   if (Attr.isArgIdent(ArgNum)) {
     IdentifierLoc *Loc = Attr.getArgAsIdent(ArgNum);
-    S.Diag(Loc->Loc, diag::err_attribute_argument_type)
+    Diag(Loc->Loc, diag::err_attribute_argument_type)
         << Attr.getName() << AANT_ArgumentString
         << FixItHint::CreateInsertion(Loc->Loc, "\"")
-        << FixItHint::CreateInsertion(S.PP.getLocForEndOfToken(Loc->Loc), "\"");
+        << FixItHint::CreateInsertion(PP.getLocForEndOfToken(Loc->Loc), "\"");
     Str = Loc->Ident->getName();
     if (ArgLocation)
       *ArgLocation = Loc->Loc;
@@ -311,7 +310,7 @@ static bool checkStringLiteralArgument(Sema &S, StringRef &Str,
     *ArgLocation = ArgExpr->getLocStart();
 
   if (!Literal || !Literal->isAscii()) {
-    S.Diag(ArgExpr->getLocStart(), diag::err_attribute_argument_type)
+    Diag(ArgExpr->getLocStart(), diag::err_attribute_argument_type)
         << Attr.getName() << AANT_ArgumentString;
     return false;
   }
@@ -1027,7 +1026,12 @@ static bool checkForConsumableClass(Sema &S, const CXXMethodDecl *MD,
   return true;
 }
 
-static void handleConsumesAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+
+static void handleCallableWhenAttr(Sema &S, Decl *D,
+                                   const AttributeList &Attr) {
+  if (!checkAttributeAtLeastNumArgs(S, Attr, 1))
+    return;
+
   if (!isa<CXXMethodDecl>(D)) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type) <<
       Attr.getName() << ExpectedMethod;
@@ -1037,58 +1041,30 @@ static void handleConsumesAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
     return;
   
+  SmallVector<CallableWhenAttr::ConsumedState, 3> States;
+  for (unsigned ArgIndex = 0; ArgIndex < Attr.getNumArgs(); ++ArgIndex) {
+    CallableWhenAttr::ConsumedState CallableState;
+    
+    StringRef StateString;
+    SourceLocation Loc;
+    if (!S.checkStringLiteralArgumentAttr(Attr, ArgIndex, StateString, &Loc))
+      return;
+
+    if (!CallableWhenAttr::ConvertStrToConsumedState(StateString,
+                                                      CallableState)) {
+      S.Diag(Loc, diag::warn_attribute_type_not_supported)
+        << Attr.getName() << StateString;
+      return;
+    }
+      
+    States.push_back(CallableState);
+  }
+  
   D->addAttr(::new (S.Context)
-             ConsumesAttr(Attr.getRange(), S.Context,
-                          Attr.getAttributeSpellingListIndex()));
+             CallableWhenAttr(Attr.getRange(), S.Context, States.data(),
+               States.size(), Attr.getAttributeSpellingListIndex()));
 }
 
-static void handleCallableWhenUnconsumedAttr(Sema &S, Decl *D,
-                                             const AttributeList &Attr) {
-  if (!isa<CXXMethodDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type) <<
-      Attr.getName() << ExpectedMethod;
-    return;
-  }
-  
-  if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
-    return;
-  
-  D->addAttr(::new (S.Context)
-             CallableWhenUnconsumedAttr(Attr.getRange(), S.Context,
-                                        Attr.getAttributeSpellingListIndex()));
-}
-
-static void handleTestsConsumedAttr(Sema &S, Decl *D,
-                                    const AttributeList &Attr) {
-  if (!isa<CXXMethodDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type) <<
-      Attr.getName() << ExpectedMethod;
-    return;
-  }
-  
-  if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
-    return;
-  
-  D->addAttr(::new (S.Context)
-             TestsConsumedAttr(Attr.getRange(), S.Context,
-                               Attr.getAttributeSpellingListIndex()));
-}
-
-static void handleTestsUnconsumedAttr(Sema &S, Decl *D,
-                                      const AttributeList &Attr) {
-  if (!isa<CXXMethodDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type) <<
-      Attr.getName() << ExpectedMethod;
-    return;
-  }
-  
-  if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
-    return;
-  
-  D->addAttr(::new (S.Context)
-             TestsUnconsumedAttr(Attr.getRange(), S.Context,
-                                 Attr.getAttributeSpellingListIndex()));
-}
 
 static void handleReturnTypestateAttr(Sema &S, Decl *D,
                                       const AttributeList &Attr) {
@@ -1138,6 +1114,74 @@ static void handleReturnTypestateAttr(Sema &S, Decl *D,
   D->addAttr(::new (S.Context)
              ReturnTypestateAttr(Attr.getRange(), S.Context, ReturnState,
                                  Attr.getAttributeSpellingListIndex()));
+}
+
+
+static void handleSetTypestateAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  if (!checkAttributeNumArgs(S, Attr, 1))
+    return;
+
+  if (!isa<CXXMethodDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type) <<
+      Attr.getName() << ExpectedMethod;
+    return;
+  }
+  
+  if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
+    return;
+  
+  SetTypestateAttr::ConsumedState NewState;
+  if (Attr.isArgIdent(0)) {
+    IdentifierLoc *Ident = Attr.getArgAsIdent(0);
+    StringRef Param = Ident->Ident->getName();
+    if (!SetTypestateAttr::ConvertStrToConsumedState(Param, NewState)) {
+      S.Diag(Ident->Loc, diag::warn_attribute_type_not_supported)
+        << Attr.getName() << Param;
+      return;
+    }
+  } else {
+    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type) <<
+      Attr.getName() << AANT_ArgumentIdentifier;
+    return;
+  }
+  
+  D->addAttr(::new (S.Context)
+             SetTypestateAttr(Attr.getRange(), S.Context, NewState,
+                              Attr.getAttributeSpellingListIndex()));
+}
+
+static void handleTestsTypestateAttr(Sema &S, Decl *D,
+                                        const AttributeList &Attr) {
+  if (!checkAttributeNumArgs(S, Attr, 1))
+    return;
+  
+  if (!isa<CXXMethodDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type) <<
+      Attr.getName() << ExpectedMethod;
+    return;
+  }
+  
+  if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
+    return;
+  
+  TestsTypestateAttr::ConsumedState TestState;  
+  if (Attr.isArgIdent(0)) {
+    IdentifierLoc *Ident = Attr.getArgAsIdent(0);
+    StringRef Param = Ident->Ident->getName();
+    if (!TestsTypestateAttr::ConvertStrToConsumedState(Param, TestState)) {
+      S.Diag(Ident->Loc, diag::warn_attribute_type_not_supported)
+        << Attr.getName() << Param;
+      return;
+    }
+  } else {
+    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type) <<
+      Attr.getName() << AANT_ArgumentIdentifier;
+    return;
+  }
+  
+  D->addAttr(::new (S.Context)
+             TestsTypestateAttr(Attr.getRange(), S.Context, TestState,
+                                Attr.getAttributeSpellingListIndex()));
 }
 
 static void handleExtVectorTypeAttr(Sema &S, Scope *scope, Decl *D,
@@ -1564,7 +1608,7 @@ static void handleWeakRefAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // of transforming it into an AliasAttr.  The WeakRefAttr never uses the
   // StringRef parameter it was given anyway.
   StringRef Str;
-  if (Attr.getNumArgs() && checkStringLiteralArgument(S, Str, Attr, 0))
+  if (Attr.getNumArgs() && S.checkStringLiteralArgumentAttr(Attr, 0, Str))
     // GCC will accept anything as the argument of weakref. Should we
     // check for an existing decl?
     D->addAttr(::new (S.Context) AliasAttr(Attr.getRange(), S.Context, Str,
@@ -1577,7 +1621,7 @@ static void handleWeakRefAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 
 static void handleAliasAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   StringRef Str;
-  if (!checkStringLiteralArgument(S, Str, Attr, 0))
+  if (!S.checkStringLiteralArgumentAttr(Attr, 0, Str))
     return;
 
   if (S.Context.getTargetInfo().getTriple().isOSDarwin()) {
@@ -1667,7 +1711,7 @@ static void handleTLSModelAttr(Sema &S, Decl *D,
   StringRef Model;
   SourceLocation LiteralLoc;
   // Check that it is a string.
-  if (!checkStringLiteralArgument(S, Model, Attr, 0, &LiteralLoc))
+  if (!S.checkStringLiteralArgumentAttr(Attr, 0, Model, &LiteralLoc))
     return;
 
   if (!isa<VarDecl>(D) || !cast<VarDecl>(D)->getTLSKind()) {
@@ -1999,7 +2043,7 @@ static void handleAttrWithMessage(Sema &S, Decl *D,
 
   // Handle the case where the attribute has a text message.
   StringRef Str;
-  if (NumArgs == 1 && !checkStringLiteralArgument(S, Str, Attr, 0))
+  if (NumArgs == 1 && !S.checkStringLiteralArgumentAttr(Attr, 0, Str))
     return;
 
   D->addAttr(::new (S.Context) AttrTy(Attr.getRange(), S.Context, Str,
@@ -2310,7 +2354,7 @@ static void handleVisibilityAttr(Sema &S, Decl *D, const AttributeList &Attr,
   // Check that the argument is a string literal.
   StringRef TypeStr;
   SourceLocation LiteralLoc;
-  if (!checkStringLiteralArgument(S, TypeStr, Attr, 0, &LiteralLoc))
+  if (!S.checkStringLiteralArgumentAttr(Attr, 0, TypeStr, &LiteralLoc))
     return;
 
   VisibilityAttr::VisibilityType type;
@@ -2724,7 +2768,7 @@ static void handleSectionAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // argument.
   StringRef Str;
   SourceLocation LiteralLoc;
-  if (!checkStringLiteralArgument(S, Str, Attr, 0, &LiteralLoc))
+  if (!S.checkStringLiteralArgumentAttr(Attr, 0, Str, &LiteralLoc))
     return;
 
   // If the target wants to validate the section specifier, make it happen.
@@ -3195,7 +3239,7 @@ static void handleAnnotateAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // Make sure that there is a string literal as the annotation's single
   // argument.
   StringRef Str;
-  if (!checkStringLiteralArgument(S, Str, Attr, 0))
+  if (!S.checkStringLiteralArgumentAttr(Attr, 0, Str))
     return;
 
   // Don't duplicate annotations that are already set.
@@ -3793,7 +3837,7 @@ bool Sema::CheckCallingConvAttr(const AttributeList &attr, CallingConv &CC,
     break;
   case AttributeList::AT_Pcs: {
     StringRef StrRef;
-    if (!checkStringLiteralArgument(*this, StrRef, attr, 0)) {
+    if (!checkStringLiteralArgumentAttr(attr, 0, StrRef)) {
       attr.setInvalid();
       return true;
     }
@@ -4353,7 +4397,7 @@ static void handleUuidAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 
   StringRef StrRef;
   SourceLocation LiteralLoc;
-  if (!checkStringLiteralArgument(S, StrRef, Attr, 0, &LiteralLoc))
+  if (!S.checkStringLiteralArgumentAttr(Attr, 0, StrRef, &LiteralLoc))
     return;
 
   // GUID format is "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" or
@@ -4761,24 +4805,21 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     handleAcquiredAfterAttr(S, D, Attr);
     break;
 
-  // Uniqueness analysis attributes.
+  // Consumed analysis attributes.
   case AttributeList::AT_Consumable:
     handleConsumableAttr(S, D, Attr);
     break;
-  case AttributeList::AT_Consumes:
-    handleConsumesAttr(S, D, Attr);
-    break;
-  case AttributeList::AT_CallableWhenUnconsumed:
-    handleCallableWhenUnconsumedAttr(S, D, Attr);
-    break;
-  case AttributeList::AT_TestsConsumed:
-    handleTestsConsumedAttr(S, D, Attr);
-    break;
-  case AttributeList::AT_TestsUnconsumed:
-    handleTestsUnconsumedAttr(S, D, Attr);
+  case AttributeList::AT_CallableWhen:
+    handleCallableWhenAttr(S, D, Attr);
     break;
   case AttributeList::AT_ReturnTypestate:
     handleReturnTypestateAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_SetTypestate:
+    handleSetTypestateAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_TestsTypestate:
+    handleTestsTypestateAttr(S, D, Attr);
     break;
 
   // Type safety attributes.

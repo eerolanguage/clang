@@ -202,6 +202,12 @@ namespace test7 {
   // Comment!
 }
 
+void test8() {
+  struct {} o;
+  // This used to crash.
+  (&o)->(); // expected-error{{expected unqualified-id}}
+}
+
 namespace PR5066 {
   template<typename T> struct X {};
   X<int N> x; // expected-error {{type-id cannot have a name}}
@@ -215,6 +221,15 @@ void foo() {
                             // expected-error {{expected a qualified name after 'typename'}} \
                             // expected-warning {{'template' keyword outside of a template}}
 }
+}
+
+namespace PR17567 {
+  struct Foobar { // expected-note 2{{declared here}}
+    FooBar(); // expected-error {{missing return type for function 'FooBar'; did you mean the constructor name 'Foobar'?}}
+    ~FooBar(); // expected-error {{expected the class name after '~' to name a destructor}}
+  };
+  FooBar::FooBar() {} // expected-error {{undeclared}} expected-error {{missing return type}}
+  FooBar::~FooBar() {} // expected-error {{undeclared}} expected-error {{expected the class name}}
 }
 
 // PR8380

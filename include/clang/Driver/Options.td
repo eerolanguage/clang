@@ -74,8 +74,6 @@ def m_hexagon_Features_Group  : OptionGroup<"<m hexagon features group>">, Group
 def m_arm_Features_Group  : OptionGroup<"<m arm features group>">, Group<m_Group>;
 def opencl_Group          : OptionGroup<"<opencl group>">;
 def u_Group               : OptionGroup<"<u group>">;
-def mips_CPUs_Group       : OptionGroup<"<MIPS CPU aliases group>">,
-  Group<CompileOnly_Group>;
 
 def pedantic_Group        : OptionGroup<"<pedantic group>">,
   Group<CompileOnly_Group>;
@@ -165,8 +163,23 @@ def objcmt_migrate_subscripting : Flag<["-"], "objcmt-migrate-subscripting">, Fl
   HelpText<"Enable migration to modern ObjC subscripting">;
 def objcmt_migrate_property : Flag<["-"], "objcmt-migrate-property">, Flags<[CC1Option]>,
   HelpText<"Enable migration to modern ObjC property">;
+def objcmt_migrate_all : Flag<["-"], "objcmt-migrate-all">, Flags<[CC1Option]>,
+  HelpText<"Enable migration to modern ObjC">;
 def objcmt_migrate_readonly_property : Flag<["-"], "objcmt-migrate-readonly-property">, Flags<[CC1Option]>,
   HelpText<"Enable migration to modern ObjC readonly property">;
+def objcmt_migrate_readwrite_property : Flag<["-"], "objcmt-migrate-readwrite-property">, Flags<[CC1Option]>,
+  HelpText<"Enable migration to modern ObjC readwrite property">;
+def objcmt_migrate_annotation : Flag<["-"], "objcmt-migrate-annotation">, Flags<[CC1Option]>,
+  HelpText<"Enable migration to property and method annotations">;
+def objcmt_migrate_instancetype : Flag<["-"], "objcmt-migrate-instancetype">, Flags<[CC1Option]>,
+  HelpText<"Enable migration to infer instancetype for method result type">;
+def objcmt_migrate_nsmacros : Flag<["-"], "objcmt-migrate-ns-macros">, Flags<[CC1Option]>,
+  HelpText<"Enable migration to NS_ENUM/NS_OPTIONS macros">;
+def objcmt_migrate_protocol_conformance : Flag<["-"], "objcmt-migrate-protocol-conformance">, Flags<[CC1Option]>,
+  HelpText<"Enable migration to add protocol conformance on classes">;
+def objcmt_atomic_property : Flag<["-"], "objcmt-atomic-property">,
+  Flags<[CC1Option]>,
+  HelpText<"Make migration to 'atomic' properties">;
 // Make sure all other -ccc- options are rejected.
 def ccc_ : Joined<["-"], "ccc-">, Group<internal_Group>, Flags<[Unsupported]>;
 
@@ -424,6 +437,10 @@ def fencoding_EQ : Joined<["-"], "fencoding=">, Group<f_Group>;
 def ferror_limit_EQ : Joined<["-"], "ferror-limit=">, Group<f_Group>;
 def fexceptions : Flag<["-"], "fexceptions">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Enable support for exception handling">;
+def fexpensive_optimizations : Flag<["-"], "fexpensive-optimizations">,
+  Group<clang_ignored_f_Group>;
+def fno_expensive_optimizations : Flag<["-"], "fno-expensive-optimizations">,
+  Group<clang_ignored_f_Group>;
 def fextdirs_EQ : Joined<["-"], "fextdirs=">, Group<f_Group>;
 def fextended_identifiers : Flag<["-"], "fextended-identifiers">,
     Group<clang_ignored_f_Group>;
@@ -646,6 +663,7 @@ def fno_spell_checking : Flag<["-"], "fno-spell-checking">, Group<f_Group>,
 def fno_stack_protector : Flag<["-"], "fno-stack-protector">, Group<f_Group>;
 def fno_strict_aliasing : Flag<["-"], "fno-strict-aliasing">, Group<f_Group>;
 def fstruct_path_tbaa : Flag<["-"], "fstruct-path-tbaa">, Group<f_Group>;
+def fno_struct_path_tbaa : Flag<["-"], "fno-struct-path-tbaa">, Group<f_Group>;
 def fno_strict_enums : Flag<["-"], "fno-strict-enums">, Group<f_Group>;
 def fno_strict_overflow : Flag<["-"], "fno-strict-overflow">, Group<f_Group>;
 def fno_threadsafe_statics : Flag<["-"], "fno-threadsafe-statics">, Group<f_Group>,
@@ -737,6 +755,8 @@ def fshow_source_location : Flag<["-"], "fshow-source-location">, Group<f_Group>
 def fspell_checking : Flag<["-"], "fspell-checking">, Group<f_Group>;
 def fsigned_bitfields : Flag<["-"], "fsigned-bitfields">, Group<f_Group>;
 def fsigned_char : Flag<["-"], "fsigned-char">, Group<f_Group>;
+def fno_signed_char : Flag<["-"], "fno-signed-char">, Flags<[CC1Option]>,
+    Group<clang_ignored_f_Group>, HelpText<"Char is unsigned">;
 def fsplit_stack : Flag<["-"], "fsplit-stack">, Group<f_Group>;
 def fstack_protector_all : Flag<["-"], "fstack-protector-all">, Group<f_Group>;
 def fstack_protector : Flag<["-"], "fstack-protector">, Group<f_Group>;
@@ -817,10 +837,15 @@ def fwrapv : Flag<["-"], "fwrapv">, Group<f_Group>, Flags<[CC1Option]>,
 def fwritable_strings : Flag<["-"], "fwritable-strings">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Store string literals as writable data">;
 def fzero_initialized_in_bss : Flag<["-"], "fzero-initialized-in-bss">, Group<f_Group>;
-def ffunction_sections: Flag <["-"], "ffunction-sections">, Group<f_Group>,
-  Flags<[CC1Option]>, HelpText<"Place each function in its own section (ELF Only)">;
-def fdata_sections : Flag <["-"], "fdata-sections">, Group<f_Group>, Flags<[CC1Option]>,
-  HelpText<"Place each data in its own section (ELF Only)">;
+def ffunction_sections : Flag<["-"], "ffunction-sections">, Group<f_Group>,
+  Flags<[CC1Option]>,
+  HelpText<"Place each function in its own section (ELF Only)">;
+def fno_function_sections : Flag<["-"], "fno-function-sections">,
+  Group<f_Group>, Flags<[CC1Option]>;
+def fdata_sections : Flag <["-"], "fdata-sections">, Group<f_Group>,
+ Flags<[CC1Option]>, HelpText<"Place each data in its own section (ELF Only)">;
+def fno_data_sections : Flag <["-"], "fno-data-sections">, Group<f_Group>,
+  Flags<[CC1Option]>;
 def fdebug_types_section: Flag <["-"], "fdebug-types-section">, Group<f_Group>,
   Flags<[CC1Option]>, HelpText<"Place debug types in their own section (ELF Only)">;
 def g_Flag : Flag<["-"], "g">, Group<g_Group>,
@@ -902,12 +927,12 @@ def lazy__framework : Separate<["-"], "lazy_framework">, Flags<[LinkerInput]>;
 def lazy__library : Separate<["-"], "lazy_library">, Flags<[LinkerInput]>;
 def EL : Flag<["-"], "EL">, Flags<[DriverOption]>;
 def EB : Flag<["-"], "EB">, Flags<[DriverOption]>;
-def m32 : Flag<["-"], "m32">, Group<m_Group>, Flags<[DriverOption]>;
+def m32 : Flag<["-"], "m32">, Group<m_Group>, Flags<[DriverOption, CoreOption]>;
 def mqdsp6_compat : Flag<["-"], "mqdsp6-compat">, Group<m_Group>, Flags<[DriverOption,CC1Option]>,
   HelpText<"Enable hexagon-qdsp6 backward compatibility">;
 def m3dnowa : Flag<["-"], "m3dnowa">, Group<m_x86_Features_Group>;
 def m3dnow : Flag<["-"], "m3dnow">, Group<m_x86_Features_Group>;
-def m64 : Flag<["-"], "m64">, Group<m_Group>, Flags<[DriverOption]>;
+def m64 : Flag<["-"], "m64">, Group<m_Group>, Flags<[DriverOption, CoreOption]>;
 def mabi_EQ : Joined<["-"], "mabi=">, Group<m_Group>;
 def march_EQ : Joined<["-"], "march=">, Group<m_Group>;
 def maltivec : Flag<["-"], "maltivec">, Alias<faltivec>;
@@ -925,6 +950,9 @@ def mconstant_cfstrings : Flag<["-"], "mconstant-cfstrings">, Group<clang_ignore
 def mcpu_EQ : Joined<["-"], "mcpu=">, Group<m_Group>;
 def mdynamic_no_pic : Joined<["-"], "mdynamic-no-pic">, Group<m_Group>;
 def mfix_and_continue : Flag<["-"], "mfix-and-continue">, Group<clang_ignored_m_Group>;
+def mieee_fp : Flag<["-"], "mieee-fp">, Group<clang_ignored_m_Group>;
+def minline_all_stringops : Flag<["-"], "minline-all-stringops">, Group<clang_ignored_m_Group>;
+def mno_inline_all_stringops : Flag<["-"], "mno-inline-all-stringops">, Group<clang_ignored_m_Group>;
 def mfloat_abi_EQ : Joined<["-"], "mfloat-abi=">, Group<m_Group>;
 def mfpmath_EQ : Joined<["-"], "mfpmath=">, Group<m_Group>;
 def mfpu_EQ : Joined<["-"], "mfpu=">, Group<m_Group>;
@@ -1049,6 +1077,7 @@ def mrtm : Flag<["-"], "mrtm">, Group<m_x86_Features_Group>;
 def mprfchw : Flag<["-"], "mprfchw">, Group<m_x86_Features_Group>;
 def mrdseed : Flag<["-"], "mrdseed">, Group<m_x86_Features_Group>;
 def msha : Flag<["-"], "msha">, Group<m_x86_Features_Group>;
+def mcx16 : Flag<["-"], "mcx16">, Group<m_x86_Features_Group>;
 def mips16 : Flag<["-"], "mips16">, Group<m_Group>;
 def mno_mips16 : Flag<["-"], "mno-mips16">, Group<m_Group>;
 def mmicromips : Flag<["-"], "mmicromips">, Group<m_Group>;
@@ -1071,13 +1100,17 @@ def mmsa : Flag<["-"], "mmsa">, Group<m_Group>,
 def mno_msa : Flag<["-"], "mno-msa">, Group<m_Group>,
   HelpText<"Disable MSA ASE on MIPS processors">, Flags<[HelpHidden]>;
 def mnan_EQ : Joined<["-"], "mnan=">, Group<m_Group>;
-def mips32 : Flag<["-"], "mips32">, Group<mips_CPUs_Group>,
+def mips32 : Flag<["-"], "mips32">,
+  Alias<march_EQ>, AliasArgs<["mips32"]>,
   HelpText<"Equivalent to -march=mips32">, Flags<[HelpHidden]>;
-def mips32r2 : Flag<["-"], "mips32r2">, Group<mips_CPUs_Group>,
+def mips32r2 : Flag<["-"], "mips32r2">,
+  Alias<march_EQ>, AliasArgs<["mips32r2"]>,
   HelpText<"Equivalent to -march=mips32r2">, Flags<[HelpHidden]>;
-def mips64 : Flag<["-"], "mips64">, Group<mips_CPUs_Group>,
+def mips64 : Flag<["-"], "mips64">,
+  Alias<march_EQ>, AliasArgs<["mips64"]>,
   HelpText<"Equivalent to -march=mips64">, Flags<[HelpHidden]>;
-def mips64r2 : Flag<["-"], "mips64r2">, Group<mips_CPUs_Group>,
+def mips64r2 : Flag<["-"], "mips64r2">,
+  Alias<march_EQ>, AliasArgs<["mips64r2"]>,
   HelpText<"Equivalent to -march=mips64r2">, Flags<[HelpHidden]>;
 def module_file_info : Flag<["-"], "module-file-info">, Flags<[DriverOption,CC1Option]>, Group<Action_Group>;
 def mthumb : Flag<["-"], "mthumb">, Group<m_Group>;
@@ -1378,10 +1411,11 @@ multiclass BooleanFFlag<string name> {
 def fprofile_dir : Joined<["-"], "fprofile-dir=">, Group<clang_ignored_f_Group>;
 
 defm profile_use : BooleanFFlag<"profile-use">, Group<clang_ignored_f_Group>;
-def fprofile_use_eq : Joined<["-"], "fprofile-use=">, Group<clang_ignored_f_Group>;
+def fprofile_use_EQ : Joined<["-"], "fprofile-use=">, Group<clang_ignored_f_Group>;
+def fuse_ld_EQ : Joined<["-"], "fuse-ld=">, Group<clang_ignored_f_Group>;
 
 defm align_functions : BooleanFFlag<"align-functions">, Group<clang_ignored_f_Group>;
-def falign_functions_eq : Joined<["-"], "falign-functions=">, Group<clang_ignored_f_Group>;
+def falign_functions_EQ : Joined<["-"], "falign-functions=">, Group<clang_ignored_f_Group>;
 
 def ffixed_line_length_VALUE : Joined<["-"], "ffixed-line-length-">, Group<clang_ignored_f_Group>;
 
@@ -1406,6 +1440,7 @@ defm regs_graph : BooleanFFlag<"regs-graph">, Group<clang_ignored_f_Group>;
 defm ripa : BooleanFFlag<"ripa">, Group<clang_ignored_f_Group>;
 defm rounding_math : BooleanFFlag<"rounding-math">, Group<clang_ignored_f_Group>;
 defm schedule_insns : BooleanFFlag<"schedule-insns">, Group<clang_ignored_f_Group>;
+defm see : BooleanFFlag<"see">, Group<clang_ignored_f_Group>;
 defm signaling_nans : BooleanFFlag<"signaling-nans">, Group<clang_ignored_f_Group>;
 defm spec_constr_count : BooleanFFlag<"spec-constr-count">, Group<clang_ignored_f_Group>;
 defm tls_model : BooleanFFlag<"tls-model">, Group<clang_ignored_f_Group>;

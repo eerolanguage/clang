@@ -22,6 +22,7 @@ protected:
   std::string format(llvm::StringRef Code, unsigned Offset, unsigned Length,
                      const FormatStyle &Style) {
     DEBUG(llvm::errs() << "---\n");
+    DEBUG(llvm::errs() << Code << "\n\n");
     std::vector<tooling::Range> Ranges(1, tooling::Range(Offset, Length));
     tooling::Replacements Replaces = reformat(Style, Code, Ranges);
     ReplacementCount = Replaces.size();
@@ -66,7 +67,14 @@ protected:
         JustReplacedNewline = false;
       }
     }
-    return MessedUp;
+    std::string WithoutWhitespace;
+    if (MessedUp[0] != ' ')
+      WithoutWhitespace.push_back(MessedUp[0]);
+    for (unsigned i = 1, e = MessedUp.size(); i != e; ++i) {
+      if (MessedUp[i] != ' ' || MessedUp[i - 1] != ' ')
+        WithoutWhitespace.push_back(MessedUp[i]);
+    }
+    return WithoutWhitespace;
   }
 
   FormatStyle getLLVMStyleWithColumns(unsigned ColumnLimit) {
@@ -103,7 +111,7 @@ TEST_F(FormatTest, MessUp) {
   EXPECT_EQ("1 2 3\n", messUp("1\n2\n3\n"));
   EXPECT_EQ("a\n//b\nc", messUp("a\n//b\nc"));
   EXPECT_EQ("a\n#b\nc", messUp("a\n#b\nc"));
-  EXPECT_EQ("a\n#b  c  d\ne", messUp("a\n#b\\\nc\\\nd\ne"));
+  EXPECT_EQ("a\n#b c d\ne", messUp("a\n#b\\\nc\\\nd\ne"));
 }
 
 //===----------------------------------------------------------------------===//
@@ -1492,6 +1500,18 @@ TEST_F(FormatTest, SeparatesLogicalBlocks) {
                    "protected:\n"
                    "int h;\n"
                    "};"));
+  EXPECT_EQ("class A {\n"
+            "protected:\n"
+            "public:\n"
+            "  void f();\n"
+            "};",
+            format("class A {\n"
+                   "protected:\n"
+                   "\n"
+                   "public:\n"
+                   "\n"
+                   "  void f();\n"
+                   "};"));
 }
 
 TEST_F(FormatTest, FormatsClasses) {
@@ -1518,6 +1538,11 @@ TEST_F(FormatTest, FormatsClasses) {
                "  int i;\n"
                "};",
                getLLVMStyleWithColumns(32));
+  verifyFormat("struct aaaaaaaaaaaaa : public aaaaaaaaaaaaaaaaaaa< // break\n"
+               "                           aaaaaaaaaaaaaaaa> {};");
+  verifyFormat("struct aaaaaaaaaaaaaaaaaaaa\n"
+               "    : public aaaaaaaaaaaaaaaaaaa<aaaaaaaaaaaaaaaaaaaaa,\n"
+               "                                 aaaaaaaaaaaaaaaaaaaaaa> {};");
 }
 
 TEST_F(FormatTest, FormatsVariableDeclarationsAfterStructOrClass) {
@@ -1617,6 +1642,10 @@ TEST_F(FormatTest, FormatsBitfields) {
   verifyFormat("struct Bitfields {\n"
                "  unsigned sClass : 8;\n"
                "  unsigned ValueKind : 2;\n"
+               "};");
+  verifyFormat("struct A {\n"
+               "  int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa : 1,\n"
+               "      bbbbbbbbbbbbbbbbbbbbbbbbb;\n"
                "};");
 }
 
@@ -1844,14 +1873,28 @@ TEST_F(FormatTest, FormatsSmallMacroDefinitionsInSingleLine) {
 }
 
 TEST_F(FormatTest, DoesNotBreakPureVirtualFunctionDefinition) {
-  verifyFormat(
-      "virtual void write(ELFWriter *writerrr,\n"
-      "                   OwningPtr<FileOutputBuffer> &buffer) = 0;");
+  verifyFormat("virtual void write(ELFWriter *writerrr,\n"
+               "                   OwningPtr<FileOutputBuffer> &buffer) = 0;");
+}
+
+TEST_F(FormatTest, BreaksStringLiteralsOnlyInDefine) {
+  verifyFormat("# 1111 \"/aaaaaaaaa/aaaaaaaaaaaaaaaaaaa/aaaaaaaa.cpp\" 2 3",
+               getLLVMStyleWithColumns(40));
+  verifyFormat("#line 11111 \"/aaaaaaaaa/aaaaaaaaaaaaaaaaaaa/aaaaaaaa.cpp\"",
+               getLLVMStyleWithColumns(40));
+  EXPECT_EQ("#define Q                              \\\n"
+            "  \"/aaaaaaaaa/aaaaaaaaaaaaaaaaaaa/\"    \\\n"
+            "  \"aaaaaaaa.cpp\"",
+            format("#define Q \"/aaaaaaaaa/aaaaaaaaaaaaaaaaaaa/aaaaaaaa.cpp\"",
+                   getLLVMStyleWithColumns(40)));
+}
+
+TEST_F(FormatTest, UnderstandsLinePPDirective) {
+  EXPECT_EQ("# 123 \"A string literal\"",
+            format("   #     123    \"A string literal\""));
 }
 
 TEST_F(FormatTest, LayoutUnknownPPDirective) {
-  EXPECT_EQ("#123 \"A string literal\"",
-            format("   #     123    \"A string literal\""));
   EXPECT_EQ("#;", format("#;"));
   verifyFormat("#\n;\n;\n;");
 }
@@ -1867,6 +1910,16 @@ TEST_F(FormatTest, EndOfFileEndsPPDirective) {
   EXPECT_EQ("#line 42 \"test\"",
             format("#  \\\n  line  \\\n  42  \\\n  \"test\""));
   EXPECT_EQ("#define A B", format("#  \\\n define  \\\n    A  \\\n       B"));
+}
+
+TEST_F(FormatTest, DoesntRemoveUnknownTokens) {
+  verifyFormat("#define A \\x20");
+  verifyFormat("#define A \\ x20");
+  EXPECT_EQ("#define A \\ x20", format("#define A \\   x20"));
+  verifyFormat("#define A ''");
+  verifyFormat("#define A ''qqq");
+  verifyFormat("#define A `qqq");
+  verifyFormat("f(\"aaaa, bbbb, \"\\\"ccccc\\\"\");");
 }
 
 TEST_F(FormatTest, IndentsPPDirectiveInReducedSpace) {
@@ -2232,6 +2285,40 @@ TEST_F(FormatTest, LayoutStatementsAroundPreprocessorDirectives) {
                "#endif\n"
                "{\n"
                "}");
+  verifyFormat("void f() {\n"
+               "  if (true)\n"
+               "#ifdef A\n"
+               "    f(42);\n"
+               "  x();\n"
+               "#else\n"
+               "    g();\n"
+               "  x();\n"
+               "#endif\n"
+               "}");
+  verifyFormat("void f(param1, param2,\n"
+               "       param3,\n"
+               "#ifdef A\n"
+               "       param4(param5,\n"
+               "#ifdef A1\n"
+               "              param6,\n"
+               "#ifdef A2\n"
+               "              param7),\n"
+               "#else\n"
+               "              param8),\n"
+               "       param9,\n"
+               "#endif\n"
+               "       param10,\n"
+               "#endif\n"
+               "       param11)\n"
+               "#else\n"
+               "       param12)\n"
+               "#endif\n"
+               "{\n"
+               "  x();\n"
+               "}",
+               getLLVMStyleWithColumns(28));
+  verifyFormat("#if 1\n"
+               "int i;");
 }
 
 TEST_F(FormatTest, LayoutBlockInsideParens) {
@@ -3352,10 +3439,10 @@ TEST_F(FormatTest, AlignsPipes) {
       "         << aaaaaaaaaaaaaaaaaaaaaaaaaaaaa;");
 
   verifyFormat("return out << \"somepacket = {\\n\"\n"
-               "           << \"  aaaaaa = \" << pkt.aaaaaa << \"\\n\"\n"
-               "           << \"  bbbb = \" << pkt.bbbb << \"\\n\"\n"
-               "           << \"  cccccc = \" << pkt.cccccc << \"\\n\"\n"
-               "           << \"  ddd = [\" << pkt.ddd << \"]\\n\"\n"
+               "           << \" aaaaaa = \" << pkt.aaaaaa << \"\\n\"\n"
+               "           << \" bbbb = \" << pkt.bbbb << \"\\n\"\n"
+               "           << \" cccccc = \" << pkt.cccccc << \"\\n\"\n"
+               "           << \" ddd = [\" << pkt.ddd << \"]\\n\"\n"
                "           << \"}\";");
 
   verifyFormat("llvm::outs() << \"aaaaaaaaaaaaaaaa: \" << aaaaaaaaaaaaaaaa\n"
@@ -3569,6 +3656,9 @@ TEST_F(FormatTest, WrapsTemplateDeclarations) {
                "          template <typename> class Baaaaaaar>\n"
                "struct C {};",
                AlwaysBreak);
+  verifyFormat("template <typename T> // T can be A, B or C.\n"
+               "struct C {};",
+               AlwaysBreak);
 }
 
 TEST_F(FormatTest, WrapsAtNestedNameSpecifiers) {
@@ -3623,8 +3713,14 @@ TEST_F(FormatTest, UnderstandsTemplateParameters) {
   verifyGoogleFormat("A<A<int> > a;");
   verifyGoogleFormat("A<A<A<int> > > a;");
   verifyGoogleFormat("A<A<A<A<int> > > > a;");
+  verifyGoogleFormat("A<::A<int>> a;");
+  verifyGoogleFormat("A<::A> a;");
+  verifyGoogleFormat("A< ::A> a;");
+  verifyGoogleFormat("A< ::A<int> > a;");
   EXPECT_EQ("A<A<A<A>>> a;", format("A<A<A<A> >> a;", getGoogleStyle()));
   EXPECT_EQ("A<A<A<A>>> a;", format("A<A<A<A>> > a;", getGoogleStyle()));
+  EXPECT_EQ("A<::A<int>> a;", format("A< ::A<int>> a;", getGoogleStyle()));
+  EXPECT_EQ("A<::A<int>> a;", format("A<::A<int> > a;", getGoogleStyle()));
 
   verifyFormat("test >> a >> b;");
   verifyFormat("test << a >> b;");
@@ -4261,7 +4357,7 @@ TEST_F(FormatTest, IncorrectCodeMissingParens) {
 
 TEST_F(FormatTest, DoesNotTouchUnwrappedLinesWithErrors) {
   verifyFormat("namespace {\n"
-               "class Foo {  Foo  (\n"
+               "class Foo { Foo (\n"
                "};\n"
                "} // comment");
 }
@@ -4456,6 +4552,7 @@ TEST_F(FormatTest, UnderstandContextOfRecordTypeKeywords) {
   verifyFormat("class __attribute__(X) Z {\n} n;");
   verifyFormat("class __declspec(X) Z {\n} n;");
   verifyFormat("class A##B##C {\n} n;");
+  verifyFormat("class alignas(16) Z {\n} n;");
 
   // Redefinition from nested context:
   verifyFormat("class A::B::C {\n} n;");
@@ -4487,8 +4584,11 @@ TEST_F(FormatTest, UnderstandContextOfRecordTypeKeywords) {
 }
 
 TEST_F(FormatTest, DoNotInterfereWithErrorAndWarning) {
-  verifyFormat("#error Leave     all         white!!!!! space* alone!\n");
-  verifyFormat("#warning Leave     all         white!!!!! space* alone!\n");
+  EXPECT_EQ("#error Leave     all         white!!!!! space* alone!\n",
+            format("#error Leave     all         white!!!!! space* alone!\n"));
+  EXPECT_EQ(
+      "#warning Leave     all         white!!!!! space* alone!\n",
+      format("#warning Leave     all         white!!!!! space* alone!\n"));
   EXPECT_EQ("#error 1", format("  #  error   1"));
   EXPECT_EQ("#warning 1", format("  #  warning 1"));
 }
@@ -4533,7 +4633,8 @@ TEST_F(FormatTest, MergeHandlingInTheFaceOfPreprocessorDirectives) {
                "  if (true) continue;\n"
                "#endif\n"
                "  // Comment\n"
-               "  if (true) continue;",
+               "  if (true) continue;\n"
+               "}",
                ShortMergedIf);
 }
 
@@ -5867,6 +5968,21 @@ TEST_F(FormatTest, ConfigurableUseOfTab) {
                    Tab));
 
   Tab.UseTab = FormatStyle::UT_ForIndentation;
+  verifyFormat("T t[] = {\n"
+               "\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "};",
+               Tab);
+  verifyFormat("enum A {\n"
+               "\ta1,\n"
+               "\ta2,\n"
+               "\ta3\n"
+               "};",
+               Tab);
   EXPECT_EQ("if (aaaaaaaa && // q\n"
             "    bb)         // w\n"
             "\t;",
@@ -6574,6 +6690,20 @@ TEST_F(FormatTest, ConstructorInitializerIndentWidth) {
                ", b(b)\n"
                ", c(c) {}",
                Style);
+
+  Style.ConstructorInitializerAllOnOneLineOrOnePerLine = true;
+  Style.ConstructorInitializerIndentWidth = 4;
+  verifyFormat(
+      "SomeClass::Constructor()\n"
+      "    : aaaaaaaa(aaaaaaaa), aaaaaaaa(aaaaaaaa), aaaaaaaa(aaaaaaaa) {}",
+      Style);
+  Style.ConstructorInitializerIndentWidth = 4;
+  Style.ColumnLimit = 60;
+  verifyFormat("SomeClass::Constructor()\n"
+               "    : aaaaaaaa(aaaaaaaa)\n"
+               "    , aaaaaaaa(aaaaaaaa)\n"
+               "    , aaaaaaaa(aaaaaaaa) {}",
+               Style);
 }
 
 TEST_F(FormatTest, FormatsWithWebKitStyle) {
@@ -6737,6 +6867,13 @@ TEST_F(FormatTest, SupportsCRLF) {
                    "  b; \\\r\n"
                    "  c; d; \r\n",
                    getGoogleStyle()));
+}
+
+TEST_F(FormatTest, MunchSemicolonAfterBlocks) {
+  verifyFormat("MY_CLASS(C) {\n"
+               "  int i;\n"
+               "  int j;\n"
+               "};");
 }
 
 } // end namespace tooling

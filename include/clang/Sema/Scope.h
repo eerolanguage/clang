@@ -150,11 +150,10 @@ private:
   typedef llvm::SmallVector<const char *, 32> PrefixListTy;
   PrefixListTy PrefixesInScope;
 
-  /// Entity - The entity with which this scope is associated. For
+  /// The DeclContext with which this scope is associated. For
   /// example, the entity of a class scope is the class itself, the
-  /// entity of a function scope is a function, etc. This field is
-  /// maintained by the Action implementation.
-  void *Entity;
+  /// entity of a function scope is a function, etc.
+  DeclContext *Entity;
 
   typedef SmallVector<UsingDirectiveDecl *, 2> UsingDirectivesTy;
   UsingDirectivesTy UsingDirectives;
@@ -250,8 +249,8 @@ public:
   bool prefix_empty() const { return PrefixesInScope.empty(); }
   void AddPrefix(const char *P) { PrefixesInScope.push_back(P); }
 
-  void* getEntity() const { return Entity; }
-  void setEntity(void *E) { Entity = E; }
+  DeclContext *getEntity() const { return Entity; }
+  void setEntity(DeclContext *E) { Entity = E; }
 
   bool hasErrorOccurred() const { return ErrorTrap.hasErrorOccurred(); }
 

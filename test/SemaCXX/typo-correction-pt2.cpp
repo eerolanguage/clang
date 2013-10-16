@@ -135,3 +135,36 @@ void test() {
     req.set_check(false);  // expected-error-re {{use of undeclared identifier 'req'$}}
 }
 }
+
+namespace PR17394 {
+  class A {
+  protected:
+    long zzzzzzzzzz;
+  };
+  class B : private A {};
+  B zzzzzzzzzy<>; // expected-error {{expected ';' after top level declarator}}{}
+}
+
+namespace correct_fields_in_member_funcs {
+struct S {
+  int my_member;  // expected-note {{'my_member' declared here}}
+  void f() { my_menber = 1; }  // expected-error {{use of undeclared identifier 'my_menber'; did you mean 'my_member'?}}
+};
+}
+
+namespace PR17019 {
+  template<class F>
+  struct evil {
+    evil(F de) {  // expected-note {{'de' declared here}}
+      de_;  // expected-error {{use of undeclared identifier 'de_'; did you mean 'de'?}} \
+            // expected-warning {{expression result unused}}
+    }
+    ~evil() {
+      de_->bar()  // expected-error {{use of undeclared identifier 'de_'}}
+    }
+  };
+
+  void meow() {
+    evil<int> Q(0); // expected-note {{in instantiation of member function}}
+  }
+}

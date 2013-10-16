@@ -544,8 +544,7 @@ public:
                                       CXXRecordDecl *ThisContext,
                                       unsigned ThisTypeQuals);
 
-  StmtResult
-  TransformSEHHandler(Stmt *Handler);
+  StmtResult TransformSEHHandler(Stmt *Handler);
 
   QualType
   TransformTemplateSpecializationType(TypeLocBuilder &TLB,
@@ -1313,6 +1312,18 @@ public:
                                               EndLoc);
   }
 
+  /// \brief Build a new OpenMP 'firstprivate' clause.
+  ///
+  /// By default, performs semantic analysis to build the new statement.
+  /// Subclasses may override this routine to provide different behavior.
+  OMPClause *RebuildOMPFirstprivateClause(ArrayRef<Expr *> VarList,
+                                          SourceLocation StartLoc,
+                                          SourceLocation LParenLoc,
+                                          SourceLocation EndLoc) {
+    return getSema().ActOnOpenMPFirstprivateClause(VarList, StartLoc, LParenLoc,
+                                                   EndLoc);
+  }
+
   OMPClause *RebuildOMPSharedClause(ArrayRef<Expr *> VarList,
                                     SourceLocation StartLoc,
                                     SourceLocation LParenLoc,
@@ -1456,22 +1467,18 @@ public:
     return getSema().FinishCXXForRangeStmt(ForRange, Body);
   }
 
-  StmtResult RebuildSEHTryStmt(bool IsCXXTry,
-                               SourceLocation TryLoc,
-                               Stmt *TryBlock,
-                               Stmt *Handler) {
-    return getSema().ActOnSEHTryBlock(IsCXXTry,TryLoc,TryBlock,Handler);
+  StmtResult RebuildSEHTryStmt(bool IsCXXTry, SourceLocation TryLoc,
+                               Stmt *TryBlock, Stmt *Handler) {
+    return getSema().ActOnSEHTryBlock(IsCXXTry, TryLoc, TryBlock, Handler);
   }
 
-  StmtResult RebuildSEHExceptStmt(SourceLocation Loc,
-                                  Expr *FilterExpr,
+  StmtResult RebuildSEHExceptStmt(SourceLocation Loc, Expr *FilterExpr,
                                   Stmt *Block) {
-    return getSema().ActOnSEHExceptBlock(Loc,FilterExpr,Block);
+    return getSema().ActOnSEHExceptBlock(Loc, FilterExpr, Block);
   }
 
-  StmtResult RebuildSEHFinallyStmt(SourceLocation Loc,
-                                   Stmt *Block) {
-    return getSema().ActOnSEHFinallyBlock(Loc,Block);
+  StmtResult RebuildSEHFinallyStmt(SourceLocation Loc, Stmt *Block) {
+    return getSema().ActOnSEHFinallyBlock(Loc, Block);
   }
 
   /// \brief Build a new expression that references a declaration.
@@ -5987,23 +5994,19 @@ TreeTransform<Derived>::TransformObjCForCollectionStmt(
                                                    Body.get());
 }
 
-
-template<typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformCXXCatchStmt(CXXCatchStmt *S) {
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformCXXCatchStmt(CXXCatchStmt *S) {
   // Transform the exception declaration, if any.
   VarDecl *Var = 0;
-  if (S->getExceptionDecl()) {
-    VarDecl *ExceptionDecl = S->getExceptionDecl();
-    TypeSourceInfo *T = getDerived().TransformType(
-                                            ExceptionDecl->getTypeSourceInfo());
+  if (VarDecl *ExceptionDecl = S->getExceptionDecl()) {
+    TypeSourceInfo *T =
+        getDerived().TransformType(ExceptionDecl->getTypeSourceInfo());
     if (!T)
       return StmtError();
 
-    Var = getDerived().RebuildExceptionDecl(ExceptionDecl, T,
-                                            ExceptionDecl->getInnerLocStart(),
-                                            ExceptionDecl->getLocation(),
-                                            ExceptionDecl->getIdentifier());
+    Var = getDerived().RebuildExceptionDecl(
+        ExceptionDecl, T, ExceptionDecl->getInnerLocStart(),
+        ExceptionDecl->getLocation(), ExceptionDecl->getIdentifier());
     if (!Var || Var->isInvalidDecl())
       return StmtError();
   }
@@ -6013,31 +6016,25 @@ TreeTransform<Derived>::TransformCXXCatchStmt(CXXCatchStmt *S) {
   if (Handler.isInvalid())
     return StmtError();
 
-  if (!getDerived().AlwaysRebuild() &&
-      !Var &&
+  if (!getDerived().AlwaysRebuild() && !Var &&
       Handler.get() == S->getHandlerBlock())
     return SemaRef.Owned(S);
 
-  return getDerived().RebuildCXXCatchStmt(S->getCatchLoc(),
-                                          Var,
-                                          Handler.get());
+  return getDerived().RebuildCXXCatchStmt(S->getCatchLoc(), Var, Handler.get());
 }
 
-template<typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformCXXTryStmt(CXXTryStmt *S) {
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformCXXTryStmt(CXXTryStmt *S) {
   // Transform the try block itself.
-  StmtResult TryBlock
-    = getDerived().TransformCompoundStmt(S->getTryBlock());
+  StmtResult TryBlock = getDerived().TransformCompoundStmt(S->getTryBlock());
   if (TryBlock.isInvalid())
     return StmtError();
 
   // Transform the handlers.
   bool HandlerChanged = false;
-  SmallVector<Stmt*, 8> Handlers;
+  SmallVector<Stmt *, 8> Handlers;
   for (unsigned I = 0, N = S->getNumHandlers(); I != N; ++I) {
-    StmtResult Handler
-      = getDerived().TransformCXXCatchStmt(S->getHandler(I));
+    StmtResult Handler = getDerived().TransformCXXCatchStmt(S->getHandler(I));
     if (Handler.isInvalid())
       return StmtError();
 
@@ -6045,8 +6042,7 @@ TreeTransform<Derived>::TransformCXXTryStmt(CXXTryStmt *S) {
     Handlers.push_back(Handler.takeAs<Stmt>());
   }
 
-  if (!getDerived().AlwaysRebuild() &&
-      TryBlock.get() == S->getTryBlock() &&
+  if (!getDerived().AlwaysRebuild() && TryBlock.get() == S->getTryBlock() &&
       !HandlerChanged)
     return SemaRef.Owned(S);
 
@@ -6218,52 +6214,50 @@ TreeTransform<Derived>::TransformMSPropertyRefExpr(MSPropertyRefExpr *E) {
                         QualifierLoc, E->getMemberLoc());
 }
 
-template<typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformSEHTryStmt(SEHTryStmt *S) {
-  StmtResult TryBlock; //  = getDerived().TransformCompoundStmt(S->getTryBlock());
-  if(TryBlock.isInvalid()) return StmtError();
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformSEHTryStmt(SEHTryStmt *S) {
+  StmtResult TryBlock = getDerived().TransformCompoundStmt(S->getTryBlock());
+  if (TryBlock.isInvalid())
+    return StmtError();
 
   StmtResult Handler = getDerived().TransformSEHHandler(S->getHandler());
-  if(!getDerived().AlwaysRebuild() &&
-     TryBlock.get() == S->getTryBlock() &&
-     Handler.get() == S->getHandler())
+  if (Handler.isInvalid())
+    return StmtError();
+
+  if (!getDerived().AlwaysRebuild() && TryBlock.get() == S->getTryBlock() &&
+      Handler.get() == S->getHandler())
     return SemaRef.Owned(S);
 
-  return getDerived().RebuildSEHTryStmt(S->getIsCXXTry(),
-                                        S->getTryLoc(),
-                                        TryBlock.take(),
-                                        Handler.take());
+  return getDerived().RebuildSEHTryStmt(S->getIsCXXTry(), S->getTryLoc(),
+                                        TryBlock.take(), Handler.take());
 }
 
-template<typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformSEHFinallyStmt(SEHFinallyStmt *S) {
-  StmtResult Block; //  = getDerived().TransformCompoundStatement(S->getBlock());
-  if(Block.isInvalid()) return StmtError();
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformSEHFinallyStmt(SEHFinallyStmt *S) {
+  StmtResult Block = getDerived().TransformCompoundStmt(S->getBlock());
+  if (Block.isInvalid())
+    return StmtError();
 
-  return getDerived().RebuildSEHFinallyStmt(S->getFinallyLoc(),
-                                            Block.take());
+  return getDerived().RebuildSEHFinallyStmt(S->getFinallyLoc(), Block.take());
 }
 
-template<typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformSEHExceptStmt(SEHExceptStmt *S) {
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformSEHExceptStmt(SEHExceptStmt *S) {
   ExprResult FilterExpr = getDerived().TransformExpr(S->getFilterExpr());
-  if(FilterExpr.isInvalid()) return StmtError();
+  if (FilterExpr.isInvalid())
+    return StmtError();
 
-  StmtResult Block; //  = getDerived().TransformCompoundStatement(S->getBlock());
-  if(Block.isInvalid()) return StmtError();
+  StmtResult Block = getDerived().TransformCompoundStmt(S->getBlock());
+  if (Block.isInvalid())
+    return StmtError();
 
-  return getDerived().RebuildSEHExceptStmt(S->getExceptLoc(),
-                                           FilterExpr.take(),
+  return getDerived().RebuildSEHExceptStmt(S->getExceptLoc(), FilterExpr.take(),
                                            Block.take());
 }
 
-template<typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformSEHHandler(Stmt *Handler) {
-  if(isa<SEHFinallyStmt>(Handler))
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformSEHHandler(Stmt *Handler) {
+  if (isa<SEHFinallyStmt>(Handler))
     return getDerived().TransformSEHFinallyStmt(cast<SEHFinallyStmt>(Handler));
   else
     return getDerived().TransformSEHExceptStmt(cast<SEHExceptStmt>(Handler));
@@ -6339,6 +6333,26 @@ TreeTransform<Derived>::TransformOMPPrivateClause(OMPPrivateClause *C) {
                                               C->getLocStart(),
                                               C->getLParenLoc(),
                                               C->getLocEnd());
+}
+
+template<typename Derived>
+OMPClause *
+TreeTransform<Derived>::TransformOMPFirstprivateClause(
+                                                 OMPFirstprivateClause *C) {
+  llvm::SmallVector<Expr *, 16> Vars;
+  Vars.reserve(C->varlist_size());
+  for (OMPFirstprivateClause::varlist_iterator I = C->varlist_begin(),
+                                               E = C->varlist_end();
+       I != E; ++I) {
+    ExprResult EVar = getDerived().TransformExpr(cast<Expr>(*I));
+    if (EVar.isInvalid())
+      return 0;
+    Vars.push_back(EVar.take());
+  }
+  return getDerived().RebuildOMPFirstprivateClause(Vars,
+                                                   C->getLocStart(),
+                                                   C->getLParenLoc(),
+                                                   C->getLocEnd());
 }
 
 template<typename Derived>
@@ -8095,6 +8109,7 @@ ExprResult
 TreeTransform<Derived>::TransformDependentScopeDeclRefExpr(
                                                DependentScopeDeclRefExpr *E,
                                                bool IsAddressOfOperand) {
+  assert(E->getQualifierLoc());
   NestedNameSpecifierLoc QualifierLoc
   = getDerived().TransformNestedNameSpecifierLoc(E->getQualifierLoc());
   if (!QualifierLoc)

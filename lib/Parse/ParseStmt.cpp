@@ -129,7 +129,7 @@ public:
 
   virtual bool ValidateCandidate(const TypoCorrection &candidate) {
     if (FieldDecl *FD = candidate.getCorrectionDeclAs<FieldDecl>())
-      return isa<ObjCIvarDecl>(FD);
+      return !candidate.getCorrectionSpecifier() || isa<ObjCIvarDecl>(FD);
     if (NextToken.is(tok::equal))
       return candidate.getCorrectionDeclAs<VarDecl>();
     if (NextToken.is(tok::period) &&
@@ -1520,16 +1520,14 @@ StmtResult Parser::ParseDoStatement() {
     return StmtError();
   }
 
-  // Parse the parenthesized condition.
+  // Parse the parenthesized expression.
   BalancedDelimiterTracker T(*this, tok::l_paren);
   if (getLangOpts().Eero && !PP.isInLegacyMode(DoLoc)) 
     T.setOptional();
   T.consumeOpen();
 
-  // FIXME: Do not just parse the attribute contents and throw them away
-  ParsedAttributesWithRange attrs(AttrFactory);
-  MaybeParseCXX11Attributes(attrs);
-  ProhibitAttributes(attrs);
+  // A do-while expression is not a condition, so can't have attributes.
+  DiagnoseAndSkipCXX11Attributes();
 
   ExprResult Cond = ParseExpression();
   T.consumeClose();
@@ -2930,9 +2928,10 @@ StmtResult Parser::ParseCXXTryBlockCommon(SourceLocation TryLoc, bool FnTry) {
   }
   else {
     StmtVector Handlers;
-    ParsedAttributesWithRange attrs(AttrFactory);
-    MaybeParseCXX11Attributes(attrs);
-    ProhibitAttributes(attrs);
+
+    // C++11 attributes can't appear here, despite this context seeming
+    // statement-like.
+    DiagnoseAndSkipCXX11Attributes();
 
     if (Tok.isNot(tok::kw_catch))
       return StmtError(Diag(Tok, diag::err_expected_catch));

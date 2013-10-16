@@ -89,6 +89,7 @@ static CXTypeKind GetTypeKind(QualType T) {
     TKCASE(VariableArray);
     TKCASE(DependentSizedArray);
     TKCASE(Vector);
+    TKCASE(MemberPointer);
     default:
       return CXType_Unexposed;
   }
@@ -365,6 +366,9 @@ CXType clang_getPointeeType(CXType CT) {
     case Type::ObjCObjectPointer:
       T = cast<ObjCObjectPointerType>(TP)->getPointeeType();
       break;
+    case Type::MemberPointer:
+      T = cast<MemberPointerType>(TP)->getPointeeType();
+      break;
     default:
       T = QualType();
       break;
@@ -478,6 +482,7 @@ CXString clang_getTypeKindSpelling(enum CXTypeKind K) {
     TKIND(VariableArray);
     TKIND(DependentSizedArray);
     TKIND(Vector);
+    TKIND(MemberPointer);
   }
 #undef TKIND
   return cxstring::createRef(s);
@@ -707,6 +712,17 @@ long long clang_Type_getAlignOf(CXType T) {
   return Ctx.getTypeAlignInChars(QT).getQuantity();
 }
 
+CXType clang_Type_getClassType(CXType CT) {
+  QualType ET = QualType();
+  QualType T = GetQualType(CT);
+  const Type *TP = T.getTypePtrOrNull();
+
+  if (TP && TP->getTypeClass() == Type::MemberPointer) {
+    ET = QualType(cast<MemberPointerType> (TP)->getClass(), 0);
+  }
+  return MakeCXType(ET, GetTU(CT));
+}
+
 long long clang_Type_getSizeOf(CXType T) {
   if (T.kind == CXType_Invalid)
     return CXTypeLayoutError_Invalid;
@@ -798,6 +814,24 @@ long long clang_Type_getOffsetOf(CXType PT, const char *S) {
     return Ctx.getFieldOffset(IFD);
   // we don't want any other Decl Type.
   return CXTypeLayoutError_InvalidFieldName;
+}
+
+enum CXRefQualifierKind clang_Type_getCXXRefQualifier(CXType T) {
+  QualType QT = GetQualType(T);
+  if (QT.isNull())
+    return CXRefQualifier_None;
+  const FunctionProtoType *FD = QT->getAs<FunctionProtoType>();
+  if (!FD)
+    return CXRefQualifier_None;
+  switch (FD->getRefQualifier()) {
+    case RQ_None:
+      return CXRefQualifier_None;
+    case RQ_LValue:
+      return CXRefQualifier_LValue;
+    case RQ_RValue:
+      return CXRefQualifier_RValue;
+  }
+  return CXRefQualifier_None;
 }
 
 unsigned clang_Cursor_isBitField(CXCursor C) {

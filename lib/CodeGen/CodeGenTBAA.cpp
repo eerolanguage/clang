@@ -86,7 +86,7 @@ static bool TypeHasMayAlias(QualType QTy) {
 
 llvm::MDNode *
 CodeGenTBAA::getTBAAInfo(QualType QTy) {
-  // At -O0 TBAA is not emitted for regular types.
+  // At -O0 or relaxed aliasing, TBAA is not emitted for regular types.
   if (CodeGenOpts.OptimizationLevel == 0 || CodeGenOpts.RelaxedAliasing)
     return NULL;
 
@@ -291,6 +291,9 @@ CodeGenTBAA::getTBAAStructTypeInfo(QualType QTy) {
 llvm::MDNode *
 CodeGenTBAA::getTBAAStructTagInfo(QualType BaseQTy, llvm::MDNode *AccessNode,
                                   uint64_t Offset) {
+  if (!AccessNode)
+    return NULL;
+
   if (!CodeGenOpts.StructPathTBAA)
     return getTBAAScalarTagInfo(AccessNode);
 
@@ -312,6 +315,8 @@ CodeGenTBAA::getTBAAStructTagInfo(QualType BaseQTy, llvm::MDNode *AccessNode,
 
 llvm::MDNode *
 CodeGenTBAA::getTBAAScalarTagInfo(llvm::MDNode *AccessNode) {
+  if (!AccessNode)
+    return NULL;
   if (llvm::MDNode *N = ScalarTagMetadataCache[AccessNode])
     return N;
 

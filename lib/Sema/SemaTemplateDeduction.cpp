@@ -2276,7 +2276,7 @@ Sema::DeduceTemplateArguments(ClassTemplatePartialSpecializationDecl *Partial,
   SmallVector<TemplateArgument, 4> DeducedArgs(Deduced.begin(), Deduced.end());
   InstantiatingTemplate Inst(*this, Partial->getLocation(), Partial,
                              DeducedArgs, Info);
-  if (Inst)
+  if (Inst.isInvalid())
     return TDK_InstantiationDepth;
 
   if (Trap.hasErrorOccurred())
@@ -2440,7 +2440,7 @@ Sema::DeduceTemplateArguments(VarTemplatePartialSpecializationDecl *Partial,
   SmallVector<TemplateArgument, 4> DeducedArgs(Deduced.begin(), Deduced.end());
   InstantiatingTemplate Inst(*this, Partial->getLocation(), Partial,
                              DeducedArgs, Info);
-  if (Inst)
+  if (Inst.isInvalid())
     return TDK_InstantiationDepth;
 
   if (Trap.hasErrorOccurred())
@@ -2528,7 +2528,7 @@ Sema::SubstituteExplicitTemplateArguments(
                              FunctionTemplate, DeducedArgs,
            ActiveTemplateInstantiation::ExplicitTemplateArgumentSubstitution,
                              Info);
-  if (Inst)
+  if (Inst.isInvalid())
     return TDK_InstantiationDepth;
 
   if (CheckTemplateArgumentList(FunctionTemplate,
@@ -2779,7 +2779,7 @@ Sema::FinishTemplateArgumentDeduction(FunctionTemplateDecl *FunctionTemplate,
                              FunctionTemplate, DeducedArgs,
               ActiveTemplateInstantiation::DeducedTemplateArgumentSubstitution,
                              Info);
-  if (Inst)
+  if (Inst.isInvalid())
     return TDK_InstantiationDepth;
 
   ContextRAII SavedContext(*this, FunctionTemplate->getTemplatedDecl());
@@ -3745,11 +3745,8 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *ConversionTemplate,
   const bool IsGenericLambdaConversionOperator = 
       isLambdaConversionOperator(Conv);
   if (IsGenericLambdaConversionOperator) {
-    const Type *FromTypePtr = P.getTypePtr();
     const Type *ToTypePtr = A.getTypePtr();
 
-    assert(P->isPointerType()); 
-    FromTypePtr = P->getPointeeType().getTypePtr();
     assert(A->isPointerType());
     ToTypePtr = A->getPointeeType().getTypePtr();
     
@@ -3781,11 +3778,11 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *ConversionTemplate,
                                                     0, CallOpSpec, OpInfo))
       return Result;
  
-    bool HadToDeduceReturnTypeDuringCurrentCall = false;
+    // bool HadToDeduceReturnTypeDuringCurrentCall = false;
     // If we need to deduce the return type, do so (instantiates the callop).
     if (GenericLambdaCallOperatorHasDeducedReturnType && 
         CallOpSpec->getResultType()->isUndeducedType()) {
-      HadToDeduceReturnTypeDuringCurrentCall = true;
+      // HadToDeduceReturnTypeDuringCurrentCall = true;
       DeduceReturnType(CallOpSpec, CallOpSpec->getPointOfInstantiation(),
                       /*Diagnose*/ true);
     }

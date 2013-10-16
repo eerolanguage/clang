@@ -34,6 +34,10 @@
 
 using namespace clang;
 
+Decl *clang::getPrimaryMergedDecl(Decl *D) {
+  return D->getASTContext().getPrimaryMergedDecl(D);
+}
+
 //===----------------------------------------------------------------------===//
 // NamedDecl Implementation
 //===----------------------------------------------------------------------===//
@@ -698,8 +702,8 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
       // require looking at the linkage of this function, and we don't need this
       // for correctness because the type is not part of the function's
       // signature.
-      // FIXME: This is a hack. We should be able to solve this circularity some
-      // other way.
+      // FIXME: This is a hack. We should be able to solve this circularity and 
+      // the one in getLVForClassMember for Functions some other way.
       QualType TypeAsWritten = Function->getType();
       if (TypeSourceInfo *TSI = Function->getTypeSourceInfo())
         TypeAsWritten = TSI->getType();
@@ -826,9 +830,20 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D,
   if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(D)) {
     // If the type of the function uses a type with unique-external
     // linkage, it's not legally usable from outside this translation unit.
-    if (MD->getType()->getLinkage() == UniqueExternalLinkage)
-      return LinkageInfo::uniqueExternal();
-
+    // But only look at the type-as-written. If this function has an auto-deduced
+    // return type, we can't compute the linkage of that type because it could
+    // require looking at the linkage of this function, and we don't need this
+    // for correctness because the type is not part of the function's
+    // signature.
+    // FIXME: This is a hack. We should be able to solve this circularity and the
+    // one in getLVForNamespaceScopeDecl for Functions some other way.
+    {
+      QualType TypeAsWritten = MD->getType();
+      if (TypeSourceInfo *TSI = MD->getTypeSourceInfo())
+        TypeAsWritten = TSI->getType();
+      if (TypeAsWritten->getLinkage() == UniqueExternalLinkage)
+        return LinkageInfo::uniqueExternal();
+    }
     // If this is a method template specialization, use the linkage for
     // the template parameters and arguments.
     if (FunctionTemplateSpecializationInfo *spec
@@ -1092,6 +1107,19 @@ static LinkageInfo getLVForLocalDecl(const NamedDecl *D,
                      LV.isVisibilityExplicit());
 }
 
+static inline const CXXRecordDecl*
+getOutermostEnclosingLambda(const CXXRecordDecl *Record) {
+  const CXXRecordDecl *Ret = Record;
+  while (Record && Record->isLambda()) {
+    Ret = Record;
+    if (!Record->getParent()) break;
+    // Get the Containing Class of this Lambda Class
+    Record = dyn_cast_or_null<CXXRecordDecl>(
+      Record->getParent()->getParent());
+  }
+  return Ret;
+}
+
 static LinkageInfo computeLVForDecl(const NamedDecl *D,
                                     LVComputationKind computation) {
   // Objective-C: treat all Objective-C declarations as having external
@@ -1122,9 +1150,24 @@ static LinkageInfo computeLVForDecl(const NamedDecl *D,
           return LinkageInfo::internal();
         }
 
-        // This lambda has its linkage/visibility determined by its owner.
-        return getLVForClosure(D->getDeclContext()->getRedeclContext(),
-                               Record->getLambdaContextDecl(), computation);
+        // This lambda has its linkage/visibility determined:
+        //  - either by the outermost lambda if that lambda has no mangling 
+        //    number. 
+        //  - or by the parent of the outer most lambda
+        // This prevents infinite recursion in settings such as nested lambdas 
+        // used in NSDMI's, for e.g. 
+        //  struct L {
+        //    int t{};
+        //    int t2 = ([](int a) { return [](int b) { return b; };})(t)(t);    
+        //  };
+        const CXXRecordDecl *OuterMostLambda = 
+            getOutermostEnclosingLambda(Record);
+        if (!OuterMostLambda->getLambdaManglingNumber())
+          return LinkageInfo::internal();
+        
+        return getLVForClosure(
+                  OuterMostLambda->getDeclContext()->getRedeclContext(),
+                  OuterMostLambda->getLambdaContextDecl(), computation);
       }
       
       break;
@@ -3066,6 +3109,10 @@ unsigned FieldDecl::getBitWidthValue(const ASTContext &Ctx) const {
 }
 
 unsigned FieldDecl::getFieldIndex() const {
+  const FieldDecl *Canonical = getCanonicalDecl();
+  if (Canonical != this)
+    return Canonical->getFieldIndex();
+
   if (CachedFieldIndex) return CachedFieldIndex - 1;
 
   unsigned Index = 0;
@@ -3073,7 +3120,7 @@ unsigned FieldDecl::getFieldIndex() const {
 
   for (RecordDecl::field_iterator I = RD->field_begin(), E = RD->field_end();
        I != E; ++I, ++Index)
-    I->CachedFieldIndex = Index + 1;
+    I->getCanonicalDecl()->CachedFieldIndex = Index + 1;
 
   assert(CachedFieldIndex && "failed to find field in parent");
   return CachedFieldIndex - 1;
