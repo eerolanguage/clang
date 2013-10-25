@@ -2840,6 +2840,9 @@ Decl *Parser::ParseFunctionTryBlock(Decl *Decl, ParseScope &BodyScope) {
 }
 
 bool Parser::trySkippingFunctionBody() {
+  if (getLangOpts().OffSideRule && !PP.isInLegacyHeader()) {
+    return false;
+  }
   assert(Tok.is(tok::l_brace));
   assert(SkipFunctionBodies &&
          "Should only be called when SkipFunctionBodies is enabled");
