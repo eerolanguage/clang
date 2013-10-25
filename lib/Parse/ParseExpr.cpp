@@ -1609,12 +1609,14 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           ObjectType = ParsedType();
       }
 
-      const QualType &LHSType = LHS.get()->getType();
-      const bool isEeroObjectExpr = 
-          isEero && (OpKind == tok::period) && !LHS.isInvalid() &&
-          (LHSType->isObjCObjectPointerType() ||
-           LHSType->isSpecificPlaceholderType(BuiltinType::PseudoObject) ||
-           LHSType->isBlockPointerType());
+      bool isEeroObjectExpr = false;
+      if (isEero && (OpKind == tok::period) && !LHS.isInvalid()) {
+        const QualType &LHSType = LHS.get()->getType();
+        isEeroObjectExpr =
+            (LHSType->isObjCObjectPointerType() ||
+             LHSType->isSpecificPlaceholderType(BuiltinType::PseudoObject) ||
+             LHSType->isBlockPointerType());
+      }
 
       if (Tok.is(tok::code_completion)) {
         if (isEeroObjectExpr) 
@@ -1659,9 +1661,9 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         IdentifierInfo *Id = Tok.getIdentifierInfo();
         SourceLocation Loc = ConsumeToken();
         Name.setIdentifier(Id, Loc);
-      } else if (isEeroObjectExpr && ((Tok.is(tok::identifier) && 
-                                       NextToken().is(tok::colon)) ||
-                                      Tok.is(tok::colon))) {
+      } else if (isEeroObjectExpr && !LHS.isInvalid() &&
+                 ((Tok.is(tok::identifier) && NextToken().is(tok::colon)) ||
+                  Tok.is(tok::colon))) {
         LHS = ParseObjCMessageExpressionBody(LHS.get()->getLocStart(), 
                                              SourceLocation(),
                                              ParsedType(), LHS.get());
@@ -1675,7 +1677,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         LHS = ExprError();
       
       // Universal dot notation, including for 'id' and block objects
-      if (isEeroObjectExpr) {
+      if (isEeroObjectExpr && !LHS.isInvalid()) {
         Selector Sel;
         SourceLocation MsgEndLoc;
         MultiExprArg MsgExprArg;
