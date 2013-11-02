@@ -631,9 +631,9 @@ public:
   template <class decl_type> friend class RedeclarableTemplate;
 
   /// \brief Retrieves the canonical declaration of this template.
-  RedeclarableTemplateDecl *getCanonicalDecl() { return getFirstDeclaration(); }
-  const RedeclarableTemplateDecl *getCanonicalDecl() const { 
-    return getFirstDeclaration(); 
+  RedeclarableTemplateDecl *getCanonicalDecl() { return getFirstDecl(); }
+  const RedeclarableTemplateDecl *getCanonicalDecl() const {
+    return getFirstDecl();
   }
 
   /// \brief Determines whether this template was a specialization of a
@@ -715,6 +715,7 @@ public:
   using redeclarable_base::redecls_end;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
+  using redeclarable_base::isFirstDecl;
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -1448,8 +1449,7 @@ public:
                                     bool Qualified) const;
 
   ClassTemplateSpecializationDecl *getMostRecentDecl() {
-    CXXRecordDecl *Recent
-        = cast<CXXRecordDecl>(CXXRecordDecl::getMostRecentDecl());
+    CXXRecordDecl *Recent = CXXRecordDecl::getMostRecentDecl();
     while (!isa<ClassTemplateSpecializationDecl>(Recent)) {
       // FIXME: Does injected class name need to be in the redeclarations chain?
       assert(Recent->isInjectedClassName() && Recent->getPreviousDecl());
@@ -1725,15 +1725,15 @@ public:
   /// \c Outer<float>::Inner<U*>, this function would return
   /// \c Outer<T>::Inner<U*>.
   ClassTemplatePartialSpecializationDecl *getInstantiatedFromMember() {
-    ClassTemplatePartialSpecializationDecl *First
-      = cast<ClassTemplatePartialSpecializationDecl>(getFirstDeclaration());
+    ClassTemplatePartialSpecializationDecl *First =
+        cast<ClassTemplatePartialSpecializationDecl>(getFirstDecl());
     return First->InstantiatedFromMember.getPointer();
   }
 
   void setInstantiatedFromMember(
                           ClassTemplatePartialSpecializationDecl *PartialSpec) {
-    ClassTemplatePartialSpecializationDecl *First
-      = cast<ClassTemplatePartialSpecializationDecl>(getFirstDeclaration());
+    ClassTemplatePartialSpecializationDecl *First =
+        cast<ClassTemplatePartialSpecializationDecl>(getFirstDecl());
     First->InstantiatedFromMember.setPointer(PartialSpec);
   }
 
@@ -1754,15 +1754,15 @@ public:
   /// struct X<int>::Inner<T*> { /* ... */ };
   /// \endcode
   bool isMemberSpecialization() {
-    ClassTemplatePartialSpecializationDecl *First
-      = cast<ClassTemplatePartialSpecializationDecl>(getFirstDeclaration());
+    ClassTemplatePartialSpecializationDecl *First =
+        cast<ClassTemplatePartialSpecializationDecl>(getFirstDecl());
     return First->InstantiatedFromMember.getInt();
   }
 
   /// \brief Note that this member template is a specialization.
   void setMemberSpecialization() {
-    ClassTemplatePartialSpecializationDecl *First
-      = cast<ClassTemplatePartialSpecializationDecl>(getFirstDeclaration());
+    ClassTemplatePartialSpecializationDecl *First =
+        cast<ClassTemplatePartialSpecializationDecl>(getFirstDecl());
     assert(First->InstantiatedFromMember.getPointer() &&
            "Only member templates can be member template specializations");
     return First->InstantiatedFromMember.setInt(true);
@@ -1898,6 +1898,14 @@ public:
   const ClassTemplateDecl *getPreviousDecl() const {
     return cast_or_null<ClassTemplateDecl>(
              RedeclarableTemplateDecl::getPreviousDecl());
+  }
+
+  ClassTemplateDecl *getMostRecentDecl() {
+    return cast<ClassTemplateDecl>(
+        RedeclarableTemplateDecl::getMostRecentDecl());
+  }
+  const ClassTemplateDecl *getMostRecentDecl() const {
+    return const_cast<ClassTemplateDecl*>(this)->getMostRecentDecl();
   }
 
   ClassTemplateDecl *getInstantiatedFromMemberTemplate() {
@@ -2309,7 +2317,7 @@ public:
                                     bool Qualified) const;
 
   VarTemplateSpecializationDecl *getMostRecentDecl() {
-    VarDecl *Recent = cast<VarDecl>(VarDecl::getMostRecentDecl());
+    VarDecl *Recent = VarDecl::getMostRecentDecl();
     return cast<VarTemplateSpecializationDecl>(Recent);
   }
 
@@ -2574,14 +2582,14 @@ public:
   /// \c Outer<T>::Inner<U*>.
   VarTemplatePartialSpecializationDecl *getInstantiatedFromMember() {
     VarTemplatePartialSpecializationDecl *First =
-        cast<VarTemplatePartialSpecializationDecl>(getFirstDeclaration());
+        cast<VarTemplatePartialSpecializationDecl>(getFirstDecl());
     return First->InstantiatedFromMember.getPointer();
   }
 
   void
   setInstantiatedFromMember(VarTemplatePartialSpecializationDecl *PartialSpec) {
     VarTemplatePartialSpecializationDecl *First =
-        cast<VarTemplatePartialSpecializationDecl>(getFirstDeclaration());
+        cast<VarTemplatePartialSpecializationDecl>(getFirstDecl());
     First->InstantiatedFromMember.setPointer(PartialSpec);
   }
 
@@ -2603,14 +2611,14 @@ public:
   /// \endcode
   bool isMemberSpecialization() {
     VarTemplatePartialSpecializationDecl *First =
-        cast<VarTemplatePartialSpecializationDecl>(getFirstDeclaration());
+        cast<VarTemplatePartialSpecializationDecl>(getFirstDecl());
     return First->InstantiatedFromMember.getInt();
   }
 
   /// \brief Note that this member template is a specialization.
   void setMemberSpecialization() {
     VarTemplatePartialSpecializationDecl *First =
-        cast<VarTemplatePartialSpecializationDecl>(getFirstDeclaration());
+        cast<VarTemplatePartialSpecializationDecl>(getFirstDecl());
     assert(First->InstantiatedFromMember.getPointer() &&
            "Only member templates can be member template specializations");
     return First->InstantiatedFromMember.setInt(true);

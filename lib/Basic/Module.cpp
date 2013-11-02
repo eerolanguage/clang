@@ -11,6 +11,7 @@
 // code.
 //
 //===----------------------------------------------------------------------===//
+
 #include "clang/Basic/Module.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/LangOptions.h"
@@ -20,6 +21,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+
 using namespace clang;
 
 Module::Module(StringRef Name, SourceLocation DefinitionLoc, Module *Parent, 
@@ -66,16 +68,17 @@ static bool hasFeature(StringRef Feature, const LangOptions &LangOpts,
            .Default(Target.hasFeature(Feature));
 }
 
-bool 
+bool
 Module::isAvailable(const LangOptions &LangOpts, const TargetInfo &Target,
-                    StringRef &Feature) const {
+                    Requirement &Req) const {
   if (IsAvailable)
     return true;
 
   for (const Module *Current = this; Current; Current = Current->Parent) {
-    for (unsigned I = 0, N = Current->Requires.size(); I != N; ++I) {
-      if (!hasFeature(Current->Requires[I], LangOpts, Target)) {
-        Feature = Current->Requires[I];
+    for (unsigned I = 0, N = Current->Requirements.size(); I != N; ++I) {
+      if (hasFeature(Current->Requirements[I].first, LangOpts, Target) !=
+              Current->Requirements[I].second) {
+        Req = Current->Requirements[I];
         return false;
       }
     }
@@ -144,12 +147,13 @@ ArrayRef<const FileEntry *> Module::getTopHeaders(FileManager &FileMgr) {
   return llvm::makeArrayRef(TopHeaders.begin(), TopHeaders.end());
 }
 
-void Module::addRequirement(StringRef Feature, const LangOptions &LangOpts,
+void Module::addRequirement(StringRef Feature, bool RequiredState,
+                            const LangOptions &LangOpts,
                             const TargetInfo &Target) {
-  Requires.push_back(Feature);
+  Requirements.push_back(Requirement(Feature, RequiredState));
 
   // If this feature is currently available, we're done.
-  if (hasFeature(Feature, LangOpts, Target))
+  if (hasFeature(Feature, LangOpts, Target) == RequiredState)
     return;
 
   if (!IsAvailable)
@@ -249,15 +253,14 @@ void Module::buildVisibleModulesCache() const {
   // This module is visible to itself.
   VisibleModulesCache.insert(this);
 
-  llvm::SmallVector<Module*, 4> Exported;
-  for (unsigned I = 0, N = Imports.size(); I != N; ++I) {
-    // Every imported module is visible.
-    VisibleModulesCache.insert(Imports[I]);
+  // Every imported module is visible.
+  SmallVector<Module *, 16> Stack(Imports.begin(), Imports.end());
+  while (!Stack.empty()) {
+    Module *CurrModule = Stack.pop_back_val();
 
-    // Every module exported by an imported module is visible.
-    Imports[I]->getExportedModules(Exported);
-    VisibleModulesCache.insert(Exported.begin(), Exported.end());
-    Exported.clear();
+    // Every module transitively exported by an imported module is visible.
+    if (VisibleModulesCache.insert(CurrModule).second)
+      CurrModule->getExportedModules(Stack);
   }
 }
 
@@ -276,13 +279,15 @@ void Module::print(raw_ostream &OS, unsigned Indent) const {
 
   OS << " {\n";
   
-  if (!Requires.empty()) {
+  if (!Requirements.empty()) {
     OS.indent(Indent + 2);
     OS << "requires ";
-    for (unsigned I = 0, N = Requires.size(); I != N; ++I) {
+    for (unsigned I = 0, N = Requirements.size(); I != N; ++I) {
       if (I)
         OS << ", ";
-      OS << Requires[I];
+      if (!Requirements[I].second)
+        OS << "!";
+      OS << Requirements[I].first;
     }
     OS << "\n";
   }

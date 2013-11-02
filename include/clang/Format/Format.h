@@ -52,6 +52,9 @@ struct FormatStyle {
   /// \brief The penalty for breaking before the first \c <<.
   unsigned PenaltyBreakFirstLessLess;
 
+  /// \brief The penalty for breaking a function call after "call(".
+  unsigned PenaltyBreakBeforeFirstCallParameter;
+
   /// \brief Set whether & and * bind to the type as opposed to the variable.
   bool PointerBindsToType;
 
@@ -218,9 +221,12 @@ struct FormatStyle {
   /// are not also definitions after the type.
   bool IndentFunctionDeclarationAfterType;
 
-  /// \brief If \c true, spaces will be inserted after every '(' and before
-  /// every ')'.
+  /// \brief If \c true, spaces will be inserted after '(' and before ')'.
   bool SpacesInParentheses;
+
+  /// \brief If \c true, spaces will be inserted after '<' and before '>' in
+  /// template argument lists
+  bool SpacesInAngles;
 
   /// \brief If \c false, spaces may be inserted into '()'.
   bool SpaceInEmptyParentheses;
@@ -234,6 +240,9 @@ struct FormatStyle {
 
   /// \brief If \c false, spaces will be removed before assignment operators.
   bool SpaceBeforeAssignmentOperators;
+
+  /// \brief Indent width for line continuations.
+  unsigned ContinuationIndentWidth;
 
   bool operator==(const FormatStyle &R) const {
     return AccessModifierOffset == R.AccessModifierOffset &&
@@ -278,11 +287,13 @@ struct FormatStyle {
            Cpp11BracedListStyle == R.Cpp11BracedListStyle &&
            Standard == R.Standard && TabWidth == R.TabWidth &&
            UseTab == R.UseTab && SpacesInParentheses == R.SpacesInParentheses &&
+           SpacesInAngles == R.SpacesInAngles &&
            SpaceInEmptyParentheses == R.SpaceInEmptyParentheses &&
            SpacesInCStyleCastParentheses == R.SpacesInCStyleCastParentheses &&
            SpaceAfterControlStatementKeyword ==
                R.SpaceAfterControlStatementKeyword &&
-           SpaceBeforeAssignmentOperators == R.SpaceBeforeAssignmentOperators;
+           SpaceBeforeAssignmentOperators == R.SpaceBeforeAssignmentOperators &&
+           ContinuationIndentWidth == R.ContinuationIndentWidth;
   }
 };
 

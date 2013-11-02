@@ -338,6 +338,21 @@ void LookupResult::deletePaths(CXXBasePaths *Paths) {
   delete Paths;
 }
 
+/// Get a representative context for a declaration such that two declarations
+/// will have the same context if they were found within the same scope.
+static DeclContext *getContextForScopeMatching(Decl *D) {
+  // For function-local declarations, use that function as the context. This
+  // doesn't account for scopes within the function; the caller must deal with
+  // those.
+  DeclContext *DC = D->getLexicalDeclContext();
+  if (DC->isFunctionOrMethod())
+    return DC;
+
+  // Otherwise, look at the semantic context of the declaration. The
+  // declaration must have been found there.
+  return D->getDeclContext()->getRedeclContext();
+}
+
 /// Resolves the result kind of this lookup.
 void LookupResult::resolveKind() {
   unsigned N = Decls.size();
@@ -438,8 +453,8 @@ void LookupResult::resolveKind() {
   // even if they're not visible. (ref?)
   if (HideTags && HasTag && !Ambiguous &&
       (HasFunction || HasNonFunction || HasUnresolved)) {
-    if (Decls[UniqueTagIndex]->getDeclContext()->getRedeclContext()->Equals(
-         Decls[UniqueTagIndex? 0 : N-1]->getDeclContext()->getRedeclContext()))
+    if (getContextForScopeMatching(Decls[UniqueTagIndex])->Equals(
+            getContextForScopeMatching(Decls[UniqueTagIndex ? 0 : N - 1])))
       Decls[UniqueTagIndex] = Decls[--N];
     else
       Ambiguous = true;
@@ -931,8 +946,10 @@ bool Sema::CppLookupName(LookupResult &R, Scope *S) {
             LeftStartingScope = true;
 
           // If we found something outside of our starting scope that
-          // does not have linkage, skip it.
-          if (LeftStartingScope && !((*I)->hasLinkage())) {
+          // does not have linkage, skip it. If it's a template parameter,
+          // we still find it, so we can diagnose the invalid redeclaration.
+          if (LeftStartingScope && !((*I)->hasLinkage()) &&
+              !(*I)->isTemplateParameter()) {
             R.setShadowed();
             continue;
           }
@@ -3611,6 +3628,7 @@ typedef SmallVector<SpecifierInfo, 16> SpecifierInfoList;
 class NamespaceSpecifierSet {
   ASTContext &Context;
   DeclContextList CurContextChain;
+  std::string CurNameSpecifier;
   SmallVector<const IdentifierInfo*, 4> CurContextIdentifiers;
   SmallVector<const IdentifierInfo*, 4> CurNameSpecifierIdentifiers;
   bool isSorted;
@@ -3630,9 +3648,13 @@ class NamespaceSpecifierSet {
                         CXXScopeSpec *CurScopeSpec)
       : Context(Context), CurContextChain(BuildContextChain(CurContext)),
         isSorted(false) {
-    if (CurScopeSpec && CurScopeSpec->getScopeRep())
-      getNestedNameSpecifierIdentifiers(CurScopeSpec->getScopeRep(),
-                                        CurNameSpecifierIdentifiers);
+    if (NestedNameSpecifier *NNS =
+            CurScopeSpec ? CurScopeSpec->getScopeRep() : 0) {
+      llvm::raw_string_ostream SpecifierOStream(CurNameSpecifier);
+      NNS->print(SpecifierOStream, Context.getPrintingPolicy());
+
+      getNestedNameSpecifierIdentifiers(NNS, CurNameSpecifierIdentifiers);
+    }
     // Build the list of identifiers that would be used for an absolute
     // (from the global context) NestedNameSpecifier referring to the current
     // context.
@@ -3650,13 +3672,9 @@ class NamespaceSpecifierSet {
                       NestedNameSpecifier::GlobalSpecifier(Context), 1));
   }
 
-  /// \brief Add the namespace to the set, computing the corresponding
-  /// NestedNameSpecifier and its distance in the process.
-  void AddNamespace(NamespaceDecl *ND);
-
-  /// \brief Add the record to the set, computing the corresponding
-  /// NestedNameSpecifier and its distance in the process.
-  void AddRecord(RecordDecl *RD);
+  /// \brief Add the DeclContext (a namespace or record) to the set, computing
+  /// the corresponding NestedNameSpecifier and its distance in the process.
+  void AddNameSpecifier(DeclContext *Ctx);
 
   typedef SpecifierInfoList::iterator iterator;
   iterator begin() {
@@ -3699,104 +3717,12 @@ void NamespaceSpecifierSet::SortNamespaces() {
   isSorted = true;
 }
 
-void NamespaceSpecifierSet::AddNamespace(NamespaceDecl *ND) {
-  DeclContext *Ctx = cast<DeclContext>(ND);
-  NestedNameSpecifier *NNS = NULL;
+static unsigned BuildNestedNameSpecifier(ASTContext &Context,
+                                         DeclContextList &DeclChain,
+                                         NestedNameSpecifier *&NNS) {
   unsigned NumSpecifiers = 0;
-  DeclContextList NamespaceDeclChain(BuildContextChain(Ctx));
-  DeclContextList FullNamespaceDeclChain(NamespaceDeclChain);
-
-  // Eliminate common elements from the two DeclContext chains.
-  for (DeclContextList::reverse_iterator C = CurContextChain.rbegin(),
-                                      CEnd = CurContextChain.rend();
-       C != CEnd && !NamespaceDeclChain.empty() &&
-       NamespaceDeclChain.back() == *C; ++C) {
-    NamespaceDeclChain.pop_back();
-  }
-
-  // Add an explicit leading '::' specifier if needed.
-  if (NamespaceDeclChain.empty()) {
-    NamespaceDeclChain = FullNamespaceDeclChain;
-    NNS = NestedNameSpecifier::GlobalSpecifier(Context);
-  } else if (NamespaceDecl *ND =
-                 dyn_cast_or_null<NamespaceDecl>(NamespaceDeclChain.back())) {
-    IdentifierInfo *Name = ND->getIdentifier();
-    if (std::find(CurContextIdentifiers.begin(), CurContextIdentifiers.end(),
-                  Name) != CurContextIdentifiers.end() ||
-        std::find(CurNameSpecifierIdentifiers.begin(),
-                  CurNameSpecifierIdentifiers.end(),
-                  Name) != CurNameSpecifierIdentifiers.end()) {
-      NamespaceDeclChain = FullNamespaceDeclChain;
-      NNS = NestedNameSpecifier::GlobalSpecifier(Context);
-    }
-  }
-
-  // Build the NestedNameSpecifier from what is left of the NamespaceDeclChain
-  for (DeclContextList::reverse_iterator C = NamespaceDeclChain.rbegin(),
-                                      CEnd = NamespaceDeclChain.rend();
-       C != CEnd; ++C) {
-    NamespaceDecl *ND = dyn_cast_or_null<NamespaceDecl>(*C);
-    if (ND) {
-      NNS = NestedNameSpecifier::Create(Context, NNS, ND);
-      ++NumSpecifiers;
-    }
-  }
-
-  // If the built NestedNameSpecifier would be replacing an existing
-  // NestedNameSpecifier, use the number of component identifiers that
-  // would need to be changed as the edit distance instead of the number
-  // of components in the built NestedNameSpecifier.
-  if (NNS && !CurNameSpecifierIdentifiers.empty()) {
-    SmallVector<const IdentifierInfo*, 4> NewNameSpecifierIdentifiers;
-    getNestedNameSpecifierIdentifiers(NNS, NewNameSpecifierIdentifiers);
-    NumSpecifiers = llvm::ComputeEditDistance(
-        ArrayRef<const IdentifierInfo *>(CurNameSpecifierIdentifiers),
-        ArrayRef<const IdentifierInfo *>(NewNameSpecifierIdentifiers));
-  }
-
-  isSorted = false;
-  Distances.insert(NumSpecifiers);
-  DistanceMap[NumSpecifiers].push_back(SpecifierInfo(Ctx, NNS, NumSpecifiers));
-}
-
-void NamespaceSpecifierSet::AddRecord(RecordDecl *RD) {
-  if (!RD->isBeingDefined() && !RD->isCompleteDefinition())
-    return;
-
-  DeclContext *Ctx = cast<DeclContext>(RD);
-  NestedNameSpecifier *NNS = NULL;
-  unsigned NumSpecifiers = 0;
-  DeclContextList NamespaceDeclChain(BuildContextChain(Ctx));
-  DeclContextList FullNamespaceDeclChain(NamespaceDeclChain);
-
-  // Eliminate common elements from the two DeclContext chains.
-  for (DeclContextList::reverse_iterator C = CurContextChain.rbegin(),
-                                      CEnd = CurContextChain.rend();
-       C != CEnd && !NamespaceDeclChain.empty() &&
-       NamespaceDeclChain.back() == *C; ++C) {
-    NamespaceDeclChain.pop_back();
-  }
-
-  // Add an explicit leading '::' specifier if needed.
-  if (NamespaceDeclChain.empty()) {
-    NamespaceDeclChain = FullNamespaceDeclChain;
-    NNS = NestedNameSpecifier::GlobalSpecifier(Context);
-  } else if (NamedDecl *ND =
-                 dyn_cast_or_null<NamedDecl>(NamespaceDeclChain.back())) {
-    IdentifierInfo *Name = ND->getIdentifier();
-    if (std::find(CurContextIdentifiers.begin(), CurContextIdentifiers.end(),
-                  Name) != CurContextIdentifiers.end() ||
-        std::find(CurNameSpecifierIdentifiers.begin(),
-                  CurNameSpecifierIdentifiers.end(),
-                  Name) != CurNameSpecifierIdentifiers.end()) {
-      NamespaceDeclChain = FullNamespaceDeclChain;
-      NNS = NestedNameSpecifier::GlobalSpecifier(Context);
-    }
-  }
-
-  // Build the NestedNameSpecifier from what is left of the NamespaceDeclChain
-  for (DeclContextList::reverse_iterator C = NamespaceDeclChain.rbegin(),
-                                      CEnd = NamespaceDeclChain.rend();
+  for (DeclContextList::reverse_iterator C = DeclChain.rbegin(),
+                                      CEnd = DeclChain.rend();
        C != CEnd; ++C) {
     if (NamespaceDecl *ND = dyn_cast_or_null<NamespaceDecl>(*C)) {
       NNS = NestedNameSpecifier::Create(Context, NNS, ND);
@@ -3805,6 +3731,56 @@ void NamespaceSpecifierSet::AddRecord(RecordDecl *RD) {
       NNS = NestedNameSpecifier::Create(Context, NNS, RD->isTemplateDecl(),
                                         RD->getTypeForDecl());
       ++NumSpecifiers;
+    }
+  }
+  return NumSpecifiers;
+}
+
+void NamespaceSpecifierSet::AddNameSpecifier(DeclContext *Ctx) {
+  NestedNameSpecifier *NNS = NULL;
+  unsigned NumSpecifiers = 0;
+  DeclContextList NamespaceDeclChain(BuildContextChain(Ctx));
+  DeclContextList FullNamespaceDeclChain(NamespaceDeclChain);
+
+  // Eliminate common elements from the two DeclContext chains.
+  for (DeclContextList::reverse_iterator C = CurContextChain.rbegin(),
+                                      CEnd = CurContextChain.rend();
+       C != CEnd && !NamespaceDeclChain.empty() &&
+       NamespaceDeclChain.back() == *C; ++C) {
+    NamespaceDeclChain.pop_back();
+  }
+
+  // Build the NestedNameSpecifier from what is left of the NamespaceDeclChain
+  NumSpecifiers = BuildNestedNameSpecifier(Context, NamespaceDeclChain, NNS);
+
+  // Add an explicit leading '::' specifier if needed.
+  if (NamespaceDeclChain.empty()) {
+    // Rebuild the NestedNameSpecifier as a globally-qualified specifier.
+    NNS = NestedNameSpecifier::GlobalSpecifier(Context);
+    NumSpecifiers =
+        BuildNestedNameSpecifier(Context, FullNamespaceDeclChain, NNS);
+  } else if (NamedDecl *ND =
+                 dyn_cast_or_null<NamedDecl>(NamespaceDeclChain.back())) {
+    IdentifierInfo *Name = ND->getIdentifier();
+    bool SameNameSpecifier = false;
+    if (std::find(CurNameSpecifierIdentifiers.begin(),
+                  CurNameSpecifierIdentifiers.end(),
+                  Name) != CurNameSpecifierIdentifiers.end()) {
+      std::string NewNameSpecifier;
+      llvm::raw_string_ostream SpecifierOStream(NewNameSpecifier);
+      SmallVector<const IdentifierInfo *, 4> NewNameSpecifierIdentifiers;
+      getNestedNameSpecifierIdentifiers(NNS, NewNameSpecifierIdentifiers);
+      NNS->print(SpecifierOStream, Context.getPrintingPolicy());
+      SpecifierOStream.flush();
+      SameNameSpecifier = NewNameSpecifier == CurNameSpecifier;
+    }
+    if (SameNameSpecifier ||
+        std::find(CurContextIdentifiers.begin(), CurContextIdentifiers.end(),
+                  Name) != CurContextIdentifiers.end()) {
+      // Rebuild the NestedNameSpecifier as a globally-qualified specifier.
+      NNS = NestedNameSpecifier::GlobalSpecifier(Context);
+      NumSpecifiers =
+          BuildNestedNameSpecifier(Context, FullNamespaceDeclChain, NNS);
     }
   }
 
@@ -4234,7 +4210,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
   // corrections.
   bool SearchNamespaces
     = getLangOpts().CPlusPlus &&
-      (IsUnqualifiedLookup || (QualifiedDC && QualifiedDC->isNamespace()));
+      (IsUnqualifiedLookup || (SS && SS->isSet()));
   // In a few cases we *only* want to search for corrections based on just
   // adding or changing the nested name specifier.
   unsigned TypoLen = Typo->getName().size();
@@ -4294,15 +4270,17 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
            KNI = KnownNamespaces.begin(),
            KNIEnd = KnownNamespaces.end();
          KNI != KNIEnd; ++KNI)
-      Namespaces.AddNamespace(KNI->first);
+      Namespaces.AddNameSpecifier(KNI->first);
 
     for (ASTContext::type_iterator TI = Context.types_begin(),
                                    TIEnd = Context.types_end();
          TI != TIEnd; ++TI) {
       if (CXXRecordDecl *CD = (*TI)->getAsCXXRecordDecl()) {
+        CD = CD->getCanonicalDecl();
         if (!CD->isDependentType() && !CD->isAnonymousStructOrUnion() &&
-            !CD->isUnion())
-          Namespaces.AddRecord(CD->getCanonicalDecl());
+            !CD->isUnion() &&
+            (CD->isBeingDefined() || CD->isCompleteDefinition()))
+          Namespaces.AddNameSpecifier(CD);
       }
     }
   }
@@ -4475,6 +4453,18 @@ retry_lookup:
           switch (TmpRes.getResultKind()) {
           case LookupResult::Found:
           case LookupResult::FoundOverloaded: {
+            if (SS && SS->isValid()) {
+              std::string NewQualified = TC.getAsString(getLangOpts());
+              std::string OldQualified;
+              llvm::raw_string_ostream OldOStream(OldQualified);
+              SS->getScopeRep()->print(OldOStream, getPrintingPolicy());
+              OldOStream << TypoName;
+              // If correction candidate would be an identical written qualified
+              // identifer, then the existing CXXScopeSpec probably included a
+              // typedef that didn't get accounted for properly.
+              if (OldOStream.str() == NewQualified)
+                break;
+            }
             for (LookupResult::iterator TRD = TmpRes.begin(),
                                      TRDEnd = TmpRes.end();
                  TRD != TRDEnd; ++TRD) {

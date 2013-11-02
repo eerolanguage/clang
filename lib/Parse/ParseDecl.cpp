@@ -173,20 +173,22 @@ void Parser::ParseGNUAttributes(ParsedAttributes &attrs,
       }
     }
     if (ExpectAndConsume(tok::r_paren, diag::err_expected_rparen))
-      SkipUntil(tok::r_paren, false);
+      SkipUntil(tok::r_paren);
     SourceLocation Loc = Tok.getLocation();
-    if (ExpectAndConsume(tok::r_paren, diag::err_expected_rparen)) {
-      SkipUntil(tok::r_paren, false);
-    }
+    if (ExpectAndConsume(tok::r_paren, diag::err_expected_rparen))
+      SkipUntil(tok::r_paren);
     if (endLoc)
       *endLoc = Loc;
   }
 }
 
-/// \brief Determine whether the given attribute has all expression arguments.
-static bool attributeHasExprArgs(const IdentifierInfo &II) {
-  return llvm::StringSwitch<bool>(II.getName())
-#include "clang/Parse/AttrExprArgs.inc"
+/// \brief Determine whether the given attribute has an identifier argument.
+static bool attributeHasIdentifierArg(const IdentifierInfo &II) {
+  StringRef Name = II.getName();
+  if (Name.size() >= 4 && Name.startswith("__") && Name.endswith("__"))
+    Name = Name.drop_front(2).drop_back(2);
+  return llvm::StringSwitch<bool>(Name)
+#include "clang/Parse/AttrIdentifierArg.inc"
            .Default(false);
 }
 
@@ -197,6 +199,32 @@ IdentifierLoc *Parser::ParseIdentifierLoc() {
                                             Tok.getIdentifierInfo());
   ConsumeToken();
   return IL;
+}
+
+void Parser::ParseAttributeWithTypeArg(IdentifierInfo &AttrName,
+                                       SourceLocation AttrNameLoc,
+                                       ParsedAttributes &Attrs,
+                                       SourceLocation *EndLoc) {
+  BalancedDelimiterTracker Parens(*this, tok::l_paren);
+  Parens.consumeOpen();
+
+  TypeResult T;
+  if (Tok.isNot(tok::r_paren))
+    T = ParseTypeName();
+
+  if (Parens.consumeClose())
+    return;
+
+  if (T.isInvalid())
+    return;
+
+  if (T.isUsable())
+    Attrs.addNewTypeAttr(&AttrName,
+                         SourceRange(AttrNameLoc, Parens.getCloseLocation()), 0,
+                         AttrNameLoc, T.get(), AttributeList::AS_GNU);
+  else
+    Attrs.addNew(&AttrName, SourceRange(AttrNameLoc, Parens.getCloseLocation()),
+                 0, AttrNameLoc, 0, 0, AttributeList::AS_GNU);
 }
 
 /// Parse the arguments to a parameterized GNU attribute or
@@ -211,78 +239,56 @@ void Parser::ParseGNUAttributeArgs(IdentifierInfo *AttrName,
 
   assert(Tok.is(tok::l_paren) && "Attribute arg list not starting with '('");
 
+  AttributeList::Kind AttrKind =
+      AttributeList::getKind(AttrName, ScopeName, Syntax);
+
   // Availability attributes have their own grammar.
-  if (AttrName->isStr("availability")) {
+  // FIXME: All these cases fail to pass in the syntax and scope, and might be
+  // written as C++11 gnu:: attributes.
+  if (AttrKind == AttributeList::AT_Availability) {
     ParseAvailabilityAttribute(*AttrName, AttrNameLoc, Attrs, EndLoc);
     return;
   }
-  // Thread safety attributes fit into the FIXME case above, so we
-  // just parse the arguments as a list of expressions
+  // Thread safety attributes are parsed in an unevaluated context.
+  // FIXME: Share the bulk of the parsing code here and just pull out
+  // the unevaluated context.
   if (IsThreadSafetyAttribute(AttrName->getName())) {
     ParseThreadSafetyAttribute(*AttrName, AttrNameLoc, Attrs, EndLoc);
     return;
   }
   // Type safety attributes have their own grammar.
-  if (AttrName->isStr("type_tag_for_datatype")) {
+  if (AttrKind == AttributeList::AT_TypeTagForDatatype) {
     ParseTypeTagForDatatypeAttribute(*AttrName, AttrNameLoc, Attrs, EndLoc);
     return;
   }
-
-  ConsumeParen(); // ignore the left paren loc for now
-
-  bool BuiltinType = false;
-  ArgsVector ArgExprs;
-
-  TypeResult T;
-  SourceRange TypeRange;
-  bool TypeParsed = false;
-
-  switch (Tok.getKind()) {
-  case tok::kw_char:
-  case tok::kw_wchar_t:
-  case tok::kw_char16_t:
-  case tok::kw_char32_t:
-  case tok::kw_bool:
-  case tok::kw_short:
-  case tok::kw_int:
-  case tok::kw_long:
-  case tok::kw___int64:
-  case tok::kw___int128:
-  case tok::kw_signed:
-  case tok::kw_unsigned:
-  case tok::kw_float:
-  case tok::kw_double:
-  case tok::kw_void:
-  case tok::kw_typeof:
-    // __attribute__(( vec_type_hint(char) ))
-    BuiltinType = true;
-    T = ParseTypeName(&TypeRange);
-    TypeParsed = true;
-    break;
-
-  case tok::identifier: {
-    if (AttrName->isStr("vec_type_hint")) {
-      T = ParseTypeName(&TypeRange);
-      TypeParsed = true;
-      break;
-    }
-    // If this attribute doesn't want an 'identifier' argument, then this
-    // argument should be parsed as an expression.
-    if (attributeHasExprArgs(*AttrName))
-      break;
-
-    ArgExprs.push_back(ParseIdentifierLoc());
-  } break;
-
-  default:
-    break;
+  // __attribute__((vec_type_hint)) and iboutletcollection expect a type arg.
+  if (AttrKind == AttributeList::AT_VecTypeHint ||
+      AttrKind == AttributeList::AT_IBOutletCollection) {
+    ParseAttributeWithTypeArg(*AttrName, AttrNameLoc, Attrs, EndLoc);
+    return;
   }
 
-  bool isInvalid = false;
-  bool isParmType = false;
+  // Ignore the left paren location for now.
+  ConsumeParen();
 
-  if (!BuiltinType && !AttrName->isStr("vec_type_hint") &&
-      (!ArgExprs.empty() ? Tok.is(tok::comma) : Tok.isNot(tok::r_paren))) {
+  ArgsVector ArgExprs;
+
+  if (Tok.is(tok::identifier)) {
+    // If this attribute wants an 'identifier' argument, make it so.
+    bool IsIdentifierArg = attributeHasIdentifierArg(*AttrName);
+
+    // If we don't know how to parse this attribute, but this is the only
+    // token in this argument, assume it's meant to be an identifier.
+    if (AttrKind == AttributeList::UnknownAttribute) {
+      const Token &Next = NextToken();
+      IsIdentifierArg = Next.is(tok::r_paren) || Next.is(tok::comma);
+    }
+
+    if (IsIdentifierArg)
+      ArgExprs.push_back(ParseIdentifierLoc());
+  }
+
+  if (!ArgExprs.empty() ? Tok.is(tok::comma) : Tok.isNot(tok::r_paren)) {
     // Eat the comma.
     if (!ArgExprs.empty())
       ConsumeToken();
@@ -300,48 +306,12 @@ void Parser::ParseGNUAttributeArgs(IdentifierInfo *AttrName,
       ConsumeToken(); // Eat the comma, move to the next argument
     }
   }
-  else if (Tok.is(tok::less) && AttrName->isStr("iboutletcollection")) {
-    if (!ExpectAndConsume(tok::less, diag::err_expected_less_after, "<",
-                          tok::greater)) {
-      while (Tok.is(tok::identifier)) {
-        ConsumeToken();
-        if (Tok.is(tok::greater))
-          break;
-        if (Tok.is(tok::comma)) {
-          ConsumeToken();
-          continue;
-        }
-      }
-      if (Tok.isNot(tok::greater))
-        Diag(Tok, diag::err_iboutletcollection_with_protocol);
-      SkipUntil(tok::r_paren, false, true); // skip until ')'
-    }
-  } else if (AttrName->isStr("vec_type_hint")) {
-    if (T.get() && !T.isInvalid())
-      isParmType = true;
-    else {
-      if (Tok.is(tok::identifier))
-        ConsumeToken();
-      if (TypeParsed)
-        isInvalid = true;
-    }
-  }
 
   SourceLocation RParen = Tok.getLocation();
-  if (!ExpectAndConsume(tok::r_paren, diag::err_expected_rparen) &&
-      !isInvalid) {
+  if (!ExpectAndConsume(tok::r_paren, diag::err_expected_rparen)) {
     SourceLocation AttrLoc = ScopeLoc.isValid() ? ScopeLoc : AttrNameLoc;
-    if (isParmType) {
-      Attrs.addNewTypeAttr(AttrName, SourceRange(AttrLoc, RParen), ScopeName,
-                           ScopeLoc, T.get(), Syntax);
-    } else {
-      AttributeList *attr = Attrs.addNew(
-          AttrName, SourceRange(AttrLoc, RParen), ScopeName, ScopeLoc,
-          ArgExprs.data(), ArgExprs.size(), Syntax);
-      if (BuiltinType &&
-          attr->getKind() == AttributeList::AT_IBOutletCollection)
-        Diag(Tok, diag::err_iboutletcollection_builtintype);
-    }
+    Attrs.addNew(AttrName, SourceRange(AttrLoc, RParen), ScopeName, ScopeLoc,
+                 ArgExprs.data(), ArgExprs.size(), Syntax);
   }
 }
 

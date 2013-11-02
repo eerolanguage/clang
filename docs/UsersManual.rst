@@ -921,6 +921,8 @@ are listed below.
       destination.
    -  ``-fsanitize=float-divide-by-zero``: Floating point division by
       zero.
+   -  ``-fsanitize=function``: Indirect call of a function through a
+      function pointer of the wrong type (Linux, C++ and x86/x86_64 only).
    -  ``-fsanitize=integer-divide-by-zero``: Integer division by zero.
    -  ``-fsanitize=null``: Use of a null pointer or creation of a null
       reference.
@@ -1044,6 +1046,26 @@ are listed below.
    selected model is not supported by the target, or if a more
    efficient model can be used. The TLS model can be overridden per
    variable using the ``tls_model`` attribute.
+
+.. option:: -mhwdiv=[values]
+
+   Select the ARM modes (arm or thumb) that support hardware division
+   instructions.
+
+   Valid values are: ``arm``, ``thumb`` and ``arm,thumb``.
+   This option is used to indicate which mode (arm or thumb) supports
+   hardware division instructions. This only applies to the ARM
+   architecture.
+
+.. option:: -m[no-]crc
+
+   Enable or disable CRC instructions.
+
+   This option is used to indicate whether CRC instructions are to
+   be generated. This only applies to the ARM architecture.
+
+   CRC instructions are enabled by default on ARMv8.
+
 
 Controlling Size of Debug Information
 -------------------------------------
@@ -1456,6 +1478,8 @@ Execute ``clang-cl /?`` to see a list of supported options:
     /c                     Compile only
     /D <macro[=value]>     Define macro
     /fallback              Fall back to cl.exe if clang-cl fails to compile
+    /FA                    Output assembly code file during compilation
+    /Fa<file or directory> Output assembly code to this file during compilation
     /Fe<file or directory> Set output executable file or directory (ends in / or \)
     /FI<value>             Include file before parsing
     /Fo<file or directory> Set output object file, or directory (ends in / or \)

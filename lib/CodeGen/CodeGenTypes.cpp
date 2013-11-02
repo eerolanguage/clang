@@ -22,6 +22,7 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecordLayout.h"
+#include "clang/CodeGen/CGFunctionInfo.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Module.h"
@@ -32,7 +33,6 @@ CodeGenTypes::CodeGenTypes(CodeGenModule &cgm)
   : CGM(cgm), Context(cgm.getContext()), TheModule(cgm.getModule()),
     TheDataLayout(cgm.getDataLayout()),
     Target(cgm.getTarget()), TheCXXABI(cgm.getCXXABI()),
-    CodeGenOpts(cgm.getCodeGenOpts()),
     TheABIInfo(cgm.getTargetCodeGenInfo().getABIInfo()) {
   SkippedLayout = false;
 }

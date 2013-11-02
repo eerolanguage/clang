@@ -106,6 +106,7 @@ class Inst <string n, string p, string t, Op o> {
   string Types = t;
   Op Operand = o;
   bit isShift = 0;
+  bit isScalarShift = 0;
   bit isVCVT_N = 0;
   bit isA64 = 0;
 
@@ -166,8 +167,10 @@ class NoTestOpInst<string n, string p, string t, Op o> : Inst<n, p, t, o> {}
 // i: constant int
 // l: constant uint64
 // s: scalar of element type
-// r: scalar of double width element type
+// z: scalar of half width element type, signed
+// r: scalar of double width element type, signed
 // a: scalar of element type (splat to vector type)
+// b: scalar of unsigned integer/long type (int/float args)
 // y: scalar of float
 // o: scalar of double
 // k: default elt width, double num elts
@@ -783,6 +786,53 @@ def SCALAR_QRSHL: SInst<"vqrshl", "sss", "ScSsSiSlSUcSUsSUiSUl">;
 def SCALAR_RSHL: SInst<"vrshl", "sss", "SlSUl">;
 
 ////////////////////////////////////////////////////////////////////////////////
+// Scalar Shift (Immediate)
+let isScalarShift = 1 in {
+// Signed/Unsigned Shift Right (Immediate)
+def SCALAR_SSHR_N: SInst<"vshr_n", "ssi", "SlSUl">;
+// Signed/Unsigned Rounding Shift Right (Immediate)
+def SCALAR_SRSHR_N: SInst<"vrshr_n", "ssi", "SlSUl">;
+
+// Signed/Unsigned Shift Right and Accumulate (Immediate)
+def SCALAR_SSRA_N: SInst<"vsra_n", "sssi", "SlSUl">;
+// Signed/Unsigned Rounding Shift Right and Accumulate (Immediate)
+def SCALAR_SRSRA_N: SInst<"vrsra_n", "sssi", "SlSUl">;
+
+// Shift Left (Immediate)
+def SCALAR_SHL_N: SInst<"vshl_n", "ssi", "SlSUl">;
+// Signed/Unsigned Saturating Shift Left (Immediate)
+def SCALAR_SQSHL_N: SInst<"vqshl_n", "ssi", "ScSsSiSlSUcSUsSUiSUl">;
+// Signed Saturating Shift Left Unsigned (Immediate)
+def SCALAR_SQSHLU_N: SInst<"vqshlu_n", "ssi", "ScSsSiSl">;
+
+// Shift Right And Insert (Immediate)
+def SCALAR_SRI_N: SInst<"vsri_n", "ssi", "SlSUl">;
+// Shift Left And Insert (Immediate)
+def SCALAR_SLI_N: SInst<"vsli_n", "ssi", "SlSUl">;
+
+// Signed/Unsigned Saturating Shift Right Narrow (Immediate)
+def SCALAR_SQSHRN_N: SInst<"vqshrn_n", "zsi", "SsSiSlSUsSUiSUl">;
+// Signed/Unsigned Saturating Rounded Shift Right Narrow (Immediate)
+def SCALAR_SQRSHRN_N: SInst<"vqrshrn_n", "zsi", "SsSiSlSUsSUiSUl">;
+// Signed Saturating Shift Right Unsigned Narrow (Immediate)
+def SCALAR_SQSHRUN_N: SInst<"vqshrun_n", "zsi", "SsSiSl">;
+// Signed Saturating Rounded Shift Right Unsigned Narrow (Immediate)
+def SCALAR_SQRSHRUN_N: SInst<"vqrshrun_n", "zsi", "SsSiSl">;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Signed/Unsigned Fixed-point Convert To Floating-Point (Immediate)
+def SCALAR_SCVTF_N_F32: SInst<"vcvt_n_f32", "ysi", "SiSUi">;
+def SCALAR_SCVTF_N_F64: SInst<"vcvt_n_f64", "osi", "SlSUl">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Floating-point Convert To Signed/Unsigned Fixed-point (Immediate)
+def SCALAR_FCVTZS_N_S32 : SInst<"vcvt_n_s32", "xsi", "Sf">;
+def SCALAR_FCVTZU_N_U32 : SInst<"vcvt_n_u32", "usi", "Sf">;
+def SCALAR_FCVTZS_N_S64 : SInst<"vcvt_n_s64", "xsi", "Sd">;
+def SCALAR_FCVTZU_N_U64 : SInst<"vcvt_n_u64", "usi", "Sd">;
+
+////////////////////////////////////////////////////////////////////////////////
 // Scalar Reduce Pairwise Addition (Scalar and Floating Point)
 def SCALAR_ADDP  : SInst<"vpadd", "sd", "SfSHlSHd">;
 
@@ -856,8 +906,39 @@ def SCALAR_CMHI : SInst<"vcgt", "sss", "SUl">;
 def SCALAR_CMTST : SInst<"vtst", "sss", "SlSUl">;
 
 ////////////////////////////////////////////////////////////////////////////////
+// Scalar Floating-point Comparison
+def SCALAR_FCMEQ : IInst<"vceq", "bss", "SfSd">;
+def SCALAR_FCMEQZ : IInst<"vceqz", "bs", "SfSd">;
+def SCALAR_FCMGE : IInst<"vcge", "bss", "SfSd">;
+def SCALAR_FCMGEZ : IInst<"vcgez", "bs", "SfSd">;
+def SCALAR_FCMGT : IInst<"vcgt", "bss", "SfSd">;
+def SCALAR_FCMGTZ : IInst<"vcgtz", "bs", "SfSd">;
+def SCALAR_FCMLE : IInst<"vcle", "bss", "SfSd">;
+def SCALAR_FCMLEZ : IInst<"vclez", "bs", "SfSd">;
+def SCALAR_FCMLT : IInst<"vclt", "bss", "SfSd">;
+def SCALAR_FCMLTZ : IInst<"vcltz", "bs", "SfSd">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Floating-point Absolute Compare Mask Greater Than Or Equal
+def SCALAR_FACGE : IInst<"vcage", "bss", "SfSd">;
+def SCALAR_FACLE : IInst<"vcale", "bss", "SfSd">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Floating-point Absolute Compare Mask Greater Than
+def SCALAR_FACGT : IInst<"vcagt", "bss", "SfSd">;
+def SCALAR_FACLT : IInst<"vcalt", "bss", "SfSd">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Absolute Value
+def SCALAR_ABS : SInst<"vabs", "ss", "Sl">;
+
+////////////////////////////////////////////////////////////////////////////////
 // Scalar Signed Saturating Absolute Value
 def SCALAR_SQABS : SInst<"vqabs", "ss", "ScSsSiSl">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Negate
+def SCALAR_NEG : SInst<"vneg", "ss", "Sl">;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Scalar Signed Saturating Negate
@@ -870,4 +951,28 @@ def SCALAR_SUQADD : SInst<"vuqadd", "sss", "ScSsSiSl">;
 ////////////////////////////////////////////////////////////////////////////////
 // Scalar Unsigned Saturating Accumulated of Signed Value
 def SCALAR_USQADD : SInst<"vsqadd", "sss", "SUcSUsSUiSUl">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Signed Saturating Doubling Multiply-Add Long
+def SCALAR_SQDMLAL : SInst<"vqdmlal", "rrss", "SsSi">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Signed Saturating Doubling Multiply-Subtract Long
+def SCALAR_SQDMLSL : SInst<"vqdmlsl", "rrss", "SsSi">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Signed Saturating Doubling Multiply Long
+def SCALAR_SQDMULL : SInst<"vqdmull", "rss", "SsSi">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Signed Saturating Extract Unsigned Narrow
+def SCALAR_SQXTUN : SInst<"vqmovun", "zs", "SsSiSl">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Signed Saturating Extract Narrow
+def SCALAR_SQXTN : SInst<"vqmovn", "zs", "SsSiSl">;
+
+////////////////////////////////////////////////////////////////////////////////
+// Scalar Unsigned Saturating Extract Narrow
+def SCALAR_UQXTN : SInst<"vqmovn", "zs", "SUsSUiSUl">;
 }

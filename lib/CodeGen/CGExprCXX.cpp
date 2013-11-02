@@ -16,6 +16,7 @@
 #include "CGCXXABI.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
+#include "clang/CodeGen/CGFunctionInfo.h"
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/CallSite.h"
@@ -86,7 +87,8 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
     // The method is static, emit it as we would a regular call.
     llvm::Value *Callee = CGM.GetAddrOfFunction(MD);
     return EmitCall(getContext().getPointerType(MD->getType()), Callee,
-                    ReturnValue, CE->arg_begin(), CE->arg_end());
+                    CE->getLocStart(), ReturnValue, CE->arg_begin(),
+                    CE->arg_end());
   }
 
   // Compute the object pointer.

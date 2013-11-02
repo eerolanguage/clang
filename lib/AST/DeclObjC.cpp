@@ -1079,7 +1079,7 @@ ObjCInterfaceDecl(DeclContext *DC, SourceLocation atLoc, IdentifierInfo *Id,
   : ObjCContainerDecl(ObjCInterface, DC, Id, CLoc, atLoc),
     TypeForDecl(0), Data()
 {
-  setPreviousDeclaration(PrevDecl);
+  setPreviousDecl(PrevDecl);
   
   // Copy the 'data' pointer over.
   if (PrevDecl)
@@ -1325,7 +1325,8 @@ ObjCIvarDecl *ObjCIvarDecl::Create(ASTContext &C, ObjCContainerDecl *DC,
                                    SourceLocation IdLoc, IdentifierInfo *Id,
                                    QualType T, TypeSourceInfo *TInfo,
                                    AccessControl ac, Expr *BW,
-                                   bool synthesized) {
+                                   bool synthesized,
+                                   bool backingIvarReferencedInAccessor) {
   if (DC) {
     // Ivar's can only appear in interfaces, implementations (via synthesized
     // properties), and class extensions (via direct declaration, or synthesized
@@ -1353,13 +1354,13 @@ ObjCIvarDecl *ObjCIvarDecl::Create(ASTContext &C, ObjCContainerDecl *DC,
   }
 
   return new (C) ObjCIvarDecl(DC, StartLoc, IdLoc, Id, T, TInfo,
-                              ac, BW, synthesized);
+                              ac, BW, synthesized, backingIvarReferencedInAccessor);
 }
 
 ObjCIvarDecl *ObjCIvarDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   void *Mem = AllocateDeserializedDecl(C, ID, sizeof(ObjCIvarDecl));
   return new (Mem) ObjCIvarDecl(0, SourceLocation(), SourceLocation(), 0,
-                                QualType(), 0, ObjCIvarDecl::None, 0, false);
+                                QualType(), 0, ObjCIvarDecl::None, 0, false, false);
 }
 
 const ObjCInterfaceDecl *ObjCIvarDecl::getContainingInterface() const {
@@ -1418,7 +1419,7 @@ ObjCProtocolDecl::ObjCProtocolDecl(DeclContext *DC, IdentifierInfo *Id,
                                    ObjCProtocolDecl *PrevDecl)
   : ObjCContainerDecl(ObjCProtocol, DC, Id, nameLoc, atStartLoc), Data()
 {
-  setPreviousDeclaration(PrevDecl);
+  setPreviousDecl(PrevDecl);
   if (PrevDecl)
     Data = PrevDecl->Data;
 }

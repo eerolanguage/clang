@@ -626,7 +626,7 @@ public:
 
     /// \brief The current context is "potentially evaluated" in C++11 terms,
     /// but the expression is evaluated at compile-time (like the values of
-    /// cases in a switch statment).
+    /// cases in a switch statement).
     ConstantEvaluated,
 
     /// \brief The current expression is potentially evaluated at run time,
@@ -1546,7 +1546,9 @@ public:
 
   void ActOnFinishKNRParamDeclarations(Scope *S, Declarator &D,
                                        SourceLocation LocAfterDecls);
-  void CheckForFunctionRedefinition(FunctionDecl *FD);
+  void CheckForFunctionRedefinition(FunctionDecl *FD,
+                                    const FunctionDecl *EffectiveDefinition =
+                                        0);
   Decl *ActOnStartOfFunctionDef(Scope *S, Declarator &D);
   Decl *ActOnStartOfFunctionDef(Scope *S, Decl *D);
   void ActOnStartOfObjCMethodDef(Scope *S, Decl *D);
@@ -1732,6 +1734,7 @@ public:
   /// member declarations.
   void ActOnStartCXXMemberDeclarations(Scope *S, Decl *TagDecl,
                                        SourceLocation FinalLoc,
+                                       bool IsFinalSpelledSealed,
                                        SourceLocation LBraceLoc);
 
   /// ActOnTagFinishDefinition - Invoked once we have finished parsing
@@ -2634,6 +2637,16 @@ public:
   /// declared in class 'IFace'.
   bool IvarBacksCurrentMethodAccessor(ObjCInterfaceDecl *IFace,
                                       ObjCMethodDecl *Method, ObjCIvarDecl *IV);
+  
+  /// DiagnoseUnusedBackingIvarInAccessor - Issue an 'unused' warning if ivar which
+  /// backs the property is not used in the property's accessor.
+  void DiagnoseUnusedBackingIvarInAccessor(Scope *S);
+  
+  /// GetIvarBackingPropertyAccessor - If method is a property setter/getter and
+  /// it property has a backing ivar, returns this ivar; otherwise, returns NULL.
+  /// It also returns ivar's property on success.
+  ObjCIvarDecl *GetIvarBackingPropertyAccessor(const ObjCMethodDecl *Method,
+                                               const ObjCPropertyDecl *&PDecl) const;
   
   /// Called by ActOnProperty to handle \@property declarations in
   /// class extensions.
@@ -3709,9 +3722,11 @@ public:
 
   void HideUsingShadowDecl(Scope *S, UsingShadowDecl *Shadow);
   bool CheckUsingShadowDecl(UsingDecl *UD, NamedDecl *Target,
-                            const LookupResult &PreviousDecls);
+                            const LookupResult &PreviousDecls,
+                            UsingShadowDecl *&PrevShadow);
   UsingShadowDecl *BuildUsingShadowDecl(Scope *S, UsingDecl *UD,
-                                        NamedDecl *Target);
+                                        NamedDecl *Target,
+                                        UsingShadowDecl *PrevDecl);
 
   bool CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
                                    bool HasTypenameKeyword,
@@ -4520,7 +4535,8 @@ public:
   /// \brief Create a new lambda closure type.
   CXXRecordDecl *createLambdaClosureType(SourceRange IntroducerRange,
                                          TypeSourceInfo *Info,
-                                         bool KnownDependent);
+                                         bool KnownDependent, 
+                                         LambdaCaptureDefault CaptureDefault);
 
   /// \brief Start the definition of a lambda expression.
   CXXMethodDecl *startLambdaDefinition(CXXRecordDecl *Class,
@@ -4861,7 +4877,7 @@ public:
   void CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD);
   void CheckExplicitlyDefaultedMemberExceptionSpec(CXXMethodDecl *MD,
                                                    const FunctionProtoType *T);
-  void CheckDelayedExplicitlyDefaultedMemberExceptionSpecs();
+  void CheckDelayedMemberExceptionSpecs();
 
   //===--------------------------------------------------------------------===//
   // C++ Derived Classes

@@ -1234,6 +1234,10 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
     if (Args.hasArg(OPT_fno_objc_infer_related_result_type))
       Opts.ObjCInferRelatedResultType = 0;
+    
+    if (Args.hasArg(OPT_fobjc_subscripting_legacy_runtime))
+      Opts.ObjCSubscriptingLegacyRuntime =
+        (Opts.ObjCRuntime.getKind() == ObjCRuntime::FragileMacOSX);
   }
     
   if (Args.hasArg(OPT_fgnu89_inline))
@@ -1798,7 +1802,7 @@ std::string CompilerInvocation::getModuleHash() const {
     llvm::sys::path::append(systemVersionFile, "Library");
     llvm::sys::path::append(systemVersionFile, "CoreServices");
     llvm::sys::path::append(systemVersionFile, "SystemVersion.plist");
-    if (!llvm::MemoryBuffer::getFile(systemVersionFile, buffer)) {
+    if (!llvm::MemoryBuffer::getFile(systemVersionFile.c_str(), buffer)) {
       code = hash_combine(code, buffer.get()->getBuffer());
 
       struct stat statBuf;

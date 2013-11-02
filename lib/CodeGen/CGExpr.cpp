@@ -641,7 +641,8 @@ static llvm::Value *getArrayIndexingBound(
 void CodeGenFunction::EmitBoundsCheck(const Expr *E, const Expr *Base,
                                       llvm::Value *Index, QualType IndexType,
                                       bool Accessed) {
-  assert(SanOpts->Bounds && "should not be called unless adding bounds checks");
+  assert(SanOpts->ArrayBounds &&
+         "should not be called unless adding bounds checks");
 
   QualType IndexedType;
   llvm::Value *Bound = getArrayIndexingBound(*this, Base, IndexedType);
@@ -742,7 +743,7 @@ LValue CodeGenFunction::EmitUnsupportedLValue(const Expr *E,
 
 LValue CodeGenFunction::EmitCheckedLValue(const Expr *E, TypeCheckKind TCK) {
   LValue LV;
-  if (SanOpts->Bounds && isa<ArraySubscriptExpr>(E))
+  if (SanOpts->ArrayBounds && isa<ArraySubscriptExpr>(E))
     LV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E), /*Accessed*/true);
   else
     LV = EmitLValue(E);
@@ -2233,7 +2234,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   QualType IdxTy  = E->getIdx()->getType();
   bool IdxSigned = IdxTy->isSignedIntegerOrEnumerationType();
 
-  if (SanOpts->Bounds)
+  if (SanOpts->ArrayBounds)
     EmitBoundsCheck(E, E->getBase(), Idx, IdxTy, Accessed);
 
   // If the base is a vector type, then we are forming a vector element lvalue
@@ -2931,8 +2932,8 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
   }
 
   llvm::Value *Callee = EmitScalarExpr(E->getCallee());
-  return EmitCall(E->getCallee()->getType(), Callee, ReturnValue,
-                  E->arg_begin(), E->arg_end(), TargetDecl);
+  return EmitCall(E->getCallee()->getType(), Callee, E->getLocStart(),
+                  ReturnValue, E->arg_begin(), E->arg_end(), TargetDecl);
 }
 
 LValue CodeGenFunction::EmitBinaryOperatorLValue(const BinaryOperator *E) {
@@ -3103,6 +3104,7 @@ LValue CodeGenFunction::EmitStmtExprLValue(const StmtExpr *E) {
 }
 
 RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
+                                 SourceLocation CallLoc,
                                  ReturnValueSlot ReturnValue,
                                  CallExpr::const_arg_iterator ArgBeg,
                                  CallExpr::const_arg_iterator ArgEnd,
@@ -3122,6 +3124,51 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
   bool ForceColumnInfo = false;
   if (const FunctionDecl* FD = dyn_cast_or_null<const FunctionDecl>(TargetDecl))
     ForceColumnInfo = FD->isInlineSpecified();
+
+  if (getLangOpts().CPlusPlus && SanOpts->Function &&
+      (!TargetDecl || !isa<FunctionDecl>(TargetDecl))) {
+    if (llvm::Constant *PrefixSig =
+            CGM.getTargetCodeGenInfo().getUBSanFunctionSignature(CGM)) {
+      llvm::Constant *FTRTTIConst =
+          CGM.GetAddrOfRTTIDescriptor(QualType(FnType, 0), /*ForEH=*/true);
+      llvm::Type *PrefixStructTyElems[] = {
+        PrefixSig->getType(),
+        FTRTTIConst->getType()
+      };
+      llvm::StructType *PrefixStructTy = llvm::StructType::get(
+          CGM.getLLVMContext(), PrefixStructTyElems, /*isPacked=*/true);
+
+      llvm::Value *CalleePrefixStruct = Builder.CreateBitCast(
+          Callee, llvm::PointerType::getUnqual(PrefixStructTy));
+      llvm::Value *CalleeSigPtr =
+          Builder.CreateConstGEP2_32(CalleePrefixStruct, 0, 0);
+      llvm::Value *CalleeSig = Builder.CreateLoad(CalleeSigPtr);
+      llvm::Value *CalleeSigMatch = Builder.CreateICmpEQ(CalleeSig, PrefixSig);
+
+      llvm::BasicBlock *Cont = createBasicBlock("cont");
+      llvm::BasicBlock *TypeCheck = createBasicBlock("typecheck");
+      Builder.CreateCondBr(CalleeSigMatch, TypeCheck, Cont);
+
+      EmitBlock(TypeCheck);
+      llvm::Value *CalleeRTTIPtr =
+          Builder.CreateConstGEP2_32(CalleePrefixStruct, 0, 1);
+      llvm::Value *CalleeRTTI = Builder.CreateLoad(CalleeRTTIPtr);
+      llvm::Value *CalleeRTTIMatch =
+          Builder.CreateICmpEQ(CalleeRTTI, FTRTTIConst);
+      llvm::Constant *StaticData[] = {
+        EmitCheckSourceLocation(CallLoc),
+        EmitCheckTypeDescriptor(CalleeType)
+      };
+      EmitCheck(CalleeRTTIMatch,
+                "function_type_mismatch",
+                StaticData,
+                Callee,
+                CRK_Recoverable);
+
+      Builder.CreateBr(Cont);
+      EmitBlock(Cont);
+    }
+  }
 
   CallArgList Args;
   EmitCallArgs(Args, dyn_cast<FunctionProtoType>(FnType), ArgBeg, ArgEnd,

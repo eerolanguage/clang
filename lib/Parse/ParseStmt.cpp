@@ -41,6 +41,21 @@ using namespace clang;
 // C99 6.8: Statements and Blocks.
 //===----------------------------------------------------------------------===//
 
+/// \brief Parse a standalone statement (for instance, as the body of an 'if',
+/// 'while', or 'for').
+StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc) {
+  StmtResult Res;
+
+  // We may get back a null statement if we found a #pragma. Keep going until
+  // we get an actual statement.
+  do {
+    StmtVector Stmts;
+    Res = ParseStatementOrDeclaration(Stmts, true, TrailingElseLoc);
+  } while (!Res.isInvalid() && !Res.get());
+
+  return Res;
+}
+
 /// ParseStatementOrDeclaration - Read 'statement' or 'declaration'.
 ///       StatementOrDeclaration:
 ///         statement
@@ -2459,14 +2474,22 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   // We need an actual supported target.
   llvm::Triple TheTriple = Actions.Context.getTargetInfo().getTriple();
   llvm::Triple::ArchType ArchTy = TheTriple.getArch();
+  const std::string &TT = TheTriple.getTriple();
+  const llvm::Target *TheTarget = 0;
   bool UnsupportedArch = (ArchTy != llvm::Triple::x86 &&
                           ArchTy != llvm::Triple::x86_64);
-  if (UnsupportedArch)
+  if (UnsupportedArch) {
     Diag(AsmLoc, diag::err_msasm_unsupported_arch) << TheTriple.getArchName();
-    
+  } else {
+    std::string Error;
+    TheTarget = llvm::TargetRegistry::lookupTarget(TT, Error);
+    if (!TheTarget)
+      Diag(AsmLoc, diag::err_msasm_unable_to_create_target) << Error;
+  }
+
   // If we don't support assembly, or the assembly is empty, we don't
   // need to instantiate the AsmParser, etc.
-  if (UnsupportedArch || AsmToks.empty()) {
+  if (!TheTarget || AsmToks.empty()) {
     return Actions.ActOnMSAsmStmt(AsmLoc, LBraceLoc, AsmToks, StringRef(),
                                   /*NumOutputs*/ 0, /*NumInputs*/ 0,
                                   ConstraintRefs, ClobberRefs, Exprs, EndLoc);
@@ -2477,11 +2500,6 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   SmallVector<unsigned, 8> TokOffsets;
   if (buildMSAsmString(PP, AsmLoc, AsmToks, TokOffsets, AsmString))
     return StmtError();
-
-  // Find the target and create the target specific parser.
-  std::string Error;
-  const std::string &TT = TheTriple.getTriple();
-  const llvm::Target *TheTarget = llvm::TargetRegistry::lookupTarget(TT, Error);
 
   OwningPtr<llvm::MCRegisterInfo> MRI(TheTarget->createMCRegInfo(TT));
   OwningPtr<llvm::MCAsmInfo> MAI(TheTarget->createMCAsmInfo(*MRI, TT));

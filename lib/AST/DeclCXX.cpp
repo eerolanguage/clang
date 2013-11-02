@@ -108,11 +108,15 @@ CXXRecordDecl *CXXRecordDecl::Create(const ASTContext &C, TagKind TK,
 
 CXXRecordDecl *CXXRecordDecl::CreateLambda(const ASTContext &C, DeclContext *DC,
                                            TypeSourceInfo *Info, SourceLocation Loc,
-                                           bool Dependent) {
+                                           bool Dependent, bool IsGeneric, 
+                                           LambdaCaptureDefault CaptureDefault) {
   CXXRecordDecl* R = new (C) CXXRecordDecl(CXXRecord, TTK_Class, DC, Loc, Loc,
                                            0, 0);
   R->IsBeingDefined = true;
-  R->DefinitionData = new (C) struct LambdaDefinitionData(R, Info, Dependent);
+  R->DefinitionData = new (C) struct LambdaDefinitionData(R, Info, 
+                                                          Dependent, 
+                                                          IsGeneric, 
+                                                          CaptureDefault);
   R->MayHaveOutOfDateDef = false;
   R->setImplicit(true);
   C.getTypeDeclType(R, /*PrevDecl=*/0);
@@ -942,10 +946,10 @@ bool CXXRecordDecl::isCLike() const {
 
   return isPOD() && data().HasOnlyCMembers;
 }
-
+ 
 bool CXXRecordDecl::isGenericLambda() const { 
-  return isLambda() && 
-      getLambdaCallOperator()->getDescribedFunctionTemplate(); 
+  if (!isLambda()) return false;
+  return getLambdaData().IsGenericLambda;
 }
 
 CXXMethodDecl* CXXRecordDecl::getLambdaCallOperator() const {
@@ -1921,7 +1925,7 @@ NamespaceDecl::NamespaceDecl(DeclContext *DC, bool Inline,
   : NamedDecl(Namespace, DC, IdLoc, Id), DeclContext(Namespace),
     LocStart(StartLoc), RBraceLoc(), AnonOrFirstNamespaceAndInline(0, Inline) 
 {
-  setPreviousDeclaration(PrevDecl);
+  setPreviousDecl(PrevDecl);
   
   if (PrevDecl)
     AnonOrFirstNamespaceAndInline.setPointer(PrevDecl->getOriginalNamespace());

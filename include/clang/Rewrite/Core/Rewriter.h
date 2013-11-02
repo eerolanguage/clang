@@ -40,10 +40,6 @@ class RewriteBuffer {
   /// Deltas - Keep track of all the deltas in the source code due to insertions
   /// and deletions.
   DeltaTree Deltas;
-
-  /// Buffer - This is the actual buffer itself.  Note that using a vector or
-  /// string is a horribly inefficient way to do this, we should use a rope
-  /// instead.
   typedef RewriteRope BufferTy;
   BufferTy Buffer;
 public:
@@ -288,7 +284,7 @@ public:
 
   /// overwriteChangedFiles - Save all changed files to disk.
   ///
-  /// Returns whether not all changes were saved successfully.
+  /// Returns true if any files were not saved successfully.
   /// Outputs diagnostics via the source manager's diagnostic engine
   /// in case of an error.
   bool overwriteChangedFiles();

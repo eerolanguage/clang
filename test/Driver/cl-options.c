@@ -91,6 +91,9 @@
 // RUN: %clang_cl /FIasdf.h -### -- %s 2>&1 | FileCheck -check-prefix=FI %s
 // FI: "-include" "asdf.h"
 
+// RUN: %clang_cl /FI asdf.h -### -- %s 2>&1 | FileCheck -check-prefix=FI_ %s
+// FI_: "-include" "asdf.h"
+
 // We forward any unrecognized -W diagnostic options to cc1.
 // RUN: %clang_cl -Wunused-pragmas -### -- %s 2>&1 | FileCheck -check-prefix=WJoined %s
 // WJoined: "-cc1"
@@ -117,6 +120,7 @@
 
 // Unsupported but parsed options. Check that we don't error on them.
 // (/Zs is for syntax-only)
+// RUN: %clang_cl /Zs /arch:sse2 /Yustdafx.h /FpDebug\main.pch -- %s 2>&1
 // RUN: %clang_cl /Zs /EHsc /Fdfoo /fp:precise /Gd /GL /GL- -- %s 2>&1
 // RUN: %clang_cl /Zs /Gm /Gm- /GS /Gy /Gy- /GZ -- %s 2>&1
 // RUN: %clang_cl /Zs /ofoo.obj /o foo.obj -- %s 2>&1

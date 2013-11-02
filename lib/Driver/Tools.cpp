@@ -468,6 +468,7 @@ static const char *getLLVMArchSuffixForARM(StringRef CPU) {
     .Case("cortex-m4", "v7em")
     .Case("cortex-a9-mp", "v7f")
     .Case("swift", "v7s")
+    .Cases("cortex-a53", "cortex-a57", "v8")
     .Default("");
 }
 
@@ -538,6 +539,26 @@ static std::string getARMTargetCPU(const ArgList &Args,
     .Default("arm7tdmi");
 }
 
+/// getAArch64TargetCPU - Get the (LLVM) name of the AArch64 cpu we are targeting.
+//
+// FIXME: tblgen this.
+static std::string getAArch64TargetCPU(const ArgList &Args,
+                                       const llvm::Triple &Triple) {
+  // FIXME: Warn on inconsistent use of -mcpu and -march.
+
+  // If we have -mcpu=, use that.
+  if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
+    StringRef MCPU = A->getValue();
+    // Handle -mcpu=native.
+    if (MCPU == "native")
+      return llvm::sys::getHostCPUName();
+    else
+      return MCPU;
+  }
+
+  return "generic";
+}
+
 // FIXME: Move to target hook.
 static bool isSignedCharDefault(const llvm::Triple &Triple) {
   switch (Triple.getArch()) {
@@ -596,6 +617,27 @@ static void getAArch64FPUFeatures(const Driver &D, const Arg *A,
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
 
+// Handle -mhwdiv=.
+static void getARMHWDivFeatures(const Driver &D, const Arg *A,
+                              const ArgList &Args,
+                              std::vector<const char *> &Features) {
+  StringRef HWDiv = A->getValue();
+  if (HWDiv == "arm") {
+    Features.push_back("+hwdiv-arm");
+    Features.push_back("-hwdiv");
+  } else if (HWDiv == "thumb") {
+    Features.push_back("-hwdiv-arm");
+    Features.push_back("+hwdiv");
+  } else if (HWDiv == "arm,thumb" || HWDiv == "thumb,arm") {
+    Features.push_back("+hwdiv-arm");
+    Features.push_back("+hwdiv");
+  } else if (HWDiv == "none") {
+    Features.push_back("-hwdiv-arm");
+    Features.push_back("-hwdiv");
+  } else
+    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+}
+ 
 // Handle -mfpu=.
 //
 // FIXME: Centralize feature selection, defaulting shouldn't be also in the
@@ -623,12 +665,16 @@ static void getARMFPUFeatures(const Driver &D, const Arg *A,
     Features.push_back("-neon");
   } else if (FPU == "fp-armv8") {
     Features.push_back("+fp-armv8");
+    Features.push_back("-neon");
+    Features.push_back("-crypto");
   } else if (FPU == "neon-fp-armv8") {
     Features.push_back("+fp-armv8");
     Features.push_back("+neon");
+    Features.push_back("-crypto");
   } else if (FPU == "crypto-neon-fp-armv8") {
-    Features.push_back("+crypto");
     Features.push_back("+fp-armv8");
+    Features.push_back("+neon");
+    Features.push_back("+crypto");
   } else if (FPU == "neon") {
     Features.push_back("+neon");
   } else if (FPU == "none") {
@@ -740,11 +786,22 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   // Honor -mfpu=.
   if (const Arg *A = Args.getLastArg(options::OPT_mfpu_EQ))
     getARMFPUFeatures(D, A, Args, Features);
+  if (const Arg *A = Args.getLastArg(options::OPT_mhwdiv_EQ))
+    getARMHWDivFeatures(D, A, Args, Features);
 
   // Setting -msoft-float effectively disables NEON because of the GCC
   // implementation, although the same isn't true of VFP or VFP3.
   if (FloatABI == "soft")
     Features.push_back("-neon");
+
+  // En/disable crc
+  if (Arg *A = Args.getLastArg(options::OPT_mcrc,
+                               options::OPT_mnocrc)) {
+    if (A->getOption().matches(options::OPT_mcrc))
+      Features.push_back("+crc");
+    else
+      Features.push_back("-crc");
+  }
 }
 
 void Clang::AddARMTargetArgs(const ArgList &Args,
@@ -982,6 +1039,8 @@ static void getMIPSTargetFeatures(const Driver &D, const ArgList &Args,
                    "dspr2");
   AddTargetFeature(Args, Features, options::OPT_mmsa, options::OPT_mno_msa,
                    "msa");
+  AddTargetFeature(Args, Features, options::OPT_mfp64, options::OPT_mfp32,
+                   "fp64");
 }
 
 void Clang::AddMIPSTargetArgs(const ArgList &Args,
@@ -1112,30 +1171,39 @@ static std::string getPPCTargetCPU(const ArgList &Args) {
 
 static void getPPCTargetFeatures(const ArgList &Args,
                                  std::vector<const char *> &Features) {
-  // Allow override of the Altivec feature.
+  for (arg_iterator it = Args.filtered_begin(options::OPT_m_ppc_Features_Group),
+                    ie = Args.filtered_end();
+       it != ie; ++it) {
+    StringRef Name = (*it)->getOption().getName();
+    (*it)->claim();
+
+    // Skip over "-m".
+    assert(Name.startswith("m") && "Invalid feature name.");
+    Name = Name.substr(1);
+
+    bool IsNegative = Name.startswith("no-");
+    if (IsNegative)
+      Name = Name.substr(3);
+
+    // Note that gcc calls this mfcrf and LLVM calls this mfocrf so we
+    // pass the correct option to the backend while calling the frontend
+    // option the same.
+    // TODO: Change the LLVM backend option maybe?
+    if (Name == "mfcrf")
+      Name = "mfocrf";
+
+    Features.push_back(Args.MakeArgString((IsNegative ? "-" : "+") + Name));
+  }
+
+  // Altivec is a bit weird, allow overriding of the Altivec feature here.
   AddTargetFeature(Args, Features, options::OPT_faltivec,
                    options::OPT_fno_altivec, "altivec");
-
-  AddTargetFeature(Args, Features, options::OPT_mfprnd, options::OPT_mno_fprnd,
-                   "fprnd");
-
-  // Note that gcc calls this mfcrf and LLVM calls this mfocrf.
-  AddTargetFeature(Args, Features, options::OPT_mmfcrf, options::OPT_mno_mfcrf,
-                   "mfocrf");
-
-  AddTargetFeature(Args, Features, options::OPT_mpopcntd,
-                   options::OPT_mno_popcntd, "popcntd");
-
-  // It is really only possible to turn qpx off because turning qpx on is tied
-  // to using the a2q CPU.
-  if (Args.hasFlag(options::OPT_mno_qpx, options::OPT_mqpx, false))
-    Features.push_back("-qpx");
 }
 
 /// Get the (LLVM) name of the R600 gpu we are targeting.
 static std::string getR600TargetGPU(const ArgList &Args) {
   if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
-    std::string GPUName = A->getValue();
+    const char *GPUName = A->getValue();
     return llvm::StringSwitch<const char *>(GPUName)
       .Cases("rv630", "rv635", "r600")
       .Cases("rv610", "rv620", "rs780", "rs880")
@@ -1144,7 +1212,7 @@ static std::string getR600TargetGPU(const ArgList &Args) {
       .Cases("sumo", "sumo2", "sumo")
       .Case("hemlock", "cypress")
       .Case("aruba", "cayman")
-      .Default(GPUName.c_str());
+      .Default(GPUName);
   }
   return "";
 }
@@ -1227,33 +1295,37 @@ static const char *getX86TargetCPU(const ArgList &Args,
   if (Triple.isOSDarwin())
     return Is64Bit ? "core2" : "yonah";
 
-  // Everything else goes to x86-64 in 64-bit mode.
-  if (Is64Bit)
-    return "x86-64";
-
-  if (Triple.getOSName().startswith("haiku"))
-    return "i586";
-  if (Triple.getOSName().startswith("openbsd"))
-    return "i486";
-  if (Triple.getOSName().startswith("bitrig"))
-    return "i686";
-  if (Triple.getOSName().startswith("freebsd"))
-    return "i486";
-  if (Triple.getOSName().startswith("netbsd"))
-    return "i486";
   // All x86 devices running Android have core2 as their common
   // denominator. This makes a better choice than pentium4.
   if (Triple.getEnvironment() == llvm::Triple::Android)
     return "core2";
 
-  // Fallback to p4.
-  return "pentium4";
+  // Everything else goes to x86-64 in 64-bit mode.
+  if (Is64Bit)
+    return "x86-64";
+
+  switch (Triple.getOS()) {
+  case llvm::Triple::FreeBSD:
+  case llvm::Triple::NetBSD:
+  case llvm::Triple::OpenBSD:
+    return "i486";
+  case llvm::Triple::Haiku:
+    return "i586";
+  case llvm::Triple::Bitrig:
+    return "i686";
+  default:
+    // Fallback to p4.
+    return "pentium4";
+  }
 }
 
 static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
   switch(T.getArch()) {
   default:
     return "";
+
+  case llvm::Triple::aarch64:
+    return getAArch64TargetCPU(Args, T);
 
   case llvm::Triple::arm:
   case llvm::Triple::thumb:
@@ -1708,6 +1780,7 @@ static void addSanitizerRTLinkFlagsLinux(
   CmdArgs.push_back("-lpthread");
   CmdArgs.push_back("-lrt");
   CmdArgs.push_back("-ldl");
+  CmdArgs.push_back("-lm");
 
   // If possible, use a dynamic symbols file to export the symbols from the
   // runtime library. If we can't do so, use -export-dynamic instead to export
@@ -1785,30 +1858,36 @@ static void addDfsanRTLinux(const ToolChain &TC, const ArgList &Args,
     addSanitizerRTLinkFlagsLinux(TC, Args, CmdArgs, "dfsan", true);
 }
 
+static bool shouldUseFramePointerForTarget(const ArgList &Args,
+                                           const llvm::Triple &Triple) {
+  switch (Triple.getArch()) {
+  // Don't use a frame pointer on linux if optimizing for certain targets.
+  case llvm::Triple::mips64:
+  case llvm::Triple::mips64el:
+  case llvm::Triple::mips:
+  case llvm::Triple::mipsel:
+  case llvm::Triple::systemz:
+  case llvm::Triple::x86:
+  case llvm::Triple::x86_64:
+    if (Triple.isOSLinux())
+      if (Arg *A = Args.getLastArg(options::OPT_O_Group))
+        if (!A->getOption().matches(options::OPT_O0))
+          return false;
+    return true;
+  case llvm::Triple::xcore:
+    return false;
+  default:
+    return true;
+  }
+}
+
 static bool shouldUseFramePointer(const ArgList &Args,
                                   const llvm::Triple &Triple) {
   if (Arg *A = Args.getLastArg(options::OPT_fno_omit_frame_pointer,
                                options::OPT_fomit_frame_pointer))
     return A->getOption().matches(options::OPT_fno_omit_frame_pointer);
 
-  // Don't use a frame pointer on linux x86, x86_64 and z if optimizing.
-  if ((Triple.getArch() == llvm::Triple::x86_64 ||
-       Triple.getArch() == llvm::Triple::x86 ||
-       Triple.getArch() == llvm::Triple::systemz ||
-       Triple.getArch() == llvm::Triple::mips ||
-       Triple.getArch() == llvm::Triple::mipsel ||
-       Triple.getArch() == llvm::Triple::mips64 ||
-       Triple.getArch() == llvm::Triple::mips64el) &&
-      Triple.isOSLinux()) {
-    if (Arg *A = Args.getLastArg(options::OPT_O_Group))
-      if (!A->getOption().matches(options::OPT_O0))
-        return false;
-  }
-
-  if (Triple.getArch() == llvm::Triple::xcore)
-    return false;
-
-  return true;
+  return shouldUseFramePointerForTarget(Args, Triple);
 }
 
 static bool shouldUseLeafFramePointer(const ArgList &Args,
@@ -1817,24 +1896,7 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
                                options::OPT_momit_leaf_frame_pointer))
     return A->getOption().matches(options::OPT_mno_omit_leaf_frame_pointer);
 
-  // Don't use a leaf frame pointer on linux x86, x86_64 and z if optimizing.
-  if ((Triple.getArch() == llvm::Triple::x86_64 ||
-       Triple.getArch() == llvm::Triple::x86 ||
-       Triple.getArch() == llvm::Triple::systemz ||
-       Triple.getArch() == llvm::Triple::mips ||
-       Triple.getArch() == llvm::Triple::mipsel ||
-       Triple.getArch() == llvm::Triple::mips64 ||
-       Triple.getArch() == llvm::Triple::mips64el) &&
-      Triple.isOSLinux()) {
-    if (Arg *A = Args.getLastArg(options::OPT_O_Group))
-      if (!A->getOption().matches(options::OPT_O0))
-        return false;
-  }
-
-  if (Triple.getArch() == llvm::Triple::xcore)
-    return false;
-
-  return true;
+  return shouldUseFramePointerForTarget(Args, Triple);
 }
 
 /// Add a CC1 option to specify the debug compilation directory.
@@ -2882,8 +2944,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_show_template_tree);
   Args.AddLastArg(CmdArgs, options::OPT_fno_elide_type);
 
-  const SanitizerArgs &Sanitize = D.getOrParseSanitizerArgs(Args);
-  Sanitize.addArgs(getToolChain(), Args, CmdArgs);
+  const SanitizerArgs &Sanitize = getToolChain().getSanitizerArgs();
+  Sanitize.addArgs(Args, CmdArgs);
 
   if (!Args.hasFlag(options::OPT_fsanitize_recover,
                     options::OPT_fno_sanitize_recover,
@@ -3062,11 +3124,26 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fmodule-maps");
   }
 
-  // -fmodules-decluse checks that modules used are declared so (off by default).
+  // -fmodules-decluse checks that modules used are declared so (off by
+  // default).
   if (Args.hasFlag(options::OPT_fmodules_decluse,
                    options::OPT_fno_modules_decluse,
                    false)) {
     CmdArgs.push_back("-fmodules-decluse");
+  }
+
+  // -fmodule-name specifies the module that is currently being built (or
+  // used for header checking by -fmodule-maps).
+  if (Arg *A = Args.getLastArg(options::OPT_fmodule_name)) {
+    A->claim();
+    A->render(Args, CmdArgs);
+  }
+
+  // -fmodule-map-file can be used to specify a file containing module
+  // definitions.
+  if (Arg *A = Args.getLastArg(options::OPT_fmodule_map_file)) {
+    A->claim();
+    A->render(Args, CmdArgs);
   }
 
   // If a module path was provided, pass it along. Otherwise, use a temporary
@@ -4355,10 +4432,7 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   std::string Linker = ToolChain.GetProgramPath("hexagon-ld");
-  C.addCommand(
-    new Command(
-      JA, *this,
-      Args.MakeArgString(Linker), CmdArgs));
+  C.addCommand(new Command(JA, *this, Args.MakeArgString(Linker), CmdArgs));
 }
 // Hexagon tools end.
 
@@ -5020,18 +5094,17 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
   std::string LibPath = "/usr/lib/";
   llvm::Triple::ArchType Arch = T.getArch();
   switch (Arch) {
-        case llvm::Triple::x86:
-          GCCLibPath += ("i386-" + T.getVendorName() + "-" +
-              T.getOSName()).str() + "/4.5.2/";
-          break;
-        case llvm::Triple::x86_64:
-          GCCLibPath += ("i386-" + T.getVendorName() + "-" +
-              T.getOSName()).str();
-          GCCLibPath += "/4.5.2/amd64/";
-          LibPath += "amd64/";
-          break;
-        default:
-          assert(0 && "Unsupported architecture");
+  case llvm::Triple::x86:
+    GCCLibPath +=
+        ("i386-" + T.getVendorName() + "-" + T.getOSName()).str() + "/4.5.2/";
+    break;
+  case llvm::Triple::x86_64:
+    GCCLibPath += ("i386-" + T.getVendorName() + "-" + T.getOSName()).str();
+    GCCLibPath += "/4.5.2/amd64/";
+    LibPath += "amd64/";
+    break;
+  default:
+    llvm_unreachable("Unsupported architecture");
   }
 
   ArgStringList CmdArgs;
@@ -5486,23 +5559,21 @@ void bitrig::Link::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back("-lc");
     }
 
-    std::string myarch = "-lclang_rt.";
-    const llvm::Triple &T = getToolChain().getTriple();
-    llvm::Triple::ArchType Arch = T.getArch();
-    switch (Arch) {
-          case llvm::Triple::arm:
-            myarch += ("arm");
-            break;
-          case llvm::Triple::x86:
-            myarch += ("i386");
-            break;
-          case llvm::Triple::x86_64:
-            myarch += ("amd64");
-            break;
-          default:
-            assert(0 && "Unsupported architecture");
-     }
-     CmdArgs.push_back(Args.MakeArgString(myarch));
+    StringRef MyArch;
+    switch (getToolChain().getTriple().getArch()) {
+    case llvm::Triple::arm:
+      MyArch = "arm";
+      break;
+    case llvm::Triple::x86:
+      MyArch = "i386";
+      break;
+    case llvm::Triple::x86_64:
+      MyArch = "amd64";
+      break;
+    default:
+      llvm_unreachable("Unsupported architecture");
+    }
+    CmdArgs.push_back(Args.MakeArgString("-lclang_rt." + MyArch));
   }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
@@ -5954,6 +6025,8 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     StringRef MArch = getToolChain().getArchName();
     if (MArch == "armv7" || MArch == "armv7a" || MArch == "armv7-a")
       CmdArgs.push_back("-mfpu=neon");
+    if (MArch == "armv8" || MArch == "armv8a" || MArch == "armv8-a")
+      CmdArgs.push_back("-mfpu=crypto-neon-fp-armv8");
 
     StringRef ARMFloatABI = getARMFloatABI(getToolChain().getDriver(), Args,
                                            getToolChain().getTriple());
@@ -6117,10 +6190,10 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   const Driver &D = ToolChain.getDriver();
   const bool isAndroid =
     ToolChain.getTriple().getEnvironment() == llvm::Triple::Android;
-  const SanitizerArgs &Sanitize = D.getOrParseSanitizerArgs(Args);
+  const SanitizerArgs &Sanitize = ToolChain.getSanitizerArgs();
   const bool IsPIE =
     !Args.hasArg(options::OPT_shared) &&
-    (Args.hasArg(options::OPT_pie) || Sanitize.hasZeroBaseShadow(ToolChain));
+    (Args.hasArg(options::OPT_pie) || Sanitize.hasZeroBaseShadow());
 
   ArgStringList CmdArgs;
 
@@ -6651,7 +6724,7 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                          ImplibName.str()));
   }
 
-  if (getToolChain().getDriver().getOrParseSanitizerArgs(Args).needsAsanRt()) {
+  if (getToolChain().getSanitizerArgs().needsAsanRt()) {
     CmdArgs.push_back(Args.MakeArgString("-debug"));
     CmdArgs.push_back(Args.MakeArgString("-incremental:no"));
     SmallString<128> LibSanitizer(getToolChain().getDriver().ResourceDir);

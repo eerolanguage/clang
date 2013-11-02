@@ -1387,7 +1387,9 @@ static getConstantArrayInfoInChars(const ASTContext &Context,
          "Overflow in array type char size evaluation");
   uint64_t Width = EltInfo.first.getQuantity() * Size;
   unsigned Align = EltInfo.second.getQuantity();
-  Width = llvm::RoundUpToAlignment(Width, Align);
+  if (!Context.getTargetInfo().getCXXABI().isMicrosoft() ||
+      Context.getTargetInfo().getPointerWidth(0) == 64)
+    Width = llvm::RoundUpToAlignment(Width, Align);
   return std::make_pair(CharUnits::fromQuantity(Width),
                         CharUnits::fromQuantity(Align));
 }
@@ -1460,7 +1462,9 @@ ASTContext::getTypeInfoImpl(const Type *T) const {
            "Overflow in array type bit size evaluation");
     Width = EltInfo.first*Size;
     Align = EltInfo.second;
-    Width = llvm::RoundUpToAlignment(Width, Align);
+    if (!getTargetInfo().getCXXABI().isMicrosoft() ||
+        getTargetInfo().getPointerWidth(0) == 64)
+      Width = llvm::RoundUpToAlignment(Width, Align);
     break;
   }
   case Type::ExtVector:
@@ -2922,13 +2926,11 @@ QualType ASTContext::getTypeDeclTypeSlow(const TypeDecl *Decl) const {
          "Template type parameter types are always available.");
 
   if (const RecordDecl *Record = dyn_cast<RecordDecl>(Decl)) {
-    assert(!Record->getPreviousDecl() &&
-           "struct/union has previous declaration");
+    assert(Record->isFirstDecl() && "struct/union has previous declaration");
     assert(!NeedsInjectedClassNameType(Record));
     return getRecordType(Record);
   } else if (const EnumDecl *Enum = dyn_cast<EnumDecl>(Decl)) {
-    assert(!Enum->getPreviousDecl() &&
-           "enum has previous declaration");
+    assert(Enum->isFirstDecl() && "enum has previous declaration");
     return getEnumType(Enum);
   } else if (const UnresolvedUsingTypenameDecl *Using =
                dyn_cast<UnresolvedUsingTypenameDecl>(Decl)) {

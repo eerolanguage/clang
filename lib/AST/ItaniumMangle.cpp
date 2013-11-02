@@ -439,6 +439,8 @@ void CXXNameMangler::mangle(const NamedDecl *D, StringRef Prefix) {
     mangleFunctionEncoding(FD);
   else if (const VarDecl *VD = dyn_cast<VarDecl>(D))
     mangleName(VD);
+  else if (const IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(D))
+    mangleName(IFD->getAnonField());
   else
     mangleName(cast<FieldDecl>(D));
 }
@@ -3655,8 +3657,8 @@ void ItaniumMangleContextImpl::mangleThunk(const CXXMethodDecl *MD,
   // Mangle the return pointer adjustment if there is one.
   if (!Thunk.Return.isEmpty())
     Mangler.mangleCallOffset(Thunk.Return.NonVirtual,
-                             Thunk.Return.VBaseOffsetOffset);
-  
+                             Thunk.Return.Virtual.Itanium.VBaseOffsetOffset);
+
   Mangler.mangleFunctionEncoding(MD);
 }
 

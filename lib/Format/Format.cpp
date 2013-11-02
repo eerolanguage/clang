@@ -137,6 +137,8 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     IO.mapOptional("NamespaceIndentation", Style.NamespaceIndentation);
     IO.mapOptional("ObjCSpaceBeforeProtocolList",
                    Style.ObjCSpaceBeforeProtocolList);
+    IO.mapOptional("PenaltyBreakBeforeFirstCallParameter",
+                   Style.PenaltyBreakBeforeFirstCallParameter);
     IO.mapOptional("PenaltyBreakComment", Style.PenaltyBreakComment);
     IO.mapOptional("PenaltyBreakString", Style.PenaltyBreakString);
     IO.mapOptional("PenaltyBreakFirstLessLess",
@@ -156,6 +158,7 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     IO.mapOptional("IndentFunctionDeclarationAfterType",
                    Style.IndentFunctionDeclarationAfterType);
     IO.mapOptional("SpacesInParentheses", Style.SpacesInParentheses);
+    IO.mapOptional("SpacesInAngles", Style.SpacesInAngles);
     IO.mapOptional("SpaceInEmptyParentheses", Style.SpaceInEmptyParentheses);
     IO.mapOptional("SpacesInCStyleCastParentheses",
                    Style.SpacesInCStyleCastParentheses);
@@ -163,6 +166,7 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
                    Style.SpaceAfterControlStatementKeyword);
     IO.mapOptional("SpaceBeforeAssignmentOperators",
                    Style.SpaceBeforeAssignmentOperators);
+    IO.mapOptional("ContinuationIndentWidth", Style.ContinuationIndentWidth);
   }
 };
 }
@@ -214,9 +218,12 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.SpacesInCStyleCastParentheses = false;
   LLVMStyle.SpaceAfterControlStatementKeyword = true;
   LLVMStyle.SpaceBeforeAssignmentOperators = true;
+  LLVMStyle.ContinuationIndentWidth = 4;
+  LLVMStyle.SpacesInAngles = false;
 
   setDefaultPenalties(LLVMStyle);
   LLVMStyle.PenaltyReturnTypeOnItsOwnLine = 60;
+  LLVMStyle.PenaltyBreakBeforeFirstCallParameter = 19;
 
   return LLVMStyle;
 }
@@ -257,9 +264,12 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.SpacesInCStyleCastParentheses = false;
   GoogleStyle.SpaceAfterControlStatementKeyword = true;
   GoogleStyle.SpaceBeforeAssignmentOperators = true;
+  GoogleStyle.ContinuationIndentWidth = 4;
+  GoogleStyle.SpacesInAngles = false;
 
   setDefaultPenalties(GoogleStyle);
   GoogleStyle.PenaltyReturnTypeOnItsOwnLine = 200;
+  GoogleStyle.PenaltyBreakBeforeFirstCallParameter = 1;
 
   return GoogleStyle;
 }
@@ -538,9 +548,10 @@ private:
   /// break or don't break.
   bool formatChildren(LineState &State, bool NewLine, bool DryRun,
                       unsigned &Penalty) {
-    const FormatToken &LBrace = *State.NextToken->Previous;
-    if (LBrace.isNot(tok::l_brace) || LBrace.BlockKind != BK_Block ||
-        LBrace.Children.size() == 0)
+    const FormatToken &Previous = *State.NextToken->Previous;
+    const FormatToken *LBrace = State.NextToken->getPreviousNonComment();
+    if (!LBrace || LBrace->isNot(tok::l_brace) ||
+        LBrace->BlockKind != BK_Block || Previous.Children.size() == 0)
       // The previous token does not open a block. Nothing to do. We don't
       // assert so that we can simply call this function for all tokens.
       return true;
@@ -548,8 +559,8 @@ private:
     if (NewLine) {
       unsigned ParentIndent = State.Stack.back().Indent;
       for (SmallVector<AnnotatedLine *, 1>::const_iterator
-               I = LBrace.Children.begin(),
-               E = LBrace.Children.end();
+               I = Previous.Children.begin(),
+               E = Previous.Children.end();
            I != E; ++I) {
         unsigned Indent =
             ParentIndent + ((*I)->Level - Line.Level - 1) * Style.IndentWidth;
@@ -567,24 +578,24 @@ private:
       return true;
     }
 
-    if (LBrace.Children.size() > 1)
+    if (Previous.Children.size() > 1)
       return false; // Cannot merge multiple statements into a single line.
 
     // We can't put the closing "}" on a line with a trailing comment.
-    if (LBrace.Children[0]->Last->isTrailingComment())
+    if (Previous.Children[0]->Last->isTrailingComment())
       return false;
 
     if (!DryRun) {
       Whitespaces->replaceWhitespace(
-          *LBrace.Children[0]->First,
+          *Previous.Children[0]->First,
           /*Newlines=*/0, /*IndentLevel=*/0, /*Spaces=*/1,
           /*StartOfTokenColumn=*/State.Column, State.Line->InPPDirective);
       UnwrappedLineFormatter Formatter(Indenter, Whitespaces, Style,
-                                       *LBrace.Children[0]);
+                                       *Previous.Children[0]);
       Penalty += Formatter.format(State.Column + 1, DryRun);
     }
 
-    State.Column += 1 + LBrace.Children[0]->Last->TotalLength;
+    State.Column += 1 + Previous.Children[0]->Last->TotalLength;
     return true;
   }
 
@@ -912,10 +923,7 @@ public:
       } else if (TheLine.Type != LT_Invalid &&
                  (WasMoved || FormatPPDirective || touchesLine(TheLine))) {
         unsigned LevelIndent = getIndent(IndentForLevel, TheLine.Level);
-        if (FirstTok->WhitespaceRange.isValid() &&
-            // Insert a break even if there is a structural error in case where
-            // we break apart a line consisting of multiple unwrapped lines.
-            (FirstTok->NewlinesBefore == 0 || !StructuralError)) {
+        if (FirstTok->WhitespaceRange.isValid()) {
           formatFirstToken(*TheLine.First, PreviousLine, TheLine.Level, Indent,
                            TheLine.InPPDirective);
         } else {
@@ -1423,7 +1431,8 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
 
     if (IsFile) {
       OwningPtr<llvm::MemoryBuffer> Text;
-      if (llvm::error_code ec = llvm::MemoryBuffer::getFile(ConfigFile, Text)) {
+      if (llvm::error_code ec =
+              llvm::MemoryBuffer::getFile(ConfigFile.c_str(), Text)) {
         llvm::errs() << ec.message() << "\n";
         continue;
       }

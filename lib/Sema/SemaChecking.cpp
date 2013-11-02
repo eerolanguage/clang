@@ -556,8 +556,11 @@ bool Sema::CheckARMBuiltinExclusiveCall(unsigned BuiltinID, CallExpr *TheCall) {
   ValArg = PerformCopyInitialization(Entity, SourceLocation(), ValArg);
   if (ValArg.isInvalid())
     return true;
-
   TheCall->setArg(0, ValArg.get());
+
+  // __builtin_arm_strex always returns an int. It's marked as such in the .def,
+  // but the custom checker bypasses all default analysis.
+  TheCall->setType(Context.IntTy);
   return false;
 }
 
@@ -2123,6 +2126,27 @@ checkFormatStringExpr(Sema &S, const Expr *E, ArrayRef<const Expr *> Args,
 
     return SLCT_NotALiteral;
   }
+      
+  case Stmt::ObjCMessageExprClass: {
+    const ObjCMessageExpr *ME = cast<ObjCMessageExpr>(E);
+    if (const ObjCMethodDecl *MDecl = ME->getMethodDecl()) {
+      if (const NamedDecl *ND = dyn_cast<NamedDecl>(MDecl)) {
+        if (const FormatArgAttr *FA = ND->getAttr<FormatArgAttr>()) {
+          unsigned ArgIndex = FA->getFormatIdx();
+          if (ArgIndex <= ME->getNumArgs()) {
+            const Expr *Arg = ME->getArg(ArgIndex-1);
+            return checkFormatStringExpr(S, Arg, Args,
+                                         HasVAListArg, format_idx,
+                                         firstDataArg, Type, CallType,
+                                         InFunctionCall, CheckedVarArgs);
+          }
+        }
+      }
+    }
+
+    return SLCT_NotALiteral;
+  }
+      
   case Stmt::ObjCStringLiteralClass:
   case Stmt::StringLiteralClass: {
     const StringLiteral *StrE = NULL;
@@ -4755,6 +4779,10 @@ static bool HasEnumType(Expr *E) {
 }
 
 static void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
+  // Disable warning in template instantiations.
+  if (!S.ActiveTemplateInstantiations.empty())
+    return;
+
   BinaryOperatorKind op = E->getOpcode();
   if (E->isValueDependent())
     return;
@@ -4782,6 +4810,10 @@ static void DiagnoseOutOfRangeComparison(Sema &S, BinaryOperator *E,
                                          Expr *Constant, Expr *Other,
                                          llvm::APSInt Value,
                                          bool RhsConstant) {
+  // Disable warning in template instantiations.
+  if (!S.ActiveTemplateInstantiations.empty())
+    return;
+
   // 0 values are handled later by CheckTrivialUnsignedComparison().
   if (Value == 0)
     return;

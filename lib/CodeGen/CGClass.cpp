@@ -22,6 +22,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/Basic/TargetBuiltins.h"
+#include "clang/CodeGen/CGFunctionInfo.h"
 #include "clang/Frontend/CodeGenOptions.h"
 
 using namespace clang;
@@ -1829,8 +1830,8 @@ void CodeGenFunction::EmitCXXDestructorCall(const CXXDestructorDecl *DD,
                                             bool ForVirtualBase,
                                             bool Delegating,
                                             llvm::Value *This) {
-  llvm::Value *VTT = GetVTTParameter(GlobalDecl(DD, Type),
-                                     ForVirtualBase, Delegating);
+  GlobalDecl GD(DD, Type);
+  llvm::Value *VTT = GetVTTParameter(GD, ForVirtualBase, Delegating);
   llvm::Value *Callee = 0;
   if (getLangOpts().AppleKext)
     Callee = BuildAppleKextVirtualDestructorCall(DD, Type, 
@@ -1838,7 +1839,10 @@ void CodeGenFunction::EmitCXXDestructorCall(const CXXDestructorDecl *DD,
     
   if (!Callee)
     Callee = CGM.GetAddrOfCXXDestructor(DD, Type);
-  
+
+  if (DD->isVirtual())
+    This = CGM.getCXXABI().adjustThisArgumentForVirtualCall(*this, GD, This);
+
   // FIXME: Provide a source location here.
   EmitCXXMemberCall(DD, SourceLocation(), Callee, ReturnValueSlot(), This,
                     VTT, getContext().getPointerType(getContext().VoidPtrTy),

@@ -44,6 +44,7 @@ class ObjCMigrateASTConsumer : public ASTConsumer {
   
   void migrateDecl(Decl *D);
   void migrateObjCInterfaceDecl(ASTContext &Ctx, ObjCContainerDecl *D);
+  void migrateDeprecatedAnnotation(ASTContext &Ctx, ObjCCategoryDecl *CatDecl);
   void migrateProtocolConformance(ASTContext &Ctx,
                                   const ObjCImplementationDecl *ImpDecl);
   void CacheObjCNSIntegerTypedefed(const TypedefDecl *TypedefDcl);
@@ -229,8 +230,14 @@ void ObjCMigrateASTConsumer::migrateDecl(Decl *D) {
   BodyMigrator(*this).TraverseDecl(D);
 }
 
-static void append_attr(std::string &PropertyString, const char *attr) {
-  PropertyString += ", ";
+static void append_attr(std::string &PropertyString, const char *attr,
+                        bool &LParenAdded) {
+  if (!LParenAdded) {
+    PropertyString += "(";
+    LParenAdded = true;
+  }
+  else
+    PropertyString += ", ";
   PropertyString += attr;
 }
 
@@ -267,30 +274,49 @@ void MigrateBlockOrFunctionPointerTypeVariable(std::string & PropertyString,
 }
 
 
-static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
+static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
                                   const ObjCMethodDecl *Setter,
                                   const NSAPI &NS, edit::Commit &commit,
                                   unsigned LengthOfPrefix,
-                                  bool Atomic) {
+                                  bool Atomic, bool AvailabilityArgsMatch) {
   ASTContext &Context = NS.getASTContext();
-  std::string PropertyString = "@property (";
-  PropertyString += (Atomic ? "atomic" : "nonatomic");
+  bool LParenAdded = false;
+  std::string PropertyString = "@property ";
+  if (!Atomic) {
+    PropertyString += "(nonatomic";
+    LParenAdded = true;
+  }
+  
   std::string PropertyNameString = Getter->getNameAsString();
   StringRef PropertyName(PropertyNameString);
   if (LengthOfPrefix > 0) {
-    PropertyString += ", getter=";
+    if (!LParenAdded) {
+      PropertyString += "(getter=";
+      LParenAdded = true;
+    }
+    else
+      PropertyString += ", getter=";
     PropertyString += PropertyNameString;
   }
   // Property with no setter may be suggested as a 'readonly' property.
-  if (!Setter)
-    append_attr(PropertyString, "readonly");
+  if (!Setter) {
+    if (!LParenAdded) {
+      PropertyString += "(readonly";
+      LParenAdded = true;
+    }
+    else
+      append_attr(PropertyString, "readonly", LParenAdded);
+  }
   
-  // Short circuit properties that contain the name "delegate" or "dataSource",
-  // or have exact name "target" to have unsafe_unretained attribute.
+  // Short circuit 'delegate' properties that contain the name "delegate" or
+  // "dataSource", or have exact name "target" to have 'assign' attribute.
   if (PropertyName.equals("target") ||
       (PropertyName.find("delegate") != StringRef::npos) ||
-      (PropertyName.find("dataSource") != StringRef::npos))
-    append_attr(PropertyString, "unsafe_unretained");
+      (PropertyName.find("dataSource") != StringRef::npos)) {
+    QualType QT = Getter->getResultType();
+    if (!QT->isRealType())
+      append_attr(PropertyString, "assign", LParenAdded);
+  }
   else if (Setter) {
     const ParmVarDecl *argDecl = *Setter->param_begin();
     QualType ArgType = Context.getCanonicalType(argDecl->getType());
@@ -302,21 +328,22 @@ static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
         ObjCInterfaceDecl *IDecl = ObjPtrTy->getObjectType()->getInterface();
         if (IDecl &&
             IDecl->lookupNestedProtocol(&Context.Idents.get("NSCopying")))
-          append_attr(PropertyString, "copy");
+          append_attr(PropertyString, "copy", LParenAdded);
         else
-          append_attr(PropertyString, "retain");
+          append_attr(PropertyString, "retain", LParenAdded);
       }
       else if (ArgType->isBlockPointerType())
-        append_attr(PropertyString, "copy");
+        append_attr(PropertyString, "copy", LParenAdded);
     } else if (propertyLifetime == Qualifiers::OCL_Weak)
       // TODO. More precise determination of 'weak' attribute requires
       // looking into setter's implementation for backing weak ivar.
-      append_attr(PropertyString, "weak");
+      append_attr(PropertyString, "weak", LParenAdded);
     else if (RetainableObject)
       append_attr(PropertyString,
-                  ArgType->isBlockPointerType() ? "copy" : "retain");
+                  ArgType->isBlockPointerType() ? "copy" : "retain", LParenAdded);
   }
-  PropertyString += ')';
+  if (LParenAdded)
+    PropertyString += ')';
   QualType RT = Getter->getResultType();
   if (!isa<TypedefType>(RT)) {
     // strip off any ARC lifetime qualifier.
@@ -363,13 +390,16 @@ static bool rewriteToObjCProperty(const ObjCMethodDecl *Getter,
   commit.replace(CharSourceRange::getCharRange(Getter->getLocStart(),
                                                EndGetterSelectorLoc),
                  PropertyString);
-  if (Setter) {
+  if (Setter && AvailabilityArgsMatch) {
     SourceLocation EndLoc = Setter->getDeclaratorEndLoc();
     // Get location past ';'
     EndLoc = EndLoc.getLocWithOffset(1);
-    commit.remove(CharSourceRange::getCharRange(Setter->getLocStart(), EndLoc));
+    SourceLocation BeginOfSetterDclLoc = Setter->getLocStart();
+    // FIXME. This assumes that setter decl; is immediately preceeded by eoln.
+    // It is trying to remove the setter method decl. line entirely.
+    BeginOfSetterDclLoc = BeginOfSetterDclLoc.getLocWithOffset(-1);
+    commit.remove(SourceRange(BeginOfSetterDclLoc, EndLoc));
   }
-  return true;
 }
 
 void ObjCMigrateASTConsumer::migrateObjCInterfaceDecl(ASTContext &Ctx,
@@ -390,12 +420,45 @@ void ObjCMigrateASTConsumer::migrateObjCInterfaceDecl(ASTContext &Ctx,
        E = D->prop_end(); P != E; ++P) {
     ObjCPropertyDecl *Prop = *P;
     if ((ASTMigrateActions & FrontendOptions::ObjCMT_Annotation) &&
-        !P->isDeprecated())
+        !Prop->isDeprecated())
       migratePropertyNsReturnsInnerPointer(Ctx, Prop);
   }
 }
 
-static bool 
+void ObjCMigrateASTConsumer::migrateDeprecatedAnnotation(ASTContext &Ctx,
+                                                           ObjCCategoryDecl *CatDecl) {
+  StringRef Name = CatDecl->getName();
+  if (!Name.endswith("Deprecated"))
+    return;
+  
+  if (!Ctx.Idents.get("DEPRECATED").hasMacroDefinition())
+    return;
+  
+  ObjCContainerDecl *D = cast<ObjCContainerDecl>(CatDecl);
+  
+  for (ObjCContainerDecl::method_iterator M = D->meth_begin(), MEnd = D->meth_end();
+       M != MEnd; ++M) {
+    ObjCMethodDecl *Method = (*M);
+    if (Method->isDeprecated() || Method->isImplicit())
+      continue;
+    // Annotate with DEPRECATED
+    edit::Commit commit(*Editor);
+    commit.insertBefore(Method->getLocEnd(), " DEPRECATED");
+    Editor->commit(commit);
+  }
+  for (ObjCContainerDecl::prop_iterator P = D->prop_begin(),
+       E = D->prop_end(); P != E; ++P) {
+    ObjCPropertyDecl *Prop = *P;
+    if (Prop->isDeprecated())
+      continue;
+    // Annotate with DEPRECATED
+    edit::Commit commit(*Editor);
+    commit.insertAfterToken(Prop->getLocEnd(), " DEPRECATED");
+    Editor->commit(commit);
+  }
+}
+
+static bool
 ClassImplementsAllMethodsAndProperties(ASTContext &Ctx,
                                       const ObjCImplementationDecl *ImpDecl,
                                        const ObjCInterfaceDecl *IDecl,
@@ -546,7 +609,7 @@ static bool rewriteToNSEnumDecl(const EnumDecl *EnumDcl,
   return false;
 }
 
-static bool rewriteToNSMacroDecl(const EnumDecl *EnumDcl,
+static void rewriteToNSMacroDecl(const EnumDecl *EnumDcl,
                                 const TypedefDecl *TypedefDcl,
                                 const NSAPI &NS, edit::Commit &commit,
                                  bool IsNSIntegerType) {
@@ -558,7 +621,6 @@ static bool rewriteToNSMacroDecl(const EnumDecl *EnumDcl,
   commit.replace(R, ClassString);
   SourceLocation TypedefLoc = TypedefDcl->getLocEnd();
   commit.remove(SourceRange(TypedefLoc, TypedefLoc));
-  return true;
 }
 
 static bool UseNSOptionsMacro(Preprocessor &PP, ASTContext &Ctx,
@@ -716,6 +778,7 @@ bool ObjCMigrateASTConsumer::migrateNSEnumDecl(ASTContext &Ctx,
         edit::Commit commit(*Editor);
         rewriteToNSMacroDecl(EnumDcl, TypedefDcl, *NSAPIObj, commit, !NSOptions);
         Editor->commit(commit);
+        return true;
       }
     }
     return false;
@@ -847,23 +910,49 @@ static bool TypeIsInnerPointer(QualType T) {
   return true;
 }
 
-static bool AttributesMatch(const Decl *Decl1, const Decl *Decl2) {
-  if (Decl1->hasAttrs() != Decl2->hasAttrs())
-    return false;
-  
-  if (!Decl1->hasAttrs())
+/// \brief Check whether the two versions match.
+static bool versionsMatch(const VersionTuple &X, const VersionTuple &Y) {
+  return (X == Y);
+}
+
+/// AvailabilityAttrsMatch - This routine checks that if comparing two
+/// availability attributes, all their components match. It returns
+/// true, if not dealing with availability or when all components of
+/// availability attributes match. This routine is only called when
+/// the attributes are of the same kind.
+static bool AvailabilityAttrsMatch(Attr *At1, Attr *At2) {
+  const AvailabilityAttr *AA1 = dyn_cast<AvailabilityAttr>(At1);
+  if (!AA1)
     return true;
+  const AvailabilityAttr *AA2 = dyn_cast<AvailabilityAttr>(At2);
   
-  const AttrVec &Attrs1 = Decl1->getAttrs();
-  const AttrVec &Attrs2 = Decl2->getAttrs();
+  VersionTuple Introduced1 = AA1->getIntroduced();
+  VersionTuple Deprecated1 = AA1->getDeprecated();
+  VersionTuple Obsoleted1 = AA1->getObsoleted();
+  bool IsUnavailable1 = AA1->getUnavailable();
+  VersionTuple Introduced2 = AA2->getIntroduced();
+  VersionTuple Deprecated2 = AA2->getDeprecated();
+  VersionTuple Obsoleted2 = AA2->getObsoleted();
+  bool IsUnavailable2 = AA2->getUnavailable();
+  return (versionsMatch(Introduced1, Introduced2) &&
+          versionsMatch(Deprecated1, Deprecated2) &&
+          versionsMatch(Obsoleted1, Obsoleted2) &&
+          IsUnavailable1 == IsUnavailable2);
+  
+}
+
+static bool MatchTwoAttributeLists(const AttrVec &Attrs1, const AttrVec &Attrs2,
+                                   bool &AvailabilityArgsMatch) {
   // This list is very small, so this need not be optimized.
   for (unsigned i = 0, e = Attrs1.size(); i != e; i++) {
     bool match = false;
     for (unsigned j = 0, f = Attrs2.size(); j != f; j++) {
-      // Matching attribute kind only. We are not getting into
-      // details of the attributes. For all practical purposes
+      // Matching attribute kind only. Except for Availabilty attributes,
+      // we are not getting into details of the attributes. For all practical purposes
       // this is sufficient.
       if (Attrs1[i]->getKind() == Attrs2[j]->getKind()) {
+        if (AvailabilityArgsMatch)
+          AvailabilityArgsMatch = AvailabilityAttrsMatch(Attrs1[i], Attrs2[j]);
         match = true;
         break;
       }
@@ -872,6 +961,28 @@ static bool AttributesMatch(const Decl *Decl1, const Decl *Decl2) {
       return false;
   }
   return true;
+}
+
+/// AttributesMatch - This routine checks list of attributes for two
+/// decls. It returns false, if there is a mismatch in kind of
+/// attributes seen in the decls. It returns true if the two decls
+/// have list of same kind of attributes. Furthermore, when there
+/// are availability attributes in the two decls, it sets the
+/// AvailabilityArgsMatch to false if availability attributes have
+/// different versions, etc.
+static bool AttributesMatch(const Decl *Decl1, const Decl *Decl2,
+                            bool &AvailabilityArgsMatch) {
+  if (!Decl1->hasAttrs() || !Decl2->hasAttrs()) {
+    AvailabilityArgsMatch = (Decl1->hasAttrs() == Decl2->hasAttrs());
+    return true;
+  }
+  AvailabilityArgsMatch = true;
+  const AttrVec &Attrs1 = Decl1->getAttrs();
+  const AttrVec &Attrs2 = Decl2->getAttrs();
+  bool match = MatchTwoAttributeLists(Attrs1, Attrs2, AvailabilityArgsMatch);
+  if (match && (Attrs2.size() > Attrs1.size()))
+    return MatchTwoAttributeLists(Attrs2, Attrs1, AvailabilityArgsMatch);
+  return match;
 }
 
 static bool IsValidIdentifier(ASTContext &Ctx,
@@ -938,8 +1049,9 @@ bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
   if (SetterMethod) {
     if ((ASTMigrateActions & FrontendOptions::ObjCMT_ReadwriteProperty) == 0)
       return false;
+    bool AvailabilityArgsMatch;
     if (SetterMethod->isDeprecated() ||
-        !AttributesMatch(Method, SetterMethod))
+        !AttributesMatch(Method, SetterMethod, AvailabilityArgsMatch))
       return false;
     
     // Is this a valid setter, matching the target getter?
@@ -954,7 +1066,8 @@ bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
     rewriteToObjCProperty(Method, SetterMethod, *NSAPIObj, commit,
                           LengthOfPrefix,
                           (ASTMigrateActions &
-                           FrontendOptions::ObjCMT_AtomicProperty) != 0);
+                           FrontendOptions::ObjCMT_AtomicProperty) != 0,
+                          AvailabilityArgsMatch);
     Editor->commit(commit);
     return true;
   }
@@ -965,7 +1078,8 @@ bool ObjCMigrateASTConsumer::migrateProperty(ASTContext &Ctx,
     rewriteToObjCProperty(Method, 0 /*SetterMethod*/, *NSAPIObj, commit,
                           LengthOfPrefix,
                           (ASTMigrateActions &
-                           FrontendOptions::ObjCMT_AtomicProperty) != 0);
+                           FrontendOptions::ObjCMT_AtomicProperty) != 0,
+                          /*AvailabilityArgsMatch*/false);
     Editor->commit(commit);
     return true;
   }
@@ -1475,8 +1589,11 @@ void ObjCMigrateASTConsumer::HandleTranslationUnit(ASTContext &Ctx) {
       
       if (ObjCInterfaceDecl *CDecl = dyn_cast<ObjCInterfaceDecl>(*D))
         migrateObjCInterfaceDecl(Ctx, CDecl);
-      if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(*D))
+      if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(*D)) {
         migrateObjCInterfaceDecl(Ctx, CatDecl);
+        if (ASTMigrateActions & FrontendOptions::ObjCMT_Annotation)
+          migrateDeprecatedAnnotation(Ctx, CatDecl);
+      }
       else if (ObjCProtocolDecl *PDecl = dyn_cast<ObjCProtocolDecl>(*D))
         ObjCProtocolDecls.insert(PDecl);
       else if (const ObjCImplementationDecl *ImpDecl =
@@ -1497,17 +1614,27 @@ void ObjCMigrateASTConsumer::HandleTranslationUnit(ASTContext &Ctx) {
           migrateNSEnumDecl(Ctx, ED, /*TypedefDecl */0);
       }
       else if (const TypedefDecl *TD = dyn_cast<TypedefDecl>(*D)) {
-        if (ASTMigrateActions & FrontendOptions::ObjCMT_NsMacros) {
-          DeclContext::decl_iterator N = D;
+        if (!(ASTMigrateActions & FrontendOptions::ObjCMT_NsMacros))
+          continue;
+        DeclContext::decl_iterator N = D;
+        if (++N == DEnd)
+          continue;
+        if (const EnumDecl *ED = dyn_cast<EnumDecl>(*N)) {
           if (++N != DEnd)
-            if (const EnumDecl *ED = dyn_cast<EnumDecl>(*N)) {
-              if (migrateNSEnumDecl(Ctx, ED, TD)) {
-                ++D;
+            if (const TypedefDecl *TDF = dyn_cast<TypedefDecl>(*N)) {
+              // prefer typedef-follows-enum to enum-follows-typedef pattern.
+              if (migrateNSEnumDecl(Ctx, ED, TDF)) {
+                ++D; ++D;
+                CacheObjCNSIntegerTypedefed(TD);
                 continue;
               }
             }
-          CacheObjCNSIntegerTypedefed(TD);
+          if (migrateNSEnumDecl(Ctx, ED, TD)) {
+            ++D;
+            continue;
+          }
         }
+        CacheObjCNSIntegerTypedefed(TD);
       }
       else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(*D)) {
         if (ASTMigrateActions & FrontendOptions::ObjCMT_Annotation)

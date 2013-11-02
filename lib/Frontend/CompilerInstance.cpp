@@ -219,7 +219,7 @@ void CompilerInstance::createPreprocessor() {
 
   // Create the Preprocessor.
   HeaderSearch *HeaderInfo = new HeaderSearch(&getHeaderSearchOpts(),
-                                              getFileManager(),
+                                              getSourceManager(),
                                               getDiagnostics(),
                                               getLangOpts(),
                                               &getTarget());
@@ -904,29 +904,6 @@ static void compileModule(CompilerInstance &ImportingInstance,
   FrontendOpts.Inputs.clear();
   InputKind IK = getSourceInputKindFromOptions(*Invocation->getLangOpts());
 
-  // Get or create the module map that we'll use to build this module.
-  SmallString<128> TempModuleMapFileName;
-  if (const FileEntry *ModuleMapFile
-                                  = ModMap.getContainingModuleMapFile(Module)) {
-    // Use the module map where this module resides.
-    FrontendOpts.Inputs.push_back(FrontendInputFile(ModuleMapFile->getName(), 
-                                                    IK));
-  } else {
-    // Create a temporary module map file.
-    int FD;
-    if (llvm::sys::fs::createTemporaryFile(Module->Name, "map", FD,
-                                           TempModuleMapFileName)) {
-      ImportingInstance.getDiagnostics().Report(diag::err_module_map_temp_file)
-        << TempModuleMapFileName;
-      return;
-    }
-    // Print the module map to this file.
-    llvm::raw_fd_ostream OS(FD, /*shouldClose=*/true);
-    Module->print(OS);
-    FrontendOpts.Inputs.push_back(
-      FrontendInputFile(TempModuleMapFileName.str().str(), IK));
-  }
-
   // Don't free the remapped file buffers; they are owned by our caller.
   PPOpts.RetainRemappedFileBuffers = true;
     
@@ -953,6 +930,26 @@ static void compileModule(CompilerInstance &ImportingInstance,
   SourceMgr.pushModuleBuildStack(Module->getTopLevelModuleName(),
     FullSourceLoc(ImportLoc, ImportingInstance.getSourceManager()));
 
+  // Get or create the module map that we'll use to build this module.
+  std::string InferredModuleMapContent;
+  if (const FileEntry *ModuleMapFile =
+          ModMap.getContainingModuleMapFile(Module)) {
+    // Use the module map where this module resides.
+    FrontendOpts.Inputs.push_back(
+        FrontendInputFile(ModuleMapFile->getName(), IK));
+  } else {
+    llvm::raw_string_ostream OS(InferredModuleMapContent);
+    Module->print(OS);
+    OS.flush();
+    FrontendOpts.Inputs.push_back(
+        FrontendInputFile("__inferred_module.map", IK));
+
+    const llvm::MemoryBuffer *ModuleMapBuffer =
+        llvm::MemoryBuffer::getMemBuffer(InferredModuleMapContent);
+    ModuleMapFile = Instance.getFileManager().getVirtualFile(
+        "__inferred_module.map", InferredModuleMapContent.size(), 0);
+    SourceMgr.overrideFileContents(ModuleMapFile, ModuleMapBuffer);
+  }
 
   // Construct a module-generating action.
   GenerateModuleAction CreateModuleAction(Module->IsSystem);
@@ -970,8 +967,6 @@ static void compileModule(CompilerInstance &ImportingInstance,
   // be nice to do this with RemoveFileOnSignal when we can. However, that
   // doesn't make sense for all clients, so clean this up manually.
   Instance.clearOutputFiles(/*EraseFiles=*/true);
-  if (!TempModuleMapFileName.empty())
-    llvm::sys::fs::remove(TempModuleMapFileName.str());
 
   // We've rebuilt a module. If we're allowed to generate or update the global
   // module index, record that fact in the importing compiler instance.
@@ -1161,23 +1156,23 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
                              ModuleIdPath Path,
                              Module::NameVisibilityKind Visibility,
                              bool IsInclusionDirective) {
+  // Determine what file we're searching from.
+  StringRef ModuleName = Path[0].first->getName();
+  SourceLocation ModuleNameLoc = Path[0].second;
+
   // If we've already handled this import, just return the cached result.
   // This one-element cache is important to eliminate redundant diagnostics
   // when both the preprocessor and parser see the same import declaration.
   if (!ImportLoc.isInvalid() && LastModuleImportLoc == ImportLoc) {
     // Make the named module visible.
-    if (LastModuleImportResult)
+    if (LastModuleImportResult && ModuleName != getLangOpts().CurrentModule)
       ModuleManager->makeModuleVisible(LastModuleImportResult, Visibility,
                                        ImportLoc, /*Complain=*/false);
     return LastModuleImportResult;
   }
-  
-  // Determine what file we're searching from.
-  StringRef ModuleName = Path[0].first->getName();
-  SourceLocation ModuleNameLoc = Path[0].second;
 
   clang::Module *Module = 0;
-  
+
   // If we don't already have information on this module, load the module now.
   llvm::DenseMap<const IdentifierInfo *, clang::Module *>::iterator Known
     = KnownModules.find(Path[0].first);
@@ -1417,11 +1412,11 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
     }
 
     // Check whether this module is available.
-    StringRef Feature;
-    if (!Module->isAvailable(getLangOpts(), getTarget(), Feature)) {
+    clang::Module::Requirement Requirement;
+    if (!Module->isAvailable(getLangOpts(), getTarget(), Requirement)) {
       getDiagnostics().Report(ImportLoc, diag::err_module_unavailable)
         << Module->getFullModuleName()
-        << Feature
+        << Requirement.second << Requirement.first
         << SourceRange(Path.front().second, Path.back().second);
       LastModuleImportLoc = ImportLoc;
       LastModuleImportResult = ModuleLoadResult();

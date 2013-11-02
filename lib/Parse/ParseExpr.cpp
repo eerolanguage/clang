@@ -616,6 +616,7 @@ class CastExpressionIdValidator : public CorrectionCandidateCallback {
 ///                   '__is_final'
 ///                   '__is_pod'
 ///                   '__is_polymorphic'
+///                   '__is_sealed'                           [MS]
 ///                   '__is_trivial'
 ///                   '__is_union'
 ///
@@ -1284,6 +1285,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw___is_trivially_copyable:
   case tok::kw___is_union:
   case tok::kw___is_final:
+  case tok::kw___is_sealed:
   case tok::kw___has_trivial_constructor:
   case tok::kw___has_trivial_move_constructor:
   case tok::kw___has_trivial_copy:
@@ -1885,6 +1887,9 @@ ExprResult Parser::ParseUnaryExprOrTypeTraitExpression() {
     if (!Name)
       return ExprError();
     
+    EnterExpressionEvaluationContext Unevaluated(Actions, Sema::Unevaluated,
+                                                 Sema::ReuseLambdaContextDecl);
+
     return Actions.ActOnSizeofParameterPackExpr(getCurScope(),
                                                 OpTok.getLocation(), 
                                                 *Name, NameLoc,

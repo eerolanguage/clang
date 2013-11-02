@@ -129,32 +129,33 @@ static void AdoptTemplateParameterList(TemplateParameterList *Params,
 //===----------------------------------------------------------------------===//
 
 RedeclarableTemplateDecl::CommonBase *RedeclarableTemplateDecl::getCommonPtr() const {
-  if (!Common) {
-    // Walk the previous-declaration chain until we either find a declaration
-    // with a common pointer or we run out of previous declarations.
-    SmallVector<const RedeclarableTemplateDecl *, 2> PrevDecls;
-    for (const RedeclarableTemplateDecl *Prev = getPreviousDecl(); Prev;
-         Prev = Prev->getPreviousDecl()) {
-      if (Prev->Common) {
-        Common = Prev->Common;
-        break;
-      }
-      
-      PrevDecls.push_back(Prev);
+  if (Common)
+    return Common;
+
+  // Walk the previous-declaration chain until we either find a declaration
+  // with a common pointer or we run out of previous declarations.
+  SmallVector<const RedeclarableTemplateDecl *, 2> PrevDecls;
+  for (const RedeclarableTemplateDecl *Prev = getPreviousDecl(); Prev;
+       Prev = Prev->getPreviousDecl()) {
+    if (Prev->Common) {
+      Common = Prev->Common;
+      break;
     }
 
-    // If we never found a common pointer, allocate one now.
-    if (!Common) {
-      // FIXME: If any of the declarations is from an AST file, we probably
-      // need an update record to add the common data.
-      
-      Common = newCommon(getASTContext());
-    }
-    
-    // Update any previous declarations we saw with the common pointer.
-    for (unsigned I = 0, N = PrevDecls.size(); I != N; ++I)
-      PrevDecls[I]->Common = Common;
+    PrevDecls.push_back(Prev);
   }
+
+  // If we never found a common pointer, allocate one now.
+  if (!Common) {
+    // FIXME: If any of the declarations is from an AST file, we probably
+    // need an update record to add the common data.
+
+    Common = newCommon(getASTContext());
+  }
+
+  // Update any previous declarations we saw with the common pointer.
+  for (unsigned I = 0, N = PrevDecls.size(); I != N; ++I)
+    PrevDecls[I]->Common = Common;
 
   return Common;
 }
@@ -308,7 +309,7 @@ ClassTemplateDecl *ClassTemplateDecl::Create(ASTContext &C,
                                              ClassTemplateDecl *PrevDecl) {
   AdoptTemplateParameterList(Params, cast<DeclContext>(Decl));
   ClassTemplateDecl *New = new (C) ClassTemplateDecl(DC, L, Name, Params, Decl);
-  New->setPreviousDeclaration(PrevDecl);
+  New->setPreviousDecl(PrevDecl);
   return New;
 }
 
@@ -974,7 +975,7 @@ VarTemplateDecl *VarTemplateDecl::Create(ASTContext &C, DeclContext *DC,
                                          NamedDecl *Decl,
                                          VarTemplateDecl *PrevDecl) {
   VarTemplateDecl *New = new (C) VarTemplateDecl(DC, L, Name, Params, Decl);
-  New->setPreviousDeclaration(PrevDecl);
+  New->setPreviousDecl(PrevDecl);
   return New;
 }
 

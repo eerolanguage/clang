@@ -304,3 +304,18 @@ class A {
   A([[gnu::unused]] int a);
 };
 A::A([[gnu::unused]] int a) {}
+
+namespace GccConst {
+  // GCC's tokenizer treats const and __const as the same token.
+  [[gnu::const]] int *f1();
+  [[gnu::__const]] int *f2();
+  void f(const int *);
+  void g() { f(f1()); f(f2()); }
+}
+
+namespace GccASan {
+  __attribute__((no_address_safety_analysis)) void f1();
+  __attribute__((no_sanitize_address)) void f2();
+  [[gnu::no_address_safety_analysis]] void f3();
+  [[gnu::no_sanitize_address]] void f4();
+}

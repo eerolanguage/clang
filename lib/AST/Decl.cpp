@@ -508,7 +508,7 @@ static bool useInlineVisibilityHidden(const NamedDecl *D) {
 }
 
 template <typename T> static bool isFirstInExternCContext(T *D) {
-  const T *First = D->getFirstDeclaration();
+  const T *First = D->getFirstDecl();
   return First->isInExternCContext();
 }
 
@@ -575,11 +575,10 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
     // Explicitly declared static.
     if (Function->getCanonicalDecl()->getStorageClass() == SC_Static)
       return LinkageInfo(InternalLinkage, DefaultVisibility, false);
-  } else if (const FieldDecl *Field = dyn_cast<FieldDecl>(D)) {
-    //   - a data member of an anonymous union.
-    if (cast<RecordDecl>(Field->getDeclContext())->isAnonymousStructOrUnion())
-      return LinkageInfo::internal();
   }
+  //   - a data member of an anonymous union.
+  assert(!isa<IndirectFieldDecl>(D) && "Didn't expect an IndirectFieldDecl!");
+  assert(!isa<FieldDecl>(D) && "Didn't expect a FieldDecl!");
 
   if (D->isInAnonymousNamespace()) {
     const VarDecl *Var = dyn_cast<VarDecl>(D);
@@ -786,6 +785,7 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D,
   if (!(isa<CXXMethodDecl>(D) ||
         isa<VarDecl>(D) ||
         isa<FieldDecl>(D) ||
+        isa<IndirectFieldDecl>(D) ||
         isa<TagDecl>(D)))
     return LinkageInfo::none();
 
@@ -972,7 +972,7 @@ NamedDecl::getExplicitVisibility(ExplicitVisibilityKind kind) const {
                            kind);
 
   // Use the most recent declaration.
-  const NamedDecl *MostRecent = cast<NamedDecl>(this->getMostRecentDecl());
+  const NamedDecl *MostRecent = getMostRecentDecl();
   if (MostRecent != this)
     return MostRecent->getExplicitVisibility(kind);
 
@@ -1721,9 +1721,7 @@ bool VarDecl::isInExternCXXContext() const {
   return isInLanguageSpecContext(this, LinkageSpecDecl::lang_cxx);
 }
 
-VarDecl *VarDecl::getCanonicalDecl() {
-  return getFirstDeclaration();
-}
+VarDecl *VarDecl::getCanonicalDecl() { return getFirstDecl(); }
 
 VarDecl::DefinitionKind VarDecl::isThisDeclarationADefinition(
   ASTContext &C) const
@@ -1745,7 +1743,7 @@ VarDecl::DefinitionKind VarDecl::isThisDeclarationADefinition(
          // If the first declaration is out-of-line, this may be an
          // instantiation of an out-of-line partial specialization of a variable
          // template for which we have not yet instantiated the initializer.
-         (getFirstDeclaration()->isOutOfLine()
+         (getFirstDecl()->isOutOfLine()
               ? getTemplateSpecializationKind() == TSK_Undeclared
               : getTemplateSpecializationKind() !=
                     TSK_ExplicitSpecialization) ||
@@ -1762,6 +1760,9 @@ VarDecl::DefinitionKind VarDecl::isThisDeclarationADefinition(
   //   If the declaration of an identifier for an object has file scope and an
   //   initializer, the declaration is an external definition for the identifier
   if (hasInit())
+    return Definition;
+
+  if (hasAttr<AliasAttr>())
     return Definition;
 
   // A variable template specialization (other than a static data member
@@ -1800,7 +1801,7 @@ VarDecl *VarDecl::getActingDefinition() {
     return 0;
 
   VarDecl *LastTentative = 0;
-  VarDecl *First = getFirstDeclaration();
+  VarDecl *First = getFirstDecl();
   for (redecl_iterator I = First->redecls_begin(), E = First->redecls_end();
        I != E; ++I) {
     Kind = (*I)->isThisDeclarationADefinition();
@@ -1813,7 +1814,7 @@ VarDecl *VarDecl::getActingDefinition() {
 }
 
 VarDecl *VarDecl::getDefinition(ASTContext &C) {
-  VarDecl *First = getFirstDeclaration();
+  VarDecl *First = getFirstDecl();
   for (redecl_iterator I = First->redecls_begin(), E = First->redecls_end();
        I != E; ++I) {
     if ((*I)->isThisDeclarationADefinition(C) == Definition)
@@ -1825,7 +1826,7 @@ VarDecl *VarDecl::getDefinition(ASTContext &C) {
 VarDecl::DefinitionKind VarDecl::hasDefinition(ASTContext &C) const {
   DefinitionKind Kind = DeclarationOnly;
   
-  const VarDecl *First = getFirstDeclaration();
+  const VarDecl *First = getFirstDecl();
   for (redecl_iterator I = First->redecls_begin(), E = First->redecls_end();
        I != E; ++I) {
     Kind = std::max(Kind, (*I)->isThisDeclarationADefinition(C));
@@ -2225,7 +2226,8 @@ bool FunctionDecl::hasTrivialBody() const
 
 bool FunctionDecl::isDefined(const FunctionDecl *&Definition) const {
   for (redecl_iterator I = redecls_begin(), E = redecls_end(); I != E; ++I) {
-    if (I->IsDeleted || I->IsDefaulted || I->Body || I->IsLateTemplateParsed) {
+    if (I->IsDeleted || I->IsDefaulted || I->Body || I->IsLateTemplateParsed ||
+        I->hasAttr<AliasAttr>()) {
       Definition = I->IsDeleted ? I->getCanonicalDecl() : *I;
       return true;
     }
@@ -2235,15 +2237,11 @@ bool FunctionDecl::isDefined(const FunctionDecl *&Definition) const {
 }
 
 Stmt *FunctionDecl::getBody(const FunctionDecl *&Definition) const {
-  for (redecl_iterator I = redecls_begin(), E = redecls_end(); I != E; ++I) {
-    if (I->Body) {
-      Definition = *I;
-      return I->Body.get(getASTContext().getExternalSource());
-    } else if (I->IsLateTemplateParsed) {
-      Definition = *I;
-      return 0;
-    }
-  }
+  if (!hasBody(Definition))
+    return 0;
+
+  if (Definition->Body)
+    return Definition->Body.get(getASTContext().getExternalSource());
 
   return 0;
 }
@@ -2369,12 +2367,6 @@ bool FunctionDecl::isReplaceableGlobalAllocationFunction() const {
 }
 
 LanguageLinkage FunctionDecl::getLanguageLinkage() const {
-  // Users expect to be able to write
-  // extern "C" void *__builtin_alloca (size_t);
-  // so consider builtins as having C language linkage.
-  if (getBuiltinID())
-    return CLanguageLinkage;
-
   return getLanguageLinkageTemplate(*this);
 }
 
@@ -2418,13 +2410,13 @@ bool FunctionDecl::isNoReturn() const {
 
 void
 FunctionDecl::setPreviousDeclaration(FunctionDecl *PrevDecl) {
-  redeclarable_base::setPreviousDeclaration(PrevDecl);
+  redeclarable_base::setPreviousDecl(PrevDecl);
 
   if (FunctionTemplateDecl *FunTmpl = getDescribedFunctionTemplate()) {
     FunctionTemplateDecl *PrevFunTmpl
       = PrevDecl? PrevDecl->getDescribedFunctionTemplate() : 0;
     assert((!PrevDecl || PrevFunTmpl) && "Function/function template mismatch");
-    FunTmpl->setPreviousDeclaration(PrevFunTmpl);
+    FunTmpl->setPreviousDecl(PrevFunTmpl);
   }
   
   if (PrevDecl && PrevDecl->IsInline)
@@ -2432,12 +2424,10 @@ FunctionDecl::setPreviousDeclaration(FunctionDecl *PrevDecl) {
 }
 
 const FunctionDecl *FunctionDecl::getCanonicalDecl() const {
-  return getFirstDeclaration();
+  return getFirstDecl();
 }
 
-FunctionDecl *FunctionDecl::getCanonicalDecl() {
-  return getFirstDeclaration();
-}
+FunctionDecl *FunctionDecl::getCanonicalDecl() { return getFirstDecl(); }
 
 /// \brief Returns a value indicating whether this function
 /// corresponds to a builtin function.
@@ -2457,6 +2447,22 @@ unsigned FunctionDecl::getBuiltinID() const {
     return 0;
 
   ASTContext &Context = getASTContext();
+  if (Context.getLangOpts().CPlusPlus) {
+    const LinkageSpecDecl *LinkageDecl = dyn_cast<LinkageSpecDecl>(
+        getFirstDecl()->getDeclContext());
+    // In C++, the first declaration of a builtin is always inside an implicit
+    // extern "C".
+    // FIXME: A recognised library function may not be directly in an extern "C"
+    // declaration, for instance "extern "C" { namespace std { decl } }".
+    if (!LinkageDecl || LinkageDecl->getLanguage() != LinkageSpecDecl::lang_c)
+      return 0;
+  }
+
+  // If the function is marked "overloadable", it has a different mangled name
+  // and is not the C library function.
+  if (getAttr<OverloadableAttr>())
+    return 0;
+
   if (!Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID))
     return BuiltinID;
 
@@ -2468,22 +2474,7 @@ unsigned FunctionDecl::getBuiltinID() const {
   if (getStorageClass() == SC_Static)
     return 0;
 
-  // If this function is at translation-unit scope and we're not in
-  // C++, it refers to the C library function.
-  if (!Context.getLangOpts().CPlusPlus &&
-      getDeclContext()->isTranslationUnit())
-    return BuiltinID;
-
-  // If the function is in an extern "C" linkage specification and is
-  // not marked "overloadable", it's the real function.
-  if (isa<LinkageSpecDecl>(getDeclContext()) &&
-      cast<LinkageSpecDecl>(getDeclContext())->getLanguage()
-        == LinkageSpecDecl::lang_c &&
-      !getAttr<OverloadableAttr>())
-    return BuiltinID;
-
-  // Not a builtin
-  return 0;
+  return BuiltinID;
 }
 
 
@@ -3157,9 +3148,7 @@ SourceRange TagDecl::getSourceRange() const {
   return SourceRange(getOuterLocStart(), E);
 }
 
-TagDecl* TagDecl::getCanonicalDecl() {
-  return getFirstDeclaration();
-}
+TagDecl *TagDecl::getCanonicalDecl() { return getFirstDecl(); }
 
 void TagDecl::setTypedefNameForAnonDecl(TypedefNameDecl *TDD) {
   NamedDeclOrQualifier = TDD;

@@ -173,7 +173,7 @@ def AddressSpace : TypeAttr {
   let Args = [IntArgument<"AddressSpace">];
 }
 
-def Alias : InheritableAttr {
+def Alias : Attr {
   let Spellings = [GNU<"alias">, CXX11<"gnu", "alias">];
   let Args = [StringArgument<"Aliasee">];
 }
@@ -314,7 +314,8 @@ def Common : InheritableAttr {
 }
 
 def Const : InheritableAttr {
-  let Spellings = [GNU<"const">, GNU<"__const">, CXX11<"gnu", "const">];
+  let Spellings = [GNU<"const">, GNU<"__const">,
+                   CXX11<"gnu", "const">, CXX11<"gnu", "__const">];
 }
 
 def Constructor : InheritableAttr {
@@ -395,7 +396,8 @@ def FastCall : InheritableAttr {
 }
 
 def Final : InheritableAttr {
-  let Spellings = [];
+  let Spellings = [Keyword<"final">, Keyword<"sealed">];
+  let Accessors = [Accessor<"isSpelledAsSealed", [Keyword<"sealed">]>];
   let SemaHandler = 0;
 }
 
@@ -433,7 +435,7 @@ def IBOutlet : InheritableAttr {
 
 def IBOutletCollection : InheritableAttr {
   let Spellings = [GNU<"iboutletcollection">];
-  let Args = [TypeArgument<"Interface", 1>, SourceLocArgument<"InterfaceLoc">];
+  let Args = [TypeArgument<"Interface", 1>];
 }
 
 def Malloc : InheritableAttr {
@@ -748,8 +750,7 @@ def VectorSize : TypeAttr {
 
 def VecTypeHint : InheritableAttr {
   let Spellings = [GNU<"vec_type_hint">];
-  let Args = [TypeArgument<"TypeHint">, SourceLocArgument<"TypeLoc">];
-  let HasCustomParsing = 1;
+  let Args = [TypeArgument<"TypeHint">];
 }
 
 def Visibility : InheritableAttr {
@@ -774,7 +775,7 @@ def VecReturn : InheritableAttr {
 }
 
 def WarnUnused : InheritableAttr {
-  let Spellings = [GNU<"warn_unused">, CXX11<"gnu", "warn_unused">];
+  let Spellings = [GNU<"warn_unused">];
   let Subjects = [Record];
 }
 
@@ -805,7 +806,9 @@ def X86ForceAlignArgPointer : InheritableAttr, TargetSpecificAttr {
 // Attribute to disable AddressSanitizer (or equivalent) checks.
 def NoSanitizeAddress : InheritableAttr {
   let Spellings = [GNU<"no_address_safety_analysis">,
-                   GNU<"no_sanitize_address">];
+                   GNU<"no_sanitize_address">,
+                   CXX11<"gnu", "no_address_safety_analysis">,
+                   CXX11<"gnu", "no_sanitize_address">];
 }
 
 // Attribute to disable ThreadSanitizer checks.
@@ -967,9 +970,17 @@ def CallableWhen : InheritableAttr {
                                    ["Unknown", "Consumed", "Unconsumed"]>];
 }
 
+def ParamTypestate : InheritableAttr {
+  let Spellings = [GNU<"param_typestate">];
+  let Subjects = [ParmVar];
+  let Args = [EnumArgument<"ParamState", "ConsumedState",
+                           ["unknown", "consumed", "unconsumed"],
+                           ["Unknown", "Consumed", "Unconsumed"]>];
+}
+
 def ReturnTypestate : InheritableAttr {
   let Spellings = [GNU<"return_typestate">];
-  let Subjects = [Function];
+  let Subjects = [Function, ParmVar];
   let Args = [EnumArgument<"State", "ConsumedState",
                            ["unknown", "consumed", "unconsumed"],
                            ["Unknown", "Consumed", "Unconsumed"]>];
@@ -983,8 +994,8 @@ def SetTypestate : InheritableAttr {
                            ["Unknown", "Consumed", "Unconsumed"]>];
 }
 
-def TestsTypestate : InheritableAttr {
-  let Spellings = [GNU<"tests_typestate">];
+def TestTypestate : InheritableAttr {
+  let Spellings = [GNU<"test_typestate">];
   let Subjects = [CXXMethod];
   let Args = [EnumArgument<"TestState", "ConsumedState",
                            ["consumed", "unconsumed"],

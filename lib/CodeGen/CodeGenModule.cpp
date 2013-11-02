@@ -35,7 +35,9 @@
 #include "clang/Basic/Module.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Basic/Version.h"
 #include "clang/Frontend/CodeGenOptions.h"
+#include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/IR/CallingConv.h"
@@ -170,8 +172,42 @@ void CodeGenModule::createCUDARuntime() {
   CUDARuntime = CreateNVCUDARuntime(*this);
 }
 
+void CodeGenModule::checkAliases() {
+  bool Error = false;
+  for (std::vector<GlobalDecl>::iterator I = Aliases.begin(),
+         E = Aliases.end(); I != E; ++I) {
+    const GlobalDecl &GD = *I;
+    const ValueDecl *D = cast<ValueDecl>(GD.getDecl());
+    const AliasAttr *AA = D->getAttr<AliasAttr>();
+    StringRef MangledName = getMangledName(GD);
+    llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
+    llvm::GlobalAlias *Alias = cast<llvm::GlobalAlias>(Entry);
+    llvm::GlobalValue *GV = Alias->getAliasedGlobal();
+    if (GV->isDeclaration()) {
+      Error = true;
+      getDiags().Report(AA->getLocation(), diag::err_alias_to_undefined);
+    } else if (!Alias->resolveAliasedGlobal(/*stopOnWeak*/ false)) {
+      Error = true;
+      getDiags().Report(AA->getLocation(), diag::err_cyclic_alias);
+    }
+  }
+  if (!Error)
+    return;
+
+  for (std::vector<GlobalDecl>::iterator I = Aliases.begin(),
+         E = Aliases.end(); I != E; ++I) {
+    const GlobalDecl &GD = *I;
+    StringRef MangledName = getMangledName(GD);
+    llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
+    llvm::GlobalAlias *Alias = cast<llvm::GlobalAlias>(Entry);
+    Alias->replaceAllUsesWith(llvm::UndefValue::get(Alias->getType()));
+    Alias->eraseFromParent();
+  }
+}
+
 void CodeGenModule::Release() {
   EmitDeferred();
+  checkAliases();
   EmitCXXGlobalInitFunc();
   EmitCXXGlobalDtorFunc();
   EmitCXXThreadLocalInitFunc();
@@ -204,6 +240,8 @@ void CodeGenModule::Release() {
 
   if (DebugInfo)
     DebugInfo->finalize();
+
+  EmitVersionIdentMetadata();
 }
 
 void CodeGenModule::UpdateCompletedType(const TagDecl *TD) {
@@ -1660,7 +1698,7 @@ void CodeGenModule::MaybeHandleStaticInExternC(const SomeDecl *D,
 
   // Must be in an extern "C" context. Entities declared directly within
   // a record are not extern "C" even if the record is in such a context.
-  const SomeDecl *First = D->getFirstDeclaration();
+  const SomeDecl *First = D->getFirstDecl();
   if (First->getDeclContext()->isRecord() || !First->isInExternCContext())
     return;
 
@@ -2084,6 +2122,8 @@ void CodeGenModule::EmitAliasDefinition(GlobalDecl GD) {
   llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
   if (Entry && !Entry->isDeclaration())
     return;
+
+  Aliases.push_back(GD);
 
   llvm::Type *DeclTy = getTypes().ConvertTypeForMem(D->getType());
 
@@ -3032,6 +3072,18 @@ void CodeGenFunction::EmitDeclMetadata() {
       EmitGlobalDeclMetadata(CGM, GlobalMetadata, GD, GV);
     }
   }
+}
+
+void CodeGenModule::EmitVersionIdentMetadata() {
+  llvm::NamedMDNode *IdentMetadata =
+    TheModule.getOrInsertNamedMetadata("llvm.ident");
+  std::string Version = getClangFullVersion();
+  llvm::LLVMContext &Ctx = TheModule.getContext();
+
+  llvm::Value *IdentNode[] = {
+    llvm::MDString::get(Ctx, Version)
+  };
+  IdentMetadata->addOperand(llvm::MDNode::get(Ctx, IdentNode));
 }
 
 void CodeGenModule::EmitCoverageFile() {

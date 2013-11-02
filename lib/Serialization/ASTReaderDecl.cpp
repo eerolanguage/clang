@@ -386,7 +386,7 @@ void ASTDeclReader::VisitDecl(Decl *D) {
     D->setAttrsImpl(Attrs, Reader.getContext());
   }
   D->setImplicit(Record[Idx++]);
-  D->setIsUsed(Record[Idx++]);
+  D->Used = Record[Idx++];
   D->setReferenced(Record[Idx++]);
   D->setTopLevelDeclInObjCContainer(Record[Idx++]);
   D->setAccess((AccessSpecifier)Record[Idx++]);
@@ -798,6 +798,8 @@ void ASTDeclReader::VisitObjCIvarDecl(ObjCIvarDecl *IVD) {
   IVD->setNextIvar(0);
   bool synth = Record[Idx++];
   IVD->setSynthesize(synth);
+  bool backingIvarReferencedInAccessor = Record[Idx++];
+  IVD->setBackingIvarReferencedInAccessor(backingIvarReferencedInAccessor);
 }
 
 void ASTDeclReader::VisitObjCProtocolDecl(ObjCProtocolDecl *PD) {
@@ -1110,7 +1112,7 @@ void ASTDeclReader::VisitNamespaceDecl(NamespaceDecl *D) {
   } else {
     // Link this namespace back to the first declaration, which has already
     // been deserialized.
-    D->AnonOrFirstNamespaceAndInline.setPointer(D->getFirstDeclaration());
+    D->AnonOrFirstNamespaceAndInline.setPointer(D->getFirstDecl());
   }
 }
 
@@ -1134,12 +1136,14 @@ void ASTDeclReader::VisitUsingDecl(UsingDecl *D) {
 }
 
 void ASTDeclReader::VisitUsingShadowDecl(UsingShadowDecl *D) {
+  RedeclarableResult Redecl = VisitRedeclarable(D);
   VisitNamedDecl(D);
   D->setTargetDecl(ReadDeclAs<NamedDecl>(Record, Idx));
   D->UsingOrNextShadow = ReadDeclAs<NamedDecl>(Record, Idx);
   UsingShadowDecl *Pattern = ReadDeclAs<UsingShadowDecl>(Record, Idx);
   if (Pattern)
     Reader.getContext().setInstantiatedFromUsingShadowDecl(D, Pattern);
+  mergeRedeclarable(D, Redecl);
 }
 
 void ASTDeclReader::VisitUsingDirectiveDecl(UsingDirectiveDecl *D) {
@@ -1224,6 +1228,8 @@ void ASTDeclReader::ReadCXXDefinitionData(
     CXXRecordDecl::LambdaDefinitionData &Lambda
       = static_cast<CXXRecordDecl::LambdaDefinitionData &>(Data);
     Lambda.Dependent = Record[Idx++];
+    Lambda.IsGenericLambda = Record[Idx++];
+    Lambda.CaptureDefault = Record[Idx++];
     Lambda.NumCaptures = Record[Idx++];
     Lambda.NumExplicitCaptures = Record[Idx++];
     Lambda.ManglingNumber = Record[Idx++];
@@ -1232,7 +1238,6 @@ void ASTDeclReader::ReadCXXDefinitionData(
       = (Capture*)Reader.Context.Allocate(sizeof(Capture)*Lambda.NumCaptures);
     Capture *ToCapture = Lambda.Captures;
     Lambda.MethodTyInfo = GetTypeSourceInfo(Record, Idx);
-    Lambda.TheLambdaExpr = cast<LambdaExpr>(Reader.ReadExpr(F));
     for (unsigned I = 0, N = Lambda.NumCaptures; I != N; ++I) {
       SourceLocation Loc = ReadSourceLocation(Record, Idx);
       bool IsImplicit = Record[Idx++];
@@ -1264,7 +1269,8 @@ ASTDeclReader::VisitCXXRecordDeclImpl(CXXRecordDecl *D) {
     bool IsLambda = Record[Idx++];
     if (IsLambda)
       D->DefinitionData = new (C) CXXRecordDecl::LambdaDefinitionData(D, 0,
-                                                                      false);
+                                                                      false,
+                                                                      false, LCD_None);
     else
       D->DefinitionData = new (C) struct CXXRecordDecl::DefinitionData(D);
 
@@ -2151,6 +2157,12 @@ static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
     // FIXME: Also check the value is odr-equivalent.
     return true;
 
+  // Using shadow declarations with the same target match.
+  if (UsingShadowDecl *USX = dyn_cast<UsingShadowDecl>(X)) {
+    UsingShadowDecl *USY = cast<UsingShadowDecl>(Y);
+    return USX->getTargetDecl() == USY->getTargetDecl();
+  }
+
   // FIXME: Many other cases to implement.
   return false;
 }
@@ -2193,6 +2205,9 @@ ASTDeclReader::FindExistingResult ASTDeclReader::findExisting(NamedDecl *D) {
     return Result;
   }
 
+  // FIXME: Bail out for non-canonical declarations. We will have performed any
+  // necessary merging already.
+
   DeclContext *DC = D->getDeclContext()->getRedeclContext();
   if (DC->isTranslationUnit() && Reader.SemaObj) {
     IdentifierResolver &IdResolver = Reader.SemaObj->IdResolver;
@@ -2226,17 +2241,23 @@ ASTDeclReader::FindExistingResult ASTDeclReader::findExisting(NamedDecl *D) {
       if (isSameEntity(*I, D))
         return FindExistingResult(Reader, D, *I);
     }
-    return FindExistingResult(Reader, D, /*Existing=*/0);
   } else if (DeclContext *MergeDC = getPrimaryContextForMerging(DC)) {
     DeclContext::lookup_result R = MergeDC->noload_lookup(Name);
     for (DeclContext::lookup_iterator I = R.begin(), E = R.end(); I != E; ++I) {
       if (isSameEntity(*I, D))
         return FindExistingResult(Reader, D, *I);
     }
-    return FindExistingResult(Reader, D, /*Existing=*/0);
+  } else {
+    // Not in a mergeable context.
+    return FindExistingResult(Reader);
   }
 
-  return FindExistingResult(Reader);
+  // If this declaration is from a merged context, make a note that we need to
+  // check that the canonical definition of that context contains the decl.
+  if (Reader.MergedDeclContexts.count(D->getLexicalDeclContext()))
+    Reader.PendingOdrMergeChecks.push_back(D);
+
+  return FindExistingResult(Reader, D, /*Existing=*/0);
 }
 
 void ASTDeclReader::attachPreviousDecl(Decl *D, Decl *previous) {
@@ -2249,6 +2270,8 @@ void ASTDeclReader::attachPreviousDecl(Decl *D, Decl *previous) {
     VD->RedeclLink.setNext(cast<VarDecl>(previous));
   } else if (TypedefNameDecl *TD = dyn_cast<TypedefNameDecl>(D)) {
     TD->RedeclLink.setNext(cast<TypedefNameDecl>(previous));
+  } else if (UsingShadowDecl *USD = dyn_cast<UsingShadowDecl>(D)) {
+    USD->RedeclLink.setNext(cast<UsingShadowDecl>(previous));
   } else if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(D)) {
     ID->RedeclLink.setNext(cast<ObjCInterfaceDecl>(previous));
   } else if (ObjCProtocolDecl *PD = dyn_cast<ObjCProtocolDecl>(D)) {
@@ -2276,7 +2299,7 @@ void ASTDeclReader::attachLatestDecl(Decl *D, Decl *Latest) {
     TD->RedeclLink
       = Redeclarable<TagDecl>::LatestDeclLink(cast<TagDecl>(Latest));
   } else if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
-    FD->RedeclLink 
+    FD->RedeclLink
       = Redeclarable<FunctionDecl>::LatestDeclLink(cast<FunctionDecl>(Latest));
   } else if (VarDecl *VD = dyn_cast<VarDecl>(D)) {
     VD->RedeclLink
@@ -2285,6 +2308,10 @@ void ASTDeclReader::attachLatestDecl(Decl *D, Decl *Latest) {
     TD->RedeclLink
       = Redeclarable<TypedefNameDecl>::LatestDeclLink(
                                                 cast<TypedefNameDecl>(Latest));
+  } else if (UsingShadowDecl *USD = dyn_cast<UsingShadowDecl>(D)) {
+    USD->RedeclLink
+      = Redeclarable<UsingShadowDecl>::LatestDeclLink(
+                                             cast<UsingShadowDecl>(Latest));
   } else if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(D)) {
     ID->RedeclLink
       = Redeclarable<ObjCInterfaceDecl>::LatestDeclLink(
@@ -2964,7 +2991,7 @@ void ASTDeclReader::UpdateDecl(Decl *D, ModuleFile &ModuleFile,
     case UPD_DECL_MARKED_USED: {
       // FIXME: This doesn't send the right notifications if there are
       // ASTMutationListeners other than an ASTWriter.
-      D->setIsUsed(true);
+      D->Used = true;
       break;
     }
     }

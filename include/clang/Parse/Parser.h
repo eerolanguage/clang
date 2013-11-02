@@ -102,6 +102,7 @@ class Parser : public CodeCompletionHandler {
 
   /// Contextual keywords for Microsoft extensions.
   IdentifierInfo *Ident__except;
+  mutable IdentifierInfo *Ident_sealed;
 
   /// Ident_super - IdentifierInfo for "super", to support fast
   /// comparison.
@@ -1581,10 +1582,7 @@ private:
   /// A SmallVector of types.
   typedef SmallVector<ParsedType, 12> TypeVector;
 
-  StmtResult ParseStatement(SourceLocation *TrailingElseLoc = 0) {
-    StmtVector Stmts;
-    return ParseStatementOrDeclaration(Stmts, true, TrailingElseLoc);
-  }
+  StmtResult ParseStatement(SourceLocation *TrailingElseLoc = 0);
   StmtResult ParseStatementOrDeclaration(StmtVector &Stmts,
                                          bool OnlyStatement,
                                          SourceLocation *TrailingElseLoc = 0);
@@ -2105,6 +2103,11 @@ private:
                                         SourceLocation AttrNameLoc,
                                         ParsedAttributes &Attrs,
                                         SourceLocation *EndLoc);
+
+  void ParseAttributeWithTypeArg(IdentifierInfo &AttrName,
+                                 SourceLocation AttrNameLoc,
+                                 ParsedAttributes &Attrs,
+                                 SourceLocation *EndLoc);
 
   void ParseTypeofSpecifier(DeclSpec &DS);
   SourceLocation ParseDecltypeSpecifier(DeclSpec &DS);

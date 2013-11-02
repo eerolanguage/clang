@@ -49,6 +49,8 @@ const char *types::getTypeTempSuffix(ID Id, bool CLMode) {
     return "obj";
   if (Id == TY_Image && CLMode)
     return "exe";
+  if (Id == TY_PP_Asm && CLMode)
+    return "asm";
   return getInfo(Id).TempSuffix;
 }
 
@@ -141,6 +143,7 @@ types::ID types::lookupTypeForExtension(const char *Ext) {
            .Case("f", TY_PP_Fortran)
            .Case("F", TY_Fortran)
            .Case("s", TY_PP_Asm)
+           .Case("asm", TY_PP_Asm)
            .Case("S", TY_Asm)
            .Case("o", TY_Object)
            .Case("obj", TY_Object)

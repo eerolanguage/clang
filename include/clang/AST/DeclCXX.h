@@ -514,10 +514,12 @@ class CXXRecordDecl : public RecordDecl {
   struct LambdaDefinitionData : public DefinitionData {
     typedef LambdaExpr::Capture Capture;
     
-    LambdaDefinitionData(CXXRecordDecl *D, TypeSourceInfo *Info, bool Dependent) 
-      : DefinitionData(D), Dependent(Dependent), NumCaptures(0), 
-        NumExplicitCaptures(0), ManglingNumber(0), ContextDecl(0), 
-        Captures(0), MethodTyInfo(Info), TheLambdaExpr(0) 
+       LambdaDefinitionData(CXXRecordDecl *D, TypeSourceInfo *Info, 
+                         bool Dependent, bool IsGeneric, 
+                         LambdaCaptureDefault CaptureDefault) 
+      : DefinitionData(D), Dependent(Dependent), IsGenericLambda(IsGeneric), 
+        CaptureDefault(CaptureDefault), NumCaptures(0), NumExplicitCaptures(0), 
+        ManglingNumber(0), ContextDecl(0), Captures(0), MethodTyInfo(Info)
     {
       IsLambda = true;
     }
@@ -532,11 +534,17 @@ class CXXRecordDecl : public RecordDecl {
     /// artifact of having to parse the default arguments before. 
     unsigned Dependent : 1;
     
-    /// \brief The number of captures in this lambda.
-    unsigned NumCaptures : 16;
+    /// \brief Whether this lambda is a generic lambda.
+    unsigned IsGenericLambda : 1;
+
+    /// \brief The Default Capture.
+    unsigned CaptureDefault : 2;
+
+    /// \brief The number of captures in this lambda is limited 2^NumCaptures.
+    unsigned NumCaptures : 15;
 
     /// \brief The number of explicit captures in this lambda.
-    unsigned NumExplicitCaptures : 15;
+    unsigned NumExplicitCaptures : 13;
 
     /// \brief The number used to indicate this lambda expression for name 
     /// mangling in the Itanium C++ ABI.
@@ -554,9 +562,6 @@ class CXXRecordDecl : public RecordDecl {
 
     /// \brief The type of the call method.
     TypeSourceInfo *MethodTyInfo;
-
-    /// \brief The AST node of the lambda expression.
-    LambdaExpr *TheLambdaExpr;
        
   };
 
@@ -641,18 +646,19 @@ public:
     return cast<CXXRecordDecl>(RecordDecl::getCanonicalDecl());
   }
 
-  const CXXRecordDecl *getPreviousDecl() const {
-    return cast_or_null<CXXRecordDecl>(RecordDecl::getPreviousDecl());
-  }
   CXXRecordDecl *getPreviousDecl() {
     return cast_or_null<CXXRecordDecl>(RecordDecl::getPreviousDecl());
   }
+  const CXXRecordDecl *getPreviousDecl() const {
+    return const_cast<CXXRecordDecl*>(this)->getPreviousDecl();
+  }
+
+  CXXRecordDecl *getMostRecentDecl() {
+    return cast<CXXRecordDecl>(RecordDecl::getMostRecentDecl());
+  }
 
   const CXXRecordDecl *getMostRecentDecl() const {
-    return cast_or_null<CXXRecordDecl>(RecordDecl::getMostRecentDecl());
-  }
-  CXXRecordDecl *getMostRecentDecl() {
-    return cast_or_null<CXXRecordDecl>(RecordDecl::getMostRecentDecl());
+    return const_cast<CXXRecordDecl*>(this)->getMostRecentDecl();
   }
 
   CXXRecordDecl *getDefinition() const {
@@ -668,7 +674,8 @@ public:
                                bool DelayTypeCreation = false);
   static CXXRecordDecl *CreateLambda(const ASTContext &C, DeclContext *DC,
                                      TypeSourceInfo *Info, SourceLocation Loc,
-                                     bool DependentLambda);
+                                     bool DependentLambda, bool IsGeneric, 
+                                     LambdaCaptureDefault CaptureDefault);
   static CXXRecordDecl *CreateDeserialized(const ASTContext &C, unsigned ID);
 
   bool isDynamicClass() const {
@@ -1012,16 +1019,10 @@ public:
   /// lambda.
   TemplateParameterList *getGenericLambdaTemplateParameterList() const;
 
-  /// \brief Assign the member call operator of the lambda. 
-  void setLambdaExpr(LambdaExpr *E) {
-    getLambdaData().TheLambdaExpr = E;
+  LambdaCaptureDefault getLambdaCaptureDefault() const {
+    assert(isLambda());
+    return static_cast<LambdaCaptureDefault>(getLambdaData().CaptureDefault);
   }
-
-  /// \brief Retrieve the parent lambda expression.
-  LambdaExpr *getLambdaExpr() const {
-    return isLambda() ? getLambdaData().TheLambdaExpr : 0;
-  }
-
 
   /// \brief For a closure type, retrieve the mapping from captured
   /// variables and \c this to the non-static data members that store the
@@ -1430,7 +1431,7 @@ public:
   /// returns false if the class has non-computable base classes.
   ///
   /// \param BaseMatches Callback invoked for each (direct or indirect) base
-  /// class of this type, or if \p AllowShortCircut is true then until a call
+  /// class of this type, or if \p AllowShortCircuit is true then until a call
   /// returns false.
   ///
   /// \param UserData Passed as the second argument of every call to
@@ -1716,11 +1717,18 @@ public:
   /// \brief Determine whether this is a move assignment operator.
   bool isMoveAssignmentOperator() const;
 
-  const CXXMethodDecl *getCanonicalDecl() const {
-    return cast<CXXMethodDecl>(FunctionDecl::getCanonicalDecl());
-  }
   CXXMethodDecl *getCanonicalDecl() {
     return cast<CXXMethodDecl>(FunctionDecl::getCanonicalDecl());
+  }
+  const CXXMethodDecl *getCanonicalDecl() const {
+    return const_cast<CXXMethodDecl*>(this)->getCanonicalDecl();
+  }
+
+  CXXMethodDecl *getMostRecentDecl() {
+    return cast<CXXMethodDecl>(FunctionDecl::getMostRecentDecl());
+  }
+  const CXXMethodDecl *getMostRecentDecl() const {
+    return const_cast<CXXMethodDecl*>(this)->getMostRecentDecl();
   }
 
   /// True if this method is user-declared and was not
@@ -2111,8 +2119,7 @@ public:
 
   /// \brief Determine whether this constructor was marked "explicit" or not.
   bool isExplicit() const {
-    return cast<CXXConstructorDecl>(getFirstDeclaration())
-      ->isExplicitSpecified();
+    return cast<CXXConstructorDecl>(getFirstDecl())->isExplicitSpecified();
   }
 
   /// \brief Iterates through the member/base initializer list.
@@ -2352,8 +2359,7 @@ public:
   /// Explicit conversion operators are only considered for direct
   /// initialization, e.g., when the user has explicitly written a cast.
   bool isExplicit() const {
-    return cast<CXXConversionDecl>(getFirstDeclaration())
-      ->isExplicitSpecified();
+    return cast<CXXConversionDecl>(getFirstDecl())->isExplicitSpecified();
   }
 
   /// \brief Returns the type that this conversion function is converting to.
@@ -2670,7 +2676,7 @@ public:
 ///                 // Also creates a UsingShadowDecl for A::foo() in B
 /// }
 /// \endcode
-class UsingShadowDecl : public NamedDecl {
+class UsingShadowDecl : public NamedDecl, public Redeclarable<UsingShadowDecl> {
   virtual void anchor();
 
   /// The referenced declaration.
@@ -2693,6 +2699,17 @@ class UsingShadowDecl : public NamedDecl {
     setImplicit();
   }
 
+  typedef Redeclarable<UsingShadowDecl> redeclarable_base;
+  virtual UsingShadowDecl *getNextRedeclaration() {
+    return RedeclLink.getNext();
+  }
+  virtual UsingShadowDecl *getPreviousDeclImpl() {
+    return getPreviousDecl();
+  }
+  virtual UsingShadowDecl *getMostRecentDeclImpl() {
+    return getMostRecentDecl();
+  }
+
 public:
   static UsingShadowDecl *Create(ASTContext &C, DeclContext *DC,
                                  SourceLocation Loc, UsingDecl *Using,
@@ -2701,7 +2718,20 @@ public:
   }
 
   static UsingShadowDecl *CreateDeserialized(ASTContext &C, unsigned ID);
-  
+
+  typedef redeclarable_base::redecl_iterator redecl_iterator;
+  using redeclarable_base::redecls_begin;
+  using redeclarable_base::redecls_end;
+  using redeclarable_base::getPreviousDecl;
+  using redeclarable_base::getMostRecentDecl;
+
+  virtual UsingShadowDecl *getCanonicalDecl() {
+    return getFirstDecl();
+  }
+  virtual const UsingShadowDecl *getCanonicalDecl() const {
+    return getFirstDecl();
+  }
+
   /// \brief Gets the underlying declaration which has been brought into the
   /// local scope.
   NamedDecl *getTargetDecl() const { return Underlying; }

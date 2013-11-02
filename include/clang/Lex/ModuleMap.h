@@ -37,7 +37,7 @@ class HeaderSearch;
 class ModuleMapParser;
   
 class ModuleMap {
-  SourceManager *SourceMgr;
+  SourceManager &SourceMgr;
   IntrusiveRefCntPtr<DiagnosticsEngine> Diags;
   const LangOptions &LangOpts;
   const TargetInfo *Target;
@@ -106,7 +106,8 @@ public:
   };
 
 private:
-  typedef llvm::DenseMap<const FileEntry *, KnownHeader> HeadersMap;
+  typedef llvm::DenseMap<const FileEntry *, SmallVector<KnownHeader, 1> >
+  HeadersMap;
 
   /// \brief Mapping from each header to the module that owns the contents of
   /// that header.
@@ -177,9 +178,9 @@ private:
 public:
   /// \brief Construct a new module map.
   ///
-  /// \param FileMgr The file manager used to find module files and headers.
-  /// This file manager should be shared with the header-search mechanism, since
-  /// they will refer to the same headers.
+  /// \param SourceMgr The source manager used to find module files and headers.
+  /// This source manager should be shared with the header-search mechanism,
+  /// since they will refer to the same headers.
   ///
   /// \param DC A diagnostic consumer that will be cloned for use in generating
   /// diagnostics.
@@ -187,7 +188,7 @@ public:
   /// \param LangOpts Language options for this translation unit.
   ///
   /// \param Target The target for this translation unit.
-  ModuleMap(FileManager &FileMgr, DiagnosticConsumer &DC,
+  ModuleMap(SourceManager &SourceMgr, DiagnosticConsumer &DC,
             const LangOptions &LangOpts, const TargetInfo *Target,
             HeaderSearch &HeaderInfo);
 
@@ -208,10 +209,15 @@ public:
   ///
   /// \param File The header file that is likely to be included.
   ///
+  /// \param RequestingModule Specifies the module the header is intended to be
+  /// used from.  Used to disambiguate if a header is present in multiple
+  /// modules.
+  ///
   /// \returns The module KnownHeader, which provides the module that owns the
   /// given header file.  The KnownHeader is default constructed to indicate
   /// that no module owns this header file.
-  KnownHeader findModuleForHeader(const FileEntry *File);
+  KnownHeader findModuleForHeader(const FileEntry *File,
+                                  Module *RequestingModule = NULL);
 
   /// \brief Determine whether the given header is part of a module
   /// marked 'unavailable'.

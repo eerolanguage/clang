@@ -4361,9 +4361,9 @@ CheckTemplateArgumentAddressOfObjectOrFunction(Sema &S,
   ValueDecl *Entity = DRE->getDecl();
 
   // Cannot refer to non-static data members
-  if (FieldDecl *Field = dyn_cast<FieldDecl>(Entity)) {
+  if (isa<FieldDecl>(Entity) || isa<IndirectFieldDecl>(Entity)) {
     S.Diag(Arg->getLocStart(), diag::err_template_arg_field)
-      << Field << Arg->getSourceRange();
+      << Entity << Arg->getSourceRange();
     S.Diag(Param->getLocation(), diag::note_template_param_here);
     return true;
   }
@@ -4609,8 +4609,11 @@ static bool CheckTemplateArgumentPointerToMember(Sema &S,
                   diag::err_template_arg_not_pointer_to_member_form)
       << Arg->getSourceRange();
 
-  if (isa<FieldDecl>(DRE->getDecl()) || isa<CXXMethodDecl>(DRE->getDecl())) {
+  if (isa<FieldDecl>(DRE->getDecl()) ||
+      isa<IndirectFieldDecl>(DRE->getDecl()) ||
+      isa<CXXMethodDecl>(DRE->getDecl())) {
     assert((isa<FieldDecl>(DRE->getDecl()) ||
+            isa<IndirectFieldDecl>(DRE->getDecl()) ||
             !cast<CXXMethodDecl>(DRE->getDecl())->isStatic()) &&
            "Only non-static member pointers can make it here");
 
@@ -5072,7 +5075,8 @@ Sema::BuildExpressionFromDeclTemplateArgument(const TemplateArgument &Arg,
   ValueDecl *VD = cast<ValueDecl>(Arg.getAsDecl());
 
   if (VD->getDeclContext()->isRecord() &&
-      (isa<CXXMethodDecl>(VD) || isa<FieldDecl>(VD))) {
+      (isa<CXXMethodDecl>(VD) || isa<FieldDecl>(VD) ||
+       isa<IndirectFieldDecl>(VD))) {
     // If the value is a class member, we might have a pointer-to-member.
     // Determine whether the non-type template template parameter is of
     // pointer-to-member type. If so, we need to build an appropriate
@@ -5459,8 +5463,20 @@ Sema::CheckTemplateDeclScope(Scope *S, TemplateParameterList *TemplateParams) {
   while (Ctx && isa<LinkageSpecDecl>(Ctx))
     Ctx = Ctx->getParent();
 
-  if (Ctx && (Ctx->isFileContext() || Ctx->isRecord()))
-    return false;
+  if (Ctx) {
+    if (Ctx->isFileContext())
+      return false;
+    if (CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(Ctx)) {
+      // C++ [temp.mem]p2:
+      //   A local class shall not have member templates.
+      if (RD->isLocalClass())
+        return Diag(TemplateParams->getTemplateLoc(),
+                    diag::err_template_inside_local_class)
+          << TemplateParams->getSourceRange();
+      else
+        return false;
+    }
+  }
 
   return Diag(TemplateParams->getTemplateLoc(),
               diag::err_template_outside_namespace_or_class_scope)

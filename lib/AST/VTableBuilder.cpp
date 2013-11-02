@@ -1203,10 +1203,10 @@ ItaniumVTableBuilder::ComputeReturnAdjustment(BaseOffset Offset) {
       // Get the virtual base offset offset.
       if (Offset.DerivedClass == MostDerivedClass) {
         // We can get the offset offset directly from our map.
-        Adjustment.VBaseOffsetOffset = 
+        Adjustment.Virtual.Itanium.VBaseOffsetOffset =
           VBaseOffsetOffsets.lookup(Offset.VirtualBase).getQuantity();
       } else {
-        Adjustment.VBaseOffsetOffset = 
+        Adjustment.Virtual.Itanium.VBaseOffsetOffset =
           VTables.getVirtualBaseOffsetOffset(Offset.DerivedClass,
                                              Offset.VirtualBase).getQuantity();
       }
@@ -1304,7 +1304,7 @@ ThisAdjustment ItaniumVTableBuilder::ComputeThisAdjustment(
       VCallOffsets = Builder.getVCallOffsets();
     }
       
-    Adjustment.VCallOffsetOffset = 
+    Adjustment.VCallOffsetOffset =
       VCallOffsets.getVCallOffsetOffset(MD).getQuantity();
   }
 
@@ -1996,8 +1996,8 @@ void ItaniumVTableBuilder::dumpLayout(raw_ostream &Out) {
           Out << "\n       [return adjustment: ";
           Out << Thunk.Return.NonVirtual << " non-virtual";
           
-          if (Thunk.Return.VBaseOffsetOffset) {
-            Out << ", " << Thunk.Return.VBaseOffsetOffset;
+          if (Thunk.Return.Virtual.Itanium.VBaseOffsetOffset) {
+            Out << ", " << Thunk.Return.Virtual.Itanium.VBaseOffsetOffset;
             Out << " vbase offset offset";
           }
 
@@ -2172,8 +2172,8 @@ void ItaniumVTableBuilder::dumpLayout(raw_ostream &Out) {
         if (!Thunk.Return.isEmpty()) {
           Out << "return adjustment: " << Thunk.Return.NonVirtual;
           Out << " non-virtual";
-          if (Thunk.Return.VBaseOffsetOffset) {
-            Out << ", " << Thunk.Return.VBaseOffsetOffset;
+          if (Thunk.Return.Virtual.Itanium.VBaseOffsetOffset) {
+            Out << ", " << Thunk.Return.Virtual.Itanium.VBaseOffsetOffset;
             Out << " vbase offset offset";
           }
 
@@ -2483,10 +2483,6 @@ private:
     /// this method's base has, or zero.
     const uint64_t VBTableIndex;
 
-    /// VBase - If nonnull, holds the last vbase which contains the vfptr that
-    /// the method definition is adjusted to.
-    const CXXRecordDecl *VBase;
-
     /// VFTableIndex - The index in the vftable that this method has.
     const uint64_t VFTableIndex;
 
@@ -2495,13 +2491,11 @@ private:
     /// or used for vcalls in the most derived class.
     bool Shadowed;
 
-    MethodInfo(uint64_t VBTableIndex, const CXXRecordDecl *VBase,
-               uint64_t VFTableIndex)
-        : VBTableIndex(VBTableIndex), VBase(VBase), VFTableIndex(VFTableIndex),
+    MethodInfo(uint64_t VBTableIndex, uint64_t VFTableIndex)
+        : VBTableIndex(VBTableIndex), VFTableIndex(VFTableIndex),
           Shadowed(false) {}
 
-    MethodInfo()
-        : VBTableIndex(0), VBase(0), VFTableIndex(0), Shadowed(false) {}
+    MethodInfo() : VBTableIndex(0), VFTableIndex(0), Shadowed(false) {}
   };
 
   typedef llvm::DenseMap<const CXXMethodDecl *, MethodInfo> MethodInfoMapTy;
@@ -2579,7 +2573,7 @@ private:
       // and the entries shadowed by return adjusting thunks.
       if (MD->getParent() != MostDerivedClass || MI.Shadowed)
         continue;
-      MethodVFTableLocation Loc(MI.VBTableIndex, MI.VBase,
+      MethodVFTableLocation Loc(MI.VBTableIndex, WhichVFPtr.LastVBase,
                                 WhichVFPtr.VFPtrOffset, MI.VFTableIndex);
       if (const CXXDestructorDecl *DD = dyn_cast<CXXDestructorDecl>(MD)) {
         MethodVFTableLocations[GlobalDecl(DD, Dtor_Deleting)] = Loc;
@@ -2668,11 +2662,6 @@ CharUnits
 VFTableBuilder::ComputeThisOffset(const CXXMethodDecl *MD,
                                   BaseSubobject Base,
                                   FinalOverriders::OverriderInfo Overrider) {
-  // Complete object virtual destructors are always emitted in the most derived
-  // class, thus don't have this offset.
-  if (isa<CXXDestructorDecl>(MD))
-    return CharUnits();
-
   InitialOverriddenDefinitionCollector Collector;
   visitAllOverriddenMethods(MD, Collector);
 
@@ -2690,6 +2679,7 @@ VFTableBuilder::ComputeThisOffset(const CXXMethodDecl *MD,
        I != E; ++I) {
     const CXXBasePath &Path = (*I);
     CharUnits ThisOffset = Base.getBaseOffset();
+    bool SeenVBase = false;
 
     // For each path from the overrider to the parents of the overridden methods,
     // traverse the path, calculating the this offset in the most derived class.
@@ -2701,6 +2691,7 @@ VFTableBuilder::ComputeThisOffset(const CXXMethodDecl *MD,
       const ASTRecordLayout &Layout = Context.getASTRecordLayout(PrevRD);
 
       if (Element.Base->isVirtual()) {
+        SeenVBase = true;
         if (Overrider.Method->getParent() == PrevRD) {
           // This one's interesting. If the final overrider is in a vbase B of the
           // most derived class and it overrides a method of the B's own vbase A,
@@ -2713,10 +2704,21 @@ VFTableBuilder::ComputeThisOffset(const CXXMethodDecl *MD,
         } else {
           ThisOffset = MostDerivedClassLayout.getVBaseClassOffset(CurRD);
         }
+
+        // A virtual destructor of a virtual base takes the address of the
+        // virtual base subobject as the "this" argument.
+        if (isa<CXXDestructorDecl>(MD))
+          break;
       } else {
         ThisOffset += Layout.getBaseClassOffset(CurRD);
       }
     }
+
+    // If a "Base" class has at least one non-virtual base with a virtual
+    // destructor, the "Base" virtual destructor will take the address of the
+    // "Base" subobject as the "this" argument.
+    if (!SeenVBase && isa<CXXDestructorDecl>(MD))
+      return Base.getBaseOffset();
 
     if (Ret > ThisOffset || First) {
       First = false;
@@ -2726,28 +2728,6 @@ VFTableBuilder::ComputeThisOffset(const CXXMethodDecl *MD,
 
   assert(!First && "Method not found in the given subobject?");
   return Ret;
-}
-
-static const CXXMethodDecl*
-FindDirectlyOverriddenMethodInBases(const CXXMethodDecl *MD,
-                                    BasesSetVectorTy &Bases) {
-  // We can't just iterate over the overridden methods and return the first one
-  // which has its parent in Bases, e.g. this doesn't work when we have
-  // multiple subobjects of the same type that have its virtual function
-  // overridden.
-  for (int I = Bases.size(), E = 0; I != E; --I) {
-    const CXXRecordDecl *CurrentBase = Bases[I - 1];
-
-    for (CXXMethodDecl::method_iterator I = MD->begin_overridden_methods(),
-         E = MD->end_overridden_methods(); I != E; ++I) {
-      const CXXMethodDecl *OverriddenMD = *I;
-
-      if (OverriddenMD->getParent() == CurrentBase)
-        return OverriddenMD;
-    }
-  }
-
-  return 0;
 }
 
 static void GroupNewVirtualOverloads(
@@ -2841,7 +2821,7 @@ void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
     // Check if this virtual member function overrides
     // a method in one of the visited bases.
     if (const CXXMethodDecl *OverriddenMD =
-            FindDirectlyOverriddenMethodInBases(MD, VisitedBases)) {
+            FindNearestOverriddenMethod(MD, VisitedBases)) {
       MethodInfoMapTy::iterator OverriddenMDIterator =
           MethodInfoMap.find(OverriddenMD);
 
@@ -2865,7 +2845,6 @@ void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
         // No return adjustment needed - just replace the overridden method info
         // with the current info.
         MethodInfo MI(OverriddenMethodInfo.VBTableIndex,
-                      OverriddenMethodInfo.VBase,
                       OverriddenMethodInfo.VFTableIndex);
         MethodInfoMap.erase(OverriddenMDIterator);
 
@@ -2886,7 +2865,7 @@ void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
           // FIXME: this is O(N^2), can be O(N).
           const CXXMethodDecl *SubOverride = OverriddenMD;
           while ((SubOverride =
-              FindDirectlyOverriddenMethodInBases(SubOverride, VisitedBases))) {
+                      FindNearestOverriddenMethod(SubOverride, VisitedBases))) {
             MethodInfoMapTy::iterator SubOverrideIterator =
                 MethodInfoMap.find(SubOverride);
             if (SubOverrideIterator == MethodInfoMap.end())
@@ -2911,7 +2890,7 @@ void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
     // it requires return adjustment. Insert the method info for this method.
     unsigned VBIndex =
         LastVBase ? GetVBTableIndex(MostDerivedClass, LastVBase) : 0;
-    MethodInfo MI(VBIndex, LastVBase, Components.size());
+    MethodInfo MI(VBIndex, Components.size());
 
     assert(!MethodInfoMap.count(MD) &&
            "Should not have method info for this method yet!");
@@ -2932,9 +2911,11 @@ void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
       ReturnAdjustment.NonVirtual =
           ReturnAdjustmentOffset.NonVirtualOffset.getQuantity();
       if (ReturnAdjustmentOffset.VirtualBase) {
-        // FIXME: We might want to create a VBIndex alias for VBaseOffsetOffset
-        // in the ReturnAdjustment struct.
-        ReturnAdjustment.VBaseOffsetOffset =
+        const ASTRecordLayout &DerivedLayout =
+            Context.getASTRecordLayout(ReturnAdjustmentOffset.DerivedClass);
+        ReturnAdjustment.Virtual.Microsoft.VBPtrOffset =
+            DerivedLayout.getVBPtrOffset().getQuantity();
+        ReturnAdjustment.Virtual.Microsoft.VBIndex =
             GetVBTableIndex(ReturnAdjustmentOffset.DerivedClass,
                             ReturnAdjustmentOffset.VirtualBase);
       }
@@ -2965,6 +2946,34 @@ struct MicrosoftThunkInfoStableSortComparator {
     return false;
   }
 };
+
+static void dumpMicrosoftThunkAdjustment(const ThunkInfo &TI, raw_ostream &Out,
+                                         bool ContinueFirstLine) {
+  const ReturnAdjustment &R = TI.Return;
+  bool Multiline = false;
+  const char *LinePrefix = "\n        ";
+  if (!R.isEmpty()) {
+    if (!ContinueFirstLine)
+      Out << LinePrefix;
+    Out << "[return adjustment: ";
+    if (R.Virtual.Microsoft.VBPtrOffset)
+      Out << "vbptr at offset " << R.Virtual.Microsoft.VBPtrOffset << ", ";
+    if (R.Virtual.Microsoft.VBIndex)
+      Out << "vbase #" << R.Virtual.Microsoft.VBIndex << ", ";
+    Out << R.NonVirtual << " non-virtual]";
+    Multiline = true;
+  }
+
+  const ThisAdjustment &T = TI.This;
+  if (!T.isEmpty()) {
+    if (Multiline || !ContinueFirstLine)
+      Out << LinePrefix;
+    Out << "[this adjustment: ";
+    assert(TI.This.VCallOffsetOffset == 0 &&
+           "VtorDisp adjustment is not supported yet");
+    Out << T.NonVirtual << " non-virtual]";
+  }
+}
 
 void VFTableBuilder::dumpLayout(raw_ostream &Out) {
   Out << "VFTable for ";
@@ -2998,23 +3007,8 @@ void VFTableBuilder::dumpLayout(raw_ostream &Out) {
       }
 
       ThunkInfo Thunk = VTableThunks.lookup(I);
-      if (!Thunk.isEmpty()) {
-        // If this function pointer has a return adjustment, dump it.
-        if (!Thunk.Return.isEmpty()) {
-          Out << "\n       [return adjustment: ";
-          if (Thunk.Return.VBaseOffsetOffset)
-            Out << "vbase #" << Thunk.Return.VBaseOffsetOffset << ", ";
-          Out << Thunk.Return.NonVirtual << " non-virtual]";
-        }
-
-        // If this function pointer has a 'this' pointer adjustment, dump it.
-        if (!Thunk.This.isEmpty()) {
-          assert(!Thunk.This.VCallOffsetOffset &&
-                 "No virtual this adjustment in this ABI");
-          Out << "\n       [this adjustment: " << Thunk.This.NonVirtual
-              << " non-virtual]";
-        }
-      }
+      if (!Thunk.isEmpty())
+        dumpMicrosoftThunkAdjustment(Thunk, Out, /*ContinueFirstLine=*/false);
 
       break;
     }
@@ -3032,13 +3026,7 @@ void VFTableBuilder::dumpLayout(raw_ostream &Out) {
       if (!Thunk.isEmpty()) {
         assert(Thunk.Return.isEmpty() &&
                "No return adjustment needed for destructors!");
-        // If this destructor has a 'this' pointer adjustment, dump it.
-        if (!Thunk.This.isEmpty()) {
-          assert(!Thunk.This.VCallOffsetOffset &&
-                 "No virtual this adjustment in this ABI");
-          Out << "\n       [this adjustment: " << Thunk.This.NonVirtual
-              << " non-virtual]";
-        }
+        dumpMicrosoftThunkAdjustment(Thunk, Out, /*ContinueFirstLine=*/false);
       }
 
       break;
@@ -3089,26 +3077,7 @@ void VFTableBuilder::dumpLayout(raw_ostream &Out) {
         const ThunkInfo &Thunk = ThunksVector[I];
 
         Out << llvm::format("%4d | ", I);
-
-        // If this function pointer has a return pointer adjustment, dump it.
-        if (!Thunk.Return.isEmpty()) {
-          Out << "return adjustment: ";
-          if (Thunk.Return.VBaseOffsetOffset)
-            Out << "vbase #" << Thunk.Return.VBaseOffsetOffset << ", ";
-          Out << Thunk.Return.NonVirtual << " non-virtual";
-
-          if (!Thunk.This.isEmpty())
-            Out << "\n       ";
-        }
-
-        // If this function pointer has a 'this' pointer adjustment, dump it.
-        if (!Thunk.This.isEmpty()) {
-          assert(!Thunk.This.VCallOffsetOffset &&
-                 "No virtual this adjustment in this ABI");
-          Out << "this adjustment: ";
-          Out << Thunk.This.NonVirtual << " non-virtual";
-        }
-
+        dumpMicrosoftThunkAdjustment(Thunk, Out, /*ContinueFirstLine=*/true);
         Out << '\n';
       }
 

@@ -1201,14 +1201,11 @@ public:
   using redeclarable_base::redecls_end;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
+  using redeclarable_base::isFirstDecl;
 
   /// Retrieves the canonical declaration of this Objective-C class.
-  ObjCInterfaceDecl *getCanonicalDecl() {
-    return getFirstDeclaration();
-  }
-  const ObjCInterfaceDecl *getCanonicalDecl() const {
-    return getFirstDeclaration();
-  }
+  ObjCInterfaceDecl *getCanonicalDecl() { return getFirstDecl(); }
+  const ObjCInterfaceDecl *getCanonicalDecl() const { return getFirstDecl(); }
 
   // Low-level accessor
   const Type *getTypeForDecl() const { return TypeForDecl; }
@@ -1249,10 +1246,12 @@ private:
   ObjCIvarDecl(ObjCContainerDecl *DC, SourceLocation StartLoc,
                SourceLocation IdLoc, IdentifierInfo *Id,
                QualType T, TypeSourceInfo *TInfo, AccessControl ac, Expr *BW,
-               bool synthesized)
+               bool synthesized,
+               bool backingIvarReferencedInAccessor)
     : FieldDecl(ObjCIvar, DC, StartLoc, IdLoc, Id, T, TInfo, BW,
                 /*Mutable=*/false, /*HasInit=*/ICIS_NoInit),
-      NextIvar(0), DeclAccess(ac), Synthesized(synthesized) {}
+      NextIvar(0), DeclAccess(ac), Synthesized(synthesized),
+      BackingIvarReferencedInAccessor(backingIvarReferencedInAccessor) {}
 
 public:
   static ObjCIvarDecl *Create(ASTContext &C, ObjCContainerDecl *DC,
@@ -1260,7 +1259,8 @@ public:
                               IdentifierInfo *Id, QualType T,
                               TypeSourceInfo *TInfo,
                               AccessControl ac, Expr *BW = NULL,
-                              bool synthesized=false);
+                              bool synthesized=false,
+                              bool backingIvarReferencedInAccessor=false);
 
   static ObjCIvarDecl *CreateDeserialized(ASTContext &C, unsigned ID);
   
@@ -1282,6 +1282,13 @@ public:
     return DeclAccess == None ? Protected : AccessControl(DeclAccess);
   }
 
+  void setBackingIvarReferencedInAccessor(bool val) {
+    BackingIvarReferencedInAccessor = val;
+  }
+  bool getBackingIvarReferencedInAccessor() const {
+    return BackingIvarReferencedInAccessor;
+  }
+  
   void setSynthesize(bool synth) { Synthesized = synth; }
   bool getSynthesize() const { return Synthesized; }
 
@@ -1296,6 +1303,7 @@ private:
   // NOTE: VC++ treats enums as signed, avoid using the AccessControl enum
   unsigned DeclAccess : 3;
   unsigned Synthesized : 1;
+  unsigned BackingIvarReferencedInAccessor : 1;
 };
 
 
@@ -1507,14 +1515,11 @@ public:
   using redeclarable_base::redecls_end;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
+  using redeclarable_base::isFirstDecl;
 
   /// Retrieves the canonical declaration of this Objective-C protocol.
-  ObjCProtocolDecl *getCanonicalDecl() {
-    return getFirstDeclaration();
-  }
-  const ObjCProtocolDecl *getCanonicalDecl() const {
-    return getFirstDeclaration();
-  }
+  ObjCProtocolDecl *getCanonicalDecl() { return getFirstDecl(); }
+  const ObjCProtocolDecl *getCanonicalDecl() const { return getFirstDecl(); }
 
   virtual void collectPropertiesToImplement(PropertyMap &PM,
                                             PropertyDeclOrder &PO) const;

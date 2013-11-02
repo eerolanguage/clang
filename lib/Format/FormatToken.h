@@ -25,6 +25,8 @@ namespace clang {
 namespace format {
 
 enum TokenType {
+  TT_ArrayInitializerLSquare,
+  TT_ArraySubscriptLSquare,
   TT_BinaryOperator,
   TT_BitFieldColon,
   TT_BlockComment,
@@ -33,16 +35,15 @@ enum TokenType {
   TT_CtorInitializerColon,
   TT_CtorInitializerComma,
   TT_DesignatedInitializerPeriod,
+  TT_DictLiteral,
   TT_ImplicitStringLiteral,
   TT_InlineASMColon,
   TT_InheritanceColon,
   TT_FunctionTypeLParen,
   TT_LambdaLSquare,
   TT_LineComment,
-  TT_ObjCArrayLiteral,
   TT_ObjCBlockLParen,
   TT_ObjCDecl,
-  TT_ObjCDictLiteral,
   TT_ObjCForIn,
   TT_ObjCMethodExpr,
   TT_ObjCMethodSpecifier,
@@ -336,6 +337,20 @@ struct FormatToken {
     while (Tok != NULL && Tok->is(tok::comment))
       Tok = Tok->Next;
     return Tok;
+  }
+
+  /// \brief Returns \c true if this tokens starts a block-type list, i.e. a
+  /// list that should be indented with a block indent.
+  bool opensBlockTypeList(const FormatStyle &Style) const {
+    return Type == TT_ArrayInitializerLSquare ||
+           (is(tok::l_brace) &&
+            (BlockKind == BK_Block || Type == TT_DictLiteral ||
+             !Style.Cpp11BracedListStyle));
+  }
+
+  /// \brief Same as opensBlockTypeList, but for the closing token.
+  bool closesBlockTypeList(const FormatStyle &Style) const {
+    return MatchingParen && MatchingParen->opensBlockTypeList(Style);
   }
 
   FormatToken *MatchingParen;

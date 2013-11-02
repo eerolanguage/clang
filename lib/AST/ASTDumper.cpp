@@ -501,7 +501,8 @@ void ASTDumper::dumpDeclContext(const DeclContext *DC) {
   if (!DC)
     return;
   bool HasUndeserializedDecls = DC->hasExternalLexicalStorage();
-  for (DeclContext::decl_iterator I = DC->noload_decls_begin(), E = DC->noload_decls_end();
+  for (DeclContext::decl_iterator I = DC->noload_decls_begin(),
+                                  E = DC->noload_decls_end();
        I != E; ++I) {
     DeclContext::decl_iterator Next = I;
     ++Next;
@@ -551,6 +552,8 @@ void ASTDumper::dumpLookups(const DeclContext *DC) {
       if (RI + 1 == RE)
         lastChild();
       dumpDeclRef(*RI);
+      if ((*RI)->isHidden())
+        OS << " hidden";
     }
   }
 
@@ -582,7 +585,7 @@ static void dumpPreviousDeclImpl(raw_ostream &OS, ...) {}
 
 template<typename T>
 static void dumpPreviousDeclImpl(raw_ostream &OS, const Mergeable<T> *D) {
-  const T *First = D->getFirstDeclaration();
+  const T *First = D->getFirstDecl();
   if (First != D)
     OS << " first " << First;
 }
@@ -739,6 +742,11 @@ void ASTDumper::dumpDecl(const Decl *D) {
     OS << " parent " << cast<Decl>(D->getDeclContext());
   dumpPreviousDecl(OS, D);
   dumpSourceRange(D->getSourceRange());
+  if (Module *M = D->getOwningModule())
+    OS << " in " << M->getFullModuleName();
+  if (const NamedDecl *ND = dyn_cast<NamedDecl>(D))
+    if (ND->isHidden())
+      OS << " hidden";
 
   bool HasAttrs = D->attr_begin() != D->attr_end();
   const FullComment *Comment =
@@ -1233,6 +1241,8 @@ void ASTDumper::VisitObjCIvarDecl(const ObjCIvarDecl *D) {
   dumpType(D->getType());
   if (D->getSynthesize())
     OS << " synthesize";
+  if (D->getBackingIvarReferencedInAccessor())
+    OS << " BackingIvarReferencedInAccessor";
 
   switch (D->getAccessControl()) {
   case ObjCIvarDecl::None:

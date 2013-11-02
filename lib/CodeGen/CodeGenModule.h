@@ -275,6 +275,10 @@ class CodeGenModule : public CodeGenTypeCache {
   /// is done.
   std::vector<GlobalDecl> DeferredDeclsToEmit;
 
+  /// List of alias we have emitted. Used to make sure that what they point to
+  /// is defined once we get to the end of the of the translation unit.
+  std::vector<GlobalDecl> Aliases;
+
   /// DeferredVTables - A queue of (optional) vtables to consider emitting.
   std::vector<const CXXRecordDecl*> DeferredVTables;
 
@@ -1077,6 +1081,8 @@ private:
   /// was deferred.
   void EmitDeferred();
 
+  void checkAliases();
+
   /// EmitDeferredVTables - Emit any vtables which we deferred and
   /// still have a use for.
   void EmitDeferredVTables();
@@ -1093,6 +1099,9 @@ private:
   void EmitStaticExternCAliases();
 
   void EmitDeclMetadata();
+
+  /// \brief Emit the Clang version as llvm.ident metadata.
+  void EmitVersionIdentMetadata();
 
   /// EmitCoverageFile - Emit the llvm.gcov metadata used to tell LLVM where
   /// to emit the .gcno and .gcda files in a way that persists in .bc files.
