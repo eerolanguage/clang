@@ -142,7 +142,11 @@ public:
   ///
   /// Subclasses may override this function to specify when the transformation
   /// should rebuild all AST nodes.
-  bool AlwaysRebuild() { return false; }
+  ///
+  /// We must always rebuild all AST nodes when performing variadic template
+  /// pack expansion, in order to avoid violating the AST invariant that each
+  /// statement node appears at most once in its containing declaration.
+  bool AlwaysRebuild() { return SemaRef.ArgumentPackSubstitutionIndex != -1; }
 
   /// \brief Returns the location of the entity being transformed, if that
   /// information was not available elsewhere in the AST.
@@ -8272,8 +8276,7 @@ template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformLambdaExpr(LambdaExpr *E) {
  
-  getSema().PushLambdaScope();
-  LambdaScopeInfo *LSI = getSema().getCurLambda();
+  LambdaScopeInfo *LSI = getSema().PushLambdaScope();
   // Transform the template parameters, and add them to the current
   // instantiation scope. The null case is handled correctly.
   LSI->GLTemplateParameterList = getDerived().TransformTemplateParameterList(

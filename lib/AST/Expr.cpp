@@ -20,6 +20,7 @@
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/Mangle.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/Builtins.h"
@@ -478,6 +479,30 @@ SourceLocation DeclRefExpr::getLocEnd() const {
 std::string PredefinedExpr::ComputeName(IdentType IT, const Decl *CurrentDecl) {
   ASTContext &Context = CurrentDecl->getASTContext();
 
+  if (IT == PredefinedExpr::FuncDName) {
+    if (const NamedDecl *ND = dyn_cast<NamedDecl>(CurrentDecl)) {
+      OwningPtr<MangleContext> MC;
+      MC.reset(Context.createMangleContext());
+
+      if (MC->shouldMangleDeclName(ND)) {
+        SmallString<256> Buffer;
+        llvm::raw_svector_ostream Out(Buffer);
+        if (const CXXConstructorDecl *CD = dyn_cast<CXXConstructorDecl>(ND))
+          MC->mangleCXXCtor(CD, Ctor_Base, Out);
+        else if (const CXXDestructorDecl *DD = dyn_cast<CXXDestructorDecl>(ND))
+          MC->mangleCXXDtor(DD, Dtor_Base, Out);
+        else
+          MC->mangleName(ND, Out);
+
+        Out.flush();
+        if (!Buffer.empty() && Buffer.front() == '\01')
+          return Buffer.substr(1);
+        return Buffer.str();
+      } else
+        return ND->getIdentifier()->getName();
+    }
+    return "";
+  }
   if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(CurrentDecl)) {
     if (IT != PrettyFunction && IT != PrettyFunctionNoVirtual)
       return FD->getNameAsString();
@@ -3026,7 +3051,8 @@ bool Expr::hasNonTrivialCall(ASTContext &Ctx) {
 Expr::NullPointerConstantKind
 Expr::isNullPointerConstant(ASTContext &Ctx,
                             NullPointerConstantValueDependence NPC) const {
-  if (isValueDependent() && !Ctx.getLangOpts().CPlusPlus11) {
+  if (isValueDependent() &&
+      (!Ctx.getLangOpts().CPlusPlus11 || Ctx.getLangOpts().MicrosoftMode)) {
     switch (NPC) {
     case NPC_NeverValueDependent:
       llvm_unreachable("Unexpected value dependent expression!");
@@ -3108,8 +3134,13 @@ Expr::isNullPointerConstant(ASTContext &Ctx,
   if (Ctx.getLangOpts().CPlusPlus11) {
     // C++11 [conv.ptr]p1: A null pointer constant is an integer literal with
     // value zero or a prvalue of type std::nullptr_t.
+    // Microsoft mode permits C++98 rules reflecting MSVC behavior.
     const IntegerLiteral *Lit = dyn_cast<IntegerLiteral>(this);
-    return (Lit && !Lit->getValue()) ? NPCK_ZeroLiteral : NPCK_NotNull;
+    if (Lit && !Lit->getValue())
+      return NPCK_ZeroLiteral;
+    else if (!Ctx.getLangOpts().MicrosoftMode ||
+             !isCXX98IntegralConstantExpr(Ctx))
+      return NPCK_NotNull;
   } else {
     // If we have an integer constant expression, we need to *evaluate* it and
     // test for the value 0.

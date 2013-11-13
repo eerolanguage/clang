@@ -1770,6 +1770,45 @@ static Value *EmitAArch64ScalarBuiltinExpr(CodeGenFunction &CGF,
   // argument that specifies the vector type, need to handle each case.
   switch (BuiltinID) {
   default: break;
+  case AArch64::BI__builtin_neon_vget_lane_i8:
+  case AArch64::BI__builtin_neon_vget_lane_i16:
+  case AArch64::BI__builtin_neon_vget_lane_i32:
+  case AArch64::BI__builtin_neon_vget_lane_i64:
+  case AArch64::BI__builtin_neon_vget_lane_f32:
+  case AArch64::BI__builtin_neon_vget_lane_f64:
+  case AArch64::BI__builtin_neon_vgetq_lane_i8:
+  case AArch64::BI__builtin_neon_vgetq_lane_i16:
+  case AArch64::BI__builtin_neon_vgetq_lane_i32:
+  case AArch64::BI__builtin_neon_vgetq_lane_i64:
+  case AArch64::BI__builtin_neon_vgetq_lane_f32:
+  case AArch64::BI__builtin_neon_vgetq_lane_f64:
+    return CGF.EmitARMBuiltinExpr(ARM::BI__builtin_neon_vget_lane_i8, E);
+  case AArch64::BI__builtin_neon_vset_lane_i8:
+  case AArch64::BI__builtin_neon_vset_lane_i16:
+  case AArch64::BI__builtin_neon_vset_lane_i32:
+  case AArch64::BI__builtin_neon_vset_lane_i64:
+  case AArch64::BI__builtin_neon_vset_lane_f32:
+  case AArch64::BI__builtin_neon_vset_lane_f64:
+  case AArch64::BI__builtin_neon_vsetq_lane_i8:
+  case AArch64::BI__builtin_neon_vsetq_lane_i16:
+  case AArch64::BI__builtin_neon_vsetq_lane_i32:
+  case AArch64::BI__builtin_neon_vsetq_lane_i64:
+  case AArch64::BI__builtin_neon_vsetq_lane_f32:
+  case AArch64::BI__builtin_neon_vsetq_lane_f64:
+    return CGF.EmitARMBuiltinExpr(ARM::BI__builtin_neon_vset_lane_i8, E);
+  // Crypto
+  case AArch64::BI__builtin_neon_vsha1h_u32:
+    Int = Intrinsic::arm_neon_sha1h;
+    s = "sha1h"; OverloadInt = true; break;
+  case AArch64::BI__builtin_neon_vsha1cq_u32:
+    Int = Intrinsic::aarch64_neon_sha1c;
+    s = "sha1c"; break;
+  case AArch64::BI__builtin_neon_vsha1pq_u32:
+    Int = Intrinsic::aarch64_neon_sha1p;
+    s = "sha1p"; break;
+  case AArch64::BI__builtin_neon_vsha1mq_u32:
+    Int = Intrinsic::aarch64_neon_sha1m;
+    s = "sha1m"; break;
   // Scalar Add
   case AArch64::BI__builtin_neon_vaddd_s64:
     Int = Intrinsic::aarch64_neon_vaddds;
@@ -2345,6 +2384,20 @@ static Value *EmitAArch64ScalarBuiltinExpr(CodeGenFunction &CGF,
   case AArch64::BI__builtin_neon_vcvtd_n_f64_u64:
     Int = Intrinsic::aarch64_neon_vcvtf64_n_u64;
     s = "vcvtf"; OverloadInt = false; break;
+  // Scalar Floating-point Convert To Signed Fixed-point (Immediate)
+  case AArch64::BI__builtin_neon_vcvts_n_s32_f32:
+    Int = Intrinsic::aarch64_neon_vcvts_n_s32_f32;
+    s = "fcvtzs"; OverloadInt = false; break;
+  case AArch64::BI__builtin_neon_vcvtd_n_s64_f64:
+    Int = Intrinsic::aarch64_neon_vcvtd_n_s64_f64;
+    s = "fcvtzs"; OverloadInt = false; break;
+  // Scalar Floating-point Convert To Unsigned Fixed-point (Immediate)
+  case AArch64::BI__builtin_neon_vcvts_n_u32_f32:
+    Int = Intrinsic::aarch64_neon_vcvts_n_u32_f32;
+    s = "fcvtzu"; OverloadInt = false; break;
+  case AArch64::BI__builtin_neon_vcvtd_n_u64_f64:
+    Int = Intrinsic::aarch64_neon_vcvtd_n_u64_f64;
+    s = "fcvtzu"; OverloadInt = false; break;
   }
 
   if (!Int)
@@ -2434,34 +2487,6 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
   for (unsigned i = 0, e = E->getNumArgs() - 1; i != e; i++) {
     Ops.push_back(EmitScalarExpr(E->getArg(i)));
   }
-//  Some intrinsic isn't overloaded.
-  switch (BuiltinID) {
-  default: break;
-  case AArch64::BI__builtin_neon_vget_lane_i8:
-  case AArch64::BI__builtin_neon_vget_lane_i16:
-  case AArch64::BI__builtin_neon_vget_lane_i32:
-  case AArch64::BI__builtin_neon_vget_lane_i64:
-  case AArch64::BI__builtin_neon_vgetq_lane_i8:
-  case AArch64::BI__builtin_neon_vgetq_lane_i16:
-  case AArch64::BI__builtin_neon_vgetq_lane_i32:
-  case AArch64::BI__builtin_neon_vgetq_lane_i64:
-    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vget_lane_i8, E);
-  case AArch64::BI__builtin_neon_vset_lane_i8:
-  case AArch64::BI__builtin_neon_vset_lane_i16:
-  case AArch64::BI__builtin_neon_vset_lane_i32:
-  case AArch64::BI__builtin_neon_vset_lane_i64:
-  case AArch64::BI__builtin_neon_vset_lane_f16:
-  case AArch64::BI__builtin_neon_vset_lane_f32:
-  case AArch64::BI__builtin_neon_vset_lane_f64:
-  case AArch64::BI__builtin_neon_vsetq_lane_i8:
-  case AArch64::BI__builtin_neon_vsetq_lane_i16:
-  case AArch64::BI__builtin_neon_vsetq_lane_i32:
-  case AArch64::BI__builtin_neon_vsetq_lane_i64:
-  case AArch64::BI__builtin_neon_vsetq_lane_f16:
-  case AArch64::BI__builtin_neon_vsetq_lane_f32:
-  case AArch64::BI__builtin_neon_vsetq_lane_f64:
-    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vset_lane_i8, E);
-  }
 
   // Get the last argument, which specifies the vector type.
   llvm::APSInt Result;
@@ -2486,6 +2511,22 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
   // AArch64 builtins mapping to legacy ARM v7 builtins.
   // FIXME: the mapped builtins listed correspond to what has been tested
   // in aarch64-neon-intrinsics.c so far.
+  case AArch64::BI__builtin_neon_vuzp_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vuzp_v, E);
+  case AArch64::BI__builtin_neon_vuzpq_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vuzpq_v, E);
+  case AArch64::BI__builtin_neon_vzip_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vzip_v, E);
+  case AArch64::BI__builtin_neon_vzipq_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vzipq_v, E);
+  case AArch64::BI__builtin_neon_vtrn_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vtrn_v, E);
+  case AArch64::BI__builtin_neon_vtrnq_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vtrnq_v, E);
+  case AArch64::BI__builtin_neon_vext_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vext_v, E);
+  case AArch64::BI__builtin_neon_vextq_v:
+    return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vextq_v, E);
   case AArch64::BI__builtin_neon_vmul_v:
     return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vmul_v, E);
   case AArch64::BI__builtin_neon_vmulq_v:
@@ -2766,6 +2807,38 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vst4_v, E);
   case AArch64::BI__builtin_neon_vst4q_v:
     return EmitARMBuiltinExpr(ARM::BI__builtin_neon_vst4q_v, E);
+
+  // Crypto
+  case AArch64::BI__builtin_neon_vaeseq_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_aese, Ty),
+                        Ops, "aese");
+  case AArch64::BI__builtin_neon_vaesdq_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_aesd, Ty),
+                        Ops, "aesd");
+  case AArch64::BI__builtin_neon_vaesmcq_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_aesmc, Ty),
+                        Ops, "aesmc");
+  case AArch64::BI__builtin_neon_vaesimcq_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_aesimc, Ty),
+                        Ops, "aesimc");
+  case AArch64::BI__builtin_neon_vsha1su1q_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_sha1su1, Ty),
+                        Ops, "sha1su1");
+  case AArch64::BI__builtin_neon_vsha256su0q_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_sha256su0, Ty),
+                        Ops, "sha256su0");
+  case AArch64::BI__builtin_neon_vsha1su0q_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_sha1su0, Ty),
+                        Ops, "sha1su0");
+  case AArch64::BI__builtin_neon_vsha256hq_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_sha256h, Ty),
+                        Ops, "sha256h");
+  case AArch64::BI__builtin_neon_vsha256h2q_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_sha256h2, Ty),
+                        Ops, "sha256h2");
+  case AArch64::BI__builtin_neon_vsha256su1q_v:
+    return EmitNeonCall(CGM.getIntrinsic(Intrinsic::arm_neon_sha256su1, Ty),
+                        Ops, "sha256su1");
 
   // AArch64-only builtins
   case AArch64::BI__builtin_neon_vfma_lane_v:

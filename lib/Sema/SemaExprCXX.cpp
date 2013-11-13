@@ -21,6 +21,7 @@
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/TargetInfo.h"
@@ -31,6 +32,7 @@
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
+#include "clang/Sema/SemaLambda.h"
 #include "clang/Sema/TemplateDeduction.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
@@ -751,21 +753,30 @@ static Expr *captureThis(ASTContext &Context, RecordDecl *RD,
   return new (Context) CXXThisExpr(Loc, ThisTy, /*isImplicit*/true);
 }
 
-void Sema::CheckCXXThisCapture(SourceLocation Loc, bool Explicit) {
+bool Sema::CheckCXXThisCapture(SourceLocation Loc, bool Explicit, 
+    bool BuildAndDiagnose, const unsigned *const FunctionScopeIndexToStopAt) {
   // We don't need to capture this in an unevaluated context.
   if (isUnevaluatedContext() && !Explicit)
-    return;
+    return true;
 
-  // Otherwise, check that we can capture 'this'.
+  const unsigned MaxFunctionScopesIndex = FunctionScopeIndexToStopAt ?
+    *FunctionScopeIndexToStopAt : FunctionScopes.size() - 1;  
+ // Otherwise, check that we can capture 'this'.
   unsigned NumClosures = 0;
-  for (unsigned idx = FunctionScopes.size() - 1; idx != 0; idx--) {
+  for (unsigned idx = MaxFunctionScopesIndex; idx != 0; idx--) {
     if (CapturingScopeInfo *CSI =
             dyn_cast<CapturingScopeInfo>(FunctionScopes[idx])) {
       if (CSI->CXXThisCaptureIndex != 0) {
         // 'this' is already being captured; there isn't anything more to do.
         break;
       }
-      
+      LambdaScopeInfo *LSI = dyn_cast<LambdaScopeInfo>(CSI);
+      if (LSI && isGenericLambdaCallOperatorSpecialization(LSI->CallOperator)) {
+        // This context can't implicitly capture 'this'; fail out.
+        if (BuildAndDiagnose)
+          Diag(Loc, diag::err_this_capture) << Explicit;
+        return true;
+      }
       if (CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_LambdaByref ||
           CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_LambdaByval ||
           CSI->ImpCaptureStyle == CapturingScopeInfo::ImpCap_Block ||
@@ -777,17 +788,18 @@ void Sema::CheckCXXThisCapture(SourceLocation Loc, bool Explicit) {
         continue;
       }
       // This context can't implicitly capture 'this'; fail out.
-      Diag(Loc, diag::err_this_capture) << Explicit;
-      return;
+      if (BuildAndDiagnose)
+        Diag(Loc, diag::err_this_capture) << Explicit;
+      return true;
     }
     break;
   }
-
+  if (!BuildAndDiagnose) return false;
   // Mark that we're implicitly capturing 'this' in all the scopes we skipped.
   // FIXME: We need to delay this marking in PotentiallyPotentiallyEvaluated
   // contexts.
-  for (unsigned idx = FunctionScopes.size() - 1;
-       NumClosures; --idx, --NumClosures) {
+  for (unsigned idx = MaxFunctionScopesIndex; NumClosures; 
+      --idx, --NumClosures) {
     CapturingScopeInfo *CSI = cast<CapturingScopeInfo>(FunctionScopes[idx]);
     Expr *ThisExpr = 0;
     QualType ThisTy = getCurrentThisType();
@@ -801,6 +813,7 @@ void Sema::CheckCXXThisCapture(SourceLocation Loc, bool Explicit) {
     bool isNested = NumClosures > 1;
     CSI->addThisCapture(isNested, Loc, ThisTy, ThisExpr);
   }
+  return false;
 }
 
 ExprResult Sema::ActOnCXXThis(SourceLocation Loc) {
@@ -3602,8 +3615,8 @@ static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
     //   is_trivially_constructible is defined as:
     //
     //     is_constructible<T, Args...>::value is true and the variable
-    //     definition for is_constructible, as defined below, is known to call no
-    //     operation that is not trivial.
+    //     definition for is_constructible, as defined below, is known to call
+    //     no operation that is not trivial.
     //
     //   The predicate condition for a template specialization 
     //   is_constructible<T, Args...> shall be satisfied if and only if the 
@@ -5149,6 +5162,32 @@ ExprResult Sema::ActOnDecltypeExpression(Expr *E) {
   return Owned(E);
 }
 
+/// Note a set of 'operator->' functions that were used for a member access.
+static void noteOperatorArrows(Sema &S,
+                               llvm::ArrayRef<FunctionDecl *> OperatorArrows) {
+  unsigned SkipStart = OperatorArrows.size(), SkipCount = 0;
+  // FIXME: Make this configurable?
+  unsigned Limit = 9;
+  if (OperatorArrows.size() > Limit) {
+    // Produce Limit-1 normal notes and one 'skipping' note.
+    SkipStart = (Limit - 1) / 2 + (Limit - 1) % 2;
+    SkipCount = OperatorArrows.size() - (Limit - 1);
+  }
+
+  for (unsigned I = 0; I < OperatorArrows.size(); /**/) {
+    if (I == SkipStart) {
+      S.Diag(OperatorArrows[I]->getLocation(),
+             diag::note_operator_arrows_suppressed)
+          << SkipCount;
+      I += SkipCount;
+    } else {
+      S.Diag(OperatorArrows[I]->getLocation(), diag::note_operator_arrow_here)
+          << OperatorArrows[I]->getCallResultType();
+      ++I;
+    }
+  }
+}
+
 ExprResult
 Sema::ActOnStartCXXMemberReference(Scope *S, Expr *Base, SourceLocation OpLoc,
                                    tok::TokenKind OpKind, ParsedType &ObjectType,
@@ -5181,15 +5220,25 @@ Sema::ActOnStartCXXMemberReference(Scope *S, Expr *Base, SourceLocation OpLoc,
   //   [...] When operator->returns, the operator-> is applied  to the value
   //   returned, with the original second operand.
   if (OpKind == tok::arrow) {
+    QualType StartingType = BaseType;
     bool NoArrowOperatorFound = false;
     bool FirstIteration = true;
     FunctionDecl *CurFD = dyn_cast<FunctionDecl>(CurContext);
     // The set of types we've considered so far.
     llvm::SmallPtrSet<CanQualType,8> CTypes;
-    SmallVector<SourceLocation, 8> Locations;
+    SmallVector<FunctionDecl*, 8> OperatorArrows;
     CTypes.insert(Context.getCanonicalType(BaseType));
 
     while (BaseType->isRecordType()) {
+      if (OperatorArrows.size() >= getLangOpts().ArrowDepth) {
+        Diag(OpLoc, diag::err_operator_arrow_depth_exceeded)
+          << StartingType << getLangOpts().ArrowDepth << Base->getSourceRange();
+        noteOperatorArrows(*this, OperatorArrows);
+        Diag(OpLoc, diag::note_operator_arrow_depth)
+          << getLangOpts().ArrowDepth;
+        return ExprError();
+      }
+
       Result = BuildOverloadedArrowExpr(
           S, Base, OpLoc,
           // When in a template specialization and on the first loop iteration,
@@ -5220,13 +5269,12 @@ Sema::ActOnStartCXXMemberReference(Scope *S, Expr *Base, SourceLocation OpLoc,
       }
       Base = Result.get();
       if (CXXOperatorCallExpr *OpCall = dyn_cast<CXXOperatorCallExpr>(Base))
-        Locations.push_back(OpCall->getDirectCallee()->getLocation());
+        OperatorArrows.push_back(OpCall->getDirectCallee());
       BaseType = Base->getType();
       CanQualType CBaseType = Context.getCanonicalType(BaseType);
       if (!CTypes.insert(CBaseType)) {
-        Diag(OpLoc, diag::err_operator_arrow_circular);
-        for (unsigned i = 0; i < Locations.size(); i++)
-          Diag(Locations[i], diag::note_declared_at);
+        Diag(OpLoc, diag::err_operator_arrow_circular) << StartingType;
+        noteOperatorArrows(*this, OperatorArrows);
         return ExprError();
       }
       FirstIteration = false;
@@ -5743,7 +5791,7 @@ ExprResult Sema::IgnoredValueConversions(Expr *E) {
       if (Res.isInvalid())
         return Owned(E);
       E = Res.take();
-    }
+    } 
     return Owned(E);
   }
 
@@ -5766,6 +5814,118 @@ ExprResult Sema::IgnoredValueConversions(Expr *E) {
                         diag::err_incomplete_type);
   return Owned(E);
 }
+
+// If we can unambiguously determine whether Var can never be used
+// in a constant expression, return true.
+//  - if the variable and its initializer are non-dependent, then
+//    we can unambiguously check if the variable is a constant expression.
+//  - if the initializer is not value dependent - we can determine whether
+//    it can be used to initialize a constant expression.  If Init can not
+//    be used to initialize a constant expression we conclude that Var can 
+//    never be a constant expression.
+//  - FXIME: if the initializer is dependent, we can still do some analysis and
+//    identify certain cases unambiguously as non-const by using a Visitor:
+//      - such as those that involve odr-use of a ParmVarDecl, involve a new
+//        delete, lambda-expr, dynamic-cast, reinterpret-cast etc...
+static inline bool VariableCanNeverBeAConstantExpression(VarDecl *Var, 
+    ASTContext &Context) {
+  if (isa<ParmVarDecl>(Var)) return true;
+  const VarDecl *DefVD = 0;
+
+  // If there is no initializer - this can not be a constant expression.
+  if (!Var->getAnyInitializer(DefVD)) return true;
+  assert(DefVD);
+  if (DefVD->isWeak()) return false;
+  EvaluatedStmt *Eval = DefVD->ensureEvaluatedStmt();
+  
+  Expr *Init = cast<Expr>(Eval->Value);
+
+  if (Var->getType()->isDependentType() || Init->isValueDependent()) {
+    if (!Init->isValueDependent())
+      return !DefVD->checkInitIsICE();
+    // FIXME: We might still be able to do some analysis of Init here
+    // to conclude that even in a dependent setting, Init can never
+    // be a constexpr - but for now admit agnosticity.
+    return false;
+  } 
+  return !IsVariableAConstantExpression(Var, Context); 
+}
+
+/// \brief Check if the current lambda scope has any potential captures, and 
+///  whether they can be captured by any of the enclosing lambdas that are 
+///  ready to capture. If there is a lambda that can capture a nested 
+///  potential-capture, go ahead and do so.  Also, check to see if any 
+///  variables are uncaptureable or do not involve an odr-use so do not 
+///  need to be captured.
+
+static void CheckLambdaCaptures(Expr *const FE, 
+    LambdaScopeInfo *const CurrentLSI, Sema &S) {
+    
+  assert(!S.isUnevaluatedContext());  
+  assert(S.CurContext->isDependentContext()); 
+  const bool IsFullExprInstantiationDependent = 
+      FE->isInstantiationDependent();
+  // All the potentially captureable variables in the current nested 
+  // lambda (within a generic outer lambda), must be captured by an
+  // outer lambda that is enclosed within a non-dependent context.
+     
+  for (size_t I = 0, N = CurrentLSI->getNumPotentialVariableCaptures(); 
+      I != N; ++I) {
+    Expr *VarExpr = 0;
+    VarDecl *Var = 0;
+    CurrentLSI->getPotentialVariableCapture(I, Var, VarExpr);
+    // 
+    if (CurrentLSI->isVariableExprMarkedAsNonODRUsed(VarExpr) && 
+        !IsFullExprInstantiationDependent)
+      continue; 
+    // Climb up until we find a lambda that can capture:
+    //   - a generic-or-non-generic lambda call operator that is enclosed
+    //     within a non-dependent context.
+    unsigned FunctionScopeIndexOfCapturableLambda = 0;
+    if (GetInnermostEnclosingCapturableLambda(
+            S.FunctionScopes, FunctionScopeIndexOfCapturableLambda,
+            S.CurContext, Var, S)) {
+      MarkVarDeclODRUsed(Var, VarExpr->getExprLoc(), 
+          S, &FunctionScopeIndexOfCapturableLambda);
+    } 
+    const bool IsVarNeverAConstantExpression = 
+        VariableCanNeverBeAConstantExpression(Var, S.Context);
+    if (!IsFullExprInstantiationDependent || IsVarNeverAConstantExpression) {
+      // This full expression is not instantiation dependent or the variable
+      // can not be used in a constant expression - which means 
+      // this variable must be odr-used here, so diagnose a 
+      // capture violation early, if the variable is un-captureable.
+      // This is purely for diagnosing errors early.  Otherwise, this
+      // error would get diagnosed when the lambda becomes capture ready.
+      QualType CaptureType, DeclRefType;
+      SourceLocation ExprLoc = VarExpr->getExprLoc();
+      if (S.tryCaptureVariable(Var, ExprLoc, S.TryCapture_Implicit,
+                          /*EllipsisLoc*/ SourceLocation(), 
+                          /*BuildAndDiagnose*/false, CaptureType, 
+                          DeclRefType, 0)) {
+        // We will never be able to capture this variable, and we need
+        // to be able to in any and all instantiations, so diagnose it.
+        S.tryCaptureVariable(Var, ExprLoc, S.TryCapture_Implicit,
+                          /*EllipsisLoc*/ SourceLocation(), 
+                          /*BuildAndDiagnose*/true, CaptureType, 
+                          DeclRefType, 0);
+      }
+    }
+  }
+
+  if (CurrentLSI->hasPotentialThisCapture()) {
+    unsigned FunctionScopeIndexOfCapturableLambda = 0;
+    if (GetInnermostEnclosingCapturableLambda(
+            S.FunctionScopes, FunctionScopeIndexOfCapturableLambda,
+            S.CurContext, /*0 is 'this'*/ 0, S)) {
+      S.CheckCXXThisCapture(CurrentLSI->PotentialThisCaptureLocation, 
+          /*Explicit*/false, /*BuildAndDiagnose*/true,  
+          &FunctionScopeIndexOfCapturableLambda);
+    }
+  }
+  CurrentLSI->clearPotentialCaptures();
+}
+
 
 ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC,
                                      bool DiscardedValue,
@@ -5797,6 +5957,56 @@ ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC,
   }
 
   CheckCompletedExpr(FullExpr.get(), CC, IsConstexpr);
+
+  // At the end of this full expression (which could be a deeply nested 
+  // lambda), if there is a potential capture within the nested lambda, 
+  // have the outer capture-able lambda try and capture it.
+  // Consider the following code:
+  // void f(int, int);
+  // void f(const int&, double);
+  // void foo() {   
+  //  const int x = 10, y = 20;
+  //  auto L = [=](auto a) {
+  //      auto M = [=](auto b) {
+  //         f(x, b); <-- requires x to be captured by L and M
+  //         f(y, a); <-- requires y to be captured by L, but not all Ms
+  //      };
+  //   };
+  // }
+
+  // FIXME: Also consider what happens for something like this that involves 
+  // the gnu-extension statement-expressions or even lambda-init-captures:   
+  //   void f() {
+  //     const int n = 0;
+  //     auto L =  [&](auto a) {
+  //       +n + ({ 0; a; });
+  //     };
+  //   }
+  // 
+  // Here, we see +n, and then the full-expression 0; ends, so we don't 
+  // capture n (and instead remove it from our list of potential captures), 
+  // and then the full-expression +n + ({ 0; }); ends, but it's too late 
+  // for us to see that we need to capture n after all.
+
+  LambdaScopeInfo *const CurrentLSI = getCurLambda();
+  // FIXME: PR 17877 showed that getCurLambda() can return a valid pointer 
+  // even if CurContext is not a lambda call operator. Refer to that Bug Report
+  // for an example of the code that might cause this asynchrony.  
+  // By ensuring we are in the context of a lambda's call operator
+  // we can fix the bug (we only need to check whether we need to capture
+  // if we are within a lambda's body); but per the comments in that 
+  // PR, a proper fix would entail :
+  //   "Alternative suggestion:
+  //   - Add to Sema an integer holding the smallest (outermost) scope 
+  //     index that we are *lexically* within, and save/restore/set to 
+  //     FunctionScopes.size() in InstantiatingTemplate's 
+  //     constructor/destructor.
+  //  - Teach the handful of places that iterate over FunctionScopes to 
+  //    stop at the outermost enclosing lexical scope." 
+  const bool IsInLambdaDeclContext = isLambdaCallOperator(CurContext); 
+  if (IsInLambdaDeclContext && CurrentLSI && 
+      CurrentLSI->hasPotentialCaptures() && !FullExpr.isInvalid())
+    CheckLambdaCaptures(FE, CurrentLSI, *this);
   return MaybeCreateExprWithCleanups(FullExpr);
 }
 

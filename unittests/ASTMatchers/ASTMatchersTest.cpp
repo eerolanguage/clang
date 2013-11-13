@@ -40,6 +40,18 @@ TEST(IsDerivedFromDeathTest, DiesOnEmptyBaseName) {
 }
 #endif
 
+TEST(Finder, DynamicOnlyAcceptsSomeMatchers) {
+  MatchFinder Finder;
+  EXPECT_TRUE(Finder.addDynamicMatcher(decl(), NULL));
+  EXPECT_TRUE(Finder.addDynamicMatcher(callExpr(), NULL));
+  EXPECT_TRUE(Finder.addDynamicMatcher(constantArrayType(hasSize(42)), NULL));
+
+  // Do not accept non-toplevel matchers.
+  EXPECT_FALSE(Finder.addDynamicMatcher(isArrow(), NULL));
+  EXPECT_FALSE(Finder.addDynamicMatcher(hasSize(2), NULL));
+  EXPECT_FALSE(Finder.addDynamicMatcher(hasName("x"), NULL));
+}
+
 TEST(Decl, MatchesDeclarations) {
   EXPECT_TRUE(notMatches("", decl(usingDecl())));
   EXPECT_TRUE(matches("namespace x { class X {}; } using x::X;",
@@ -651,14 +663,22 @@ public:
       : Id(Id), ExpectedCount(ExpectedCount), Count(0),
         ExpectedName(ExpectedName) {}
 
-  ~VerifyIdIsBoundTo() {
+  void onEndOfTranslationUnit() LLVM_OVERRIDE {
     if (ExpectedCount != -1)
       EXPECT_EQ(ExpectedCount, Count);
     if (!ExpectedName.empty())
       EXPECT_EQ(ExpectedName, Name);
+    Count = 0;
+    Name.clear();
+  }
+
+  ~VerifyIdIsBoundTo() {
+    EXPECT_EQ(0, Count);
+    EXPECT_EQ("", Name);
   }
 
   virtual bool run(const BoundNodes *Nodes) {
+    const BoundNodes::IDToNodeMap &M = Nodes->getMap();
     if (Nodes->getNodeAs<T>(Id)) {
       ++Count;
       if (const NamedDecl *Named = Nodes->getNodeAs<NamedDecl>(Id)) {
@@ -668,8 +688,13 @@ public:
         llvm::raw_string_ostream OS(Name);
         NNS->print(OS, PrintingPolicy(LangOptions()));
       }
+      BoundNodes::IDToNodeMap::const_iterator I = M.find(Id);
+      EXPECT_NE(M.end(), I);
+      if (I != M.end())
+        EXPECT_EQ(Nodes->getNodeAs<T>(Id), I->second.get<T>());
       return true;
     }
+    EXPECT_TRUE(M.count(Id) == 0 || M.find(Id)->second.template get<T>() == 0);
     return false;
   }
 
@@ -4089,6 +4114,12 @@ TEST(MatchFinder, InterceptsStartOfTranslationUnit) {
   OwningPtr<FrontendActionFactory> Factory(newFrontendActionFactory(&Finder));
   ASSERT_TRUE(tooling::runToolOnCode(Factory->create(), "int x;"));
   EXPECT_TRUE(VerifyCallback.Called);
+
+  VerifyCallback.Called = false;
+  OwningPtr<ASTUnit> AST(tooling::buildASTFromCode("int x;"));
+  ASSERT_TRUE(AST.get());
+  Finder.matchAST(AST->getASTContext());
+  EXPECT_TRUE(VerifyCallback.Called);
 }
 
 class VerifyEndOfTranslationUnit : public MatchFinder::MatchCallback {
@@ -4109,6 +4140,12 @@ TEST(MatchFinder, InterceptsEndOfTranslationUnit) {
   Finder.addMatcher(decl(), &VerifyCallback);
   OwningPtr<FrontendActionFactory> Factory(newFrontendActionFactory(&Finder));
   ASSERT_TRUE(tooling::runToolOnCode(Factory->create(), "int x;"));
+  EXPECT_TRUE(VerifyCallback.Called);
+
+  VerifyCallback.Called = false;
+  OwningPtr<ASTUnit> AST(tooling::buildASTFromCode("int x;"));
+  ASSERT_TRUE(AST.get());
+  Finder.matchAST(AST->getASTContext());
   EXPECT_TRUE(VerifyCallback.Called);
 }
 

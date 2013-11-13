@@ -34,6 +34,7 @@
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Support/Capacity.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1756,6 +1757,9 @@ CharUnits ASTContext::getTypeAlignInChars(const Type *T) const {
 /// a data type.
 unsigned ASTContext::getPreferredTypeAlign(const Type *T) const {
   unsigned ABIAlign = getTypeAlign(T);
+
+  if (Target->getTriple().getArch() == llvm::Triple::xcore)
+    return ABIAlign;  // Never overalign on XCore.
 
   // Double and long long should be naturally aligned if possible.
   if (const ComplexType* CT = T->getAs<ComplexType>())
@@ -8107,6 +8111,10 @@ ASTContext::getMaterializedTemporaryValue(const MaterializeTemporaryExpr *E,
 bool ASTContext::AtomicUsesUnsupportedLibcall(const AtomicExpr *E) const {
   const llvm::Triple &T = getTargetInfo().getTriple();
   if (!T.isOSDarwin())
+    return false;
+
+  if (!(T.isiOS() && T.isOSVersionLT(7)) &&
+      !(T.isMacOSX() && T.isOSVersionLT(10, 9)))
     return false;
 
   QualType AtomicTy = E->getPtr()->getType()->getPointeeType();

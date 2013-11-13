@@ -32,8 +32,7 @@ public:
   AnnotatingParser(const FormatStyle &Style, AnnotatedLine &Line,
                    IdentifierInfo &Ident_in)
       : Style(Style), Line(Line), CurrentToken(Line.First),
-        KeywordVirtualFound(false), NameFound(false), AutoFound(false),
-        Ident_in(Ident_in) {
+        KeywordVirtualFound(false), AutoFound(false), Ident_in(Ident_in) {
     Contexts.push_back(Context(tok::unknown, 1, /*IsExpression=*/false));
   }
 
@@ -367,7 +366,8 @@ private:
     case tok::l_paren:
       if (!parseParens())
         return false;
-      if (Line.MustBeDeclaration && NameFound && !Contexts.back().IsExpression)
+      if (Line.MustBeDeclaration && Contexts.size() == 1 &&
+          !Contexts.back().IsExpression)
         Line.MightBeFunctionDecl = true;
       break;
     case tok::l_square:
@@ -620,7 +620,7 @@ private:
       Contexts.back().InCtorInitializer = true;
     } else if (Current.is(tok::kw_new)) {
       Contexts.back().CanBeExpression = false;
-    } else if (Current.is(tok::semi)) {
+    } else if (Current.is(tok::semi) || Current.is(tok::exclaim)) {
       // This should be the condition or increment in a for-loop.
       Contexts.back().IsExpression = true;
     }
@@ -632,7 +632,6 @@ private:
       if (isStartOfName(Current) && !Line.MightBeFunctionDecl) {
         Contexts.back().FirstStartOfName = &Current;
         Current.Type = TT_StartOfName;
-        NameFound = true;
       } else if (Current.is(tok::kw_auto)) {
         AutoFound = true;
       } else if (Current.is(tok::arrow) && AutoFound &&
@@ -853,7 +852,6 @@ private:
   AnnotatedLine &Line;
   FormatToken *CurrentToken;
   bool KeywordVirtualFound;
-  bool NameFound;
   bool AutoFound;
   IdentifierInfo &Ident_in;
 };
@@ -873,8 +871,11 @@ public:
 
   /// \brief Parse expressions with the given operatore precedence.
   void parse(int Precedence = 0) {
-    // Skip 'return' as it is not part of a binary expression.
-    while (Current && Current->is(tok::kw_return))
+    // Skip 'return' and ObjC selector colons as they are not part of a binary
+    // expression.
+    while (Current &&
+           (Current->is(tok::kw_return) ||
+            (Current->is(tok::colon) && Current->Type == TT_ObjCMethodExpr)))
       next();
 
     if (Current == NULL || Precedence > PrecedenceArrowAndPeriod)
@@ -946,12 +947,11 @@ private:
     if (Current) {
       if (Current->Type == TT_ConditionalExpr)
         return prec::Conditional;
-      else if (Current->is(tok::semi) || Current->Type == TT_InlineASMColon)
+      else if (Current->is(tok::semi) || Current->Type == TT_InlineASMColon ||
+               Current->Type == TT_ObjCSelectorName)
         return 0;
       else if (Current->Type == TT_BinaryOperator || Current->is(tok::comma))
         return Current->getPrecedence();
-      else if (Current->Type == TT_ObjCSelectorName)
-        return prec::Assignment;
       else if (Current->isOneOf(tok::period, tok::arrow))
         return PrecedenceArrowAndPeriod;
     }
@@ -1013,22 +1013,21 @@ private:
 
 void
 TokenAnnotator::setCommentLineLevels(SmallVectorImpl<AnnotatedLine *> &Lines) {
-  if (Lines.empty())
-    return;
-
   const AnnotatedLine *NextNonCommentLine = NULL;
-  for (unsigned i = Lines.size() - 1; i > 0; --i) {
-    if (NextNonCommentLine && Lines[i]->First->is(tok::comment) &&
-        !Lines[i]->First->Next)
-      Lines[i]->Level = NextNonCommentLine->Level;
+  for (SmallVectorImpl<AnnotatedLine *>::reverse_iterator I = Lines.rbegin(),
+                                                          E = Lines.rend();
+       I != E; ++I) {
+    if (NextNonCommentLine && (*I)->First->is(tok::comment) &&
+        (*I)->First->Next == NULL)
+      (*I)->Level = NextNonCommentLine->Level;
     else
-      NextNonCommentLine =
-          Lines[i]->First->isNot(tok::r_brace) ? Lines[i] : NULL;
+      NextNonCommentLine = (*I)->First->isNot(tok::r_brace) ? (*I) : NULL;
+
+    setCommentLineLevels((*I)->Children);
   }
 }
 
 void TokenAnnotator::annotate(AnnotatedLine &Line) {
-  setCommentLineLevels(Line.Children);
   for (SmallVectorImpl<AnnotatedLine *>::iterator I = Line.Children.begin(),
                                                   E = Line.Children.end();
        I != E; ++I) {
@@ -1059,6 +1058,7 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
   if (!Line.First->Next)
     return;
   FormatToken *Current = Line.First->Next;
+  bool InFunctionDecl = Line.MightBeFunctionDecl;
   while (Current != NULL) {
     if (Current->Type == TT_LineComment)
       Current->SpacesRequiredBefore = Style.SpacesBeforeTrailingComments;
@@ -1078,11 +1078,15 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
       Current->TotalLength = Current->Previous->TotalLength +
                              Current->ColumnWidth +
                              Current->SpacesRequiredBefore;
+
+    if (Current->Type == TT_CtorInitializerColon)
+      InFunctionDecl = false;
+
     // FIXME: Only calculate this if CanBreakBefore is true once static
     // initializers etc. are sorted out.
     // FIXME: Move magic numbers to a better place.
-    Current->SplitPenalty =
-        20 * Current->BindingStrength + splitPenalty(Line, *Current);
+    Current->SplitPenalty = 20 * Current->BindingStrength +
+                            splitPenalty(Line, *Current, InFunctionDecl);
 
     Current = Current->Next;
   }
@@ -1119,7 +1123,8 @@ void TokenAnnotator::calculateUnbreakableTailLengths(AnnotatedLine &Line) {
 }
 
 unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
-                                      const FormatToken &Tok) {
+                                      const FormatToken &Tok,
+                                      bool InFunctionDecl) {
   const FormatToken &Left = *Tok.Previous;
   const FormatToken &Right = Tok;
 
@@ -1135,7 +1140,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
       return 3;
     if (Left.Type == TT_StartOfName)
       return 20;
-    if (Line.MightBeFunctionDecl && Right.BindingStrength == 1)
+    if (InFunctionDecl && Right.BindingStrength == 1)
       // FIXME: Clean up hack of using BindingStrength to find top-level names.
       return Style.PenaltyReturnTypeOnItsOwnLine;
     return 200;
@@ -1175,9 +1180,9 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
   if (Right.Type == TT_ObjCSelectorName)
     return 0;
   if (Left.is(tok::colon) && Left.Type == TT_ObjCMethodExpr)
-    return 20;
+    return 50;
 
-  if (Left.is(tok::l_paren) && Line.MightBeFunctionDecl)
+  if (Left.is(tok::l_paren) && InFunctionDecl)
     return 100;
   if (Left.opensScope())
     return Left.ParameterCount > 1 ? Style.PenaltyBreakBeforeFirstCallParameter
@@ -1412,6 +1417,16 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
   const FormatToken &Left = *Right.Previous;
   if (Right.Type == TT_StartOfName || Right.is(tok::kw_operator))
     return true;
+  if (Right.isTrailingComment())
+    // We rely on MustBreakBefore being set correctly here as we should not
+    // change the "binding" behavior of a comment.
+    return false;
+  if (Left.is(tok::question) && Right.is(tok::colon))
+    return false;
+  if (Right.Type == TT_ConditionalExpr || Right.is(tok::question))
+    return Style.BreakBeforeTernaryOperators;
+  if (Left.Type == TT_ConditionalExpr || Left.is(tok::question))
+    return !Style.BreakBeforeTernaryOperators;
   if (Right.is(tok::colon) &&
       (Right.Type == TT_DictLiteral || Right.Type == TT_ObjCMethodExpr))
     return false;
@@ -1424,10 +1439,6 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
     return true;
   if (Left.ClosesTemplateDeclaration)
     return true;
-  if ((Right.Type == TT_ConditionalExpr &&
-       !(Right.is(tok::colon) && Left.is(tok::question))) ||
-      Right.is(tok::question))
-    return true;
   if (Right.Type == TT_RangeBasedForLoopColon ||
       Right.Type == TT_OverloadedOperatorLParen ||
       Right.Type == TT_OverloadedOperator)
@@ -1437,8 +1448,7 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
   if (Right.Type == TT_RangeBasedForLoopColon)
     return false;
   if (Left.Type == TT_PointerOrReference || Left.Type == TT_TemplateCloser ||
-      Left.Type == TT_UnaryOperator || Left.Type == TT_ConditionalExpr ||
-      Left.isOneOf(tok::question, tok::kw_operator))
+      Left.Type == TT_UnaryOperator || Left.is(tok::kw_operator))
     return false;
   if (Left.is(tok::equal) && Line.Type == LT_VirtualFunctionDecl)
     return false;
@@ -1451,10 +1461,6 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
       return false;
   }
   if (Right.Type == TT_ImplicitStringLiteral)
-    return false;
-  if (Right.isTrailingComment())
-    // We rely on MustBreakBefore being set correctly here as we should not
-    // change the "binding" behavior of a comment.
     return false;
 
   if (Right.is(tok::r_paren) || Right.Type == TT_TemplateCloser)

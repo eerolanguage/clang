@@ -20,6 +20,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/Basic/ABI.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/DenseSet.h"
 #include <utility>
 
 namespace clang {
@@ -232,23 +233,21 @@ public:
   }
 
   vtable_component_iterator vtable_component_begin() const {
-   return VTableComponents.get();
+    return VTableComponents.get();
   }
 
   vtable_component_iterator vtable_component_end() const {
-   return VTableComponents.get()+NumVTableComponents;
+    return VTableComponents.get() + NumVTableComponents;
   }
 
-  uint64_t getNumVTableThunks() const {
-    return NumVTableThunks;
-  }
+  uint64_t getNumVTableThunks() const { return NumVTableThunks; }
 
   vtable_thunk_iterator vtable_thunk_begin() const {
-   return VTableThunks.get();
+    return VTableThunks.get();
   }
 
   vtable_thunk_iterator vtable_thunk_end() const {
-   return VTableThunks.get()+NumVTableThunks;
+    return VTableThunks.get() + NumVTableThunks;
   }
 
   uint64_t getAddressPoint(BaseSubobject Base) const {
@@ -358,16 +357,6 @@ public:
                                        const CXXRecordDecl *VBase);
 };
 
-/// \brief Computes the index of VBase in the vbtable of Derived.
-/// VBase must be a morally virtual base of Derived.  The vbtable is
-/// an array of i32 offsets.  The first entry is a self entry, and the rest are
-/// offsets from the vbptr to virtual bases.  The bases are ordered the same way
-/// our vbases are ordered: as they appear in a left-to-right depth-first search
-/// of the hierarchy.
-// FIXME: make this a static method of VBTableBuilder when we move it to AST.
-unsigned GetVBTableIndex(const CXXRecordDecl *Derived,
-                         const CXXRecordDecl *VBase);
-
 struct VFPtrInfo {
   typedef SmallVector<const CXXRecordDecl *, 1> BasePath;
 
@@ -411,7 +400,7 @@ struct VFPtrInfo {
   CharUnits VFPtrFullOffset;
 };
 
-class MicrosoftVFTableContext : public VTableContextBase {
+class MicrosoftVTableContext : public VTableContextBase {
 public:
   struct MethodVFTableLocation {
     /// If nonzero, holds the vbtable index of the virtual base with the vfptr.
@@ -423,27 +412,27 @@ public:
 
     /// This is the offset of the vfptr from the start of the last vbase, or the
     /// complete type if there are no virtual bases.
-    CharUnits VFTableOffset;
+    CharUnits VFPtrOffset;
 
     /// Method's index in the vftable.
     uint64_t Index;
 
     MethodVFTableLocation()
-        : VBTableIndex(0), VBase(0), VFTableOffset(CharUnits::Zero()),
+        : VBTableIndex(0), VBase(0), VFPtrOffset(CharUnits::Zero()),
           Index(0) {}
 
     MethodVFTableLocation(uint64_t VBTableIndex, const CXXRecordDecl *VBase,
-                          CharUnits VFTableOffset, uint64_t Index)
+                          CharUnits VFPtrOffset, uint64_t Index)
         : VBTableIndex(VBTableIndex), VBase(VBase),
-          VFTableOffset(VFTableOffset), Index(Index) {}
+          VFPtrOffset(VFPtrOffset), Index(Index) {}
 
     bool operator<(const MethodVFTableLocation &other) const {
       if (VBTableIndex != other.VBTableIndex) {
         assert(VBase != other.VBase);
         return VBTableIndex < other.VBTableIndex;
       }
-      if (VFTableOffset != other.VFTableOffset)
-        return VFTableOffset < other.VFTableOffset;
+      if (VFPtrOffset != other.VFPtrOffset)
+        return VFPtrOffset < other.VFPtrOffset;
       if (Index != other.Index)
         return Index < other.Index;
       return false;
@@ -467,16 +456,34 @@ private:
   typedef llvm::DenseMap<VFTableIdTy, const VTableLayout *> VFTableLayoutMapTy;
   VFTableLayoutMapTy VFTableLayouts;
 
+  typedef llvm::SmallSetVector<const CXXRecordDecl *, 8> BasesSetVectorTy;
+  void enumerateVFPtrs(const CXXRecordDecl *MostDerivedClass,
+                       const ASTRecordLayout &MostDerivedClassLayout,
+                       BaseSubobject Base, const CXXRecordDecl *LastVBase,
+                       const VFPtrInfo::BasePath &PathFromCompleteClass,
+                       BasesSetVectorTy &VisitedVBases,
+                       MicrosoftVTableContext::VFPtrListTy &Result);
+
+  void enumerateVFPtrs(const CXXRecordDecl *ForClass,
+                       MicrosoftVTableContext::VFPtrListTy &Result);
+
   void computeVTableRelatedInformation(const CXXRecordDecl *RD);
 
   void dumpMethodLocations(const CXXRecordDecl *RD,
                            const MethodVFTableLocationsTy &NewMethods,
                            raw_ostream &);
 
-public:
-  MicrosoftVFTableContext(ASTContext &Context) : Context(Context) {}
+  typedef std::pair<const CXXRecordDecl *, const CXXRecordDecl *> ClassPairTy;
+  typedef llvm::DenseMap<ClassPairTy, unsigned> VBTableIndicesTy;
+  VBTableIndicesTy VBTableIndices;
+  llvm::DenseSet<const CXXRecordDecl *> ComputedVBTableIndices;
 
-  ~MicrosoftVFTableContext() { llvm::DeleteContainerSeconds(VFTableLayouts); }
+  void computeVBTableRelatedInformation(const CXXRecordDecl *RD);
+
+public:
+  MicrosoftVTableContext(ASTContext &Context) : Context(Context) {}
+
+  ~MicrosoftVTableContext() { llvm::DeleteContainerSeconds(VFTableLayouts); }
 
   const VFPtrListTy &getVFPtrOffsets(const CXXRecordDecl *RD);
 
@@ -491,6 +498,19 @@ public:
         GD.getDtorType() == Dtor_Complete)
       return 0;
     return VTableContextBase::getThunkInfo(GD);
+  }
+
+  /// \brief Returns the index of VBase in the vbtable of Derived.
+  /// VBase must be a morally virtual base of Derived.
+  /// The vbtable is an array of i32 offsets.  The first entry is a self entry,
+  /// and the rest are offsets from the vbptr to virtual bases.
+  unsigned getVBTableIndex(const CXXRecordDecl *Derived,
+                           const CXXRecordDecl *VBase) {
+    computeVBTableRelatedInformation(Derived);
+    ClassPairTy Pair(Derived, VBase);
+    assert(VBTableIndices.count(Pair) == 1 &&
+           "VBase must be a vbase of Derived");
+    return VBTableIndices[Pair];
   }
 };
 }

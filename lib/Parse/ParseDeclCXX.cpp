@@ -1249,7 +1249,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
         << (TemplateInfo.Kind == ParsedTemplateInfo::ExplicitInstantiation)
         << (TagType == DeclSpec::TST_class? 0
             : TagType == DeclSpec::TST_struct? 1
-            : TagType == DeclSpec::TST_interface? 2
+            : TagType == DeclSpec::TST_union? 2
             : 3)
         << Name
         << SourceRange(LAngleLoc, RAngleLoc);
@@ -1492,35 +1492,31 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
         // but it actually has a definition. Most likely, this was
         // meant to be an explicit specialization, but the user forgot
         // the '<>' after 'template'.
-	// It this is friend declaration however, since it cannot have a
-	// template header, it is most likely that the user meant to
-	// remove the 'template' keyword.
+        // It this is friend declaration however, since it cannot have a
+        // template header, it is most likely that the user meant to
+        // remove the 'template' keyword.
         assert((TUK == Sema::TUK_Definition || TUK == Sema::TUK_Friend) &&
-	       "Expected a definition here");
+               "Expected a definition here");
 
-	if (TUK == Sema::TUK_Friend) {
-	  Diag(DS.getFriendSpecLoc(), 
-	       diag::err_friend_explicit_instantiation);
-	  TemplateParams = 0;
-	} else {
-	  SourceLocation LAngleLoc
-	    = PP.getLocForEndOfToken(TemplateInfo.TemplateLoc);
-	  Diag(TemplateId->TemplateNameLoc,
-	       diag::err_explicit_instantiation_with_definition)
-	    << SourceRange(TemplateInfo.TemplateLoc)
-	    << FixItHint::CreateInsertion(LAngleLoc, "<>");
-	  
-	  // Create a fake template parameter list that contains only
-	  // "template<>", so that we treat this construct as a class
-	  // template specialization.
-	  FakedParamLists.push_back(
-	    Actions.ActOnTemplateParameterList(0, SourceLocation(),
-					       TemplateInfo.TemplateLoc,
-					       LAngleLoc,
-					       0, 0,
-					       LAngleLoc));
-	  TemplateParams = &FakedParamLists;
-	}
+        if (TUK == Sema::TUK_Friend) {
+          Diag(DS.getFriendSpecLoc(), diag::err_friend_explicit_instantiation);
+          TemplateParams = 0;
+        } else {
+          SourceLocation LAngleLoc =
+              PP.getLocForEndOfToken(TemplateInfo.TemplateLoc);
+          Diag(TemplateId->TemplateNameLoc,
+               diag::err_explicit_instantiation_with_definition)
+              << SourceRange(TemplateInfo.TemplateLoc)
+              << FixItHint::CreateInsertion(LAngleLoc, "<>");
+
+          // Create a fake template parameter list that contains only
+          // "template<>", so that we treat this construct as a class
+          // template specialization.
+          FakedParamLists.push_back(Actions.ActOnTemplateParameterList(
+              0, SourceLocation(), TemplateInfo.TemplateLoc, LAngleLoc, 0, 0,
+              LAngleLoc));
+          TemplateParams = &FakedParamLists;
+        }
       }
 
       // Build the class template specialization.
@@ -1566,7 +1562,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
   } else {
     if (TUK != Sema::TUK_Declaration && TUK != Sema::TUK_Definition)
       ProhibitAttributes(attrs);
-    
+
     if (TUK == Sema::TUK_Definition &&
         TemplateInfo.Kind == ParsedTemplateInfo::ExplicitInstantiation) {
       // If the declarator-id is not a template-id, issue a diagnostic and
@@ -1957,12 +1953,12 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
       Diag(Tok, diag::err_at_defs_cxx);
     else
       Diag(Tok, diag::err_at_in_class);
-    
+
     ConsumeToken();
     SkipUntil(tok::r_brace);
     return;
   }
-  
+
   // Access declarations.
   bool MalformedTypeSpec = false;
   if (!TemplateInfo.Kind &&
@@ -2425,7 +2421,7 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
 ///     assignment-expression
 ///     braced-init-list
 ///
-///   defaulted/deleted function-definition:                                                                                                                                                                                               
+///   defaulted/deleted function-definition:
 ///     '=' 'default'
 ///     '=' 'delete'
 ///
@@ -2629,6 +2625,12 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
         continue;
       }
 
+      // If we see a namespace here, a close brace was missing somewhere.
+      if (Tok.is(tok::kw_namespace)) {
+        DiagnoseUnexpectedNamespace(cast<DeclContext>(TagDecl));
+        break;
+      }
+
       AccessSpecifier AS = getAccessSpecifierIfPresent();
       if (AS != AS_none) {
         // Current token is a C++ access specifier.
@@ -2669,8 +2671,6 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
 
         continue;
       }
-
-      // FIXME: Make sure we don't have a template here.
 
       // Parse all the comma separated declarators.
       ParseCXXClassMemberDeclaration(CurAS, AccessAttrs.getList());
@@ -2720,6 +2720,27 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
   // Leave the class scope.
   ParsingDef.Pop();
   ClassScope.Exit();
+}
+
+void Parser::DiagnoseUnexpectedNamespace(DeclContext *Ctx) {
+  assert(Tok.is(tok::kw_namespace));
+
+  // FIXME: Suggest where the close brace should have gone by looking
+  // at indentation changes within the definition body.
+  Diag(cast<Decl>(Ctx)->getLocation(),
+       diag::err_missing_end_of_definition) << Ctx;
+  Diag(Tok.getLocation(),
+       diag::note_missing_end_of_definition_before) << Ctx;
+
+  // Push '};' onto the token stream to recover.
+  PP.EnterToken(Tok);
+
+  Tok.startToken();
+  Tok.setLocation(PP.getLocForEndOfToken(PrevTokLocation));
+  Tok.setKind(tok::semi);
+  PP.EnterToken(Tok);
+
+  Tok.setKind(tok::r_brace);
 }
 
 /// ParseConstructorInitializer - Parse a C++ constructor initializer,

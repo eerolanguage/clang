@@ -744,25 +744,19 @@ bool MatchASTVisitor::TraverseNestedNameSpecifierLoc(
 
 class MatchASTConsumer : public ASTConsumer {
 public:
-  MatchASTConsumer(
-      std::vector<std::pair<internal::DynTypedMatcher, MatchCallback *> > *
-          MatcherCallbackPairs,
-      MatchFinder::ParsingDoneTestCallback *ParsingDone)
-      : Visitor(MatcherCallbackPairs), ParsingDone(ParsingDone) {}
+  MatchASTConsumer(MatchFinder *Finder,
+                   MatchFinder::ParsingDoneTestCallback *ParsingDone)
+      : Finder(Finder), ParsingDone(ParsingDone) {}
 
 private:
   virtual void HandleTranslationUnit(ASTContext &Context) {
     if (ParsingDone != NULL) {
       ParsingDone->run();
     }
-    Visitor.set_active_ast_context(&Context);
-    Visitor.onStartOfTranslationUnit();
-    Visitor.TraverseDecl(Context.getTranslationUnitDecl());
-    Visitor.onEndOfTranslationUnit();
-    Visitor.set_active_ast_context(NULL);
+    Finder->matchAST(Context);
   }
 
-  MatchASTVisitor Visitor;
+  MatchFinder *Finder;
   MatchFinder::ParsingDoneTestCallback *ParsingDone;
 };
 
@@ -811,8 +805,32 @@ void MatchFinder::addMatcher(const TypeLocMatcher &NodeMatch,
   MatcherCallbackPairs.push_back(std::make_pair(NodeMatch, Action));
 }
 
+bool MatchFinder::addDynamicMatcher(const internal::DynTypedMatcher &NodeMatch,
+                                    MatchCallback *Action) {
+  if (NodeMatch.canConvertTo<Decl>()) {
+    addMatcher(NodeMatch.convertTo<Decl>(), Action);
+    return true;
+  } else if (NodeMatch.canConvertTo<QualType>()) {
+    addMatcher(NodeMatch.convertTo<QualType>(), Action);
+    return true;
+  } else if (NodeMatch.canConvertTo<Stmt>()) {
+    addMatcher(NodeMatch.convertTo<Stmt>(), Action);
+    return true;
+  } else if (NodeMatch.canConvertTo<NestedNameSpecifier>()) {
+    addMatcher(NodeMatch.convertTo<NestedNameSpecifier>(), Action);
+    return true;
+  } else if (NodeMatch.canConvertTo<NestedNameSpecifierLoc>()) {
+    addMatcher(NodeMatch.convertTo<NestedNameSpecifierLoc>(), Action);
+    return true;
+  } else if (NodeMatch.canConvertTo<TypeLoc>()) {
+    addMatcher(NodeMatch.convertTo<TypeLoc>(), Action);
+    return true;
+  }
+  return false;
+}
+
 ASTConsumer *MatchFinder::newASTConsumer() {
-  return new internal::MatchASTConsumer(&MatcherCallbackPairs, ParsingDone);
+  return new internal::MatchASTConsumer(this, ParsingDone);
 }
 
 void MatchFinder::match(const clang::ast_type_traits::DynTypedNode &Node,
@@ -820,6 +838,14 @@ void MatchFinder::match(const clang::ast_type_traits::DynTypedNode &Node,
   internal::MatchASTVisitor Visitor(&MatcherCallbackPairs);
   Visitor.set_active_ast_context(&Context);
   Visitor.match(Node);
+}
+
+void MatchFinder::matchAST(ASTContext &Context) {
+  internal::MatchASTVisitor Visitor(&MatcherCallbackPairs);
+  Visitor.set_active_ast_context(&Context);
+  Visitor.onStartOfTranslationUnit();
+  Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+  Visitor.onEndOfTranslationUnit();
 }
 
 void MatchFinder::registerTestCallbackAfterParsing(

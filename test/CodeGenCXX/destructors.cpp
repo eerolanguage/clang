@@ -6,10 +6,6 @@
 // CHECK-DAG: @_ZN5test11OD2Ev = alias {{.*}} @_ZN5test11AD2Ev
 // CHECK-DAG: @_ZN5test11SD2Ev = alias bitcast {{.*}} @_ZN5test11AD2Ev
 
-// CHECK-DAG: @_ZN5test312_GLOBAL__N_11DD1Ev = alias internal {{.*}} @_ZN5test312_GLOBAL__N_11DD2Ev
-// CHECK-DAG: @_ZN5test312_GLOBAL__N_11DD2Ev = alias internal bitcast {{.*}} @_ZN5test312_GLOBAL__N_11CD2Ev
-// CHECK-DAG: @_ZN5test312_GLOBAL__N_11CD1Ev = alias internal {{.*}} @_ZN5test312_GLOBAL__N_11CD2Ev
-
 struct A {
   int a;
   
@@ -40,13 +36,13 @@ namespace PR7526 {
 
   struct allocator_derived : allocator { };
 
+  // CHECK-LABEL: define void @_ZN6PR75263fooEv()
+  // CHECK: call void {{.*}} @_ZN6PR75269allocatorD2Ev
+
   // CHECK-LABEL: define void @_ZN6PR75269allocatorD2Ev(%"struct.PR7526::allocator"* %this) unnamed_addr
   // CHECK: call void @__cxa_call_unexpected
   allocator::~allocator() throw() { foo(); }
 
-  // CHECK-LABEL: define linkonce_odr void @_ZN6PR752617allocator_derivedD1Ev(%"struct.PR7526::allocator_derived"* %this) unnamed_addr
-  // CHECK-NOT: call void @__cxa_call_unexpected
-  // CHECK:     }
   void foo() {
     allocator_derived ad;
   }
@@ -184,12 +180,6 @@ namespace test3 {
   void test() {
     new D; // Force emission of D's vtable
   }
-
-  // Checked at top of file:
-  // @_ZN5test312_GLOBAL__N_11CD1Ev = alias internal {{.*}} @_ZN5test312_GLOBAL__N_11CD2Ev
-
-  // More checks at end of file.
-
 }
 
 namespace test4 {
@@ -366,10 +356,26 @@ namespace test9 {
   // CHECK: call void @_ZN5test92f2Ev()
 }
 
+namespace test10 {
+  // We used to crash trying to replace _ZN6test106OptionD1Ev with
+  // _ZN6test106OptionD2Ev twice.
+  struct Option {
+    virtual ~Option() {}
+  };
+  template <class DataType> class opt : public Option {};
+  template class opt<int>;
+  // CHECK-LABEL: define zeroext i1 @_ZN6test1016handleOccurrenceEv(
+  bool handleOccurrence() {
+    // CHECK: call void @_ZN6test106OptionD2Ev(
+    Option x;
+    return true;
+  }
+}
+
 // Checks from test3:
 
   // CHECK-LABEL: define internal void @_ZN5test312_GLOBAL__N_11DD0Ev(%"struct.test3::<anonymous namespace>::D"* %this) unnamed_addr
-  // CHECK: invoke void @_ZN5test312_GLOBAL__N_11DD1Ev(
+  // CHECK: invoke void {{.*}} @_ZN5test312_GLOBAL__N_11CD2Ev
   // CHECK: call void @_ZdlPv({{.*}}) [[NUW:#[0-9]+]]
   // CHECK: ret void
   // CHECK: landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
@@ -377,18 +383,19 @@ namespace test9 {
   // CHECK: call void @_ZdlPv({{.*}}) [[NUW]]
   // CHECK: resume { i8*, i32 }
 
-  // Checked at top of file:
-  // @_ZN5test312_GLOBAL__N_11DD1Ev = alias internal {{.*}} @_ZN5test312_GLOBAL__N_11DD2Ev
-  // @_ZN5test312_GLOBAL__N_11DD2Ev = alias internal bitcast {{.*}} @_ZN5test312_GLOBAL__N_11CD2Ev
-
   // CHECK-LABEL: define internal void @_ZThn8_N5test312_GLOBAL__N_11DD1Ev(
   // CHECK: getelementptr inbounds i8* {{.*}}, i64 -8
-  // CHECK: call void @_ZN5test312_GLOBAL__N_11DD1Ev(
+  // CHECK: call void {{.*}} @_ZN5test312_GLOBAL__N_11CD2Ev
   // CHECK: ret void
 
   // CHECK-LABEL: define internal void @_ZThn8_N5test312_GLOBAL__N_11DD0Ev(
   // CHECK: getelementptr inbounds i8* {{.*}}, i64 -8
   // CHECK: call void @_ZN5test312_GLOBAL__N_11DD0Ev(
+  // CHECK: ret void
+
+  // CHECK-LABEL: define internal void @_ZThn8_N5test312_GLOBAL__N_11CD1Ev(
+  // CHECK: getelementptr inbounds i8* {{.*}}, i64 -8
+  // CHECK: call void @_ZN5test312_GLOBAL__N_11CD2Ev(
   // CHECK: ret void
 
   // CHECK-LABEL: define internal void @_ZN5test312_GLOBAL__N_11CD2Ev(%"struct.test3::<anonymous namespace>::C"* %this) unnamed_addr
@@ -400,18 +407,13 @@ namespace test9 {
   // CHECK: declare void @_ZN5test31AD2Ev(
 
   // CHECK-LABEL: define internal void @_ZN5test312_GLOBAL__N_11CD0Ev(%"struct.test3::<anonymous namespace>::C"* %this) unnamed_addr
-  // CHECK: invoke void @_ZN5test312_GLOBAL__N_11CD1Ev(
+  // CHECK: invoke void @_ZN5test312_GLOBAL__N_11CD2Ev(
   // CHECK: call void @_ZdlPv({{.*}}) [[NUW]]
   // CHECK: ret void
   // CHECK: landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
   // CHECK-NEXT: cleanup
   // CHECK: call void @_ZdlPv({{.*}}) [[NUW]]
   // CHECK: resume { i8*, i32 }
-
-  // CHECK-LABEL: define internal void @_ZThn8_N5test312_GLOBAL__N_11CD1Ev(
-  // CHECK: getelementptr inbounds i8* {{.*}}, i64 -8
-  // CHECK: call void @_ZN5test312_GLOBAL__N_11CD1Ev(
-  // CHECK: ret void
 
   // CHECK-LABEL: define internal void @_ZThn8_N5test312_GLOBAL__N_11CD0Ev(
   // CHECK: getelementptr inbounds i8* {{.*}}, i64 -8

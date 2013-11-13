@@ -839,6 +839,12 @@ DerivedArgList *Darwin::TranslateArgs(const DerivedArgList &Args,
     }
   }
 
+  // Default to use libc++ on OS X 10.9+ and iOS 7+.
+  if (((isTargetMacOS() && !isMacosxVersionLT(10, 9)) ||
+       (isTargetIPhoneOS() && !isIPhoneOSVersionLT(7, 0))) &&
+      !Args.getLastArg(options::OPT_stdlib_EQ))
+    DAL->AddJoinedArg(0, Opts.getOption(options::OPT_stdlib_EQ), "libc++");
+
   // Validate the C++ standard library choice.
   CXXStdlibType Type = GetCXXStdlibType(*DAL);
   if (Type == ToolChain::CST_Libcxx) {
@@ -1929,6 +1935,43 @@ FreeBSD::FreeBSD(const Driver &D, const llvm::Triple& Triple, const ArgList &Arg
     getFilePaths().push_back(getDriver().SysRoot + "/usr/lib");
 }
 
+ToolChain::CXXStdlibType
+FreeBSD::GetCXXStdlibType(const ArgList &Args) const {
+  if (Arg *A = Args.getLastArg(options::OPT_stdlib_EQ)) {
+    StringRef Value = A->getValue();
+    if (Value == "libstdc++")
+      return ToolChain::CST_Libstdcxx;
+    if (Value == "libc++")
+      return ToolChain::CST_Libcxx;
+
+    getDriver().Diag(diag::err_drv_invalid_stdlib_name)
+      << A->getAsString(Args);
+  }
+  if (getTriple().getOSMajorVersion() >= 10) 
+    return ToolChain::CST_Libcxx;
+  return ToolChain::CST_Libstdcxx;
+}
+
+void FreeBSD::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
+                                           ArgStringList &CC1Args) const {
+  if (DriverArgs.hasArg(options::OPT_nostdlibinc) ||
+      DriverArgs.hasArg(options::OPT_nostdincxx))
+    return;
+
+  switch (GetCXXStdlibType(DriverArgs)) {
+  case ToolChain::CST_Libcxx:
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/usr/include/c++/v1");
+    break;
+  case ToolChain::CST_Libstdcxx:
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/usr/include/c++/4.2");
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/usr/include/c++/4.2/backward");
+    break;
+  }
+}
+
 Tool *FreeBSD::buildAssembler() const {
   return new tools::freebsd::Assemble(*this);
 }
@@ -2108,6 +2151,7 @@ enum Distro {
   UbuntuQuantal,
   UbuntuRaring,
   UbuntuSaucy,
+  UbuntuTrusty,
   UnknownDistro
 };
 
@@ -2124,7 +2168,7 @@ static bool IsDebian(enum Distro Distro) {
 }
 
 static bool IsUbuntu(enum Distro Distro) {
-  return Distro >= UbuntuHardy && Distro <= UbuntuSaucy;
+  return Distro >= UbuntuHardy && Distro <= UbuntuTrusty;
 }
 
 static Distro DetectDistro(llvm::Triple::ArchType Arch) {
@@ -2149,6 +2193,7 @@ static Distro DetectDistro(llvm::Triple::ArchType Arch) {
           .Case("quantal", UbuntuQuantal)
           .Case("raring", UbuntuRaring)
           .Case("saucy", UbuntuSaucy)
+          .Case("trusty", UbuntuTrusty)
           .Default(UnknownDistro);
     return Version;
   }
@@ -2450,6 +2495,10 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   }
   addPathIfExists(SysRoot + "/lib", Paths);
   addPathIfExists(SysRoot + "/usr/lib", Paths);
+}
+
+bool FreeBSD::HasNativeLLVMSupport() const {
+  return true;
 }
 
 bool Linux::HasNativeLLVMSupport() const {

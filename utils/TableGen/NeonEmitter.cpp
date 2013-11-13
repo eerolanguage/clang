@@ -81,6 +81,12 @@ enum OpKind {
   OpQRDMulhLane,
   OpFMSLane,
   OpFMSLaneQ,
+  OpTrn1,
+  OpZip1,
+  OpUzp1,
+  OpTrn2,
+  OpZip2,
+  OpUzp2,
   OpEq,
   OpGe,
   OpLe,
@@ -120,7 +126,9 @@ enum OpKind {
   OpLongHi,
   OpNarrowHi,
   OpMovlHi,
-  OpCopy
+  OpCopyLane,
+  OpCopyQLane,
+  OpCopyLaneQ
 };
 
 enum ClassKind {
@@ -226,6 +234,12 @@ public:
     OpMap["OP_QRDMULH_LN"] = OpQRDMulhLane;
     OpMap["OP_FMS_LN"] = OpFMSLane;
     OpMap["OP_FMS_LNQ"] = OpFMSLaneQ;
+    OpMap["OP_TRN1"]  = OpTrn1;
+    OpMap["OP_ZIP1"]  = OpZip1;
+    OpMap["OP_UZP1"]  = OpUzp1;
+    OpMap["OP_TRN2"]  = OpTrn2;
+    OpMap["OP_ZIP2"]  = OpZip2;
+    OpMap["OP_UZP2"]  = OpUzp2;
     OpMap["OP_EQ"]    = OpEq;
     OpMap["OP_GE"]    = OpGe;
     OpMap["OP_LE"]    = OpLe;
@@ -265,7 +279,9 @@ public:
     OpMap["OP_LONG_HI"] = OpLongHi;
     OpMap["OP_NARROW_HI"] = OpNarrowHi;
     OpMap["OP_MOVL_HI"] = OpMovlHi;
-    OpMap["OP_COPY"] = OpCopy;
+    OpMap["OP_COPY_LN"] = OpCopyLane;
+    OpMap["OP_COPYQ_LN"] = OpCopyQLane;
+    OpMap["OP_COPY_LNQ"] = OpCopyLaneQ;
 
     Record *SI = R.getClass("SInst");
     Record *II = R.getClass("IInst");
@@ -452,6 +468,8 @@ static char ModType(const char mod, char type, bool &quad, bool &poly,
       if (type == 'd')
         type = 'l';
       break;
+    case '$':
+      scal = true;
     case 'x':
       usgn = false;
       poly = false;
@@ -1358,7 +1376,7 @@ static std::string GenArgs(const std::string &proto, StringRef typestr,
     }
     s.push_back(arg);
     //To avoid argument being multiple defined, add extra number for renaming.
-    if (name == "vcopy_lane")
+    if (name == "vcopy_lane" || name == "vcopy_laneq")
       s.push_back('1');
     if ((i + 1) < e)
       s += ", ";
@@ -1383,7 +1401,7 @@ static std::string GenMacroLocals(const std::string &proto, StringRef typestr,
       continue;
     generatedLocal = true;
     bool extranumber = false;
-    if(name == "vcopy_lane")
+    if (name == "vcopy_lane" || name == "vcopy_laneq")
       extranumber = true;
 
     s += TypeString(proto[i], typestr) + " __";
@@ -1772,6 +1790,42 @@ static std::string GenOpString(const std::string &name, OpKind op,
     s += ");";
     break;
   }
+  case OpUzp1:
+    s += "__builtin_shufflevector(__a, __b";
+    for (unsigned i = 0; i < nElts; i++)
+      s += ", " + utostr(2*i);
+    s += ");";
+    break;
+  case OpUzp2:
+    s += "__builtin_shufflevector(__a, __b";
+    for (unsigned i = 0; i < nElts; i++)
+      s += ", " + utostr(2*i+1);
+    s += ");";
+    break;
+  case OpZip1:
+    s += "__builtin_shufflevector(__a, __b";
+    for (unsigned i = 0; i < (nElts/2); i++)
+       s += ", " + utostr(i) + ", " + utostr(i+nElts);
+    s += ");";
+    break;
+  case OpZip2:
+    s += "__builtin_shufflevector(__a, __b";
+    for (unsigned i = nElts/2; i < nElts; i++)
+       s += ", " + utostr(i) + ", " + utostr(i+nElts);
+    s += ");";
+    break;
+  case OpTrn1:
+    s += "__builtin_shufflevector(__a, __b";
+    for (unsigned i = 0; i < (nElts/2); i++)
+       s += ", " + utostr(2*i) + ", " + utostr(2*i+nElts);
+    s += ");";
+    break;
+  case OpTrn2:
+    s += "__builtin_shufflevector(__a, __b";
+    for (unsigned i = 0; i < (nElts/2); i++)
+       s += ", " + utostr(2*i+1) + ", " + utostr(2*i+1+nElts);
+    s += ");";
+    break;
   case OpAbdl: {
     std::string abd = MangleName("vabd", typestr, ClassS) + "(__a, __b)";
     if (typestr[0] != 'U') {
@@ -1854,10 +1908,24 @@ static std::string GenOpString(const std::string &name, OpKind op,
          MangleName(RemoveHigh(name), typestr, ClassS) + "(__b, __c));";
     break;
   }
-  case OpCopy: {
+  case OpCopyLane: {
     s += TypeString('s', typestr) + " __c2 = " +
          MangleName("vget_lane", typestr, ClassS) + "(__c1, __d1); \\\n  " +
          MangleName("vset_lane", typestr, ClassS) + "(__c2, __a1, __b1);";
+    break;
+  }
+  case OpCopyQLane: {
+    std::string typeCode = "";
+    InstructionTypeCode(typestr, ClassS, quad, typeCode);
+    s += TypeString('s', typestr) + " __c2 = vget_lane_" + typeCode +
+         "(__c1, __d1); \\\n  vsetq_lane_" + typeCode + "(__c2, __a1, __b1);";
+    break;
+  }
+  case OpCopyLaneQ: {
+    std::string typeCode = "";
+    InstructionTypeCode(typestr, ClassS, quad, typeCode);
+    s += TypeString('s', typestr) + " __c2 = vgetq_lane_" + typeCode +
+         "(__c1, __d1); \\\n  vset_lane_" + typeCode + "(__c2, __a1, __b1);";
     break;
   }
   default:
@@ -2481,8 +2549,10 @@ NeonEmitter::genIntrinsicRangeCheckCode(raw_ostream &OS,
               "Fixed point convert name should contains \"32\" or \"64\"");
 
       } else if (R->getValueAsBit("isScalarShift")) {
-        // Right shifts have an 'r' in the name, left shifts do not.
-        if (name.find('r') != std::string::npos)
+        // Right shifts have an 'r' in the name, left shifts do not.  Convert
+        // instructions have the same bounds and right shifts.
+        if (name.find('r') != std::string::npos ||
+            name.find("cvt") != std::string::npos)
           rangestr = "l = 1; ";
 
         rangestr += "u = " +

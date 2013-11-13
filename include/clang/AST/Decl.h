@@ -274,7 +274,7 @@ public:
   }
 
   NamedDecl *getMostRecentDecl() {
-    return cast<NamedDecl>(Decl::getMostRecentDecl());
+    return cast<NamedDecl>(static_cast<Decl *>(this)->getMostRecentDecl());
   }
   const NamedDecl *getMostRecentDecl() const {
     return const_cast<NamedDecl*>(this)->getMostRecentDecl();
@@ -849,18 +849,19 @@ public:
            getStorageClass() == SC_PrivateExtern;
   }
 
-  /// hasGlobalStorage - Returns true for all variables that do not
-  ///  have local storage.  This includs all global variables as well
-  ///  as static variables declared within a function.
+  /// \brief Returns true for all variables that do not have local storage.
+  ///
+  /// This includes all global variables as well as static variables declared
+  /// within a function.
   bool hasGlobalStorage() const { return !hasLocalStorage(); }
 
-  /// \brief Get the storage duration of this variable, per C++ [basid.stc].
+  /// \brief Get the storage duration of this variable, per C++ [basic.stc].
   StorageDuration getStorageDuration() const {
     return hasLocalStorage() ? SD_Automatic :
            getTSCSpec() ? SD_Thread : SD_Static;
   }
 
-  /// Compute the language linkage.
+  /// \brief Compute the language linkage.
   LanguageLinkage getLanguageLinkage() const;
 
   /// \brief Determines whether this variable is a variable with
@@ -1792,6 +1793,11 @@ public:
   ///    An implementation is allowed to omit a call to a replaceable global
   ///    allocation function. [...]
   bool isReplaceableGlobalAllocationFunction() const;
+
+  /// \brief Determine whether this function is a sized global deallocation
+  /// function in C++1y. If so, find and return the corresponding unsized
+  /// deallocation function.
+  FunctionDecl *getCorrespondingUnsizedGlobalDeallocationFunction() const;
 
   /// Compute the language linkage.
   LanguageLinkage getLanguageLinkage() const;
@@ -2821,14 +2827,15 @@ public:
   }
 
   EnumDecl *getPreviousDecl() {
-    return cast_or_null<EnumDecl>(TagDecl::getPreviousDecl());
+    return cast_or_null<EnumDecl>(
+            static_cast<TagDecl *>(this)->getPreviousDecl());
   }
   const EnumDecl *getPreviousDecl() const {
     return const_cast<EnumDecl*>(this)->getPreviousDecl();
   }
 
   EnumDecl *getMostRecentDecl() {
-    return cast<EnumDecl>(TagDecl::getMostRecentDecl());
+    return cast<EnumDecl>(static_cast<TagDecl *>(this)->getMostRecentDecl());
   }
   const EnumDecl *getMostRecentDecl() const {
     return const_cast<EnumDecl*>(this)->getMostRecentDecl();
@@ -3028,14 +3035,15 @@ public:
   static RecordDecl *CreateDeserialized(const ASTContext &C, unsigned ID);
 
   RecordDecl *getPreviousDecl() {
-    return cast_or_null<RecordDecl>(TagDecl::getPreviousDecl());
+    return cast_or_null<RecordDecl>(
+            static_cast<TagDecl *>(this)->getPreviousDecl());
   }
   const RecordDecl *getPreviousDecl() const {
     return const_cast<RecordDecl*>(this)->getPreviousDecl();
   }
 
   RecordDecl *getMostRecentDecl() {
-    return cast<RecordDecl>(TagDecl::getMostRecentDecl());
+    return cast<RecordDecl>(static_cast<TagDecl *>(this)->getMostRecentDecl());
   }
   const RecordDecl *getMostRecentDecl() const {
     return const_cast<RecordDecl*>(this)->getMostRecentDecl();
