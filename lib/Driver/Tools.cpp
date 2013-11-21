@@ -1015,8 +1015,7 @@ static void AddTargetFeature(const ArgList &Args,
 static void getMIPSTargetFeatures(const Driver &D, const ArgList &Args,
                                   std::vector<const char *> &Features) {
   StringRef FloatABI = getMipsFloatABI(D, Args);
-  bool IsMips16 = Args.getLastArg(options::OPT_mips16) != NULL;
-  if (FloatABI == "soft" || (FloatABI == "hard" && IsMips16)) {
+  if (FloatABI == "soft") {
     // FIXME: Note, this is a hack. We need to pass the selected float
     // mode to the MipsTargetInfoBase to define appropriate macros there.
     // Now it is the only method.
@@ -1057,18 +1056,11 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
 
   StringRef FloatABI = getMipsFloatABI(D, Args);
 
-  bool IsMips16 = Args.getLastArg(options::OPT_mips16) != NULL;
-
-  if (FloatABI == "soft" || (FloatABI == "hard" && IsMips16)) {
+  if (FloatABI == "soft") {
     // Floating point operations and argument passing are soft.
     CmdArgs.push_back("-msoft-float");
     CmdArgs.push_back("-mfloat-abi");
     CmdArgs.push_back("soft");
-
-    if (FloatABI == "hard" && IsMips16) {
-      CmdArgs.push_back("-mllvm");
-      CmdArgs.push_back("-mips16-hard-float");
-    }
   }
   else {
     // Floating point operations and argument passing are hard.
@@ -1271,8 +1263,12 @@ static const char *getSystemZTargetCPU(const ArgList &Args) {
 static const char *getX86TargetCPU(const ArgList &Args,
                                    const llvm::Triple &Triple) {
   if (const Arg *A = Args.getLastArg(options::OPT_march_EQ)) {
-    if (StringRef(A->getValue()) != "native")
+    if (StringRef(A->getValue()) != "native") {
+      if (Triple.isOSDarwin() && Triple.getArchName() == "x86_64h")
+        return "core-avx2";
+
       return A->getValue();
+    }
 
     // FIXME: Reject attempts to use -march=native unless the target matches
     // the host.
@@ -1293,8 +1289,11 @@ static const char *getX86TargetCPU(const ArgList &Args,
   bool Is64Bit = Triple.getArch() == llvm::Triple::x86_64;
 
   // FIXME: Need target hooks.
-  if (Triple.isOSDarwin())
+  if (Triple.isOSDarwin()) {
+    if (Triple.getArchName() == "x86_64h")
+      return "core-avx2";
     return Is64Bit ? "core2" : "yonah";
+  }
 
   // All x86 devices running Android have core2 as their common
   // denominator. This makes a better choice than pentium4.
@@ -1380,8 +1379,22 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
   }
 }
 
-static void getX86TargetFeatures(const ArgList &Args,
+static void getX86TargetFeatures(const llvm::Triple &Triple,
+                                 const ArgList &Args,
                                  std::vector<const char *> &Features) {
+  if (Triple.getArchName() == "x86_64h") {
+    // x86_64h implies quite a few of the more modern subtarget features
+    // for Haswell class CPUs, but not all of them. Opt-out of a few.
+    Features.push_back("-rdrnd");
+    Features.push_back("-aes");
+    Features.push_back("-pclmul");
+    Features.push_back("-rtm");
+    Features.push_back("-hle");
+    Features.push_back("-fsgsbase");
+  }
+
+  // Now add any that the user explicitly requested on the command line,
+  // which may override the defaults.
   for (arg_iterator it = Args.filtered_begin(options::OPT_m_x86_Features_Group),
                     ie = Args.filtered_end();
        it != ie; ++it) {
@@ -1508,7 +1521,7 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     break;
   case llvm::Triple::x86:
   case llvm::Triple::x86_64:
-    getX86TargetFeatures(Args, Features);
+    getX86TargetFeatures(Triple, Args, Features);
     break;
   }
 
@@ -1707,6 +1720,13 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
     if (UseRelaxAll(C, Args))
       CmdArgs.push_back("-mrelax-all");
 
+    // When passing -I arguments to the assembler we sometimes need to
+    // unconditionally take the next argument.  For example, when parsing
+    // '-Wa,-I -Wa,foo' we need to accept the -Wa,foo arg after seeing the
+    // -Wa,-I arg and when parsing '-Wa,-I,foo' we need to accept the 'foo'
+    // arg after parsing the '-I' arg.
+    bool TakeNextArg = false;
+
     // When using an integrated assembler, translate -Wa, and -Xassembler
     // options.
     for (arg_iterator it = Args.filtered_begin(options::OPT_Wa_COMMA,
@@ -1717,6 +1737,11 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
 
       for (unsigned i = 0, e = A->getNumValues(); i != e; ++i) {
         StringRef Value = A->getValue(i);
+        if (TakeNextArg) {
+          CmdArgs.push_back(Value.data());
+          TakeNextArg = false;
+          continue;
+        }
 
         if (Value == "-force_cpusubtype_ALL") {
           // Do nothing, this is the default and we don't support anything else.
@@ -1727,6 +1752,12 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
           CmdArgs.push_back("-fatal-assembler-warnings");
         } else if (Value == "--noexecstack") {
           CmdArgs.push_back("-mnoexecstack");
+        } else if (Value.startswith("-I")) {
+          CmdArgs.push_back(Value.data());
+          // We need to consume the next argument if the current arg is a plain
+          // -I. The next arg will be the include directory.
+          if (Value == "-I")
+            TakeNextArg = true;
         } else {
           D.Diag(diag::err_drv_unsupported_option_argument)
             << A->getOption().getName() << Value;
@@ -2270,8 +2301,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   OptSpecifier StrictAliasingAliasOption = OFastEnabled ? options::OPT_Ofast :
     options::OPT_fstrict_aliasing;
   if (!Args.hasFlag(options::OPT_fstrict_aliasing, StrictAliasingAliasOption,
-                    options::OPT_fno_strict_aliasing,
-                    getToolChain().IsStrictAliasingDefault()))
+                    options::OPT_fno_strict_aliasing, true))
     CmdArgs.push_back("-relaxed-aliasing");
   if (!Args.hasFlag(options::OPT_fstruct_path_tbaa,
                     options::OPT_fno_struct_path_tbaa))
@@ -2714,6 +2744,21 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_subscripting);
       Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_property);
     }
+  } else {
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_literals);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_subscripting);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_property);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_all);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_readonly_property);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_readwrite_property);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_annotation);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_instancetype);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_nsmacros);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_migrate_protocol_conformance);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_atomic_property);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_returns_innerpointer_property);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_ns_nonatomic_iosonly);
+    Args.AddLastArg(CmdArgs, options::OPT_objcmt_white_list_dir_path);
   }
 
   // Add preprocessing options like -I, -D, etc. if we are using the
@@ -3006,6 +3051,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (A->getOption().matches(options::OPT_fno_strict_overflow))
       CmdArgs.push_back("-fwrapv");
   }
+
+  if (Arg *A = Args.getLastArg(options::OPT_freroll_loops,
+                               options::OPT_fno_reroll_loops))
+    if (A->getOption().matches(options::OPT_freroll_loops))
+      CmdArgs.push_back("-freroll-loops");
+
   Args.AddLastArg(CmdArgs, options::OPT_fwritable_strings);
   Args.AddLastArg(CmdArgs, options::OPT_funroll_loops,
                   options::OPT_fno_unroll_loops);
@@ -4487,7 +4538,7 @@ llvm::Triple::ArchType darwin::getArchTypeForDarwinArchName(StringRef Str) {
     .Cases("i386", "i486", "i486SX", "i586", "i686", llvm::Triple::x86)
     .Cases("pentium", "pentpro", "pentIIm3", "pentIIm5", "pentium4",
            llvm::Triple::x86)
-    .Case("x86_64", llvm::Triple::x86_64)
+    .Cases("x86_64", "x86_64h", llvm::Triple::x86_64)
     // This is derived from the driver driver.
     .Cases("arm", "armv4t", "armv5", "armv6", "armv6m", llvm::Triple::arm)
     .Cases("armv7", "armv7em", "armv7f", "armv7k", "armv7m", llvm::Triple::arm)
@@ -4546,6 +4597,11 @@ void darwin::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     assert(!SourceAction->getInputs().empty() && "unexpected root action!");
     SourceAction = SourceAction->getInputs()[0];
   }
+
+  // If -no_integrated_as is used add -Q to the darwin assember driver to make
+  // sure it runs its system assembler not clang's integrated assembler.
+  if (Args.hasArg(options::OPT_no_integrated_as))
+    CmdArgs.push_back("-Q");
 
   // Forward -g, assuming we are dealing with an actual assembly file.
   if (SourceAction->getType() == types::TY_Asm ||

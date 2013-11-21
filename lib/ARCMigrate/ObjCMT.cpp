@@ -28,6 +28,7 @@
 #include "clang/StaticAnalyzer/Checkers/ObjCRetainCount.h"
 #include "clang/AST/Attr.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/Path.h"
 
 using namespace clang;
 using namespace arcmt;
@@ -44,7 +45,6 @@ class ObjCMigrateASTConsumer : public ASTConsumer {
   
   void migrateDecl(Decl *D);
   void migrateObjCInterfaceDecl(ASTContext &Ctx, ObjCContainerDecl *D);
-  void migrateDeprecatedAnnotation(ASTContext &Ctx, ObjCCategoryDecl *CatDecl);
   void migrateProtocolConformance(ASTContext &Ctx,
                                   const ObjCImplementationDecl *ImpDecl);
   void CacheObjCNSIntegerTypedefed(const TypedefDecl *TypedefDcl);
@@ -90,6 +90,7 @@ public:
   bool IsOutputFile;
   llvm::SmallPtrSet<ObjCProtocolDecl *, 32> ObjCProtocolDecls;
   llvm::SmallVector<const Decl *, 8> CFFunctionIBCandidates;
+  llvm::StringMap<char> WhiteListFilenames;
   
   ObjCMigrateASTConsumer(StringRef migrateDir,
                          unsigned astMigrateActions,
@@ -97,12 +98,19 @@ public:
                          FileManager &fileMgr,
                          const PPConditionalDirectiveRecord *PPRec,
                          Preprocessor &PP,
-                         bool isOutputFile = false)
+                         bool isOutputFile,
+                         ArrayRef<std::string> WhiteList)
   : MigrateDir(migrateDir),
     ASTMigrateActions(astMigrateActions),
     NSIntegerTypedefed(0), NSUIntegerTypedefed(0),
     Remapper(remapper), FileMgr(fileMgr), PPRec(PPRec), PP(PP),
-    IsOutputFile(isOutputFile) { }
+    IsOutputFile(isOutputFile) {
+
+    for (ArrayRef<std::string>::iterator
+           I = WhiteList.begin(), E = WhiteList.end(); I != E; ++I) {
+      WhiteListFilenames.GetOrCreateValue(*I);
+    }
+  }
 
 protected:
   virtual void Initialize(ASTContext &Context) {
@@ -125,6 +133,13 @@ protected:
   }
 
   virtual void HandleTranslationUnit(ASTContext &Ctx);
+
+  bool canModifyFile(StringRef Path) {
+    if (WhiteListFilenames.empty())
+      return true;
+    return WhiteListFilenames.find(llvm::sys::path::filename(Path))
+        != WhiteListFilenames.end();
+  }
 };
 
 }
@@ -151,7 +166,9 @@ ASTConsumer *ObjCMigrateAction::CreateASTConsumer(CompilerInstance &CI,
                                                        Remapper,
                                                     CompInst->getFileManager(),
                                                        PPRec,
-                                                       CompInst->getPreprocessor());
+                                                       CompInst->getPreprocessor(),
+                                                       false,
+                                                       ArrayRef<std::string>());
   ASTConsumer *Consumers[] = { MTConsumer, WrappedConsumer };
   return new MultiplexConsumer(Consumers);
 }
@@ -273,6 +290,29 @@ void MigrateBlockOrFunctionPointerTypeVariable(std::string & PropertyString,
   }
 }
 
+static const char *PropertyMemoryAttribute(ASTContext &Context, QualType ArgType) {
+  Qualifiers::ObjCLifetime propertyLifetime = ArgType.getObjCLifetime();
+  bool RetainableObject = ArgType->isObjCRetainableType();
+  if (RetainableObject && propertyLifetime == Qualifiers::OCL_Strong) {
+    if (const ObjCObjectPointerType *ObjPtrTy =
+        ArgType->getAs<ObjCObjectPointerType>()) {
+      ObjCInterfaceDecl *IDecl = ObjPtrTy->getObjectType()->getInterface();
+      if (IDecl &&
+          IDecl->lookupNestedProtocol(&Context.Idents.get("NSCopying")))
+        return "copy";
+      else
+        return "retain";
+    }
+    else if (ArgType->isBlockPointerType())
+      return "copy";
+  } else if (propertyLifetime == Qualifiers::OCL_Weak)
+    // TODO. More precise determination of 'weak' attribute requires
+    // looking into setter's implementation for backing weak ivar.
+    return "weak";
+  else if (RetainableObject)
+    return ArgType->isBlockPointerType() ? "copy" : "retain";
+  return 0;
+}
 
 static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
                                   const ObjCMethodDecl *Setter,
@@ -304,12 +344,10 @@ static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
   }
   // Property with no setter may be suggested as a 'readonly' property.
   if (!Setter) {
-    if (!LParenAdded) {
-      PropertyString += "(readonly";
-      LParenAdded = true;
-    }
-    else
-      append_attr(PropertyString, "readonly", LParenAdded);
+    append_attr(PropertyString, "readonly", LParenAdded);
+    QualType ResType = Context.getCanonicalType(Getter->getResultType());
+    if (const char *MemoryManagementAttr = PropertyMemoryAttribute(Context, ResType))
+      append_attr(PropertyString, MemoryManagementAttr, LParenAdded);
   }
   
   // Short circuit 'delegate' properties that contain the name "delegate" or
@@ -324,27 +362,8 @@ static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
   else if (Setter) {
     const ParmVarDecl *argDecl = *Setter->param_begin();
     QualType ArgType = Context.getCanonicalType(argDecl->getType());
-    Qualifiers::ObjCLifetime propertyLifetime = ArgType.getObjCLifetime();
-    bool RetainableObject = ArgType->isObjCRetainableType();
-    if (RetainableObject && propertyLifetime == Qualifiers::OCL_Strong) {
-      if (const ObjCObjectPointerType *ObjPtrTy =
-          ArgType->getAs<ObjCObjectPointerType>()) {
-        ObjCInterfaceDecl *IDecl = ObjPtrTy->getObjectType()->getInterface();
-        if (IDecl &&
-            IDecl->lookupNestedProtocol(&Context.Idents.get("NSCopying")))
-          append_attr(PropertyString, "copy", LParenAdded);
-        else
-          append_attr(PropertyString, "retain", LParenAdded);
-      }
-      else if (ArgType->isBlockPointerType())
-        append_attr(PropertyString, "copy", LParenAdded);
-    } else if (propertyLifetime == Qualifiers::OCL_Weak)
-      // TODO. More precise determination of 'weak' attribute requires
-      // looking into setter's implementation for backing weak ivar.
-      append_attr(PropertyString, "weak", LParenAdded);
-    else if (RetainableObject)
-      append_attr(PropertyString,
-                  ArgType->isBlockPointerType() ? "copy" : "retain", LParenAdded);
+    if (const char *MemoryManagementAttr = PropertyMemoryAttribute(Context, ArgType))
+      append_attr(PropertyString, MemoryManagementAttr, LParenAdded);
   }
   if (LParenAdded)
     PropertyString += ')';
@@ -406,11 +425,19 @@ static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
   }
 }
 
+static bool IsCategoryNameWithDeprecatedSuffix(ObjCContainerDecl *D) {
+  if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(D)) {
+    StringRef Name = CatDecl->getName();
+    return Name.endswith("Deprecated");
+  }
+  return false;
+}
+
 void ObjCMigrateASTConsumer::migrateObjCInterfaceDecl(ASTContext &Ctx,
                                                       ObjCContainerDecl *D) {
-  if (D->isDeprecated())
+  if (D->isDeprecated() || IsCategoryNameWithDeprecatedSuffix(D))
     return;
-  
+    
   for (ObjCContainerDecl::method_iterator M = D->meth_begin(), MEnd = D->meth_end();
        M != MEnd; ++M) {
     ObjCMethodDecl *Method = (*M);
@@ -434,39 +461,6 @@ void ObjCMigrateASTConsumer::migrateObjCInterfaceDecl(ASTContext &Ctx,
     if ((ASTMigrateActions & FrontendOptions::ObjCMT_Annotation) &&
         !Prop->isDeprecated())
       migratePropertyNsReturnsInnerPointer(Ctx, Prop);
-  }
-}
-
-void ObjCMigrateASTConsumer::migrateDeprecatedAnnotation(ASTContext &Ctx,
-                                                           ObjCCategoryDecl *CatDecl) {
-  StringRef Name = CatDecl->getName();
-  if (!Name.endswith("Deprecated"))
-    return;
-  
-  if (!Ctx.Idents.get("DEPRECATED").hasMacroDefinition())
-    return;
-  
-  ObjCContainerDecl *D = cast<ObjCContainerDecl>(CatDecl);
-  
-  for (ObjCContainerDecl::method_iterator M = D->meth_begin(), MEnd = D->meth_end();
-       M != MEnd; ++M) {
-    ObjCMethodDecl *Method = (*M);
-    if (Method->isDeprecated() || Method->isImplicit())
-      continue;
-    // Annotate with DEPRECATED
-    edit::Commit commit(*Editor);
-    commit.insertBefore(Method->getLocEnd(), " DEPRECATED");
-    Editor->commit(commit);
-  }
-  for (ObjCContainerDecl::prop_iterator P = D->prop_begin(),
-       E = D->prop_end(); P != E; ++P) {
-    ObjCPropertyDecl *Prop = *P;
-    if (Prop->isDeprecated())
-      continue;
-    // Annotate with DEPRECATED
-    edit::Commit commit(*Editor);
-    commit.insertAfterToken(Prop->getLocEnd(), " DEPRECATED");
-    Editor->commit(commit);
   }
 }
 
@@ -1133,7 +1127,7 @@ void ObjCMigrateASTConsumer::migratePropertyNsReturnsInnerPointer(ASTContext &Ct
 
 void ObjCMigrateASTConsumer::migrateAllMethodInstaceType(ASTContext &Ctx,
                                                  ObjCContainerDecl *CDecl) {
-  if (CDecl->isDeprecated())
+  if (CDecl->isDeprecated() || IsCategoryNameWithDeprecatedSuffix(CDecl))
     return;
   
   // migrate methods which can have instancetype as their result type.
@@ -1607,8 +1601,6 @@ void ObjCMigrateASTConsumer::HandleTranslationUnit(ASTContext &Ctx) {
         migrateObjCInterfaceDecl(Ctx, CDecl);
       if (ObjCCategoryDecl *CatDecl = dyn_cast<ObjCCategoryDecl>(*D)) {
         migrateObjCInterfaceDecl(Ctx, CatDecl);
-        if (ASTMigrateActions & FrontendOptions::ObjCMT_Annotation)
-          migrateDeprecatedAnnotation(Ctx, CatDecl);
       }
       else if (ObjCProtocolDecl *PDecl = dyn_cast<ObjCProtocolDecl>(*D))
         ObjCProtocolDecls.insert(PDecl);
@@ -1682,6 +1674,8 @@ void ObjCMigrateASTConsumer::HandleTranslationUnit(ASTContext &Ctx) {
     assert(file);
     if (IsReallyASystemHeader(Ctx, file, FID))
       continue;
+    if (!canModifyFile(file->getName()))
+      continue;
     SmallString<512> newText;
     llvm::raw_svector_ostream vecOS(newText);
     buf.write(vecOS);
@@ -1705,16 +1699,49 @@ bool MigrateSourceAction::BeginInvocation(CompilerInstance &CI) {
   return true;
 }
 
+static std::vector<std::string> getWhiteListFilenames(StringRef DirPath) {
+  using namespace llvm::sys::fs;
+  using namespace llvm::sys::path;
+
+  std::vector<std::string> Filenames;
+  if (DirPath.empty() || !is_directory(DirPath))
+    return Filenames;
+  
+  llvm::error_code EC;
+  directory_iterator DI = directory_iterator(DirPath, EC);
+  directory_iterator DE;
+  for (; !EC && DI != DE; DI = DI.increment(EC)) {
+    if (is_regular_file(DI->path()))
+      Filenames.push_back(filename(DI->path()));
+  }
+
+  return Filenames;
+}
+
 ASTConsumer *MigrateSourceAction::CreateASTConsumer(CompilerInstance &CI,
                                                   StringRef InFile) {
   PPConditionalDirectiveRecord *
     PPRec = new PPConditionalDirectiveRecord(CI.getSourceManager());
+  unsigned ObjCMTAction = CI.getFrontendOpts().ObjCMTAction;
+  unsigned ObjCMTOpts = ObjCMTAction;
+  // These are companion flags, they do not enable transformations.
+  ObjCMTOpts &= ~(FrontendOptions::ObjCMT_AtomicProperty |
+                  FrontendOptions::ObjCMT_NsAtomicIOSOnlyProperty);
+  if (ObjCMTOpts == FrontendOptions::ObjCMT_None) {
+    // If no specific option was given, enable literals+subscripting transforms
+    // by default.
+    ObjCMTAction |= FrontendOptions::ObjCMT_Literals |
+                    FrontendOptions::ObjCMT_Subscripting;
+  }
   CI.getPreprocessor().addPPCallbacks(PPRec);
+  std::vector<std::string> WhiteList =
+    getWhiteListFilenames(CI.getFrontendOpts().ObjCMTWhiteListPath);
   return new ObjCMigrateASTConsumer(CI.getFrontendOpts().OutputFile,
-                                    FrontendOptions::ObjCMT_MigrateAll,
+                                    ObjCMTAction,
                                     Remapper,
                                     CI.getFileManager(),
                                     PPRec,
                                     CI.getPreprocessor(),
-                                    /*isOutputFile=*/true); 
+                                    /*isOutputFile=*/true,
+                                    WhiteList);
 }

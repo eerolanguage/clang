@@ -443,7 +443,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       // method definitions.
       if (ExpectAndConsumeSemi(diag::err_expected_semi_after_method_proto)) {
         // We didn't find a semi and we error'ed out. Skip until a ';' or '@'.
-        SkipUntil(tok::at, /*StopAtSemi=*/true, /*DontConsume=*/true);
+        SkipUntil(tok::at, StopAtSemi | StopBeforeMatch);
         if (Tok.is(tok::semi))
           ConsumeToken();
       }
@@ -579,7 +579,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
       // or something like that.
       Diag(AtLoc, diag::err_objc_illegal_interface_qual);
       // Skip until we see an '@' or '}' or ';'.
-      SkipUntil(tok::r_brace, tok::at);
+      SkipUntil(tok::r_brace, tok::at, StopAtSemi);
       break;
         
     case tok::objc_implementation:
@@ -740,7 +740,7 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
       if (!SelIdent) {
         Diag(Tok, diag::err_objc_expected_selector_for_getter_setter)
           << IsSetter;
-        SkipUntil(CloseKind);
+        SkipUntil(CloseKind, StopAtSemi);
         return;
       }
 
@@ -758,7 +758,7 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS) {
       }
     } else {
       Diag(AttrName, diag::err_objc_expected_property_attr) << II;
-      SkipUntil(CloseKind);
+      SkipUntil(CloseKind, StopAtSemi);
       return;
     }
 
@@ -1063,7 +1063,7 @@ ParsedType Parser::ParseObjCTypeName(ObjCDeclSpec &DS,
   else if (Tok.getLocation() == TypeStartLoc) {
     // If we didn't eat any tokens, then this isn't a type.
     Diag(Tok, diag::err_expected_type);
-    SkipUntil(tok::r_paren);
+    SkipUntil(tok::r_paren, StopAtSemi);
   } else {
     // Otherwise, we found *something*, but didn't get a ')' in the right
     // place.  Emit an error then return what we have as the type.
@@ -1187,7 +1187,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
     Diag(Tok, diag::err_expected_selector_for_method)
       << SourceRange(mLoc, Tok.getLocation());
     // Skip until we get a ; or @.
-    SkipUntil(tok::at, true /*StopAtSemi*/, true /*don't consume*/);
+    SkipUntil(tok::at, StopAtSemi | StopBeforeMatch);
     return 0;
   }
 
@@ -1661,7 +1661,7 @@ ParseObjCProtocolReferences(SmallVectorImpl<Decl *> &Protocols,
 
     if (Tok.isNot(tok::identifier)) {
       Diag(Tok, diag::err_expected_ident);
-      SkipUntil(tok::greater);
+      SkipUntil(tok::greater, StopAtSemi);
       return true;
     }
     ProtocolIdents.push_back(std::make_pair(Tok.getIdentifierInfo(),
@@ -1851,7 +1851,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
                !PP.isInLegacyMode(Tok.getLocation())) {
       Diag(Tok, diag::err_expected_semi_decl_list);
       // Skip to end of block or statement
-      SkipUntil(tok::r_brace, true, true);
+      SkipUntil(tok::r_brace, StopAtSemi | StopBeforeMatch);
     }
   }
   HelperActionsForIvarDeclarations(interfaceDecl, atLoc,
@@ -2020,7 +2020,7 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
     }
     if (Tok.isNot(tok::r_paren)) {
       Diag(Tok, diag::err_expected_rparen);
-      SkipUntil(tok::r_paren, false); // don't stop at ';'
+      SkipUntil(tok::r_paren); // don't stop at ';'
       return DeclGroupPtrTy();
     }
     rparenLoc = ConsumeParen();
@@ -2326,7 +2326,7 @@ Parser::ParseObjCSynchronizedStmt(SourceLocation atLoc) {
       Diag(Tok, diag::err_expected_rparen);
 
     // Skip forward until we see a left brace, but don't consume it.
-    SkipUntil(tok::l_brace, true, true);
+    SkipUntil(tok::l_brace, StopAtSemi | StopBeforeMatch);
   }
 
   // Require a compound statement.
@@ -2431,7 +2431,7 @@ StmtResult Parser::ParseObjCTryStmt(SourceLocation atLoc) {
         if (Tok.is(tok::r_paren))
           RParenLoc = ConsumeParen();
         else // Skip over garbage, until we get to ')'.  Eat the ')'.
-          SkipUntil(tok::r_paren, true, false);
+          SkipUntil(tok::r_paren, StopAtSemi);
 
         StmtResult CatchBody(true);
         if (Tok.is(tok::l_brace) ||
@@ -2653,7 +2653,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
     Diag(Tok, diag::err_expected_method_body);
 
     // Skip over garbage, until we get to '{'.  Don't eat the '{'.
-    SkipUntil(tok::l_brace, true, true);
+    SkipUntil(tok::l_brace, StopAtSemi | StopBeforeMatch);
 
     // If we didn't find the '{', bail out.
     if (Tok.isNot(tok::l_brace))
@@ -2662,7 +2662,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
 
   if (!MDecl) {
     ConsumeBrace();
-    SkipUntil(tok::r_brace, /*StopAtSemi=*/false);
+    SkipUntil(tok::r_brace);
     return 0;
   }
 
@@ -2972,7 +2972,7 @@ ExprResult Parser::ParseObjCMessageExpression() {
     bool IsExpr;
     void *TypeOrExpr = NULL;
     if (ParseObjCXXMessageReceiver(IsExpr, TypeOrExpr)) {
-      SkipUntil(tok::r_square);
+      SkipUntil(tok::r_square, StopAtSemi);
       return ExprError();
     }
 
@@ -3000,7 +3000,7 @@ ExprResult Parser::ParseObjCMessageExpression() {
 
     case Sema::ObjCClassMessage:
       if (!ReceiverType) {
-        SkipUntil(tok::r_square);
+        SkipUntil(tok::r_square, StopAtSemi);
         return ExprError();
       }
 
@@ -3018,7 +3018,7 @@ ExprResult Parser::ParseObjCMessageExpression() {
   // Otherwise, an arbitrary expression can be the receiver of a send.
   ExprResult Res(ParseExpression());
   if (Res.isInvalid()) {
-    SkipUntil(tok::r_square);
+    SkipUntil(tok::r_square, StopAtSemi);
     return Res;
   }
 
@@ -3108,7 +3108,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         // stop at the ']' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
         if (!isEero)
-          SkipUntil(tok::r_square);
+          SkipUntil(tok::r_square, StopAtSemi);
         return ExprError();
       }
 
@@ -3146,7 +3146,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         // stop at the ']' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
         if (!isEero)
-          SkipUntil(tok::r_square);
+          SkipUntil(tok::r_square, StopAtSemi);
         return Res;
       }
 
@@ -3200,7 +3200,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         // We must manually skip to a ']', otherwise the expression skipper will
         // stop at the ']' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
-        SkipUntil(tok::r_square);
+        SkipUntil(tok::r_square, StopAtSemi);
         return Res;
       }
 
@@ -3213,7 +3213,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
     // We must manually skip to a ']', otherwise the expression skipper will
     // stop at the ']' when it skips to the ';'.  We want it to skip beyond
     // the enclosing expression.
-    SkipUntil(tok::r_square);
+    SkipUntil(tok::r_square, StopAtSemi);
     return ExprError();
   }
     
@@ -3225,7 +3225,7 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
     // We must manually skip to a ']', otherwise the expression skipper will
     // stop at the ']' when it skips to the ';'.  We want it to skip beyond
     // the enclosing expression.
-    SkipUntil(tok::r_square);
+    SkipUntil(tok::r_square, StopAtSemi);
     return ExprError();
   }
 
@@ -3352,7 +3352,7 @@ ExprResult Parser::ParseObjCArrayLiteral(SourceLocation AtLoc) {
       // We must manually skip to a ']', otherwise the expression skipper will
       // stop at the ']' when it skips to the ';'.  We want it to skip beyond
       // the enclosing expression.
-      SkipUntil(tok::r_square);
+      SkipUntil(tok::r_square, StopAtSemi);
       return Res;
     }    
     
@@ -3387,7 +3387,7 @@ ExprResult Parser::ParseObjCDictionaryLiteral(SourceLocation AtLoc) {
         // We must manually skip to a '}', otherwise the expression skipper will
         // stop at the '}' when it skips to the ';'.  We want it to skip beyond
         // the enclosing expression.
-        SkipUntil(tok::r_brace);
+        SkipUntil(tok::r_brace, StopAtSemi);
         return KeyExpr;
       }
     }
@@ -3396,7 +3396,7 @@ ExprResult Parser::ParseObjCDictionaryLiteral(SourceLocation AtLoc) {
       ConsumeToken();
     } else {
       Diag(Tok, diag::err_expected_colon);
-      SkipUntil(tok::r_brace);
+      SkipUntil(tok::r_brace, StopAtSemi);
       return ExprError();
     }
     
@@ -3405,7 +3405,7 @@ ExprResult Parser::ParseObjCDictionaryLiteral(SourceLocation AtLoc) {
       // We must manually skip to a '}', otherwise the expression skipper will
       // stop at the '}' when it skips to the ';'.  We want it to skip beyond
       // the enclosing expression.
-      SkipUntil(tok::r_brace);
+      SkipUntil(tok::r_brace, StopAtSemi);
       return ValueExpr;
     }
     

@@ -55,7 +55,9 @@ enum AttributeDeclKind {
   ExpectedVariableFieldOrTag,
   ExpectedTypeOrNamespace,
   ExpectedObjectiveCInterface,
-  ExpectedMethodOrProperty
+  ExpectedMethodOrProperty,
+  ExpectedStructOrUnion,
+  ExpectedStructOrUnionOrClass
 };
 
 //===----------------------------------------------------------------------===//
@@ -3660,7 +3662,7 @@ static void handleConstantAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                CUDAConstantAttr(Attr.getRange(), S.Context,
                                 Attr.getAttributeSpellingListIndex()));
   } else {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "constant";
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
   }
 }
 
@@ -3683,7 +3685,7 @@ static void handleDeviceAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                CUDADeviceAttr(Attr.getRange(), S.Context,
                               Attr.getAttributeSpellingListIndex()));
   } else {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "device";
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
   }
 }
 
@@ -3714,7 +3716,7 @@ static void handleGlobalAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                CUDAGlobalAttr(Attr.getRange(), S.Context,
                               Attr.getAttributeSpellingListIndex()));
   } else {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "global";
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
   }
 }
 
@@ -3730,7 +3732,7 @@ static void handleHostAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                CUDAHostAttr(Attr.getRange(), S.Context,
                             Attr.getAttributeSpellingListIndex()));
   } else {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "host";
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
   }
 }
 
@@ -3746,7 +3748,7 @@ static void handleSharedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                CUDASharedAttr(Attr.getRange(), S.Context,
                               Attr.getAttributeSpellingListIndex()));
   } else {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "shared";
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
   }
 }
 
@@ -4389,6 +4391,31 @@ static void handleNSBridgedAttr(Sema &S, Scope *Sc, Decl *D,
                            Attr.getAttributeSpellingListIndex()));
 }
 
+static void handleObjCBridgeAttr(Sema &S, Scope *Sc, Decl *D,
+                                const AttributeList &Attr) {
+  if (!isa<RecordDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
+    << Attr.getName()
+    << (S.getLangOpts().CPlusPlus ? ExpectedStructOrUnionOrClass
+                                  : ExpectedStructOrUnion);
+    return;
+  }
+  
+  if (Attr.getNumArgs() != 1) {
+    S.Diag(D->getLocStart(), diag::err_objc_bridge_not_id);
+    return;
+  }
+  IdentifierLoc *Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
+  if (!Parm) {
+    S.Diag(D->getLocStart(), diag::err_objc_bridge_not_id);
+    return;
+  }
+  
+  D->addAttr(::new (S.Context)
+             ObjCBridgeAttr(Attr.getRange(), S.Context, Parm ? Parm->Ident : 0,
+                           Attr.getAttributeSpellingListIndex()));
+}
+
 static void handleObjCOwnershipAttr(Sema &S, Decl *D,
                                     const AttributeList &Attr) {
   if (hasDeclarator(D)) return;
@@ -4675,6 +4702,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
       
   case AttributeList::AT_NSBridged:
     handleNSBridgedAttr(S, scope, D, Attr); break;
+      
+  case AttributeList::AT_ObjCBridge:
+    handleObjCBridgeAttr(S, scope, D, Attr); break;
 
   case AttributeList::AT_CFAuditedTransfer:
   case AttributeList::AT_CFUnknownTransfer:

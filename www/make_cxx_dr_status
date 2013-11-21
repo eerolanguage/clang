@@ -94,6 +94,10 @@ print >> out_file, '''\
 
 def availability(issue):
   status = status_map.get(issue, 'unknown')
+  avail_suffix = ''
+  if status.endswith(' c++11'):
+    status = status[:-6]
+    avail_suffix = ' (C++11 onwards)'
   if status == 'unknown':
     avail = 'Unknown'
     avail_style = ' class="none"'
@@ -129,8 +133,9 @@ def availability(issue):
     _, avail_style = availability(dup)
   else:
     assert False, 'unknown status %s for issue %s' % (status, dr.issue)
-  return (avail, avail_style)
+  return (avail + avail_suffix, avail_style)
 
+count = {}
 for dr in drs:
   if dr.status in ('concepts',):
     # Yeah, cool story bro.
@@ -144,6 +149,8 @@ for dr in drs:
   else:
     row_style = ''
     avail, avail_style = availability(dr.issue)
+    if not avail.startswith('Sup') and not avail.startswith('Dup'):
+      count[avail] = count.get(avail, 0) + 1
 
   print >> out_file, '''\
   <tr%s>
@@ -153,6 +160,9 @@ for dr in drs:
     <td%s align="center">%s</td>
   </tr>''' % (row_style, dr.url, dr.issue, dr.status, dr.title, avail_style,
               avail)
+
+for status, num in count.items():
+  print "%s: %s" % (status, num)
 
 print >> out_file, '''\
 </table>

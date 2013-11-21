@@ -78,12 +78,14 @@ ifeq ($(shell test -d $(COMPILERRT_SRC_ROOT) && echo OK),OK)
 # support.
 RuntimeDirs :=
 ifeq ($(OS),Darwin)
-RuntimeDirs += darwin
+RuntimeDirs += darwin darwin_embedded
 RuntimeLibrary.darwin.Configs := \
 	eprintf.a 10.4.a osx.a ios.a cc_kext.a cc_kext_ios5.a \
 	asan_osx_dynamic.dylib \
 	profile_osx.a profile_ios.a \
 	ubsan_osx.a
+RuntimeLibrary.darwin_embedded.Configs := \
+	soft_static.a hard_static.a soft_pic.a hard_pic.a
 
 # Support building compiler-rt with relocatable SDKs.
 #
@@ -93,6 +95,10 @@ RuntimeLibrary.darwin.Configs := \
 ACTIVE_SDK_PATH := $(shell xcrun --show-sdk-path 2> /dev/null)
 ifneq ($(ACTIVE_SDK_PATH),)
 COMPILERRT_MAKE_FLAGS := SDKROOT=$(ACTIVE_SDK_PATH)
+endif
+IOSSIM_SDK_PATH := $(shell xcrun --show-sdk-path -sdk iphonesimulator 2> /dev/null)
+ifneq ($(IOSSIM_SDK_PATH),)
+RuntimeLibrary.darwin.Configs += asan_iossim_dynamic.dylib
 endif
 
 endif

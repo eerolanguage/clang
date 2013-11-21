@@ -1557,6 +1557,9 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
       return Entry;
 
     // Make sure the result is of the correct type.
+    if (Entry->getType()->getAddressSpace() != Ty->getAddressSpace())
+      return llvm::ConstantExpr::getAddrSpaceCast(Entry, Ty);
+
     return llvm::ConstantExpr::getBitCast(Entry, Ty);
   }
 
@@ -1607,9 +1610,9 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
   }
 
   if (AddrSpace != Ty->getAddressSpace())
-    return llvm::ConstantExpr::getBitCast(GV, Ty);
-  else
-    return GV;
+    return llvm::ConstantExpr::getAddrSpaceCast(GV, Ty);
+
+  return GV;
 }
 
 
@@ -1802,7 +1805,8 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D) {
   // Strip off a bitcast if we got one back.
   if (llvm::ConstantExpr *CE = dyn_cast<llvm::ConstantExpr>(Entry)) {
     assert(CE->getOpcode() == llvm::Instruction::BitCast ||
-           // all zero index gep.
+           CE->getOpcode() == llvm::Instruction::AddrSpaceCast ||
+           // All zero index gep.
            CE->getOpcode() == llvm::Instruction::GetElementPtr);
     Entry = CE->getOperand(0);
   }
@@ -2625,11 +2629,16 @@ static llvm::GlobalVariable *GenerateStringLiteral(StringRef str,
   llvm::Constant *C =
       llvm::ConstantDataArray::getString(CGM.getLLVMContext(), str, false);
 
+  // OpenCL v1.1 s6.5.3: a string literal is in the constant address space.
+  unsigned AddrSpace = 0;
+  if (CGM.getLangOpts().OpenCL)
+    AddrSpace = CGM.getContext().getTargetAddressSpace(LangAS::opencl_constant);
+
   // Create a global variable for this string
-  llvm::GlobalVariable *GV =
-    new llvm::GlobalVariable(CGM.getModule(), C->getType(), constant,
-                             llvm::GlobalValue::PrivateLinkage,
-                             C, GlobalName);
+  llvm::GlobalVariable *GV = new llvm::GlobalVariable(
+      CGM.getModule(), C->getType(), constant,
+      llvm::GlobalValue::PrivateLinkage, C, GlobalName, 0,
+      llvm::GlobalVariable::NotThreadLocal, AddrSpace);
   GV->setAlignment(Alignment);
   GV->setUnnamedAddr(true);
   return GV;

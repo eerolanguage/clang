@@ -2017,6 +2017,8 @@ static bool isMsLayout(const RecordDecl* D) {
 // * If the last field is a non-zero length bitfield and we have any virtual
 //   bases then some extra padding is added before the virtual bases for no
 //   obvious reason.
+// * When laying out empty non-virtual bases, an extra byte of padding is added
+//   if the non-virtual base before the empty non-virtual base has a vbptr.
 
 
 namespace {
@@ -2118,8 +2120,10 @@ public:
   const CXXRecordDecl *PrimaryBase;
   /// \brief The class we share our vb-pointer with.
   const CXXRecordDecl *SharedVBPtrBase;
-  /// \brief True if the class has a (not necessarily its own) vftable pointer.
-  bool HasVFPtr : 1;
+  /// \brief True if the class has a vftable pointer that can be extended
+  /// by this class or classes derived from it.  Such a vfptr will always occur
+  /// at offset 0.
+  bool HasExtendableVFPtr : 1;
   /// \brief True if the class has a (not necessarily its own) vbtable pointer.
   bool HasVBPtr : 1;
   /// \brief Offset to the virtual base table pointer (if one exists).
@@ -2139,6 +2143,8 @@ public:
   bool LastBaseWasEmpty;
   /// \brief Lets us know if we're in 64-bit mode
   bool Is64BitMode;
+  /// \brief True if the last non-virtual base has a vbptr.
+  bool LastNonVirtualBaseHasVBPtr;
 };
 } // namespace
 
@@ -2226,7 +2232,7 @@ MicrosoftRecordLayoutBuilder::initializeCXXLayout(const CXXRecordDecl *RD) {
 
   // Initialize information about the bases.
   HasVBPtr = false;
-  HasVFPtr = false;
+  HasExtendableVFPtr = false;
   SharedVBPtrBase = 0;
   PrimaryBase = 0;
   VirtualAlignment = CharUnits::One();
@@ -2251,9 +2257,9 @@ MicrosoftRecordLayoutBuilder::initializeCXXLayout(const CXXRecordDecl *RD) {
       continue;
     }
     // We located a primary base class!
-    if (!PrimaryBase && Layout.hasVFPtr()) {
+    if (!PrimaryBase && Layout.hasExtendableVFPtr()) {
       PrimaryBase = BaseDecl;
-      HasVFPtr = true;
+      HasExtendableVFPtr = true;
     }
     // We located a base to share a VBPtr with!
     if (!SharedVBPtrBase && Layout.hasVBPtr()) {
@@ -2279,12 +2285,12 @@ void MicrosoftRecordLayoutBuilder::layoutVFPtr(const CXXRecordDecl *RD) {
 
   // Look at all of our methods to determine if we need a VFPtr.  We need a
   // vfptr if we define a new virtual function.
-  if (!HasVFPtr && RD->isDynamicClass())
+  if (!HasExtendableVFPtr && RD->isDynamicClass())
     for (CXXRecordDecl::method_iterator i = RD->method_begin(),
                                         e = RD->method_end();
-         !HasVFPtr && i != e; ++i)
-      HasVFPtr = i->isVirtual() && i->size_overridden_methods() == 0;
-  if (!HasVFPtr)
+         !HasExtendableVFPtr && i != e; ++i)
+      HasExtendableVFPtr = i->isVirtual() && i->size_overridden_methods() == 0;
+  if (!HasExtendableVFPtr)
     return;
 
   // MSVC 32 (but not 64) potentially over-aligns the vf-table pointer by giving
@@ -2302,6 +2308,7 @@ void
 MicrosoftRecordLayoutBuilder::layoutNonVirtualBases(const CXXRecordDecl *RD) {
   LazyEmptyBase = 0;
   LastBaseWasEmpty = false;
+  LastNonVirtualBaseHasVBPtr = false;
 
   // Lay out the primary base first.
   if (PrimaryBase)
@@ -2329,6 +2336,10 @@ MicrosoftRecordLayoutBuilder::layoutNonVirtualBase(const CXXRecordDecl *RD) {
     const ASTRecordLayout &LazyLayout =
         Context.getASTRecordLayout(LazyEmptyBase);
     Size = Size.RoundUpToAlignment(LazyLayout.getAlignment());
+    // If the last non-virtual base has a vbptr we add a byte of padding for no
+    // obvious reason.
+    if (LastNonVirtualBaseHasVBPtr)
+      Size++;
     Bases.insert(std::make_pair(LazyEmptyBase, Size));
     // Empty bases only consume space when followed by another empty base.
     if (RD && Layout->getNonVirtualSize().isZero()) {
@@ -2336,6 +2347,7 @@ MicrosoftRecordLayoutBuilder::layoutNonVirtualBase(const CXXRecordDecl *RD) {
       Size++;
     }
     LazyEmptyBase = 0;
+    LastNonVirtualBaseHasVBPtr = false;
   }
 
   // RD is null when flushing the final lazy base.
@@ -2354,6 +2366,7 @@ MicrosoftRecordLayoutBuilder::layoutNonVirtualBase(const CXXRecordDecl *RD) {
   // Note: we don't update alignment here because it was accounted
   // for during initalization.
   LastBaseWasEmpty = false;
+  LastNonVirtualBaseHasVBPtr = Layout->hasVBPtr();
 }
 
 void MicrosoftRecordLayoutBuilder::layoutVBPtr(const CXXRecordDecl *RD) {
@@ -2672,7 +2685,8 @@ ASTContext::BuildMicrosoftASTRecordLayout(const RecordDecl *D) const {
     Builder.cxxLayout(RD);
     return new (*this) ASTRecordLayout(
         *this, Builder.Size, Builder.Alignment,
-        Builder.HasVFPtr && !Builder.PrimaryBase, Builder.HasVFPtr,
+        Builder.HasExtendableVFPtr && !Builder.PrimaryBase,
+        Builder.HasExtendableVFPtr,
         Builder.VBPtrOffset, Builder.DataSize, Builder.FieldOffsets.data(),
         Builder.FieldOffsets.size(), Builder.DataSize,
         Builder.NonVirtualAlignment, CharUnits::Zero(), Builder.PrimaryBase,

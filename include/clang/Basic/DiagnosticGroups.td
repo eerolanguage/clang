@@ -49,6 +49,7 @@ def BuiltinMacroRedefined : DiagGroup<"builtin-macro-redefined">;
 def BuiltinRequiresHeader : DiagGroup<"builtin-requires-header">;
 def C99Compat : DiagGroup<"c99-compat">;
 def CXXCompat: DiagGroup<"c++-compat">;
+def ExternCCompat : DiagGroup<"extern-c-compat">;
 def GNUCaseRange : DiagGroup<"gnu-case-range">;
 def CastAlign : DiagGroup<"cast-align">;
 def : DiagGroup<"cast-qual">;
@@ -65,11 +66,15 @@ def GNUStringLiteralOperatorTemplate :
 def DeleteNonVirtualDtor : DiagGroup<"delete-non-virtual-dtor">;
 def AbstractFinalClass : DiagGroup<"abstract-final-class">;
 
+def CXX11CompatDeprecatedWritableStr :
+  DiagGroup<"c++11-compat-deprecated-writable-strings">;
+
 def DeprecatedDeclarations : DiagGroup<"deprecated-declarations">;
 def DeprecatedImplementations :DiagGroup<"deprecated-implementations">;
 def DeprecatedIncrementBool : DiagGroup<"deprecated-increment-bool">;
 def DeprecatedRegister : DiagGroup<"deprecated-register">;
-def DeprecatedWritableStr : DiagGroup<"deprecated-writable-strings">;
+def DeprecatedWritableStr : DiagGroup<"deprecated-writable-strings",
+                                      [CXX11CompatDeprecatedWritableStr]>;
 // FIXME: Why are DeprecatedImplementations and DeprecatedWritableStr
 // not in this group?
 def Deprecated : DiagGroup<"deprecated", [DeprecatedDeclarations,
@@ -142,6 +147,7 @@ def ReservedUserDefinedLiteral :
 def CXX11Compat : DiagGroup<"c++11-compat",
                             [CXX11Narrowing,
                              CXX11CompatReservedUserDefinedLiteral,
+                             CXX11CompatDeprecatedWritableStr,
                              CXXPre1yCompat]>;
 def : DiagGroup<"c++0x-compat", [CXX11Compat]>;
 def CXX11CompatPedantic : DiagGroup<"c++11-compat-pedantic",
@@ -338,6 +344,7 @@ def UnusedArgument : DiagGroup<"unused-argument">;
 def UnusedSanitizeArgument : DiagGroup<"unused-sanitize-argument">;
 def UnusedCommandLineArgument : DiagGroup<"unused-command-line-argument",
                                           [UnusedSanitizeArgument]>;
+def InvalidCommandLineArgument : DiagGroup<"invalid-command-line-argument">;
 def UnusedComparison : DiagGroup<"unused-comparison">;
 def UnusedExceptionParameter : DiagGroup<"unused-exception-parameter">;
 def UnneededInternalDecl : DiagGroup<"unneeded-internal-declaration">;
@@ -375,6 +382,8 @@ def AutomaticReferenceCounting : DiagGroup<"arc",
 def ARCRepeatedUseOfWeakMaybe : DiagGroup<"arc-maybe-repeated-use-of-weak">;
 def ARCRepeatedUseOfWeak : DiagGroup<"arc-repeated-use-of-weak",
                                      [ARCRepeatedUseOfWeakMaybe]>;
+def ObjCBridge : DiagGroup<"bridge-cast">;
+
 def SelectorTypeMismatch : DiagGroup<"selector-type-mismatch">;
 def Selector : DiagGroup<"selector", [SelectorTypeMismatch]>;
 def Protocol : DiagGroup<"protocol">;
@@ -494,7 +503,8 @@ def Most : DiagGroup<"most", [
     ObjCMissingSuperCalls,
     OverloadedVirtual,
     PrivateExtern,
-    SelTypeCast
+    SelTypeCast,
+    ExternCCompat
  ]>;
 
 // Thread Safety warnings 

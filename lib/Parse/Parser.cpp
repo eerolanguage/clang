@@ -201,7 +201,7 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
     Diag(Tok, DiagID) << Msg;
 
   if (SkipToTok != tok::unknown)
-    SkipUntil(SkipToTok);
+    SkipUntil(SkipToTok, StopAtSemi);
   return true;
 }
 
@@ -275,16 +275,19 @@ void Parser::ConsumeExtraSemi(ExtraSemiKind Kind, unsigned TST) {
 // Error recovery.
 //===----------------------------------------------------------------------===//
 
+static bool HasFlagsSet(Parser::SkipUntilFlags L, Parser::SkipUntilFlags R) {
+  return (static_cast<unsigned>(L) & static_cast<unsigned>(R)) != 0;
+}
+
 /// SkipUntil - Read tokens until we get to the specified token, then consume
-/// it (unless DontConsume is true).  Because we cannot guarantee that the
+/// it (unless no flag StopBeforeMatch).  Because we cannot guarantee that the
 /// token will ever occur, this skips to the next token, or to some likely
 /// good stopping point.  If StopAtSemi is true, skipping will stop at a ';'
 /// character.
 ///
 /// If SkipUntil finds the specified token, it returns true, otherwise it
 /// returns false.
-bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, bool StopAtSemi,
-                       bool DontConsume, bool StopAtCodeCompletion) {
+bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, SkipUntilFlags Flags) {
   // We always want this function to skip at least one token if the first token
   // isn't T and if not at EOF.
   bool isFirstTokenSkipped = true;
@@ -292,7 +295,7 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, bool StopAtSemi,
     // If we found one of the tokens, stop and return true.
     for (unsigned i = 0, NumToks = Toks.size(); i != NumToks; ++i) {
       if (Tok.is(Toks[i])) {
-        if (DontConsume) {
+        if (HasFlagsSet(Flags, StopBeforeMatch)) {
           // Noop, don't consume the token.
         } else {
           ConsumeAnyToken();
@@ -320,8 +323,9 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, bool StopAtSemi,
     // Important special case: The caller has given up and just wants us to
     // skip the rest of the file. Do this without recursing, since we can
     // get here precisely because the caller detected too much recursion.
-    if (Toks.size() == 1 && Toks[0] == tok::eof && !StopAtSemi &&
-        !StopAtCodeCompletion) {
+    if (Toks.size() == 1 && Toks[0] == tok::eof &&
+        !HasFlagsSet(Flags, StopAtSemi) &&
+        !HasFlagsSet(Flags, StopAtCodeCompletion)) {
       while (Tok.getKind() != tok::eof)
         ConsumeAnyToken();
       return true;
@@ -333,24 +337,33 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, bool StopAtSemi,
       return false;
         
     case tok::code_completion:
-      if (!StopAtCodeCompletion)
+      if (!HasFlagsSet(Flags, StopAtCodeCompletion))
         ConsumeToken();
       return false;
         
     case tok::l_paren:
       // Recursively skip properly-nested parens.
       ConsumeParen();
-      SkipUntil(tok::r_paren, false, false, StopAtCodeCompletion);
+      if (HasFlagsSet(Flags, StopAtCodeCompletion))
+        SkipUntil(tok::r_paren, StopAtCodeCompletion);
+      else
+        SkipUntil(tok::r_paren);
       break;
     case tok::l_square:
       // Recursively skip properly-nested square brackets.
       ConsumeBracket();
-      SkipUntil(tok::r_square, false, false, StopAtCodeCompletion);
+      if (HasFlagsSet(Flags, StopAtCodeCompletion))
+        SkipUntil(tok::r_square, StopAtCodeCompletion);
+      else
+        SkipUntil(tok::r_square);
       break;
     case tok::l_brace:
       // Recursively skip properly-nested braces.
       ConsumeBrace();
-      SkipUntil(tok::r_brace, false, false, StopAtCodeCompletion);
+      if (HasFlagsSet(Flags, StopAtCodeCompletion))
+        SkipUntil(tok::r_brace, StopAtCodeCompletion);
+      else
+        SkipUntil(tok::r_brace);
       break;
 
     // Okay, we found a ']' or '}' or ')', which we think should be balanced.
@@ -383,7 +396,7 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, bool StopAtSemi,
       break;
         
     case tok::semi:
-      if (StopAtSemi)
+      if (HasFlagsSet(Flags, StopAtSemi))
         return false;
       // FALL THROUGH.
     default:
@@ -604,19 +617,30 @@ bool Parser::ParseTopLevelDecl(DeclGroupPtrTy &Result) {
   if (PP.isIncrementalProcessingEnabled() && Tok.is(tok::eof))
     ConsumeToken();
 
-  while (Tok.is(tok::annot_pragma_unused))
-    HandlePragmaUnused();
-
   Result = DeclGroupPtrTy();
-  if (Tok.is(tok::eof)) {
+  switch (Tok.getKind()) {
+  case tok::annot_pragma_unused:
+    HandlePragmaUnused();
+    return false;
+
+  case tok::annot_module_include:
+    Actions.ActOnModuleInclude(Tok.getLocation(),
+                               reinterpret_cast<Module *>(
+                                   Tok.getAnnotationValue()));
+    ConsumeToken();
+    return false;
+
+  case tok::eof:
     // Late template parsing can begin.
     if (getLangOpts().DelayedTemplateParsing)
       Actions.SetLateTemplateParser(LateTemplateParserCallback, this);
     if (!PP.isIncrementalProcessingEnabled())
       Actions.ActOnEndOfTranslationUnit();
     //else don't tell Sema that we ended parsing: more input might come.
-
     return true;
+
+  default:
+    break;
   }
 
   ParsedAttributesWithRange attrs(AttrFactory);
@@ -951,6 +975,12 @@ Parser::ParseDeclOrFunctionDefInternal(ParsedAttributesWithRange &attrs,
   // Parse the common declaration-specifiers piece.
   ParseDeclarationSpecifiers(DS, ParsedTemplateInfo(), AS, DSC_top_level);
 
+  // If we had a free-standing type definition with a missing semicolon, we
+  // may get this far before the problem becomes obvious.
+  if (DS.hasTagDefinition() &&
+      DiagnoseMissingSemiAfterTagDefinition(DS, AS, DSC_top_level))
+    return DeclGroupPtrTy();
+
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
   if (Tok.is(tok::semi)) {
@@ -1095,7 +1125,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
     Diag(Tok, diag::err_expected_fn_body);
 
     // Skip over garbage, until we get to '{'.  Don't eat the '{'.
-    SkipUntil(tok::l_brace, true, true);
+    SkipUntil(tok::l_brace, StopAtSemi | StopBeforeMatch);
 
     // If we didn't find the '{', bail out.
     if (Tok.isNot(tok::l_brace))
@@ -1351,7 +1381,7 @@ void Parser::ParseKNRParamDeclarations(Declarator &D) {
 
     if (ExpectAndConsumeSemi(diag::err_expected_semi_declaration)) {
       // Skip to end of block or statement
-      SkipUntil(tok::semi, true);
+      SkipUntil(tok::semi);
       if (Tok.is(tok::semi))
         ConsumeToken();
     }
@@ -1419,7 +1449,7 @@ Parser::ExprResult Parser::ParseSimpleAsm(SourceLocation *EndLoc) {
   ExprResult Result(ParseAsmStringLiteral());
 
   if (Result.isInvalid()) {
-    SkipUntil(tok::r_paren, true, true);
+    SkipUntil(tok::r_paren, StopAtSemi | StopBeforeMatch);
     if (EndLoc)
       *EndLoc = Tok.getLocation();
     ConsumeAnyToken();
@@ -2058,7 +2088,7 @@ bool BalancedDelimiterTracker::diagnoseOverflow() {
   P.Diag(P.Tok, diag::err_bracket_depth_exceeded)
     << P.getLangOpts().BracketDepth;
   P.Diag(P.Tok, diag::note_bracket_depth);
-  P.SkipUntil(tok::eof, false);
+  P.SkipUntil(tok::eof);
   return true;  
 }
 
@@ -2097,13 +2127,14 @@ bool BalancedDelimiterTracker::diagnoseMissingClose() {
   // token.
   if (P.Tok.isNot(tok::r_paren) && P.Tok.isNot(tok::r_brace) &&
       P.Tok.isNot(tok::r_square) &&
-      P.SkipUntil(Close, FinalToken, /*StopAtSemi*/true, /*DontConsume*/true) &&
+      P.SkipUntil(Close, FinalToken,
+                  Parser::StopAtSemi | Parser::StopBeforeMatch) &&
       P.Tok.is(Close))
     LClose = P.ConsumeAnyToken();
   return true;
 }
 
 void BalancedDelimiterTracker::skipToEnd() {
-  P.SkipUntil(Close, false, true);
+  P.SkipUntil(Close, Parser::StopBeforeMatch);
   consumeClose();
 }
