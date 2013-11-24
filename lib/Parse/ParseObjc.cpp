@@ -1373,7 +1373,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
               ConsumeAnyToken(); // the '['
               Diag(Tok, diag::err_expected_selector_for_method)
                 << SourceRange(mLoc, Tok.getLocation());
-              SkipUntil(tok::r_square, true);
+              SkipUntil(tok::r_square, StopAtSemi);
               return 0;
             }
           }
