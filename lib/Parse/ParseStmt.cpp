@@ -1004,7 +1004,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
   bool newScope = true; // for off-side rule support
 
-  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+  while (Tok.isNot(tok::r_brace) && !isEofOrEom()) {
     if (Tok.is(tok::annot_pragma_unused)) {
       HandlePragmaUnused();
       continue;
@@ -2433,7 +2433,7 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   SourceLocation TokLoc = Tok.getLocation();
   do {
     // If we hit EOF, we're done, period.
-    if (Tok.is(tok::eof))
+    if (isEofOrEom())
       break;
 
     if (!InAsmComment && Tok.is(tok::semi)) {

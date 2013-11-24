@@ -326,7 +326,7 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, SkipUntilFlags Flags) {
     if (Toks.size() == 1 && Toks[0] == tok::eof &&
         !HasFlagsSet(Flags, StopAtSemi) &&
         !HasFlagsSet(Flags, StopAtCodeCompletion)) {
-      while (Tok.getKind() != tok::eof)
+      while (Tok.isNot(tok::eof))
         ConsumeAnyToken();
       return true;
     }
@@ -335,7 +335,15 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, SkipUntilFlags Flags) {
     case tok::eof:
       // Ran out of tokens.
       return false;
-        
+
+    case tok::annot_module_begin:
+    case tok::annot_module_end:
+    case tok::annot_module_include:
+      // Stop before we change submodules. They generally indicate a "good"
+      // place to pick up parsing again (except in the special case where
+      // we're trying to skip to EOF).
+      return false;
+
     case tok::code_completion:
       if (!HasFlagsSet(Flags, StopAtCodeCompletion))
         ConsumeToken();
@@ -612,7 +620,7 @@ namespace {
 bool Parser::ParseTopLevelDecl(DeclGroupPtrTy &Result) {
   DestroyTemplateIdAnnotationsRAIIObj CleanupRAII(TemplateIds);
 
-  // Skip over the EOF token, flagging end of previous input for incremental 
+  // Skip over the EOF token, flagging end of previous input for incremental
   // processing
   if (PP.isIncrementalProcessingEnabled() && Tok.is(tok::eof))
     ConsumeToken();
@@ -627,6 +635,12 @@ bool Parser::ParseTopLevelDecl(DeclGroupPtrTy &Result) {
     Actions.ActOnModuleInclude(Tok.getLocation(),
                                reinterpret_cast<Module *>(
                                    Tok.getAnnotationValue()));
+    ConsumeToken();
+    return false;
+
+  case tok::annot_module_begin:
+  case tok::annot_module_end:
+    // FIXME: Update visibility based on the submodule we're in.
     ConsumeToken();
     return false;
 
@@ -2025,14 +2039,15 @@ void Parser::ParseMicrosoftIfExistsExternalDeclaration() {
   }
 
   // Parse the declarations.
-  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+  // FIXME: Support module import within __if_exists?
+  while (Tok.isNot(tok::r_brace) && !isEofOrEom()) {
     ParsedAttributesWithRange attrs(AttrFactory);
     MaybeParseCXX11Attributes(attrs);
     MaybeParseMicrosoftAttributes(attrs);
     DeclGroupPtrTy Result = ParseExternalDeclaration(attrs);
     if (Result && !getCurScope()->getParent())
       Actions.getASTConsumer().HandleTopLevelDecl(Result.get());
-  }     
+  }
   Braces.consumeClose();
 }
 
@@ -2088,8 +2103,8 @@ bool BalancedDelimiterTracker::diagnoseOverflow() {
   P.Diag(P.Tok, diag::err_bracket_depth_exceeded)
     << P.getLangOpts().BracketDepth;
   P.Diag(P.Tok, diag::note_bracket_depth);
-  P.SkipUntil(tok::eof);
-  return true;  
+  P.cutOffParsing();
+  return true;
 }
 
 bool BalancedDelimiterTracker::expectAndConsume(unsigned DiagID,

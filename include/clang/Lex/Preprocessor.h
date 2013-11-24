@@ -276,22 +276,26 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
     CLK_LexAfterModuleImport
   } CurLexerKind;
 
+  /// \brief True if the current lexer is for a submodule.
+  bool CurIsSubmodule;
+
   /// IncludeMacroStack - This keeps track of the stack of files currently
   /// \#included, and macros currently being expanded from, not counting
   /// CurLexer/CurTokenLexer.
   struct IncludeStackInfo {
     enum CurLexerKind     CurLexerKind;
+    bool                  IsSubmodule;
     Lexer                 *TheLexer;
     PTHLexer              *ThePTHLexer;
     PreprocessorLexer     *ThePPLexer;
     TokenLexer            *TheTokenLexer;
     const DirectoryLookup *TheDirLookup;
 
-    IncludeStackInfo(enum CurLexerKind K, Lexer *L, PTHLexer* P,
-                     PreprocessorLexer* PPL,
-                     TokenLexer* TL, const DirectoryLookup *D)
-      : CurLexerKind(K), TheLexer(L), ThePTHLexer(P), ThePPLexer(PPL),
-        TheTokenLexer(TL), TheDirLookup(D) {}
+    IncludeStackInfo(enum CurLexerKind K, bool SM, Lexer *L, PTHLexer *P,
+                     PreprocessorLexer *PPL, TokenLexer *TL,
+                     const DirectoryLookup *D)
+        : CurLexerKind(K), IsSubmodule(SM), TheLexer(L), ThePTHLexer(P),
+          ThePPLexer(PPL), TheTokenLexer(TL), TheDirLookup(D) {}
   };
   std::vector<IncludeStackInfo> IncludeMacroStack;
 
@@ -668,7 +672,7 @@ public:
   /// start lexing tokens from it instead of the current buffer.  Emit an error
   /// and don't enter the file on error.
   void EnterSourceFile(FileID CurFileID, const DirectoryLookup *Dir,
-                       SourceLocation Loc,
+                       SourceLocation Loc, bool IsSubmodule = false,
                        Lexer::LegacyStatus Legacy = Lexer::LS_Unknown);
 
   /// EnterMacro - Add a Macro to the top of the include stack and start lexing
@@ -1162,6 +1166,9 @@ private:
   IdentifierInfo *Ident__abnormal_termination,
                  *Ident___abnormal_termination,
                  *Ident_AbnormalTermination;
+
+  const char *getCurLexerEndPos();
+
 public:
   void PoisonSEHIdentifiers(bool Poison = true); // Borland
 
@@ -1281,6 +1288,7 @@ private:
 
   void PushIncludeMacroStack() {
     IncludeMacroStack.push_back(IncludeStackInfo(CurLexerKind,
+                                                 CurIsSubmodule,
                                                  CurLexer.take(),
                                                  CurPTHLexer.take(),
                                                  CurPPLexer,
@@ -1296,6 +1304,7 @@ private:
     CurTokenLexer.reset(IncludeMacroStack.back().TheTokenLexer);
     CurDirLookup  = IncludeMacroStack.back().TheDirLookup;
     CurLexerKind = IncludeMacroStack.back().CurLexerKind;
+    CurIsSubmodule = IncludeMacroStack.back().IsSubmodule;
     IncludeMacroStack.pop_back();
   }
 
@@ -1397,11 +1406,13 @@ private:
   /// EnterSourceFileWithLexer - Add a lexer to the top of the include stack and
   /// start lexing tokens from it instead of the current buffer.
   void EnterSourceFileWithLexer(Lexer *TheLexer, const DirectoryLookup *Dir,
+                                bool IsSubmodule = false,
                                 Lexer::LegacyStatus Legacy = Lexer::LS_Unknown);
 
   /// EnterSourceFileWithPTH - Add a lexer to the top of the include stack and
   /// start getting tokens from it using the PTH cache.
-  void EnterSourceFileWithPTH(PTHLexer *PL, const DirectoryLookup *Dir);
+  void EnterSourceFileWithPTH(PTHLexer *PL, const DirectoryLookup *Dir,
+                              bool IsSubmodule = false);
 
   /// \brief Set the file ID for the preprocessor predefines.
   void setPredefinesFileID(FileID FID) {

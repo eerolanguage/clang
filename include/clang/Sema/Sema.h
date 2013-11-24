@@ -6937,6 +6937,8 @@ public:
                                   SourceLocation RParenLoc,
                                   Expr *SubExpr);
   
+  void CheckTollFreeBridgeCast(QualType castType, Expr *castExpr);
+  
   bool checkInitMethod(ObjCMethodDecl *method, QualType receiverTypeIfCall);
 
   /// \brief Check whether the given new method is a valid override of the

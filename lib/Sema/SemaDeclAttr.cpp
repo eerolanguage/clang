@@ -57,7 +57,8 @@ enum AttributeDeclKind {
   ExpectedObjectiveCInterface,
   ExpectedMethodOrProperty,
   ExpectedStructOrUnion,
-  ExpectedStructOrUnionOrClass
+  ExpectedStructOrUnionOrClass,
+  ExpectedType
 };
 
 //===----------------------------------------------------------------------===//
@@ -237,6 +238,28 @@ static bool checkAttributeAtLeastNumArgs(Sema &S, const AttributeList &Attr,
     return false;
   }
 
+  return true;
+}
+
+/// \brief If Expr is a valid integer constant, get the value of the integer
+/// expression and return success or failure. May output an error.
+static bool checkUInt32Argument(Sema &S, const AttributeList &Attr,
+                                const Expr *Expr, uint32_t &Val,
+                                unsigned Idx = UINT_MAX) {
+  llvm::APSInt I(32);
+  if (Expr->isTypeDependent() || Expr->isValueDependent() ||
+      !Expr->isIntegerConstantExpr(I, S.Context)) {
+    if (Idx != UINT_MAX)
+      S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
+        << Attr.getName() << Idx << AANT_ArgumentIntegerConstant
+        << Expr->getSourceRange();
+    else
+      S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
+        << Attr.getName() << AANT_ArgumentIntegerConstant
+        << Expr->getSourceRange();
+    return false;
+  }
+  Val = (uint32_t)I.getZExtValue();
   return true;
 }
 
@@ -534,18 +557,12 @@ static void checkAttrArgsAreLockableObjs(Sema &S, Decl *D,
 // least add some helper functions to check most argument patterns (#
 // and types of args).
 
-enum ThreadAttributeDeclKind {
-  ThreadExpectedFieldOrGlobalVar,
-  ThreadExpectedFunctionOrMethod,
-  ThreadExpectedClassOrStruct
-};
-
 static bool checkGuardedVarAttrCommon(Sema &S, Decl *D,
                                       const AttributeList &Attr) {
   // D must be either a member field or global (potentially shared) variable.
   if (!mayBeSharedVariable(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFieldOrGlobalVar;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFieldOrGlobalVar;
     return false;
   }
 
@@ -579,8 +596,8 @@ static bool checkGuardedByAttrCommon(Sema &S, Decl *D,
                                      Expr* &Arg) {
   // D must be either a member field or global (potentially shared) variable.
   if (!mayBeSharedVariable(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFieldOrGlobalVar;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFieldOrGlobalVar;
     return false;
   }
 
@@ -621,8 +638,8 @@ static bool checkLockableAttrCommon(Sema &S, Decl *D,
                                     const AttributeList &Attr) {
   // FIXME: Lockable structs for C code.
   if (!isa<RecordDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedClassOrStruct;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedStructOrUnionOrClass;
     return false;
   }
 
@@ -649,8 +666,8 @@ static void handleScopedLockableAttr(Sema &S, Decl *D,
 static void handleNoThreadSafetyAnalysis(Sema &S, Decl *D,
                                          const AttributeList &Attr) {
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFunctionOrMethod;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
     return;
   }
 
@@ -704,8 +721,8 @@ static bool checkAcquireOrderAttrCommon(Sema &S, Decl *D,
   // D must be either a member field or global (potentially shared) variable.
   ValueDecl *VD = dyn_cast<ValueDecl>(D);
   if (!VD || !mayBeSharedVariable(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFieldOrGlobalVar;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFieldOrGlobalVar;
     return false;
   }
 
@@ -761,8 +778,8 @@ static bool checkLockFunAttrCommon(Sema &S, Decl *D,
 
   // check that the attribute is applied to a function
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFunctionOrMethod;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
     return false;
   }
 
@@ -834,8 +851,8 @@ static bool checkTryLockFunAttrCommon(Sema &S, Decl *D,
     return false;
 
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFunctionOrMethod;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
     return false;
   }
 
@@ -884,8 +901,8 @@ static bool checkLocksRequiredCommon(Sema &S, Decl *D,
     return false;
 
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFunctionOrMethod;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
     return false;
   }
 
@@ -928,8 +945,8 @@ static void handleUnlockFunAttr(Sema &S, Decl *D,
   // zero or more arguments ok
 
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFunctionOrMethod;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
     return;
   }
 
@@ -947,8 +964,8 @@ static void handleUnlockFunAttr(Sema &S, Decl *D,
 static void handleLockReturnedAttr(Sema &S, Decl *D,
                                    const AttributeList &Attr) {
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFunctionOrMethod;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
     return;
   }
 
@@ -970,8 +987,8 @@ static void handleLocksExcludedAttr(Sema &S, Decl *D,
     return;
 
   if (!isa<FunctionDecl>(D) && !isa<FunctionTemplateDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_thread_attribute_wrong_decl_type)
-      << Attr.getName() << ThreadExpectedFunctionOrMethod;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedFunctionOrMethod;
     return;
   }
 
@@ -1249,7 +1266,8 @@ static void handleExtVectorTypeAttr(Sema &S, Scope *scope, Decl *D,
   if (TD == 0) {
     // __attribute__((ext_vector_type(N))) can only be applied to typedefs
     // and type-ids.
-    S.Diag(Attr.getLoc(), diag::err_typecheck_ext_vector_not_typedef);
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type) <<
+      Attr.getName() << ExpectedType;
     return;
   }
 
@@ -1282,7 +1300,8 @@ static void handleMsStructAttr(Sema &S, Decl *D, const AttributeList &Attr) {
                 MsStructAttr(Attr.getRange(), S.Context,
                              Attr.getAttributeSpellingListIndex()));
   else
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedStructOrUnionOrClass;
 }
 
 static void handleIBAction(Sema &S, Decl *D, const AttributeList &Attr) {
@@ -2038,19 +2057,10 @@ static void handleConstructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  int priority = 65535; // FIXME: Do not hardcode such constants.
-  if (Attr.getNumArgs() > 0) {
-    Expr *E = Attr.getArgAsExpr(0);
-    llvm::APSInt Idx(32);
-    if (E->isTypeDependent() || E->isValueDependent() ||
-        !E->isIntegerConstantExpr(Idx, S.Context)) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
-        << Attr.getName() << 1 << AANT_ArgumentIntegerConstant
-        << E->getSourceRange();
-      return;
-    }
-    priority = Idx.getZExtValue();
-  }
+  uint32_t priority = ConstructorAttr::DefaultPriority;
+  if (Attr.getNumArgs() > 0 &&
+      !checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), priority))
+    return;
 
   if (!isa<FunctionDecl>(D)) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
@@ -2070,19 +2080,10 @@ static void handleDestructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  int priority = 65535; // FIXME: Do not hardcode such constants.
-  if (Attr.getNumArgs() > 0) {
-    Expr *E = Attr.getArgAsExpr(0);
-    llvm::APSInt Idx(32);
-    if (E->isTypeDependent() || E->isValueDependent() ||
-        !E->isIntegerConstantExpr(Idx, S.Context)) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
-        << Attr.getName() << 1 << AANT_ArgumentIntegerConstant
-        << E->getSourceRange();
-      return;
-    }
-    priority = Idx.getZExtValue();
-  }
+  uint32_t priority = ConstructorAttr::DefaultPriority;
+  if (Attr.getNumArgs() > 0 &&
+      !checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), priority))
+    return;
 
   if (!isa<FunctionDecl>(D)) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
@@ -2132,6 +2133,27 @@ static void handleObjCRootClassAttr(Sema &S, Decl *D,
              ObjCRootClassAttr(Attr.getRange(), S.Context,
                                Attr.getAttributeSpellingListIndex()));
 }
+
+static void handleObjCSuppresProtocolAttr(Sema &S, Decl *D,
+                                          const AttributeList &Attr) {
+  if (!isa<ObjCInterfaceDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
+      << Attr.getName() << ExpectedObjectiveCInterface;
+    return;
+  }
+
+  IdentifierLoc *Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
+
+  if (!Parm) {
+    S.Diag(D->getLocStart(), diag::err_objc_attr_not_id) << Attr.getName() << 1;
+    return;
+  }
+
+  D->addAttr(::new (S.Context)
+             ObjCSuppressProtocolAttr(Attr.getRange(), S.Context, Parm->Ident,
+                                      Attr.getAttributeSpellingListIndex()));
+}
+
 
 static void handleObjCRequiresPropertyDefsAttr(Sema &S, Decl *D,
                                                const AttributeList &Attr) {
@@ -2565,7 +2587,7 @@ static void handleSentinelAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  unsigned sentinel = 0;
+  unsigned sentinel = (unsigned)SentinelAttr::DefaultSentinel;
   if (Attr.getNumArgs() > 0) {
     Expr *E = Attr.getArgAsExpr(0);
     llvm::APSInt Idx(32);
@@ -2586,7 +2608,7 @@ static void handleSentinelAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     sentinel = Idx.getZExtValue();
   }
 
-  unsigned nullPos = 0;
+  unsigned nullPos = (unsigned)SentinelAttr::DefaultNullPos;
   if (Attr.getNumArgs() > 1) {
     Expr *E = Attr.getArgAsExpr(1);
     llvm::APSInt Idx(32);
@@ -2729,19 +2751,10 @@ static void handleWeakImportAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 // Handles reqd_work_group_size and work_group_size_hint.
 static void handleWorkGroupSize(Sema &S, Decl *D,
                                 const AttributeList &Attr) {
-  unsigned WGSize[3];
-  for (unsigned i = 0; i < 3; ++i) {
-    Expr *E = Attr.getArgAsExpr(i);
-    llvm::APSInt ArgNum(32);
-    if (E->isTypeDependent() || E->isValueDependent() ||
-        !E->isIntegerConstantExpr(ArgNum, S.Context)) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
-        << Attr.getName() << AANT_ArgumentIntegerConstant
-        << E->getSourceRange();
+  uint32_t WGSize[3];
+  for (unsigned i = 0; i < 3; ++i)
+    if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(i), WGSize[i], i))
       return;
-    }
-    WGSize[i] = (unsigned) ArgNum.getZExtValue();
-  }
 
   if (Attr.getKind() == AttributeList::AT_ReqdWorkGroupSize
     && D->hasAttr<ReqdWorkGroupSizeAttr>()) {
@@ -3046,22 +3059,17 @@ static void handleInitPriorityAttr(Sema &S, Decl *D,
     Attr.setInvalid();
     return;
   }
-  
-  Expr *priorityExpr = Attr.getArgAsExpr(0);
-  
-  llvm::APSInt priority(32);
-  if (priorityExpr->isTypeDependent() || priorityExpr->isValueDependent() ||
-      !priorityExpr->isIntegerConstantExpr(priority, S.Context)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
-      << Attr.getName() << AANT_ArgumentIntegerConstant
-      << priorityExpr->getSourceRange();
+
+  Expr *E = Attr.getArgAsExpr(0);
+  uint32_t prioritynum;
+  if (!checkUInt32Argument(S, Attr, E, prioritynum)) {
     Attr.setInvalid();
     return;
   }
-  unsigned prioritynum = priority.getZExtValue();
+
   if (prioritynum < 101 || prioritynum > 65535) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_outof_range)
-    <<  priorityExpr->getSourceRange();
+      << E->getSourceRange();
     Attr.setInvalid();
     return;
   }
@@ -3114,7 +3122,6 @@ static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // counted from one.
   bool HasImplicitThisParam = isInstanceMethod(D);
   unsigned NumArgs  = getFunctionOrMethodNumArgs(D) + HasImplicitThisParam;
-  unsigned FirstIdx = 1;
 
   IdentifierInfo *II = Attr.getArgAsIdent(0)->Ident;
   StringRef Format = II->getName();
@@ -3140,23 +3147,18 @@ static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 
   // checks for the 2nd argument
   Expr *IdxExpr = Attr.getArgAsExpr(1);
-  llvm::APSInt Idx(32);
-  if (IdxExpr->isTypeDependent() || IdxExpr->isValueDependent() ||
-      !IdxExpr->isIntegerConstantExpr(Idx, S.Context)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
-      << Attr.getName() << 2 << AANT_ArgumentIntegerConstant
-      << IdxExpr->getSourceRange();
+  uint32_t Idx;
+  if (!checkUInt32Argument(S, Attr, IdxExpr, Idx, 2))
     return;
-  }
 
-  if (Idx.getZExtValue() < FirstIdx || Idx.getZExtValue() > NumArgs) {
+  if (Idx < 1 || Idx > NumArgs) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_out_of_bounds)
       << "format" << 2 << IdxExpr->getSourceRange();
     return;
   }
 
   // FIXME: Do we need to bounds check?
-  unsigned ArgIdx = Idx.getZExtValue() - 1;
+  unsigned ArgIdx = Idx - 1;
 
   if (HasImplicitThisParam) {
     if (ArgIdx == 0) {
@@ -3196,14 +3198,9 @@ static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 
   // check the 3rd argument
   Expr *FirstArgExpr = Attr.getArgAsExpr(2);
-  llvm::APSInt FirstArg(32);
-  if (FirstArgExpr->isTypeDependent() || FirstArgExpr->isValueDependent() ||
-      !FirstArgExpr->isIntegerConstantExpr(FirstArg, S.Context)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
-      << Attr.getName() << 3 << AANT_ArgumentIntegerConstant
-      << FirstArgExpr->getSourceRange();
+  uint32_t FirstArg;
+  if (!checkUInt32Argument(S, Attr, FirstArgExpr, FirstArg, 3))
     return;
-  }
 
   // check if the function is variadic if the 3rd argument non-zero
   if (FirstArg != 0) {
@@ -3231,8 +3228,7 @@ static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   }
 
   FormatAttr *NewAttr = S.mergeFormatAttr(D, Attr.getRange(), II,
-                                          Idx.getZExtValue(),
-                                          FirstArg.getZExtValue(),
+                                          Idx, FirstArg,
                                           Attr.getAttributeSpellingListIndex());
   if (NewAttr)
     D->addAttr(NewAttr);
@@ -3856,23 +3852,19 @@ static void handleCallConvAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   }
 }
 
-static void handleOpenCLKernelAttr(Sema &S, Decl *D, const AttributeList &Attr){
+static void handleOpenCLKernelAttr(Sema &S, Decl *D,
+                                   const AttributeList &Attr) {
   D->addAttr(::new (S.Context) OpenCLKernelAttr(Attr.getRange(), S.Context));
 }
 
-static void handleOpenCLImageAccessAttr(Sema &S, Decl *D, const AttributeList &Attr){
-  Expr *E = Attr.getArgAsExpr(0);
-  llvm::APSInt ArgNum(32);
-  if (E->isTypeDependent() || E->isValueDependent() ||
-      !E->isIntegerConstantExpr(ArgNum, S.Context)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
-      << Attr.getName() << AANT_ArgumentIntegerConstant
-      << E->getSourceRange();
+static void handleOpenCLImageAccessAttr(Sema &S, Decl *D,
+                                        const AttributeList &Attr) {
+  uint32_t ArgNum;
+  if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), ArgNum))
     return;
-  }
 
-  D->addAttr(::new (S.Context) OpenCLImageAccessAttr(
-    Attr.getRange(), S.Context, ArgNum.getZExtValue()));
+  D->addAttr(::new (S.Context) OpenCLImageAccessAttr(Attr.getRange(),
+                                                     S.Context, ArgNum));
 }
 
 bool Sema::CheckCallingConvAttr(const AttributeList &attr, CallingConv &CC, 
@@ -3969,13 +3961,9 @@ bool Sema::CheckRegparmAttr(const AttributeList &Attr, unsigned &numParams) {
     return true;
   }
 
+  uint32_t NP;
   Expr *NumParamsExpr = Attr.getArgAsExpr(0);
-  llvm::APSInt NumParams(32);
-  if (NumParamsExpr->isTypeDependent() || NumParamsExpr->isValueDependent() ||
-      !NumParamsExpr->isIntegerConstantExpr(NumParams, Context)) {
-    Diag(Attr.getLoc(), diag::err_attribute_argument_type)
-      << Attr.getName() << AANT_ArgumentIntegerConstant
-      << NumParamsExpr->getSourceRange();
+  if (!checkUInt32Argument(*this, Attr, NumParamsExpr, NP)) {
     Attr.setInvalid();
     return true;
   }
@@ -3987,7 +3975,7 @@ bool Sema::CheckRegparmAttr(const AttributeList &Attr, unsigned &numParams) {
     return true;
   }
 
-  numParams = NumParams.getZExtValue();
+  numParams = NP;
   if (numParams > Context.getTargetInfo().getRegParmMax()) {
     Diag(Attr.getLoc(), diag::err_attribute_regparm_invalid_number)
       << Context.getTargetInfo().getRegParmMax() << NumParamsExpr->getSourceRange();
@@ -4013,34 +4001,14 @@ static void handleLaunchBoundsAttr(Sema &S, Decl *D, const AttributeList &Attr){
       return;
     }
 
-    Expr *MaxThreadsExpr = Attr.getArgAsExpr(0);
-    llvm::APSInt MaxThreads(32);
-    if (MaxThreadsExpr->isTypeDependent() ||
-        MaxThreadsExpr->isValueDependent() ||
-        !MaxThreadsExpr->isIntegerConstantExpr(MaxThreads, S.Context)) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
-        << Attr.getName() << 1 << AANT_ArgumentIntegerConstant
-        << MaxThreadsExpr->getSourceRange();
+    uint32_t MaxThreads, MinBlocks;
+    if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), MaxThreads, 1) ||
+        !checkUInt32Argument(S, Attr, Attr.getArgAsExpr(1), MinBlocks, 2))
       return;
-    }
-
-    llvm::APSInt MinBlocks(32);
-    if (Attr.getNumArgs() > 1) {
-      Expr *MinBlocksExpr = Attr.getArgAsExpr(1);
-      if (MinBlocksExpr->isTypeDependent() ||
-          MinBlocksExpr->isValueDependent() ||
-          !MinBlocksExpr->isIntegerConstantExpr(MinBlocks, S.Context)) {
-        S.Diag(Attr.getLoc(), diag::err_attribute_argument_n_type)
-          << Attr.getName() << 2 << AANT_ArgumentIntegerConstant
-          << MinBlocksExpr->getSourceRange();
-        return;
-      }
-    }
 
     D->addAttr(::new (S.Context)
                CUDALaunchBoundsAttr(Attr.getRange(), S.Context,
-                                    MaxThreads.getZExtValue(),
-                                    MinBlocks.getZExtValue(),
+                                    MaxThreads, MinBlocks,
                                     Attr.getAttributeSpellingListIndex()));
   } else {
     S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "launch_bounds";
@@ -4400,20 +4368,39 @@ static void handleObjCBridgeAttr(Sema &S, Scope *Sc, Decl *D,
                                   : ExpectedStructOrUnion);
     return;
   }
-  
-  if (Attr.getNumArgs() != 1) {
-    S.Diag(D->getLocStart(), diag::err_objc_bridge_not_id);
-    return;
-  }
-  IdentifierLoc *Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
+
+  IdentifierLoc * Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
+
   if (!Parm) {
-    S.Diag(D->getLocStart(), diag::err_objc_bridge_not_id);
+    S.Diag(D->getLocStart(), diag::err_objc_attr_not_id) << Attr.getName() << 0;
     return;
   }
   
   D->addAttr(::new (S.Context)
-             ObjCBridgeAttr(Attr.getRange(), S.Context, Parm ? Parm->Ident : 0,
+             ObjCBridgeAttr(Attr.getRange(), S.Context, Parm->Ident,
                            Attr.getAttributeSpellingListIndex()));
+}
+
+static void handleObjCBridgeMutableAttr(Sema &S, Scope *Sc, Decl *D,
+                                        const AttributeList &Attr) {
+  if (!isa<RecordDecl>(D)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
+    << Attr.getName()
+    << (S.getLangOpts().CPlusPlus ? ExpectedStructOrUnionOrClass
+        : ExpectedStructOrUnion);
+    return;
+  }
+  
+  IdentifierLoc * Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
+  
+  if (!Parm) {
+    S.Diag(D->getLocStart(), diag::err_objc_attr_not_id) << Attr.getName() << 0;
+    return;
+  }
+  
+  D->addAttr(::new (S.Context)
+             ObjCBridgeMutableAttr(Attr.getRange(), S.Context, Parm->Ident,
+                            Attr.getAttributeSpellingListIndex()));
 }
 
 static void handleObjCOwnershipAttr(Sema &S, Decl *D,
@@ -4548,10 +4535,10 @@ static void handlePortabilityAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
 
   AttributeList::Kind Kind = Attr.getKind();
-    if (Kind == AttributeList::AT_Win64)
-    D->addAttr(
-        ::new (S.Context) Win64Attr(Attr.getRange(), S.Context,
-                                    Attr.getAttributeSpellingListIndex()));
+  if (Kind == AttributeList::AT_Win64)
+  D->addAttr(
+      ::new (S.Context) Win64Attr(Attr.getRange(), S.Context,
+                                  Attr.getAttributeSpellingListIndex()));
 }
 
 static void handleForceInlineAttr(Sema &S, Decl *D, const AttributeList &Attr) {
@@ -4705,6 +4692,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
       
   case AttributeList::AT_ObjCBridge:
     handleObjCBridgeAttr(S, scope, D, Attr); break;
+      
+  case AttributeList::AT_ObjCBridgeMutable:
+    handleObjCBridgeMutableAttr(S, scope, D, Attr); break;
 
   case AttributeList::AT_CFAuditedTransfer:
   case AttributeList::AT_CFUnknownTransfer:
@@ -4744,7 +4734,10 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_ObjCRootClass:
     handleObjCRootClassAttr(S, D, Attr);
     break;
-  case AttributeList::AT_ObjCRequiresPropertyDefs: 
+  case AttributeList::AT_ObjCSuppressProtocol:
+    handleObjCSuppresProtocolAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_ObjCRequiresPropertyDefs:
     handleObjCRequiresPropertyDefsAttr (S, D, Attr); 
     break;
   case AttributeList::AT_Unused:      handleUnusedAttr      (S, D, Attr); break;

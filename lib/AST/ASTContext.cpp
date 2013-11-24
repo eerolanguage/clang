@@ -3507,6 +3507,62 @@ QualType ASTContext::getObjCObjectType(QualType BaseType,
   return QualType(T, 0);
 }
 
+/// ObjCObjectAdoptsQTypeProtocols - Checks that protocols in IC's
+/// protocol list adopt all protocols in QT's qualified-id protocol
+/// list.
+bool ASTContext::ObjCObjectAdoptsQTypeProtocols(QualType QT,
+                                                ObjCInterfaceDecl *IC) {
+  if (!QT->isObjCQualifiedIdType())
+    return false;
+  
+  if (const ObjCObjectPointerType *OPT = QT->getAs<ObjCObjectPointerType>()) {
+    // If both the right and left sides have qualifiers.
+    for (ObjCObjectPointerType::qual_iterator I = OPT->qual_begin(),
+         E = OPT->qual_end(); I != E; ++I) {
+      ObjCProtocolDecl *Proto = *I;
+      if (!IC->ClassImplementsProtocol(Proto, false))
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/// QIdProtocolsAdoptObjCObjectProtocols - Checks that protocols in
+/// QT's qualified-id protocol list adopt all protocols in IDecl's list
+/// of protocols.
+bool ASTContext::QIdProtocolsAdoptObjCObjectProtocols(QualType QT,
+                                                ObjCInterfaceDecl *IDecl) {
+  if (!QT->isObjCQualifiedIdType())
+    return false;
+  const ObjCObjectPointerType *OPT = QT->getAs<ObjCObjectPointerType>();
+  if (!OPT)
+    return false;
+  if (!IDecl->hasDefinition())
+    return false;
+  llvm::SmallPtrSet<ObjCProtocolDecl *, 8> InheritedProtocols;
+  CollectInheritedProtocols(IDecl, InheritedProtocols);
+  if (InheritedProtocols.empty())
+    return false;
+      
+  for (llvm::SmallPtrSet<ObjCProtocolDecl*,8>::iterator PI =
+       InheritedProtocols.begin(),
+       E = InheritedProtocols.end(); PI != E; ++PI) {
+    // If both the right and left sides have qualifiers.
+    bool Adopts = false;
+    for (ObjCObjectPointerType::qual_iterator I = OPT->qual_begin(),
+         E = OPT->qual_end(); I != E; ++I) {
+      ObjCProtocolDecl *Proto = *I;
+      // return 'true' if '*PI' is in the inheritance hierarchy of Proto
+      if ((Adopts = ProtocolCompatibleWithProtocol(*PI, Proto)))
+        break;
+    }
+    if (!Adopts)
+      return false;
+  }
+  return true;
+}
+
 /// getObjCObjectPointerType - Return a ObjCObjectPointerType type for
 /// the given object type.
 QualType ASTContext::getObjCObjectPointerType(QualType ObjectT) const {

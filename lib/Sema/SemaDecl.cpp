@@ -1545,6 +1545,7 @@ NamedDecl *Sema::LazilyCreateBuiltin(IdentifierInfo *II, unsigned bid,
     LinkageSpecDecl *CLinkageDecl =
         LinkageSpecDecl::Create(Context, Parent, Loc, Loc,
                                 LinkageSpecDecl::lang_c, false);
+    CLinkageDecl->setImplicit();
     Parent->addDecl(CLinkageDecl);
     Parent = CLinkageDecl;
   }
@@ -8224,9 +8225,9 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
     // data members we also need to check whether there was an in-class
     // declaration with an initializer.
     if (VDecl->isStaticDataMember() && VDecl->getAnyInitializer(PrevInit)) {
-      Diag(VDecl->getLocation(), diag::err_redefinition) 
-        << VDecl->getDeclName();
-      Diag(PrevInit->getLocation(), diag::note_previous_definition);
+      Diag(Init->getExprLoc(), diag::err_static_data_member_reinitialization)
+          << VDecl->getDeclName();
+      Diag(PrevInit->getInit()->getExprLoc(), diag::note_previous_initializer) << 0;
       return;
     }  
 
@@ -13036,5 +13037,22 @@ Decl *Sema::getObjCDeclContext() const {
 
 AvailabilityResult Sema::getCurContextAvailability() const {
   const Decl *D = cast<Decl>(getCurObjCLexicalContext());
+  // If we are within an Objective-C method, we should consult
+  // both the availability of the method as well as the
+  // enclosing class.  If the class is (say) deprecated,
+  // the entire method is considered deprecated from the
+  // purpose of checking if the current context is deprecated.
+  if (const ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(D)) {
+    AvailabilityResult R = MD->getAvailability();
+    if (R != AR_Available)
+      return R;
+    D = MD->getClassInterface();
+  }
+  // If we are within an Objective-c @implementation, it
+  // gets the same availability context as the @interface.
+  else if (const ObjCImplementationDecl *ID =
+            dyn_cast<ObjCImplementationDecl>(D)) {
+    D = ID->getClassInterface();
+  }
   return D->getAvailability();
 }

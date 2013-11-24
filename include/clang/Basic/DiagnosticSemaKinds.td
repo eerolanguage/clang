@@ -1876,8 +1876,6 @@ def err_attribute_zero_size : Error<"zero vector size">;
 def err_attribute_size_too_large : Error<"vector size too large">;
 def err_typecheck_vector_not_convertable : Error<
   "can't convert between vector values of different size (%0 and %1)">;
-def err_typecheck_ext_vector_not_typedef : Error<
-  "ext_vector_type only applies to types, not variables">;
 def err_ext_vector_component_exceeds_length : Error<
   "vector component access exceeds type %0">;
 def err_ext_vector_component_name_illegal : Error<
@@ -2038,6 +2036,8 @@ def err_alias_not_supported_on_darwin : Error <
   "only weak aliases are supported on darwin">;
 def err_alias_to_undefined : Error<
   "alias must point to a defined variable or function">;
+def err_duplicate_mangled_name : Error<
+  "definition with same mangled name as another definition">;
 def err_cyclic_alias : Error<
   "alias definition is part of a cycle">;
 def warn_attribute_wrong_decl_type : Warning<
@@ -2048,7 +2048,8 @@ def warn_attribute_wrong_decl_type : Warning<
   "variables, functions and labels|fields and global variables|structs|"
   "variables, functions and tag types|thread-local variables|"
   "variables and fields|variables, data members and tag types|"
-  "types and namespaces|Objective-C interfaces}1">,
+  "types and namespaces|Objective-C interfaces|methods and properties|"
+  "struct or union|struct, union or class|types}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<
   "%0 attribute only applies to %select{functions|unions|"
@@ -2058,8 +2059,8 @@ def err_attribute_wrong_decl_type : Error<
   "variables, functions and labels|fields and global variables|structs|"
   "variables, functions and tag types|thread-local variables|"
   "variables and fields|variables, data members and tag types|"
-  "types and namespaces|Objective-C interfaces|"
-  "methods and properties|struct or union|struct, union or class}1">;
+  "types and namespaces|Objective-C interfaces|methods and properties|"
+  "struct or union|struct, union or class|types}1">;
 def warn_type_attribute_wrong_type : Warning<
   "'%0' only applies to %select{function|pointer|"
   "Objective-C object or block pointer}1 types; type here is %2">,
@@ -2145,11 +2146,6 @@ def warn_thread_attribute_decl_not_lockable : Warning<
 def warn_thread_attribute_decl_not_pointer : Warning<
   "'%0' only applies to pointer types; type here is %1">,
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
-def warn_thread_attribute_wrong_decl_type : Warning<
-  "%0 attribute only applies to %select{"
-  "fields and global variables|functions and methods|"
-  "classes and structs}1">,
-  InGroup<ThreadSafetyAttributes>, DefaultIgnore;  
 def err_attribute_argument_out_of_range : Error<
   "%0 attribute parameter %1 is out of bounds: "
   "%plural{0:no parameters to index into|"
@@ -2447,8 +2443,8 @@ def err_ns_bridged_not_interface : Error<
   "parameter of 'ns_bridged' attribute does not name an Objective-C class">;
   
 // objc_bridge attribute diagnostics.
-def err_objc_bridge_not_id : Error<
-  "parameter of 'objc_bridge' attribute must be a single name of an Objective-C class">;
+def err_objc_attr_not_id : Error<
+  "parameter of %0 attribute must be a single name of an Objective-C %select{class|protocol}1">;
 def err_objc_cf_bridged_not_interface : Error<
   "CF object of type %0 is bridged to '%1', which is not an Objective-C class">;
 def err_objc_ns_bridged_invalid_cfobject : Error<
@@ -3534,6 +3530,8 @@ def note_declaration_not_a_prototype : Note<
 def warn_missing_variable_declarations : Warning<
   "no previous extern declaration for non-static variable %0">,
   InGroup<DiagGroup<"missing-variable-declarations">>, DefaultIgnore;
+def err_static_data_member_reinitialization :
+  Error<"static data member %0 already has an initializer">;
 def err_redefinition : Error<"redefinition of %0">;
 def err_alias_after_tentative :
   Error<"alias definition of %0 after tentative definition">;
@@ -6587,9 +6585,6 @@ def error_private_ivar_access : Error<"instance variable %0 is private">,
 def error_protected_ivar_access : Error<"instance variable %0 is protected">,
   AccessControl;
 def warn_maynot_respond : Warning<"%0 may not respond to %1">;
-def warn_attribute_method_def : Warning<
-  "attributes on method implementation and its declaration must match">,
-  InGroup<DiagGroup<"mismatched-method-attributes">>;
 def ext_typecheck_base_super : Warning<
   "method parameter type "
   "%diff{$ does not match super class method parameter type $|"

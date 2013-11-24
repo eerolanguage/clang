@@ -510,7 +510,7 @@ void Parser::ParseObjCInterfaceDeclList(tok::ObjCKeywordKind contextKey,
     }
 
     // If we got to the end of the file, exit the loop.
-    if (Tok.is(tok::eof))
+    if (isEofOrEom())
       break;
 
     // Code completion within an Objective-C interface.
@@ -1755,7 +1755,7 @@ void Parser::ParseObjCClassInstanceVariables(Decl *interfaceDecl,
     T.setOptional(BalancedDelimiterTracker::UseSplitLineTokLocs);
   T.consumeOpen();
   // While we still have something to read, read the instance variables.
-  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+  while (Tok.isNot(tok::r_brace) && !isEofOrEom()) {
     // Each iteration of this loop reads one objc-instance-variable-decl.
 
     // Check for extraneous top-level semicolon.
@@ -2075,7 +2075,7 @@ Parser::ParseObjCAtImplementationDeclaration(SourceLocation AtLoc) {
 
   {
     ObjCImplParsingDataRAII ObjCImplParsing(*this, ObjCImpDecl);
-    while (!ObjCImplParsing.isFinished() && Tok.isNot(tok::eof)) {
+    while (!ObjCImplParsing.isFinished() && !isEofOrEom()) {
       ParsedAttributesWithRange attrs(AttrFactory);
       MaybeParseCXX11Attributes(attrs);
       MaybeParseMicrosoftAttributes(attrs);
@@ -2121,7 +2121,7 @@ Parser::ParseObjCAtEndDeclaration(SourceRange atEnd) {
 Parser::ObjCImplParsingDataRAII::~ObjCImplParsingDataRAII() {
   if (!Finished) {
     finish(P.Tok.getLocation());
-    if (P.Tok.is(tok::eof)) {
+    if (P.isEofOrEom()) {
       P.Diag(P.Tok, diag::err_objc_missing_end)
           << FixItHint::CreateInsertion(P.Tok.getLocation(), "\n@end\n");
       P.Diag(Dcl->getLocStart(), diag::note_objc_container_start)

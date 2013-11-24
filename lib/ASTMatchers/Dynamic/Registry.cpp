@@ -27,9 +27,9 @@ namespace ast_matchers {
 namespace dynamic {
 namespace {
 
-using internal::MatcherCreateCallback;
+using internal::MatcherDescriptor;
 
-typedef llvm::StringMap<const MatcherCreateCallback *> ConstructorMap;
+typedef llvm::StringMap<const MatcherDescriptor *> ConstructorMap;
 class RegistryMaps {
 public:
   RegistryMaps();
@@ -38,12 +38,12 @@ public:
   const ConstructorMap &constructors() const { return Constructors; }
 
 private:
-  void registerMatcher(StringRef MatcherName, MatcherCreateCallback *Callback);
+  void registerMatcher(StringRef MatcherName, MatcherDescriptor *Callback);
   ConstructorMap Constructors;
 };
 
 void RegistryMaps::registerMatcher(StringRef MatcherName,
-                                   MatcherCreateCallback *Callback) {
+                                   MatcherDescriptor *Callback) {
   assert(Constructors.find(MatcherName) == Constructors.end());
   Constructors[MatcherName] = Callback;
 }
@@ -58,14 +58,14 @@ void RegistryMaps::registerMatcher(StringRef MatcherName,
 
 #define REGISTER_OVERLOADED_2(name)                                            \
   do {                                                                         \
-    MatcherCreateCallback *Callbacks[] = {                                     \
+    MatcherDescriptor *Callbacks[] = {                                         \
       internal::makeMatcherAutoMarshall(SPECIFIC_MATCHER_OVERLOAD(name, 0),    \
                                         #name),                                \
       internal::makeMatcherAutoMarshall(SPECIFIC_MATCHER_OVERLOAD(name, 1),    \
                                         #name)                                 \
     };                                                                         \
     registerMatcher(#name,                                                     \
-                    new internal::OverloadedMatcherCreateCallback(Callbacks)); \
+                    new internal::OverloadedMatcherDescriptor(Callbacks));     \
   } while (0)
 
 /// \brief Generate a registry map with all the known matchers.
@@ -76,7 +76,6 @@ RegistryMaps::RegistryMaps() {
   // ofKind
   //
   // Polymorphic + argument overload:
-  // unless
   // findAll
   //
   // Other:
@@ -285,6 +284,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(typedefType);
   REGISTER_MATCHER(unaryExprOrTypeTraitExpr);
   REGISTER_MATCHER(unaryOperator);
+  REGISTER_MATCHER(unless);
   REGISTER_MATCHER(userDefinedLiteral);
   REGISTER_MATCHER(usingDecl);
   REGISTER_MATCHER(varDecl);
@@ -306,27 +306,34 @@ static llvm::ManagedStatic<RegistryMaps> RegistryData;
 } // anonymous namespace
 
 // static
-VariantMatcher Registry::constructMatcher(StringRef MatcherName,
-                                          const SourceRange &NameRange,
-                                          ArrayRef<ParserValue> Args,
-                                          Diagnostics *Error) {
+llvm::Optional<MatcherCtor>
+Registry::lookupMatcherCtor(StringRef MatcherName, const SourceRange &NameRange,
+                            Diagnostics *Error) {
   ConstructorMap::const_iterator it =
       RegistryData->constructors().find(MatcherName);
   if (it == RegistryData->constructors().end()) {
     Error->addError(NameRange, Error->ET_RegistryNotFound) << MatcherName;
-    return VariantMatcher();
+    return llvm::Optional<MatcherCtor>();
   }
 
-  return it->second->run(NameRange, Args, Error);
+  return it->second;
 }
 
 // static
-VariantMatcher Registry::constructBoundMatcher(StringRef MatcherName,
+VariantMatcher Registry::constructMatcher(MatcherCtor Ctor,
+                                          const SourceRange &NameRange,
+                                          ArrayRef<ParserValue> Args,
+                                          Diagnostics *Error) {
+  return Ctor->create(NameRange, Args, Error);
+}
+
+// static
+VariantMatcher Registry::constructBoundMatcher(MatcherCtor Ctor,
                                                const SourceRange &NameRange,
                                                StringRef BindID,
                                                ArrayRef<ParserValue> Args,
                                                Diagnostics *Error) {
-  VariantMatcher Out = constructMatcher(MatcherName, NameRange, Args, Error);
+  VariantMatcher Out = constructMatcher(Ctor, NameRange, Args, Error);
   if (Out.isNull()) return Out;
 
   llvm::Optional<DynTypedMatcher> Result = Out.getSingleMatcher();

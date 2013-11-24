@@ -301,7 +301,7 @@ static const char *PropertyMemoryAttribute(ASTContext &Context, QualType ArgType
           IDecl->lookupNestedProtocol(&Context.Idents.get("NSCopying")))
         return "copy";
       else
-        return "retain";
+        return "strong";
     }
     else if (ArgType->isBlockPointerType())
       return "copy";
@@ -310,7 +310,7 @@ static const char *PropertyMemoryAttribute(ASTContext &Context, QualType ArgType
     // looking into setter's implementation for backing weak ivar.
     return "weak";
   else if (RetainableObject)
-    return ArgType->isBlockPointerType() ? "copy" : "retain";
+    return ArgType->isBlockPointerType() ? "copy" : "strong";
   return 0;
 }
 
@@ -343,12 +343,9 @@ static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
     PropertyString += PropertyNameString;
   }
   // Property with no setter may be suggested as a 'readonly' property.
-  if (!Setter) {
+  if (!Setter)
     append_attr(PropertyString, "readonly", LParenAdded);
-    QualType ResType = Context.getCanonicalType(Getter->getResultType());
-    if (const char *MemoryManagementAttr = PropertyMemoryAttribute(Context, ResType))
-      append_attr(PropertyString, MemoryManagementAttr, LParenAdded);
-  }
+  
   
   // Short circuit 'delegate' properties that contain the name "delegate" or
   // "dataSource", or have exact name "target" to have 'assign' attribute.
@@ -358,8 +355,11 @@ static void rewriteToObjCProperty(const ObjCMethodDecl *Getter,
     QualType QT = Getter->getResultType();
     if (!QT->isRealType())
       append_attr(PropertyString, "assign", LParenAdded);
-  }
-  else if (Setter) {
+  } else if (!Setter) {
+    QualType ResType = Context.getCanonicalType(Getter->getResultType());
+    if (const char *MemoryManagementAttr = PropertyMemoryAttribute(Context, ResType))
+      append_attr(PropertyString, MemoryManagementAttr, LParenAdded);
+  } else {
     const ParmVarDecl *argDecl = *Setter->param_begin();
     QualType ArgType = Context.getCanonicalType(argDecl->getType());
     if (const char *MemoryManagementAttr = PropertyMemoryAttribute(Context, ArgType))

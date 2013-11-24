@@ -202,6 +202,7 @@ def AllocSize : InheritableAttr {
 
 def AlwaysInline : InheritableAttr {
   let Spellings = [GNU<"always_inline">, CXX11<"gnu", "always_inline">];
+  let Subjects = [Function];
 }
 
 def TLSModel : InheritableAttr {
@@ -246,6 +247,7 @@ def Availability : InheritableAttr {
              .Default(llvm::StringRef());
 } }];
   let HasCustomParsing = 1;
+  let Subjects = [Named];
 }
 
 def Blocks : InheritableAttr {
@@ -304,14 +306,17 @@ def CFConsumed : InheritableParamAttr {
 def Cleanup : InheritableAttr {
   let Spellings = [GNU<"cleanup">, CXX11<"gnu", "cleanup">];
   let Args = [FunctionArgument<"FunctionDecl">];
+  let Subjects = [Var];
 }
 
 def Cold : InheritableAttr {
   let Spellings = [GNU<"cold">, CXX11<"gnu", "cold">];
+  let Subjects = [Function];
 }
 
 def Common : InheritableAttr {
   let Spellings = [GNU<"common">, CXX11<"gnu", "common">];
+  let Subjects = [Var];
 }
 
 def Const : InheritableAttr {
@@ -321,23 +326,28 @@ def Const : InheritableAttr {
 
 def Constructor : InheritableAttr {
   let Spellings = [GNU<"constructor">, CXX11<"gnu", "constructor">];
-  let Args = [IntArgument<"Priority", 1>];
+  let Args = [DefaultIntArgument<"Priority", 65535>];
+  let Subjects = [Function];
 }
 
 def CUDAConstant : InheritableAttr {
   let Spellings = [GNU<"constant">];
+  let Subjects = [Var];
 }
 
 def CUDADevice : InheritableAttr {
   let Spellings = [GNU<"device">];
+  let Subjects = [Function, Var];
 }
 
 def CUDAGlobal : InheritableAttr {
   let Spellings = [GNU<"global">];
+  let Subjects = [Function];
 }
 
 def CUDAHost : InheritableAttr {
   let Spellings = [GNU<"host">];
+  let Subjects = [Function];
 }
 
 def CUDALaunchBounds : InheritableAttr {
@@ -347,6 +357,7 @@ def CUDALaunchBounds : InheritableAttr {
 
 def CUDAShared : InheritableAttr {
   let Spellings = [GNU<"shared">];
+  let Subjects = [Var];
 }
 
 def C11NoReturn : InheritableAttr {
@@ -377,11 +388,13 @@ def Deprecated : InheritableAttr {
 
 def Destructor : InheritableAttr {
   let Spellings = [GNU<"destructor">, CXX11<"gnu", "destructor">];
-  let Args = [IntArgument<"Priority", 1>];
+  let Args = [DefaultIntArgument<"Priority", 65535>];
+  let Subjects = [Function];
 }
 
 def ExtVectorType : Attr {
   let Spellings = [GNU<"ext_vector_type">];
+  let Subjects = [TypedefName];
   let Args = [ExprArgument<"NumElements">];
   let ASTNode = 0;
 }
@@ -405,7 +418,7 @@ def Final : InheritableAttr {
 
 def MinSize : InheritableAttr {
   let Spellings = [GNU<"minsize">];
-  let Subjects = [Function];
+  let Subjects = [Function, ObjCMethod];
 }
 
 def Format : InheritableAttr {
@@ -421,27 +434,33 @@ def FormatArg : InheritableAttr {
 
 def GNUInline : InheritableAttr {
   let Spellings = [GNU<"gnu_inline">, CXX11<"gnu", "gnu_inline">];
+  let Subjects = [Function];
 }
 
 def Hot : InheritableAttr {
   let Spellings = [GNU<"hot">, CXX11<"gnu", "hot">];
+  let Subjects = [Function];
 }
 
 def IBAction : InheritableAttr {
   let Spellings = [GNU<"ibaction">];
+  let Subjects = [ObjCMethod];
 }
 
 def IBOutlet : InheritableAttr {
   let Spellings = [GNU<"iboutlet">];
+  let Subjects = [ObjCIvar, ObjCProperty];
 }
 
 def IBOutletCollection : InheritableAttr {
   let Spellings = [GNU<"iboutletcollection">];
   let Args = [TypeArgument<"Interface", 1>];
+  let Subjects = [ObjCIvar, ObjCProperty];
 }
 
 def Malloc : InheritableAttr {
   let Spellings = [GNU<"malloc">, CXX11<"gnu", "malloc">];
+  let Subjects = [Function];
 }
 
 def MaxFieldAlignment : InheritableAttr {
@@ -477,6 +496,7 @@ def Mode : Attr {
 
 def Naked : InheritableAttr {
   let Spellings = [GNU<"naked">, CXX11<"gnu", "naked">];
+  let Subjects = [Function];
 }
 
 def NeonPolyVectorType : TypeAttr {
@@ -491,10 +511,12 @@ def NeonVectorType : TypeAttr {
 
 def ReturnsTwice : InheritableAttr {
   let Spellings = [GNU<"returns_twice">, CXX11<"gnu", "returns_twice">];
+  let Subjects = [Function];
 }
 
 def NoCommon : InheritableAttr {
   let Spellings = [GNU<"nocommon">, CXX11<"gnu", "nocommon">];
+  let Subjects = [Var];
 }
 
 def NoDebug : InheritableAttr {
@@ -503,6 +525,7 @@ def NoDebug : InheritableAttr {
 
 def NoInline : InheritableAttr {
   let Spellings = [GNU<"noinline">, CXX11<"gnu", "noinline">];
+  let Subjects = [Function];
 }
 
 def NoMips16 : InheritableAttr, TargetSpecificAttr {
@@ -526,7 +549,6 @@ def NonNull : InheritableAttr {
 def NoReturn : InheritableAttr {
   let Spellings = [GNU<"noreturn">, CXX11<"gnu", "noreturn">];
   // FIXME: Does GCC allow this on the function instead?
-  let Subjects = [Function];
 }
 
 def NoInstrumentFunction : InheritableAttr {
@@ -548,7 +570,13 @@ def NSBridged : InheritableAttr {
 def ObjCBridge : InheritableAttr {
   let Spellings = [GNU<"objc_bridge">];
   let Subjects = [Record];
-  let Args = [IdentifierArgument<"BridgedType", 1>];
+  let Args = [IdentifierArgument<"BridgedType">];
+}
+
+def ObjCBridgeMutable : InheritableAttr {
+  let Spellings = [GNU<"objc_bridge_mutable">];
+  let Subjects = [Record];
+  let Args = [IdentifierArgument<"BridgedType">];
 }
 
 def NSReturnsRetained : InheritableAttr {
@@ -578,6 +606,7 @@ def NSConsumed : InheritableParamAttr {
 
 def ObjCException : InheritableAttr {
   let Spellings = [GNU<"objc_exception">];
+  let Subjects = [ObjCInterface];
 }
 
 def ObjCMethodFamily : InheritableAttr {
@@ -613,8 +642,15 @@ def ObjCRootClass : InheritableAttr {
   let Subjects = [ObjCInterface];
 }
 
+def ObjCSuppressProtocol : InheritableAttr {
+  let Spellings = [GNU<"objc_suppress_protocol_methods">];
+  let Subjects = [ObjCInterface];
+  let Args = [IdentifierArgument<"Protocol">];
+}
+
 def Overloadable : Attr {
   let Spellings = [GNU<"overloadable">];
+  let Subjects = [Function];
 }
 
 def Override : InheritableAttr { 
@@ -635,6 +671,7 @@ def Ownership : InheritableAttr {
 
 def Packed : InheritableAttr {
   let Spellings = [GNU<"packed">, CXX11<"gnu", "packed">];
+  let Subjects = [Tag, Field];
 }
 
 def PnaclCall : InheritableAttr {
@@ -680,6 +717,7 @@ def WorkGroupSizeHint :  InheritableAttr {
 def InitPriority : InheritableAttr {
   let Spellings = [GNU<"init_priority">];
   let Args = [UnsignedArgument<"Priority">];
+  let Subjects = [Var];
 }
 
 def Section : InheritableAttr {
@@ -691,6 +729,7 @@ def Sentinel : InheritableAttr {
   let Spellings = [GNU<"sentinel">, CXX11<"gnu", "sentinel">];
   let Args = [DefaultIntArgument<"Sentinel", 0>,
               DefaultIntArgument<"NullPos", 0>];
+  let Subjects = [Function, ObjCMethod, Block, Var];
 }
 
 def StdCall : InheritableAttr {
@@ -717,6 +756,7 @@ def Pascal : InheritableAttr {
 
 def TransparentUnion : InheritableAttr {
   let Spellings = [GNU<"transparent_union">, CXX11<"gnu", "transparent_union">];
+  let Subjects = [Record, TypedefName];
 }
 
 def Unavailable : InheritableAttr {
@@ -783,6 +823,7 @@ def TypeVisibility : InheritableAttr {
   let Args = [EnumArgument<"Visibility", "VisibilityType",
                            ["default", "hidden", "internal", "protected"],
                            ["Default", "Hidden", "Hidden", "Protected"]>];
+  let Subjects = [Tag, ObjCInterface, Namespace];
 }
 
 def VecReturn : InheritableAttr {
@@ -803,6 +844,7 @@ def WarnUnusedResult : InheritableAttr {
 
 def Weak : InheritableAttr {
   let Spellings = [GNU<"weak">, CXX11<"gnu", "weak">];
+  let Subjects = [Var, Function, CXXRecord];
 }
 
 def WeakImport : InheritableAttr {
@@ -813,6 +855,7 @@ def WeakRef : InheritableAttr {
   let Spellings = [GNU<"weakref">, CXX11<"gnu", "weakref">];
   // A WeakRef that has an argument is treated as being an AliasAttr
   let Args = [StringArgument<"Aliasee", 1>];
+  let Subjects = [Var, Function];
 }
 
 def X86ForceAlignArgPointer : InheritableAttr, TargetSpecificAttr {
@@ -825,38 +868,46 @@ def NoSanitizeAddress : InheritableAttr {
                    GNU<"no_sanitize_address">,
                    CXX11<"gnu", "no_address_safety_analysis">,
                    CXX11<"gnu", "no_sanitize_address">];
+  let Subjects = [Function, FunctionTemplate];
 }
 
 // Attribute to disable ThreadSanitizer checks.
 def NoSanitizeThread : InheritableAttr {
   let Spellings = [GNU<"no_sanitize_thread">];
+  let Subjects = [Function, FunctionTemplate];
 }
 
 // Attribute to disable MemorySanitizer checks.
 def NoSanitizeMemory : InheritableAttr {
   let Spellings = [GNU<"no_sanitize_memory">];
+  let Subjects = [Function, FunctionTemplate];
 }
 
 // C/C++ Thread safety attributes (e.g. for deadlock, data race checking)
 
 def GuardedVar : InheritableAttr {
   let Spellings = [GNU<"guarded_var">];
+  let Subjects = [Field, Var];
 }
 
 def PtGuardedVar : InheritableAttr {
   let Spellings = [GNU<"pt_guarded_var">];
+  let Subjects = [Field, Var];
 }
 
 def Lockable : InheritableAttr {
   let Spellings = [GNU<"lockable">];
+  let Subjects = [Record];
 }
 
 def ScopedLockable : InheritableAttr {
   let Spellings = [GNU<"scoped_lockable">];
+  let Subjects = [Record];
 }
 
 def NoThreadSafetyAnalysis : InheritableAttr {
   let Spellings = [GNU<"no_thread_safety_analysis">];
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def GuardedBy : InheritableAttr {
@@ -864,6 +915,7 @@ def GuardedBy : InheritableAttr {
   let Args = [ExprArgument<"Arg">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Field, Var];
 }
 
 def PtGuardedBy : InheritableAttr {
@@ -871,6 +923,7 @@ def PtGuardedBy : InheritableAttr {
   let Args = [ExprArgument<"Arg">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Field, Var];
 }
 
 def AcquiredAfter : InheritableAttr {
@@ -878,6 +931,7 @@ def AcquiredAfter : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Field, Var];
 }
 
 def AcquiredBefore : InheritableAttr {
@@ -885,6 +939,7 @@ def AcquiredBefore : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Field, Var];
 }
 
 def ExclusiveLockFunction : InheritableAttr {
@@ -892,6 +947,7 @@ def ExclusiveLockFunction : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def SharedLockFunction : InheritableAttr {
@@ -899,6 +955,7 @@ def SharedLockFunction : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def AssertExclusiveLock : InheritableAttr {
@@ -906,6 +963,7 @@ def AssertExclusiveLock : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def AssertSharedLock : InheritableAttr {
@@ -913,6 +971,7 @@ def AssertSharedLock : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 // The first argument is an integer or boolean value specifying the return value
@@ -922,6 +981,7 @@ def ExclusiveTrylockFunction : InheritableAttr {
   let Args = [ExprArgument<"SuccessValue">, VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 // The first argument is an integer or boolean value specifying the return value
@@ -931,6 +991,7 @@ def SharedTrylockFunction : InheritableAttr {
   let Args = [ExprArgument<"SuccessValue">, VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def UnlockFunction : InheritableAttr {
@@ -938,6 +999,7 @@ def UnlockFunction : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def LockReturned : InheritableAttr {
@@ -945,6 +1007,7 @@ def LockReturned : InheritableAttr {
   let Args = [ExprArgument<"Arg">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def LocksExcluded : InheritableAttr {
@@ -952,6 +1015,7 @@ def LocksExcluded : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def ExclusiveLocksRequired : InheritableAttr {
@@ -959,6 +1023,7 @@ def ExclusiveLocksRequired : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 def SharedLocksRequired : InheritableAttr {
@@ -966,6 +1031,7 @@ def SharedLocksRequired : InheritableAttr {
   let Args = [VariadicExprArgument<"Args">];
   let LateParsed = 1;
   let TemplateDependent = 1;
+  let Subjects = [Function, FunctionTemplate];
 }
 
 // C/C++ consumed attributes.
@@ -1027,7 +1093,6 @@ def ArgumentWithTypeTag : InheritableAttr {
               UnsignedArgument<"ArgumentIdx">,
               UnsignedArgument<"TypeTagIdx">,
               BoolArgument<"IsPointer">];
-  let Subjects = [Function];
   let HasCustomParsing = 1;
 }
 
@@ -1048,7 +1113,8 @@ def MsProperty : IgnoredAttr {
 }
 
 def MsStruct : InheritableAttr {
-  let Spellings = [Declspec<"ms_struct">];
+  let Spellings = [GNU<"ms_struct">, CXX11<"gnu", "ms_struct">];
+  let Subjects = [Record];
 }
 
 def DLLExport : InheritableAttr, TargetSpecificAttr {

@@ -322,7 +322,7 @@ void UnwrappedLineParser::calculateBraceTypes() {
           // (for example while parsing lambdas).
           //
           // We exclude + and - as they can be ObjC visibility modifiers.
-          if (NextTok->isOneOf(tok::comma, tok::semi, tok::r_paren,
+          if (NextTok->isOneOf(tok::comma, tok::semi, tok::r_paren, tok::period,
                                tok::r_square, tok::l_brace, tok::colon) ||
               (NextTok->isBinaryOperator() &&
                !NextTok->isOneOf(tok::plus, tok::minus))) {
@@ -681,6 +681,7 @@ void UnwrappedLineParser::parseStructuralElement() {
             Style.BreakBeforeBraces == FormatStyle::BS_Stroustrup ||
             Style.BreakBeforeBraces == FormatStyle::BS_Allman)
           addUnwrappedLine();
+        FormatTok->Type = TT_FunctionLBrace;
         parseBlock(/*MustBeDeclaration=*/false);
         addUnwrappedLine();
         return;
@@ -1085,6 +1086,9 @@ void UnwrappedLineParser::parseSwitch() {
 
 void UnwrappedLineParser::parseAccessSpecifier() {
   nextToken();
+  // Understand Qt's slots.
+  if (FormatTok->is(tok::identifier) && FormatTok->TokenText == "slots")
+    nextToken();
   // Otherwise, we don't know what it is, and we'd better keep the next token.
   if (FormatTok->Tok.is(tok::colon))
     nextToken();
