@@ -1906,7 +1906,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
         !Collection.get()->getType()->isObjCObjectPointerType()) {
       Diag(FirstPart.get()->getLocStart(), diag::err_for_range_expected_decl)
         << Collection.get()->getSourceRange();
-      SkipUntil(tok::r_paren, false, true);
+      SkipUntil(tok::r_paren, StopBeforeMatch);
       return StmtError();
     }
 
