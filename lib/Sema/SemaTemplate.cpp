@@ -2652,11 +2652,6 @@ Sema::CheckVarTemplateId(VarTemplateDecl *Template, SourceLocation TemplateLoc,
       }
     }
 
-    // If we're dealing with a member template where the template parameters
-    // have been instantiated, this provides the original template parameters
-    // from which the member template's parameters were instantiated.
-    SmallVector<const NamedDecl *, 4> InstantiatedTemplateParameters;
-
     if (Matched.size() >= 1) {
       SmallVector<MatchResult, 4>::iterator Best = Matched.begin();
       if (Matched.size() == 1) {
@@ -6270,7 +6265,10 @@ Sema::CheckSpecializationInstantiationRedecl(SourceLocation NewLoc,
   switch (NewTSK) {
   case TSK_Undeclared:
   case TSK_ImplicitInstantiation:
-    llvm_unreachable("Don't check implicit instantiations here");
+    assert(
+        (PrevTSK == TSK_Undeclared || PrevTSK == TSK_ImplicitInstantiation) &&
+        "previous declaration must be implicit!");
+    return false;
 
   case TSK_ExplicitSpecialization:
     switch (PrevTSK) {
@@ -7438,7 +7436,8 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
     NamedDecl *Prev = *P;
     if (!HasExplicitTemplateArgs) {
       if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(Prev)) {
-        if (Context.hasSameUnqualifiedType(Method->getType(), R)) {
+        QualType Adjusted = adjustCCAndNoReturn(R, Method->getType());
+        if (Context.hasSameUnqualifiedType(Method->getType(), Adjusted)) {
           Matches.clear();
 
           Matches.addDecl(Method, P.getAccess());

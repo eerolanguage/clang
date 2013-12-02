@@ -30,6 +30,21 @@ namespace format {
 /// \brief The \c FormatStyle is used to configure the formatting to follow
 /// specific guidelines.
 struct FormatStyle {
+  /// \brief Supported languages. When stored in a configuration file, specifies
+  /// the language, that the configuration targets. When passed to the
+  /// reformat() function, enables syntax features specific to the language.
+  enum LanguageKind {
+    /// Do not use.
+    LK_None,
+    /// Should be used for C, C++, ObjectiveC, ObjectiveC++.
+    LK_Cpp,
+    /// Should be used for JavaScript.
+    LK_JavaScript
+  };
+
+  /// \brief Language, this format style is targeted at.
+  LanguageKind Language;
+
   /// \brief The column limit.
   ///
   /// A column limit of \c 0 means that there is no column limit. In this case,
@@ -283,7 +298,7 @@ struct FormatStyle {
            IndentCaseLabels == R.IndentCaseLabels &&
            IndentFunctionDeclarationAfterType ==
                R.IndentFunctionDeclarationAfterType &&
-           IndentWidth == R.IndentWidth &&
+           IndentWidth == R.IndentWidth && Language == R.Language &&
            MaxEmptyLinesToKeep == R.MaxEmptyLinesToKeep &&
            NamespaceIndentation == R.NamespaceIndentation &&
            ObjCSpaceBeforeProtocolList == R.ObjCSpaceBeforeProtocolList &&
@@ -387,10 +402,13 @@ extern const char *StyleOptionHelpDescription;
 /// above.
 /// \param[in] FileName Path to start search for .clang-format if \c StyleName
 /// == "file".
+/// \param[in] FallbackStyle The name of a predefined style used to fallback to
+/// in case the style can't be determined from \p StyleName.
 ///
 /// \returns FormatStyle as specified by \c StyleName. If no style could be
 /// determined, the default is LLVM Style (see getLLVMStyle()).
-FormatStyle getStyle(StringRef StyleName, StringRef FileName);
+FormatStyle getStyle(StringRef StyleName, StringRef FileName,
+                     StringRef FallbackStyle);
 
 } // end namespace format
 } // end namespace clang

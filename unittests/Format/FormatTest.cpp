@@ -187,10 +187,10 @@ TEST_F(FormatTest, FormatsCorrectRegionForLeadingWhitespace) {
                    26, 0, getLLVMStyleWithColumns(12)));
   EXPECT_EQ("#define A  \\\n"
             "  int a;   \\\n"
-            "    int b;",
+            "  int b;",
             format("#define A  \\\n"
                    "  int a;   \\\n"
-                   "    int b;",
+                   "  int b;",
                    25, 0, getLLVMStyleWithColumns(12)));
 }
 
@@ -829,6 +829,43 @@ TEST_F(FormatTest, CanFormatCommentsLocally) {
                    "int b;\n"
                    "int   c; // unrelated comment",
                    31, 0, getLLVMStyle()));
+
+  EXPECT_EQ("int a; // This\n"
+            "       // is\n"
+            "       // a",
+            format("int a;      // This\n"
+                   "            // is\n"
+                   "            // a",
+                   0, 0, getLLVMStyle()));
+  EXPECT_EQ("int a; // This\n"
+            "       // is\n"
+            "       // a\n"
+            "// This is b\n"
+            "int b;",
+            format("int a; // This\n"
+                   "     // is\n"
+                   "     // a\n"
+                   "// This is b\n"
+                   "int b;",
+                   0, 0, getLLVMStyle()));
+  EXPECT_EQ("int a; // This\n"
+            "       // is\n"
+            "       // a\n"
+            "\n"
+            "  // This is unrelated",
+            format("int a; // This\n"
+                   "     // is\n"
+                   "     // a\n"
+                   "\n"
+                   "  // This is unrelated",
+                   0, 0, getLLVMStyle()));
+  EXPECT_EQ("int a;\n"
+            "// This is\n"
+            "// not formatted.   ",
+            format("int a;\n"
+                   "// This is\n"
+                   "// not formatted.   ",
+                   0, 0, getLLVMStyle()));
 }
 
 TEST_F(FormatTest, RemovesTrailingWhitespaceOfComments) {
@@ -843,11 +880,11 @@ TEST_F(FormatTest, RemovesTrailingWhitespaceOfComments) {
 TEST_F(FormatTest, UnderstandsBlockComments) {
   verifyFormat("f(/*noSpaceAfterParameterNamingComment=*/true);");
   verifyFormat("void f() { g(/*aaa=*/x, /*bbb=*/!y); }");
-  EXPECT_EQ(
-      "f(aaaaaaaaaaaaaaaaaaaaaaaaa, /* Trailing comment for aa... */\n"
-      "  bbbbbbbbbbbbbbbbbbbbbbbbb);",
-      format("f(aaaaaaaaaaaaaaaaaaaaaaaaa ,   \\\n/* Trailing comment for aa... */\n"
-             "  bbbbbbbbbbbbbbbbbbbbbbbbb);"));
+  EXPECT_EQ("f(aaaaaaaaaaaaaaaaaaaaaaaaa, /* Trailing comment for aa... */\n"
+            "  bbbbbbbbbbbbbbbbbbbbbbbbb);",
+            format("f(aaaaaaaaaaaaaaaaaaaaaaaaa ,   \\\n"
+                   "/* Trailing comment for aa... */\n"
+                   "  bbbbbbbbbbbbbbbbbbbbbbbbb);"));
   EXPECT_EQ(
       "f(aaaaaaaaaaaaaaaaaaaaaaaaa,\n"
       "  /* Leading comment for bb... */ bbbbbbbbbbbbbbbbbbbbbbbbb);",
@@ -1539,6 +1576,8 @@ TEST_F(FormatTest, UnderstandsAccessSpecifiers) {
                      "};");
   verifyFormat("class A {\n"
                "public slots:\n"
+               "  void f() {}\n"
+               "public Q_SLOTS:\n"
                "  void f() {}\n"
                "};");
 }
@@ -2465,6 +2504,14 @@ TEST_F(FormatTest, LayoutNestedBlocks) {
                "  somethingelse();\n"
                "});",
                getLLVMStyleWithColumns(40));
+  verifyFormat("DEBUG( //\n"
+               "    { f(); }, a);");
+  verifyFormat("DEBUG( //\n"
+               "    {\n"
+               "      f(); //\n"
+               "    },\n"
+               "    a);");
+
   EXPECT_EQ("call(parameter, {\n"
             "  something();\n"
             "  // Comment too\n"
@@ -2511,6 +2558,45 @@ TEST_F(FormatTest, LayoutNestedBlocks) {
                "                 return;\n"
                "             },\n"
                "      a);", Style);
+}
+
+TEST_F(FormatTest, IndividualStatementsOfNestedBlocks) {
+  EXPECT_EQ("DEBUG({\n"
+            "  int i;\n"
+            "  int        j;\n"
+            "});",
+            format("DEBUG(   {\n"
+                   "  int        i;\n"
+                   "  int        j;\n"
+                   "}   )  ;",
+                   20, 1, getLLVMStyle()));
+  EXPECT_EQ("DEBUG(   {\n"
+            "  int        i;\n"
+            "  int j;\n"
+            "}   )  ;",
+            format("DEBUG(   {\n"
+                   "  int        i;\n"
+                   "  int        j;\n"
+                   "}   )  ;",
+                   41, 1, getLLVMStyle()));
+  EXPECT_EQ("DEBUG(   {\n"
+            "    int        i;\n"
+            "    int j;\n"
+            "}   )  ;",
+            format("DEBUG(   {\n"
+                   "    int        i;\n"
+                   "    int        j;\n"
+                   "}   )  ;",
+                   41, 1, getLLVMStyle()));
+  EXPECT_EQ("DEBUG({\n"
+            "  int i;\n"
+            "  int j;\n"
+            "});",
+            format("DEBUG(   {\n"
+                   "    int        i;\n"
+                   "    int        j;\n"
+                   "}   )  ;",
+                   20, 1, getLLVMStyle()));
 
   EXPECT_EQ("Debug({\n"
             "        if (aaaaaaaaaaaaaaaaaaaaaaaa)\n"
@@ -2523,18 +2609,26 @@ TEST_F(FormatTest, LayoutNestedBlocks) {
                    "      },\n"
                    "      a);",
                    50, 1, getLLVMStyle()));
-}
-
-TEST_F(FormatTest, IndividualStatementsOfNestedBlocks) {
   EXPECT_EQ("DEBUG({\n"
-            "  int        i;\n"
-            "  int j;\n"
+            "  DEBUG({\n"
+            "    int a;\n"
+            "    int b;\n"
+            "  }) ;\n"
             "});",
-            format("DEBUG(   {\n"
-                   "  int        i;\n"
-                   "  int        j;\n"
-                   "}   )  ;",
-                   40, 1, getLLVMStyle()));
+            format("DEBUG({\n"
+                   "  DEBUG({\n"
+                   "    int a;\n"
+                   "    int    b;\n" // Format this line only.
+                   "  }) ;\n"        // Don't touch this line.
+                   "});",
+                   35, 0, getLLVMStyle()));
+  EXPECT_EQ("DEBUG({\n"
+            "  int a; //\n"
+            "});",
+            format("DEBUG({\n"
+                   "    int a; //\n"
+                   "});",
+                   0, 0, getLLVMStyle()));
 }
 
 TEST_F(FormatTest, PutEmptyBlocksIntoOneLine) {
@@ -6852,8 +6946,6 @@ TEST_F(FormatTest, GetsPredefinedStyleByName) {
   EXPECT_FALSE(getPredefinedStyle("qwerty", &Styles[0]));
 }
 
-TEST_F(FormatTest, ParsesConfiguration) {
-  FormatStyle Style = {};
 #define CHECK_PARSE(TEXT, FIELD, VALUE)                                        \
   EXPECT_NE(VALUE, Style.FIELD);                                               \
   EXPECT_EQ(0, parseConfiguration(TEXT, &Style).value());                      \
@@ -6866,6 +6958,9 @@ TEST_F(FormatTest, ParsesConfiguration) {
   EXPECT_EQ(0, parseConfiguration(#FIELD ": false", &Style).value());          \
   EXPECT_FALSE(Style.FIELD);
 
+TEST_F(FormatTest, ParsesConfiguration) {
+  FormatStyle Style = {};
+  Style.Language = FormatStyle::LK_Cpp;
   CHECK_PARSE_BOOL(AlignEscapedNewlinesLeft);
   CHECK_PARSE_BOOL(AlignTrailingComments);
   CHECK_PARSE_BOOL(AllowAllParametersOfDeclarationOnNextLine);
@@ -6940,15 +7035,117 @@ TEST_F(FormatTest, ParsesConfiguration) {
               FormatStyle::NI_Inner);
   CHECK_PARSE("NamespaceIndentation: All", NamespaceIndentation,
               FormatStyle::NI_All);
+}
+
+TEST_F(FormatTest, ParsesConfigurationWithLanguages) {
+  FormatStyle Style = {};
+  Style.Language = FormatStyle::LK_Cpp;
+  CHECK_PARSE("Language: Cpp\n"
+              "IndentWidth: 12",
+              IndentWidth, 12u);
+  EXPECT_EQ(llvm::errc::not_supported,
+            parseConfiguration("Language: JavaScript\n"
+                               "IndentWidth: 34",
+                               &Style));
+  EXPECT_EQ(12u, Style.IndentWidth);
+  CHECK_PARSE("IndentWidth: 56", IndentWidth, 56u);
+  EXPECT_EQ(FormatStyle::LK_Cpp, Style.Language);
+
+  Style.Language = FormatStyle::LK_JavaScript;
+  CHECK_PARSE("Language: JavaScript\n"
+              "IndentWidth: 12",
+              IndentWidth, 12u);
+  CHECK_PARSE("IndentWidth: 23", IndentWidth, 23u);
+  EXPECT_EQ(llvm::errc::not_supported, parseConfiguration("Language: Cpp\n"
+                                                          "IndentWidth: 34",
+                                                          &Style));
+  EXPECT_EQ(23u, Style.IndentWidth);
+  CHECK_PARSE("IndentWidth: 56", IndentWidth, 56u);
+  EXPECT_EQ(FormatStyle::LK_JavaScript, Style.Language);
+
+  CHECK_PARSE("BasedOnStyle: LLVM\n"
+              "IndentWidth: 67",
+              IndentWidth, 67u);
+
+  CHECK_PARSE("---\n"
+              "Language: JavaScript\n"
+              "IndentWidth: 12\n"
+              "---\n"
+              "Language: Cpp\n"
+              "IndentWidth: 34\n"
+              "...\n",
+              IndentWidth, 12u);
+
+  Style.Language = FormatStyle::LK_Cpp;
+  CHECK_PARSE("---\n"
+              "Language: JavaScript\n"
+              "IndentWidth: 12\n"
+              "---\n"
+              "Language: Cpp\n"
+              "IndentWidth: 34\n"
+              "...\n",
+              IndentWidth, 34u);
+  CHECK_PARSE("---\n"
+              "IndentWidth: 78\n"
+              "---\n"
+              "Language: JavaScript\n"
+              "IndentWidth: 56\n"
+              "...\n",
+              IndentWidth, 78u);
+
+  Style.ColumnLimit = 123;
+  Style.IndentWidth = 234;
+  Style.BreakBeforeBraces = FormatStyle::BS_Linux;
+  Style.TabWidth = 345;
+  EXPECT_EQ(llvm::errc::success,
+            parseConfiguration("---\n"
+                               "IndentWidth: 456\n"
+                               "BreakBeforeBraces: Allman\n"
+                               "---\n"
+                               "Language: JavaScript\n"
+                               "IndentWidth: 111\n"
+                               "TabWidth: 111\n"
+                               "---\n"
+                               "Language: Cpp\n"
+                               "BreakBeforeBraces: Stroustrup\n"
+                               "TabWidth: 789\n"
+                               "...\n",
+                               &Style));
+  EXPECT_EQ(123u, Style.ColumnLimit);
+  EXPECT_EQ(456u, Style.IndentWidth);
+  EXPECT_EQ(FormatStyle::BS_Stroustrup, Style.BreakBeforeBraces);
+  EXPECT_EQ(789u, Style.TabWidth);
+
+
+  EXPECT_EQ(llvm::errc::invalid_argument,
+            parseConfiguration("---\n"
+                               "Language: JavaScript\n"
+                               "IndentWidth: 56\n"
+                               "---\n"
+                               "IndentWidth: 78\n"
+                               "...\n",
+                               &Style));
+  EXPECT_EQ(llvm::errc::invalid_argument,
+            parseConfiguration("---\n"
+                               "Language: JavaScript\n"
+                               "IndentWidth: 56\n"
+                               "---\n"
+                               "Language: JavaScript\n"
+                               "IndentWidth: 78\n"
+                               "...\n",
+                               &Style));
+
+  EXPECT_EQ(FormatStyle::LK_Cpp, Style.Language);
+}
 
 #undef CHECK_PARSE
 #undef CHECK_PARSE_BOOL
-}
 
 TEST_F(FormatTest, ConfigurationRoundTripTest) {
   FormatStyle Style = getLLVMStyle();
   std::string YAML = configurationAsText(Style);
   FormatStyle ParsedStyle = {};
+  ParsedStyle.Language = FormatStyle::LK_Cpp;
   EXPECT_EQ(0, parseConfiguration(YAML, &ParsedStyle).value());
   EXPECT_EQ(Style, ParsedStyle);
 }
@@ -6991,6 +7188,16 @@ TEST_F(FormatTest, CountsUTF8CharactersProperly) {
 }
 
 TEST_F(FormatTest, SplitsUTF8Strings) {
+  // Non-printable characters' width is currently considered to be the length in
+  // bytes in UTF8. The characters can be displayed in very different manner
+  // (zero-width, single width with a substitution glyph, expanded to their code
+  // (e.g. "<8d>"), so there's no single correct way to handle them.
+  EXPECT_EQ("\"aaaaÄ\"\n"
+            "\"\xc2\x8d\";",
+            format("\"aaaaÄ\xc2\x8d\";", getLLVMStyleWithColumns(10)));
+  EXPECT_EQ("\"aaaaaaaÄ\"\n"
+            "\"\xc2\x8d\";",
+            format("\"aaaaaaaÄ\xc2\x8d\";", getLLVMStyleWithColumns(10)));
   EXPECT_EQ(
       "\"Однажды, в \"\n"
       "\"студёную \"\n"
@@ -7024,6 +7231,8 @@ TEST_F(FormatTest, HandlesDoubleWidthCharsInMultiLineStrings) {
 }
 
 TEST_F(FormatTest, SplitsUTF8LineComments) {
+  EXPECT_EQ("// aaaaÄ\xc2\x8d",
+            format("// aaaaÄ\xc2\x8d", getLLVMStyleWithColumns(10)));
   EXPECT_EQ("// Я из лесу\n"
             "// вышел; был\n"
             "// сильный\n"
@@ -7358,18 +7567,36 @@ TEST_F(FormatTest, SpacesInAngles) {
 }
 
 TEST_F(FormatTest, UnderstandsJavaScript) {
-  verifyFormat("a == = b;");
-  verifyFormat("a != = b;");
+  FormatStyle JS = getLLVMStyle();
+  FormatStyle JS10Columns = getLLVMStyleWithColumns(10);
+  FormatStyle JS20Columns = getLLVMStyleWithColumns(20);
+  JS.Language = JS10Columns.Language = JS20Columns.Language =
+      FormatStyle::LK_JavaScript;
 
-  verifyFormat("a === b;");
-  verifyFormat("aaaaaaa ===\n    b;", getLLVMStyleWithColumns(10));
-  verifyFormat("a !== b;");
-  verifyFormat("aaaaaaa !==\n    b;", getLLVMStyleWithColumns(10));
+  verifyFormat("a == = b;", JS);
+  verifyFormat("a != = b;", JS);
+
+  verifyFormat("a === b;", JS);
+  verifyFormat("aaaaaaa ===\n    b;", JS10Columns);
+  verifyFormat("a !== b;", JS);
+  verifyFormat("aaaaaaa !==\n    b;", JS10Columns);
   verifyFormat("if (a + b + c +\n"
                "        d !==\n"
                "    e + f + g)\n"
                "  q();",
-               getLLVMStyleWithColumns(20));
+               JS20Columns);
+
+  verifyFormat("a >> >= b;", JS);
+
+  verifyFormat("a >>> b;", JS);
+  verifyFormat("aaaaaaa >>>\n    b;", JS10Columns);
+  verifyFormat("a >>>= b;", JS);
+  verifyFormat("aaaaaaa >>>=\n    b;", JS10Columns);
+  verifyFormat("if (a + b + c +\n"
+               "        d >>>\n"
+               "    e + f + g)\n"
+               "  q();",
+               JS20Columns);
 }
 
 } // end namespace tooling

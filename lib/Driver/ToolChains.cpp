@@ -921,12 +921,6 @@ void Darwin::CheckObjCARC() const {
   getDriver().Diag(diag::err_arc_unsupported_on_toolchain);
 }
 
-std::string
-Darwin_Generic_GCC::ComputeEffectiveClangTriple(const ArgList &Args,
-                                                types::ID InputType) const {
-  return ComputeLLVMTriple(Args, InputType);
-}
-
 /// Generic_GCC - A tool chain using the 'gcc' command to perform
 /// all subcommands; this relies on gcc translating the majority of
 /// command line options.
@@ -1025,7 +1019,7 @@ static StringRef getGCCToolchainDir(const ArgList &Args) {
 /// triple.
 Generic_GCC::GCCInstallationDetector::GCCInstallationDetector(
     const Driver &D, const llvm::Triple &TargetTriple, const ArgList &Args)
-    : IsValid(false), D(D) {
+    : IsValid(false) {
   llvm::Triple BiarchVariantTriple =
       TargetTriple.isArch32Bit() ? TargetTriple.get64BitArchVariant()
                                  : TargetTriple.get32BitArchVariant();
@@ -1392,9 +1386,6 @@ static bool findTargetBiarchSuffix(std::string &Suffix, StringRef Path,
 void Generic_GCC::GCCInstallationDetector::findMIPSABIDirSuffix(
     std::string &Suffix, llvm::Triple::ArchType TargetArch, StringRef Path,
     const llvm::opt::ArgList &Args) {
-  if (!isMipsArch(TargetArch))
-    return;
-
   // Some MIPS toolchains put libraries and object files compiled
   // using different options in to the sub-directoris which names
   // reflects the flags used for compilation. For example sysroot
@@ -1419,65 +1410,64 @@ void Generic_GCC::GCCInstallationDetector::findMIPSABIDirSuffix(
   // /mips32
   //     /usr
   //       /lib  <= crt*.o files compiled with '-mips32'
-  //
-  // Unfortunately different toolchains use different and partially
-  // overlapped naming schemes. So we have to make a trick for detection
-  // of using toolchain. We lookup a path which unique for each toolchains.
 
-  bool IsMentorToolChain = hasCrtBeginObj(Path + "/mips16/soft-float");
-  bool IsFSFToolChain = hasCrtBeginObj(Path + "/mips32/mips16/sof");
+  // Check FSF Toolchain path
+  Suffix.clear();
+  if (TargetArch == llvm::Triple::mips ||
+      TargetArch == llvm::Triple::mipsel) {
+    if (isMicroMips(Args))
+      Suffix += "/micromips";
+    else if (isMips32r2(Args))
+      Suffix += "";
+    else
+      Suffix += "/mips32";
 
-  if (IsMentorToolChain && IsFSFToolChain)
-    D.Diag(diag::err_drv_unknown_toolchain);
-
-  if (IsMentorToolChain) {
     if (isMips16(Args))
       Suffix += "/mips16";
-    else if (isMicroMips(Args))
-      Suffix += "/micromips";
-
-    if (isSoftFloatABI(Args))
-      Suffix += "/soft-float";
-
-    if (TargetArch == llvm::Triple::mipsel ||
-        TargetArch == llvm::Triple::mips64el)
-      Suffix += "/el";
-  } else if (IsFSFToolChain) {
-    if (TargetArch == llvm::Triple::mips ||
-        TargetArch == llvm::Triple::mipsel) {
-      if (isMicroMips(Args))
-        Suffix += "/micromips";
-      else if (isMips32r2(Args))
-        Suffix += "";
-      else
-        Suffix += "/mips32";
-
-      if (isMips16(Args))
-        Suffix += "/mips16";
-    } else {
-      if (isMips64r2(Args))
-        Suffix += hasMipsN32ABIArg(Args) ? "/mips64r2" : "/mips64r2/64";
-      else
-        Suffix += hasMipsN32ABIArg(Args) ? "/mips64" : "/mips64/64";
-    }
-
-    if (TargetArch == llvm::Triple::mipsel ||
-        TargetArch == llvm::Triple::mips64el)
-      Suffix += "/el";
-
-    if (isSoftFloatABI(Args))
-      Suffix += "/sof";
-    else {
-      if (isMipsFP64(Args))
-        Suffix += "/fp64";
-
-      if (isMipsNan2008(Args))
-        Suffix += "/nan2008";
-    }
+  } else {
+    if (isMips64r2(Args))
+      Suffix += hasMipsN32ABIArg(Args) ? "/mips64r2" : "/mips64r2/64";
+    else
+      Suffix += hasMipsN32ABIArg(Args) ? "/mips64" : "/mips64/64";
   }
 
-  if (!hasCrtBeginObj(Path + Suffix))
-    Suffix.clear();
+  if (TargetArch == llvm::Triple::mipsel ||
+      TargetArch == llvm::Triple::mips64el)
+    Suffix += "/el";
+
+  if (isSoftFloatABI(Args))
+    Suffix += "/sof";
+  else {
+    if (isMipsFP64(Args))
+      Suffix += "/fp64";
+
+    if (isMipsNan2008(Args))
+      Suffix += "/nan2008";
+  }
+
+  if (hasCrtBeginObj(Path + Suffix))
+    return;
+
+  // Check Code Sourcery Toolchain path
+  Suffix.clear();
+  if (isMips16(Args))
+    Suffix += "/mips16";
+  else if (isMicroMips(Args))
+    Suffix += "/micromips";
+
+  if (isSoftFloatABI(Args))
+    Suffix += "/soft-float";
+  else if (isMipsNan2008(Args))
+    Suffix += "/nan2008";
+
+  if (TargetArch == llvm::Triple::mipsel ||
+      TargetArch == llvm::Triple::mips64el)
+    Suffix += "/el";
+
+  if (hasCrtBeginObj(Path + Suffix))
+    return;
+
+  Suffix.clear();
 }
 
 void Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple(
@@ -1529,7 +1519,8 @@ void Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple(
         continue;
 
       std::string MIPSABIDirSuffix;
-      findMIPSABIDirSuffix(MIPSABIDirSuffix, TargetArch, LI->path(), Args);
+      if (isMipsArch(TargetArch))
+        findMIPSABIDirSuffix(MIPSABIDirSuffix, TargetArch, LI->path(), Args);
 
       // Some versions of SUSE and Fedora on ppc64 put 32-bit libs
       // in what would normally be GCCInstallPath and put the 64-bit
@@ -1580,10 +1571,6 @@ Tool *Generic_GCC::getTool(Action::ActionClass AC) const {
     if (!Preprocess)
       Preprocess.reset(new tools::gcc::Preprocess(*this));
     return Preprocess.get();
-  case Action::PrecompileJobClass:
-    if (!Precompile)
-      Precompile.reset(new tools::gcc::Precompile(*this));
-    return Precompile.get();
   case Action::CompileJobClass:
     if (!Compile)
       Compile.reset(new tools::gcc::Compile(*this));
@@ -1620,6 +1607,11 @@ bool Generic_GCC::isPIEDefault() const {
 
 bool Generic_GCC::isPICDefaultForced() const {
   return false;
+}
+
+bool Generic_GCC::IsIntegratedAssemblerDefault() const {
+  return getTriple().getArch() == llvm::Triple::x86 ||
+    getTriple().getArch() == llvm::Triple::x86_64;
 }
 
 /// Hexagon Toolchain

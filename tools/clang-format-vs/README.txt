@@ -3,4 +3,8 @@ for clang-format.
 
 Build prerequisites are:
 - Visual Studio 2012 Professional
-- Visual Studio SDK (http://www.microsoft.com/en-us/download/details.aspx?id=30668)
+- Visual Studio 2010 Professional
+- Visual Studio 2010 SDK.
+
+clang-format.exe must be copied into the ClangFormat/ directory before building.
+It will be bundled into the .vsix file.

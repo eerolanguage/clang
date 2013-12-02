@@ -5848,6 +5848,8 @@ public:
   // C++ Template Argument Deduction (C++ [temp.deduct])
   //===--------------------------------------------------------------------===//
 
+  QualType adjustCCAndNoReturn(QualType ArgFunctionType, QualType FunctionType);
+
   /// \brief Describes the result of template argument deduction.
   ///
   /// The TemplateDeductionResult enumeration describes the result of
@@ -6477,6 +6479,26 @@ public:
   /// enclosing function, so that they can reference function-local
   /// types, static variables, enumerators, etc.
   std::deque<PendingImplicitInstantiation> PendingLocalImplicitInstantiations;
+
+  class SavePendingLocalImplicitInstantiationsRAII {
+  public:
+    SavePendingLocalImplicitInstantiationsRAII(Sema &S): S(S) {
+      SavedPendingLocalImplicitInstantiations.swap(
+          S.PendingLocalImplicitInstantiations);
+    }
+
+    ~SavePendingLocalImplicitInstantiationsRAII() {
+      assert(S.PendingLocalImplicitInstantiations.empty() &&
+             "there shouldn't be any pending local implicit instantiations");
+      SavedPendingLocalImplicitInstantiations.swap(
+          S.PendingLocalImplicitInstantiations);
+    }
+
+  private:
+    Sema &S;
+    std::deque<PendingImplicitInstantiation>
+    SavedPendingLocalImplicitInstantiations;
+  };
 
   void PerformPendingInstantiations(bool LocalOnly = false);
 

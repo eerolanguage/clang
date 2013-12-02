@@ -76,7 +76,6 @@ protected:
   /// Driver, and has logic for fuzzing that where appropriate.
   class GCCInstallationDetector {
     bool IsValid;
-    const Driver &D;
     llvm::Triple GCCTriple;
 
     // FIXME: These might be better as path objects.
@@ -164,6 +163,7 @@ public:
   virtual bool isPICDefault() const;
   virtual bool isPIEDefault() const;
   virtual bool isPICDefaultForced() const;
+  virtual bool IsIntegratedAssemblerDefault() const;
 
 protected:
   virtual Tool *getTool(Action::ActionClass AC) const;
@@ -183,7 +183,6 @@ protected:
 
 private:
   mutable OwningPtr<tools::gcc::Preprocess> Preprocess;
-  mutable OwningPtr<tools::gcc::Precompile> Precompile;
   mutable OwningPtr<tools::gcc::Compile> Compile;
 };
 
@@ -407,19 +406,6 @@ public:
   /// }
 };
 
-/// Darwin_Generic_GCC - Generic Darwin tool chain using gcc.
-class LLVM_LIBRARY_VISIBILITY Darwin_Generic_GCC : public Generic_GCC {
-public:
-  Darwin_Generic_GCC(const Driver &D, const llvm::Triple &Triple,
-                     const llvm::opt::ArgList &Args)
-      : Generic_GCC(D, Triple, Args) {}
-
-  std::string ComputeEffectiveClangTriple(const llvm::opt::ArgList &Args,
-                                          types::ID InputType) const;
-
-  virtual bool isPICDefault() const { return false; }
-};
-
 class LLVM_LIBRARY_VISIBILITY Generic_ELF : public Generic_GCC {
   virtual void anchor();
 public:
@@ -428,10 +414,9 @@ public:
       : Generic_GCC(D, Triple, Args) {}
 
   virtual bool IsIntegratedAssemblerDefault() const {
-    // Default integrated assembler to on for x86.
-    return (getTriple().getArch() == llvm::Triple::aarch64 ||
-            getTriple().getArch() == llvm::Triple::x86 ||
-            getTriple().getArch() == llvm::Triple::x86_64);
+    if (getTriple().getArch() == llvm::Triple::aarch64)
+      return true;
+    return Generic_GCC::IsIntegratedAssemblerDefault();
   }
 };
 

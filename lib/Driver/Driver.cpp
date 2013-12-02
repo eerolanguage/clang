@@ -1178,7 +1178,7 @@ void Driver::BuildActions(const ToolChain &TC, DerivedArgList &Args,
 
   // Construct the actions to perform.
   ActionList LinkerInputs;
-  ActionList SplitInputs;
+
   llvm::SmallVector<phases::ID, phases::MaxNumberOfPhases> PL;
   for (unsigned i = 0, e = Inputs.size(); i != e; ++i) {
     types::ID InputType = Inputs[i].first;
@@ -1929,13 +1929,7 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
     case llvm::Triple::Darwin:
     case llvm::Triple::MacOSX:
     case llvm::Triple::IOS:
-      if (Target.getArch() == llvm::Triple::x86 ||
-          Target.getArch() == llvm::Triple::x86_64 ||
-          Target.getArch() == llvm::Triple::arm ||
-          Target.getArch() == llvm::Triple::thumb)
-        TC = new toolchains::DarwinClang(*this, Target, Args);
-      else
-        TC = new toolchains::Darwin_Generic_GCC(*this, Target, Args);
+      TC = new toolchains::DarwinClang(*this, Target, Args);
       break;
     case llvm::Triple::DragonFly:
       TC = new toolchains::DragonFly(*this, Target, Args);

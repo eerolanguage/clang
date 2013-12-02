@@ -1398,6 +1398,24 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
   }
 }
 
+static void AddGoldPlugin(const ToolChain &ToolChain, const ArgList &Args,
+                          ArgStringList &CmdArgs) {
+  // Tell the linker to load the plugin. This has to come before AddLinkerInputs
+  // as gold requires -plugin to come before any -plugin-opt that -Wl might
+  // forward.
+  CmdArgs.push_back("-plugin");
+  std::string Plugin = ToolChain.getDriver().Dir + "/../lib/LLVMgold.so";
+  CmdArgs.push_back(Args.MakeArgString(Plugin));
+
+  // Try to pass driver level flags relevant to LTO code generation down to
+  // the plugin.
+
+  // Handle flags for selecting CPU variants.
+  std::string CPU = getCPUName(Args, ToolChain.getTriple());
+  if (!CPU.empty())
+    CmdArgs.push_back(Args.MakeArgString(Twine("-plugin-opt=mcpu=") + CPU));
+}
+
 static void getX86TargetFeatures(const llvm::Triple &Triple,
                                  const ArgList &Args,
                                  std::vector<const char *> &Features) {
@@ -4265,11 +4283,6 @@ void gcc::Preprocess::RenderExtraToolArgs(const JobAction &JA,
   CmdArgs.push_back("-E");
 }
 
-void gcc::Precompile::RenderExtraToolArgs(const JobAction &JA,
-                                          ArgStringList &CmdArgs) const {
-  // The type is good enough.
-}
-
 void gcc::Compile::RenderExtraToolArgs(const JobAction &JA,
                                        ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
@@ -5877,25 +5890,8 @@ void freebsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
   Args.AddAllArgs(CmdArgs, options::OPT_r);
 
-  // Tell the linker to load the plugin. This has to come before AddLinkerInputs
-  // as gold requires -plugin to come before any -plugin-opt that -Wl might
-  // forward.
-  if (D.IsUsingLTO(Args)) {
-    CmdArgs.push_back("-plugin");
-    std::string Plugin = ToolChain.getDriver().Dir + "/../lib/LLVMgold.so";
-    CmdArgs.push_back(Args.MakeArgString(Plugin));
-
-    // Try to pass driver level flags relevant to LTO code generation down to
-    // the plugin.
-
-    // Handle flags for selecting CPU variants.
-    std::string CPU = getCPUName(Args, ToolChain.getTriple());
-    if (!CPU.empty()) {
-      CmdArgs.push_back(
-                        Args.MakeArgString(Twine("-plugin-opt=mcpu=") +
-                                           CPU));
-    }
-  }
+  if (D.IsUsingLTO(Args))
+    AddGoldPlugin(ToolChain, Args, CmdArgs);
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
@@ -6187,18 +6183,19 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back(Args.MakeArgString("-mnan=2008"));
     }
 
-    if (Arg *A = Args.getLastArg(options::OPT_mfp32, options::OPT_mfp64)) {
-      if (A->getOption().matches(options::OPT_mfp32))
-        CmdArgs.push_back(Args.MakeArgString("-mfp32"));
-      else
-        CmdArgs.push_back(Args.MakeArgString("-mfp64"));
-    }
-
+    Args.AddLastArg(CmdArgs, options::OPT_mfp32, options::OPT_mfp64);
     Args.AddLastArg(CmdArgs, options::OPT_mips16, options::OPT_mno_mips16);
     Args.AddLastArg(CmdArgs, options::OPT_mmicromips,
                     options::OPT_mno_micromips);
     Args.AddLastArg(CmdArgs, options::OPT_mdsp, options::OPT_mno_dsp);
     Args.AddLastArg(CmdArgs, options::OPT_mdspr2, options::OPT_mno_dspr2);
+
+    if (Arg *A = Args.getLastArg(options::OPT_mmsa, options::OPT_mno_msa)) {
+      // Do not use AddLastArg because not all versions of MIPS assembler
+      // support -mmsa / -mno-msa options.
+      if (A->getOption().matches(options::OPT_mmsa))
+        CmdArgs.push_back(Args.MakeArgString("-mmsa"));
+    }
 
     Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
                                       options::OPT_fpic, options::OPT_fno_pic,
@@ -6459,26 +6456,8 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
        i != e; ++i)
     CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
 
-  // Tell the linker to load the plugin. This has to come before AddLinkerInputs
-  // as gold requires -plugin to come before any -plugin-opt that -Wl might
-  // forward.
-  if (D.IsUsingLTO(Args)) {
-    CmdArgs.push_back("-plugin");
-    std::string Plugin = ToolChain.getDriver().Dir + "/../lib/LLVMgold.so";
-    CmdArgs.push_back(Args.MakeArgString(Plugin));
-
-    // Try to pass driver level flags relevant to LTO code generation down to
-    // the plugin.
-
-    // Handle flags for selecting CPU variants.
-    std::string CPU = getCPUName(Args, ToolChain.getTriple());
-    if (!CPU.empty()) {
-      CmdArgs.push_back(
-                        Args.MakeArgString(Twine("-plugin-opt=mcpu=") +
-                                           CPU));
-    }
-  }
-
+  if (D.IsUsingLTO(Args))
+    AddGoldPlugin(ToolChain, Args, CmdArgs);
 
   if (Args.hasArg(options::OPT_Z_Xlinker__no_demangle))
     CmdArgs.push_back("--no-demangle");

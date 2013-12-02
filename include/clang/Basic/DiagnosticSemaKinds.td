@@ -555,7 +555,7 @@ def err_conflicting_ivar_bitwidth : Error<
   "instance variable %0 has conflicting bit-field width">;
 def err_conflicting_ivar_name : Error<
   "conflicting instance variable names: %0 vs %1">;
-def err_inconsistant_ivar_count : Error<
+def err_inconsistent_ivar_count : Error<
   "inconsistent number of instance variables specified">;
 def warn_undef_method_impl : Warning<"method definition for %0 not found">,
   InGroup<DiagGroup<"incomplete-implementation">>;
@@ -1804,9 +1804,6 @@ def err_attribute_wrong_number_arguments : Error<
   ":requires exactly %1 arguments}1">;
 def err_attribute_too_many_arguments : Error<
   "attribute takes no more than %0 argument%s0">;
-def err_suppress_autosynthesis : Error<
-  "objc_requires_property_definitions attribute may only be specified on a class"
-  "to a class declaration">;
 def err_attribute_too_few_arguments : Error<
   "attribute takes at least %0 argument%s0">;
 def err_attribute_invalid_vector_type : Error<"invalid vector element type %0">;
@@ -1866,8 +1863,6 @@ def err_format_attribute_result_not : Error<"function does not return %0">;
 def err_format_attribute_implicit_this_format_string : Error<
   "format attribute cannot specify the implicit this argument as the format "
   "string">;
-def err_common_not_supported_cplusplus : Error<
-  "common attribute is not supported in C++">;
 def err_init_method_bad_return_type : Error<
   "init methods must return an object pointer type, not %0">;
 def err_attribute_invalid_size : Error<
@@ -2049,7 +2044,8 @@ def warn_attribute_wrong_decl_type : Warning<
   "variables, functions and tag types|thread-local variables|"
   "variables and fields|variables, data members and tag types|"
   "types and namespaces|Objective-C interfaces|methods and properties|"
-  "struct or union|struct, union or class|types}1">,
+  "struct or union|struct, union or class|types|"
+  "Objective-C instance methods|variables, functions and classes}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<
   "%0 attribute only applies to %select{functions|unions|"
@@ -2060,7 +2056,8 @@ def err_attribute_wrong_decl_type : Error<
   "variables, functions and tag types|thread-local variables|"
   "variables and fields|variables, data members and tag types|"
   "types and namespaces|Objective-C interfaces|methods and properties|"
-  "struct or union|struct, union or class|types}1">;
+  "struct or union|struct, union or class|types|"
+  "Objective-C instance methods|variables, functions and classes}1">;
 def warn_type_attribute_wrong_type : Warning<
   "'%0' only applies to %select{function|pointer|"
   "Objective-C object or block pointer}1 types; type here is %2">,
@@ -2312,6 +2309,8 @@ def note_function_to_bool_call : Note<
 def warn_cast_align : Warning<
   "cast from %0 to %1 increases required alignment from %2 to %3">,
   InGroup<CastAlign>, DefaultIgnore;
+def warn_old_style_cast : Warning<
+  "use of old-style cast">, InGroup<OldStyleCast>, DefaultIgnore;
 
 // Separate between casts to void* and non-void* pointers.
 // Some APIs use (abuse) void* for something like a user context,
@@ -2396,14 +2395,13 @@ def err_attribute_regparm_wrong_platform : Error<
   "'regparm' is not valid on this platform">;
 def err_attribute_regparm_invalid_number : Error<
   "'regparm' parameter must be between 0 and %0 inclusive">;
+def err_attribute_not_supported_in_lang : Error<
+  "%0 attribute is not supported in %select{C|C++|Objective-C}1">;
 
 
 // Clang-Specific Attributes
 def warn_attribute_iboutlet : Warning<
   "%0 attribute can only be applied to instance variables or properties">,
-  InGroup<IgnoredAttributes>;
-def warn_attribute_ibaction: Warning<
-  "ibaction attribute can only be applied to Objective-C instance methods">,
   InGroup<IgnoredAttributes>;
 def err_iboutletcollection_type : Error<
   "invalid type %0 as argument of iboutletcollection attribute">;
@@ -2416,8 +2414,6 @@ def warn_iboutletcollection_property_assign : Warning<
   "IBOutletCollection properties should be copy/strong and not assign">,
   InGroup<ObjCInvalidIBOutletProperty>;
   
-def err_attribute_overloadable_not_function : Error<
-  "'overloadable' attribute can only be applied to a function">;
 def err_attribute_overloadable_missing : Error<
   "%select{overloaded function|redeclaration of}0 %1 must have the "
   "'overloadable' attribute">;

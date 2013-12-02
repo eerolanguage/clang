@@ -34,6 +34,15 @@
 namespace llvm {
 namespace yaml {
 template <>
+struct ScalarEnumerationTraits<clang::format::FormatStyle::LanguageKind> {
+  static void enumeration(IO &IO,
+                          clang::format::FormatStyle::LanguageKind &Value) {
+    IO.enumCase(Value, "Cpp", clang::format::FormatStyle::LK_Cpp);
+    IO.enumCase(Value, "JavaScript", clang::format::FormatStyle::LK_JavaScript);
+  }
+};
+
+template <>
 struct ScalarEnumerationTraits<clang::format::FormatStyle::LanguageStandard> {
   static void enumeration(IO &IO,
                           clang::format::FormatStyle::LanguageStandard &Value) {
@@ -99,13 +108,17 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     } else {
       StringRef BasedOnStyle;
       IO.mapOptional("BasedOnStyle", BasedOnStyle);
-      if (!BasedOnStyle.empty())
+      if (!BasedOnStyle.empty()) {
+        clang::format::FormatStyle::LanguageKind Language = Style.Language;
         if (!clang::format::getPredefinedStyle(BasedOnStyle, &Style)) {
           IO.setError(Twine("Unknown value for BasedOnStyle: ", BasedOnStyle));
           return;
         }
+        Style.Language = Language;
+      }
     }
 
+    IO.mapOptional("Language", Style.Language);
     IO.mapOptional("AccessModifierOffset", Style.AccessModifierOffset);
     IO.mapOptional("ConstructorInitializerIndentWidth",
                    Style.ConstructorInitializerIndentWidth);
@@ -173,6 +186,36 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     IO.mapOptional("ContinuationIndentWidth", Style.ContinuationIndentWidth);
   }
 };
+
+// Allows to read vector<FormatStyle> while keeping default values.
+// Elements will be written or read starting from the 1st element.
+// When writing, the 0th element is ignored.
+// When reading, keys that are not present in the serialized form will be
+// copied from the 0th element of the vector. If the first element had no
+// Language specified, it will be treated as the default one for the following
+// elements.
+template <>
+struct DocumentListTraits<std::vector<clang::format::FormatStyle> > {
+  static size_t size(IO &io, std::vector<clang::format::FormatStyle> &Seq) {
+    return Seq.size() - 1;
+  }
+  static clang::format::FormatStyle &
+  element(IO &io, std::vector<clang::format::FormatStyle> &Seq, size_t Index) {
+    if (Index + 2 > Seq.size()) {
+      assert(Index + 2 == Seq.size() + 1);
+      clang::format::FormatStyle Template;
+      if (Seq.size() > 1 &&
+          Seq[1].Language == clang::format::FormatStyle::LK_None) {
+        Template = Seq[1];
+      } else {
+        Template = Seq[0];
+        Template.Language = clang::format::FormatStyle::LK_None;
+      }
+      Seq.resize(Index + 2, Template);
+    }
+    return Seq[Index + 1];
+  }
+};
 }
 }
 
@@ -188,6 +231,7 @@ void setDefaultPenalties(FormatStyle &Style) {
 
 FormatStyle getLLVMStyle() {
   FormatStyle LLVMStyle;
+  LLVMStyle.Language = FormatStyle::LK_Cpp;
   LLVMStyle.AccessModifierOffset = -2;
   LLVMStyle.AlignEscapedNewlinesLeft = false;
   LLVMStyle.AlignTrailingComments = true;
@@ -236,6 +280,7 @@ FormatStyle getLLVMStyle() {
 
 FormatStyle getGoogleStyle() {
   FormatStyle GoogleStyle;
+  GoogleStyle.Language = FormatStyle::LK_Cpp;
   GoogleStyle.AccessModifierOffset = -1;
   GoogleStyle.AlignEscapedNewlinesLeft = true;
   GoogleStyle.AlignTrailingComments = true;
@@ -337,11 +382,42 @@ bool getPredefinedStyle(StringRef Name, FormatStyle *Style) {
 }
 
 llvm::error_code parseConfiguration(StringRef Text, FormatStyle *Style) {
+  assert(Style);
+  assert(Style->Language != FormatStyle::LK_None);
   if (Text.trim().empty())
     return llvm::make_error_code(llvm::errc::invalid_argument);
+
+  std::vector<FormatStyle> Styles;
+  // DocumentListTraits<vector<FormatStyle>> uses 0th element as the default one
+  // for the fields, keys for which are missing from the configuration.
+  Styles.push_back(*Style);
   llvm::yaml::Input Input(Text);
-  Input >> *Style;
-  return Input.error();
+  Input >> Styles;
+  if (Input.error())
+    return Input.error();
+
+  for (unsigned i = 1; i < Styles.size(); ++i) {
+    // Ensures that only the first configuration can skip the Language option.
+    if (Styles[i].Language == FormatStyle::LK_None && i != 1)
+      return llvm::make_error_code(llvm::errc::invalid_argument);
+    // Ensure that each language is configured at most once.
+    for (unsigned j = 1; j < i; ++j) {
+      if (Styles[i].Language == Styles[j].Language)
+        return llvm::make_error_code(llvm::errc::invalid_argument);
+    }
+  }
+  // Look for a suitable configuration starting from the end, so we can
+  // find the configuration for the specific language first, and the default
+  // configuration (which can only be at slot 1) after it.
+  for (unsigned i = Styles.size() - 1; i > 0; --i) {
+    if (Styles[i].Language == Styles[0].Language ||
+        Styles[i].Language == FormatStyle::LK_None) {
+      *Style = Styles[i];
+      Style->Language = Styles[0].Language;
+      return llvm::make_error_code(llvm::errc::success);
+    }
+  }
+  return llvm::make_error_code(llvm::errc::not_supported);
 }
 
 std::string configurationAsText(const FormatStyle &Style) {
@@ -553,37 +629,26 @@ private:
 
 class UnwrappedLineFormatter {
 public:
-  UnwrappedLineFormatter(SourceManager &SourceMgr,
-                         SmallVectorImpl<CharSourceRange> &Ranges,
-                         ContinuationIndenter *Indenter,
+  UnwrappedLineFormatter(ContinuationIndenter *Indenter,
                          WhitespaceManager *Whitespaces,
                          const FormatStyle &Style)
-      : SourceMgr(SourceMgr), Ranges(Ranges), Indenter(Indenter),
-        Whitespaces(Whitespaces), Style(Style), Joiner(Style) {}
+      : Indenter(Indenter), Whitespaces(Whitespaces), Style(Style),
+        Joiner(Style) {}
 
   unsigned format(const SmallVectorImpl<AnnotatedLine *> &Lines, bool DryRun,
-                  int AdditionalIndent = 0) {
+                  int AdditionalIndent = 0, bool FixBadIndentation = false) {
     assert(!Lines.empty());
     unsigned Penalty = 0;
     std::vector<int> IndentForLevel;
     for (unsigned i = 0, e = Lines[0]->Level; i != e; ++i)
       IndentForLevel.push_back(Style.IndentWidth * i + AdditionalIndent);
-    bool PreviousLineWasTouched = false;
     const AnnotatedLine *PreviousLine = NULL;
-    bool FormatPPDirective = false;
     for (SmallVectorImpl<AnnotatedLine *>::const_iterator I = Lines.begin(),
                                                           E = Lines.end();
          I != E; ++I) {
       const AnnotatedLine &TheLine = **I;
       const FormatToken *FirstTok = TheLine.First;
       int Offset = getIndentOffset(*FirstTok);
-
-      // Check whether this line is part of a formatted preprocessor directive.
-      if (FirstTok->HasUnescapedNewline)
-        FormatPPDirective = false;
-      if (!FormatPPDirective && TheLine.InPPDirective &&
-          (touchesLine(TheLine) || touchesPPDirective(I + 1, E)))
-        FormatPPDirective = true;
 
       // Determine indent and try to merge multiple unwrapped lines.
       while (IndentForLevel.size() <= TheLine.Level)
@@ -600,17 +665,19 @@ public:
       }
       I += MergedLines;
 
-      bool WasMoved = PreviousLineWasTouched && FirstTok->NewlinesBefore == 0;
+      unsigned LevelIndent = getIndent(IndentForLevel, TheLine.Level);
+      bool FixIndentation =
+          FixBadIndentation && (LevelIndent != FirstTok->OriginalColumn);
       if (TheLine.First->is(tok::eof)) {
-        if (PreviousLineWasTouched && !DryRun) {
+        if (PreviousLine && PreviousLine->Affected && !DryRun) {
+          // Remove the file's trailing whitespace.
           unsigned Newlines = std::min(FirstTok->NewlinesBefore, 1u);
           Whitespaces->replaceWhitespace(*TheLine.First, Newlines,
                                          /*IndentLevel=*/0, /*Spaces=*/0,
                                          /*TargetColumn=*/0);
         }
       } else if (TheLine.Type != LT_Invalid &&
-                 (WasMoved || FormatPPDirective || touchesLine(TheLine))) {
-        unsigned LevelIndent = getIndent(IndentForLevel, TheLine.Level);
+                 (TheLine.Affected || FixIndentation)) {
         if (FirstTok->WhitespaceRange.isValid()) {
           if (!DryRun)
             formatFirstToken(*TheLine.First, PreviousLine, TheLine.Level,
@@ -632,6 +699,7 @@ public:
           while (State.NextToken != NULL)
             Indenter->addTokenToState(State, /*Newline=*/false, DryRun);
         } else if (Style.ColumnLimit == 0) {
+          // FIXME: Implement nested blocks for ColumnLimit = 0.
           NoColumnLimitFormatter Formatter(Indenter);
           if (!DryRun)
             Formatter.format(Indent, &TheLine);
@@ -640,7 +708,8 @@ public:
         }
 
         IndentForLevel[TheLine.Level] = LevelIndent;
-        PreviousLineWasTouched = true;
+      } else if (TheLine.ChildrenAffected) {
+        format(TheLine.Children, DryRun);
       } else {
         // Format the first token if necessary, and notify the WhitespaceManager
         // about the unchanged whitespace.
@@ -649,9 +718,9 @@ public:
               (Tok->NewlinesBefore > 0 || Tok->IsFirst)) {
             unsigned LevelIndent = Tok->OriginalColumn;
             if (!DryRun) {
-              // Remove trailing whitespace of the previous line if it was
-              // touched.
-              if (PreviousLineWasTouched || touchesEmptyLineBefore(TheLine)) {
+              // Remove trailing whitespace of the previous line.
+              if ((PreviousLine && PreviousLine->Affected) ||
+                  TheLine.LeadingEmptyLinesAffected) {
                 formatFirstToken(*Tok, PreviousLine, TheLine.Level, LevelIndent,
                                  TheLine.InPPDirective);
               } else {
@@ -667,10 +736,6 @@ public:
             Whitespaces->addUntouchableToken(*Tok, TheLine.InPPDirective);
           }
         }
-        // If we did not reformat this unwrapped line, the column at the end of
-        // the last token is unchanged - thus, we can calculate the end of the
-        // last token.
-        PreviousLineWasTouched = false;
       }
       if (!DryRun) {
         for (FormatToken *Tok = TheLine.First; Tok != NULL; Tok = Tok->Next) {
@@ -779,6 +844,8 @@ private:
   void join(AnnotatedLine &A, const AnnotatedLine &B) {
     assert(!A.Last->Next);
     assert(!B.First->Previous);
+    if (B.Affected)
+      A.Affected = true;
     A.Last->Next = B.First;
     B.First->Previous = A.Last;
     B.First->CanBreakBefore = true;
@@ -792,48 +859,6 @@ private:
   unsigned getColumnLimit(bool InPPDirective) const {
     // In preprocessor directives reserve two chars for trailing " \"
     return Style.ColumnLimit - (InPPDirective ? 2 : 0);
-  }
-
-  bool touchesRanges(const CharSourceRange &Range) {
-    for (SmallVectorImpl<CharSourceRange>::const_iterator I = Ranges.begin(),
-                                                          E = Ranges.end();
-         I != E; ++I) {
-      if (!SourceMgr.isBeforeInTranslationUnit(Range.getEnd(), I->getBegin()) &&
-          !SourceMgr.isBeforeInTranslationUnit(I->getEnd(), Range.getBegin()))
-        return true;
-    }
-    return false;
-  }
-
-  bool touchesLine(const AnnotatedLine &TheLine) {
-    const FormatToken *First = TheLine.First;
-    const FormatToken *Last = TheLine.Last;
-    CharSourceRange LineRange = CharSourceRange::getCharRange(
-        First->WhitespaceRange.getBegin().getLocWithOffset(
-            First->LastNewlineOffset),
-        Last->getStartOfNonWhitespace().getLocWithOffset(
-            Last->TokenText.size() - 1));
-    return touchesRanges(LineRange);
-  }
-
-  bool touchesPPDirective(SmallVectorImpl<AnnotatedLine *>::const_iterator I,
-                          SmallVectorImpl<AnnotatedLine *>::const_iterator E) {
-    for (; I != E; ++I) {
-      if ((*I)->First->HasUnescapedNewline)
-        return false;
-      if (touchesLine(**I))
-        return true;
-    }
-    return false;
-  }
-
-  bool touchesEmptyLineBefore(const AnnotatedLine &TheLine) {
-    const FormatToken *First = TheLine.First;
-    CharSourceRange LineRange = CharSourceRange::getCharRange(
-        First->WhitespaceRange.getBegin(),
-        First->WhitespaceRange.getBegin().getLocWithOffset(
-            First->LastNewlineOffset));
-    return touchesRanges(LineRange);
   }
 
   /// \brief Analyze the entire solution space starting from \p InitialState.
@@ -981,7 +1006,8 @@ private:
     if (NewLine) {
       int AdditionalIndent = State.Stack.back().Indent -
                              Previous.Children[0]->Level * Style.IndentWidth;
-      Penalty += format(Previous.Children, DryRun, AdditionalIndent);
+      Penalty += format(Previous.Children, DryRun, AdditionalIndent,
+                        /*FixBadIndentation=*/true);
       return true;
     }
 
@@ -1005,8 +1031,6 @@ private:
     return true;
   }
 
-  SourceManager &SourceMgr;
-  SmallVectorImpl<CharSourceRange> &Ranges;
   ContinuationIndenter *Indenter;
   WhitespaceManager *Whitespaces;
   FormatStyle Style;
@@ -1038,24 +1062,44 @@ public:
 
 private:
   void tryMergePreviousTokens() {
-    tryMerge_TMacro() || tryMergeJavaScriptIdentityOperators();
+    if (tryMerge_TMacro())
+      return;
+
+    if (Style.Language == FormatStyle::LK_JavaScript) {
+      static tok::TokenKind JSIdentity[] = { tok::equalequal, tok::equal };
+      static tok::TokenKind JSNotIdentity[] = { tok::exclaimequal, tok::equal };
+      static tok::TokenKind JSShiftEqual[] = { tok::greater, tok::greater,
+                                               tok::greaterequal };
+      // FIXME: We probably need to change token type to mimic operator with the
+      // correct priority.
+      if (tryMergeTokens(JSIdentity))
+        return;
+      if (tryMergeTokens(JSNotIdentity))
+        return;
+      if (tryMergeTokens(JSShiftEqual))
+        return;
+    }
   }
 
-  bool tryMergeJavaScriptIdentityOperators() {
-    if (Tokens.size() < 2)
+  bool tryMergeTokens(ArrayRef<tok::TokenKind> Kinds) {
+    if (Tokens.size() < Kinds.size())
       return false;
-    FormatToken &First = *Tokens[Tokens.size() - 2];
-    if (!First.isOneOf(tok::exclaimequal, tok::equalequal))
+
+    SmallVectorImpl<FormatToken *>::const_iterator First =
+        Tokens.end() - Kinds.size();
+    if (!First[0]->is(Kinds[0]))
       return false;
-    FormatToken &Second = *Tokens.back();
-    if (!Second.is(tok::equal))
-      return false;
-    if (Second.WhitespaceRange.getBegin() != Second.WhitespaceRange.getEnd())
-      return false;
-    First.TokenText =
-        StringRef(First.TokenText.data(), First.TokenText.size() + 1);
-    First.ColumnWidth += 1;
-    Tokens.pop_back();
+    unsigned AddLength = 0;
+    for (unsigned i = 1; i < Kinds.size(); ++i) {
+      if (!First[i]->is(Kinds[i]) || First[i]->WhitespaceRange.getBegin() !=
+                                         First[i]->WhitespaceRange.getEnd())
+        return false;
+      AddLength += First[i]->TokenText.size();
+    }
+    Tokens.resize(Tokens.size() - Kinds.size() + 1);
+    First[0]->TokenText = StringRef(First[0]->TokenText.data(),
+                                    First[0]->TokenText.size() + AddLength);
+    First[0]->ColumnWidth += AddLength;
     return true;
   }
 
@@ -1253,6 +1297,17 @@ private:
   }
 };
 
+static StringRef getLanguageName(FormatStyle::LanguageKind Language) {
+  switch (Language) {
+  case FormatStyle::LK_Cpp:
+    return "C++";
+  case FormatStyle::LK_JavaScript:
+    return "JavaScript";
+  default:
+    return "Unknown";
+  }
+}
+
 class Formatter : public UnwrappedLineConsumer {
 public:
   Formatter(const FormatStyle &Style, Lexer &Lex, SourceManager &SourceMgr,
@@ -1264,6 +1319,8 @@ public:
     DEBUG(llvm::dbgs() << "File encoding: "
                        << (Encoding == encoding::Encoding_UTF8 ? "UTF8"
                                                                : "unknown")
+                       << "\n");
+    DEBUG(llvm::dbgs() << "Language: " << getLanguageName(Style.Language)
                        << "\n");
   }
 
@@ -1310,17 +1367,152 @@ public:
     for (unsigned i = 0, e = AnnotatedLines.size(); i != e; ++i) {
       Annotator.calculateFormattingInformation(*AnnotatedLines[i]);
     }
+    computeAffectedLines(AnnotatedLines.begin(), AnnotatedLines.end());
 
     Annotator.setCommentLineLevels(AnnotatedLines);
     ContinuationIndenter Indenter(Style, SourceMgr, Whitespaces, Encoding,
                                   BinPackInconclusiveFunctions);
-    UnwrappedLineFormatter Formatter(SourceMgr, Ranges, &Indenter, &Whitespaces,
-                                     Style);
+    UnwrappedLineFormatter Formatter(&Indenter, &Whitespaces, Style);
     Formatter.format(AnnotatedLines, /*DryRun=*/false);
     return Whitespaces.generateReplacements();
   }
 
 private:
+  // Determines which lines are affected by the SourceRanges given as input.
+  // Returns \c true if at least one line between I and E or one of their
+  // children is affected.
+  bool computeAffectedLines(SmallVectorImpl<AnnotatedLine *>::iterator I,
+                            SmallVectorImpl<AnnotatedLine *>::iterator E) {
+    bool SomeLineAffected = false;
+    const AnnotatedLine *PreviousLine = NULL;
+    while (I != E) {
+      AnnotatedLine *Line = *I;
+      Line->LeadingEmptyLinesAffected = affectsLeadingEmptyLines(*Line->First);
+
+      // If a line is part of a preprocessor directive, it needs to be formatted
+      // if any token within the directive is affected.
+      if (Line->InPPDirective) {
+        FormatToken *Last = Line->Last;
+        SmallVectorImpl<AnnotatedLine *>::iterator PPEnd = I + 1;
+        while (PPEnd != E && !(*PPEnd)->First->HasUnescapedNewline) {
+          Last = (*PPEnd)->Last;
+          ++PPEnd;
+        }
+
+        if (affectsTokenRange(*Line->First, *Last,
+                              /*IncludeLeadingNewlines=*/false)) {
+          SomeLineAffected = true;
+          markAllAsAffected(I, PPEnd);
+        }
+        I = PPEnd;
+        continue;
+      }
+
+      if (nonPPLineAffected(Line, PreviousLine))
+        SomeLineAffected = true;
+
+      PreviousLine = Line;
+      ++I;
+    }
+    return SomeLineAffected;
+  }
+
+  // Determines whether 'Line' is affected by the SourceRanges given as input.
+  // Returns \c true if line or one if its children is affected.
+  bool nonPPLineAffected(AnnotatedLine *Line,
+                         const AnnotatedLine *PreviousLine) {
+    bool SomeLineAffected = false;
+    Line->ChildrenAffected =
+        computeAffectedLines(Line->Children.begin(), Line->Children.end());
+    if (Line->ChildrenAffected)
+      SomeLineAffected = true;
+
+    // Stores whether one of the line's tokens is directly affected.
+    bool SomeTokenAffected = false;
+    // Stores whether we need to look at the leading newlines of the next token
+    // in order to determine whether it was affected.
+    bool IncludeLeadingNewlines = false;
+
+    // Stores whether the first child line of any of this line's tokens is
+    // affected.
+    bool SomeFirstChildAffected = false;
+
+    for (FormatToken *Tok = Line->First; Tok; Tok = Tok->Next) {
+      // Determine whether 'Tok' was affected.
+      if (affectsTokenRange(*Tok, *Tok, IncludeLeadingNewlines))
+        SomeTokenAffected = true;
+
+      // Determine whether the first child of 'Tok' was affected.
+      if (!Tok->Children.empty() && Tok->Children.front()->Affected)
+        SomeFirstChildAffected = true;
+
+      IncludeLeadingNewlines = Tok->Children.empty();
+    }
+
+    // Was this line moved, i.e. has it previously been on the same line as an
+    // affected line?
+    bool LineMoved = PreviousLine && PreviousLine->Affected &&
+                     Line->First->NewlinesBefore == 0;
+
+    bool IsContinuedComment = Line->First->is(tok::comment) &&
+                              Line->First->Next == NULL &&
+                              Line->First->NewlinesBefore < 2 && PreviousLine &&
+                              PreviousLine->Affected &&
+                              PreviousLine->Last->is(tok::comment);
+
+    if (SomeTokenAffected || SomeFirstChildAffected || LineMoved ||
+        IsContinuedComment) {
+      Line->Affected = true;
+      SomeLineAffected = true;
+    }
+    return SomeLineAffected;
+  }
+
+  // Marks all lines between I and E as well as all their children as affected.
+  void markAllAsAffected(SmallVectorImpl<AnnotatedLine *>::iterator I,
+                         SmallVectorImpl<AnnotatedLine *>::iterator E) {
+    while (I != E) {
+      (*I)->Affected = true;
+      markAllAsAffected((*I)->Children.begin(), (*I)->Children.end());
+      ++I;
+    }
+  }
+
+  // Returns true if the range from 'First' to 'Last' intersects with one of the
+  // input ranges.
+  bool affectsTokenRange(const FormatToken &First, const FormatToken &Last,
+                         bool IncludeLeadingNewlines) {
+    SourceLocation Start = First.WhitespaceRange.getBegin();
+    if (!IncludeLeadingNewlines)
+      Start = Start.getLocWithOffset(First.LastNewlineOffset);
+    SourceLocation End = Last.getStartOfNonWhitespace();
+    if (Last.TokenText.size() > 0)
+      End = End.getLocWithOffset(Last.TokenText.size() - 1);
+    CharSourceRange Range = CharSourceRange::getCharRange(Start, End);
+    return affectsCharSourceRange(Range);
+  }
+
+  // Returns true if one of the input ranges intersect the leading empty lines
+  // before 'Tok'.
+  bool affectsLeadingEmptyLines(const FormatToken &Tok) {
+    CharSourceRange EmptyLineRange = CharSourceRange::getCharRange(
+        Tok.WhitespaceRange.getBegin(),
+        Tok.WhitespaceRange.getBegin().getLocWithOffset(Tok.LastNewlineOffset));
+    return affectsCharSourceRange(EmptyLineRange);
+  }
+
+  // Returns true if 'Range' intersects with one of the input ranges.
+  bool affectsCharSourceRange(const CharSourceRange &Range) {
+    for (SmallVectorImpl<CharSourceRange>::const_iterator I = Ranges.begin(),
+                                                          E = Ranges.end();
+         I != E; ++I) {
+      if (!SourceMgr.isBeforeInTranslationUnit(Range.getEnd(), I->getBegin()) &&
+          !SourceMgr.isBeforeInTranslationUnit(I->getEnd(), Range.getBegin()))
+        return true;
+    }
+    return false;
+  }
+
   static bool inputUsesCRLF(StringRef Text) {
     return Text.count('\r') * 2 > Text.count('\n');
   }
@@ -1456,11 +1648,28 @@ const char *StyleOptionHelpDescription =
     "parameters, e.g.:\n"
     "  -style=\"{BasedOnStyle: llvm, IndentWidth: 8}\"";
 
-FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
-  // Fallback style in case the rest of this function can't determine a style.
-  StringRef FallbackStyle = "LLVM";
+static void fillLanguageByFileName(StringRef FileName, FormatStyle *Style) {
+  if (FileName.endswith_lower(".c") || FileName.endswith_lower(".h") ||
+      FileName.endswith_lower(".cpp") || FileName.endswith_lower(".hpp") ||
+      FileName.endswith_lower(".cc") || FileName.endswith_lower(".hh") ||
+      FileName.endswith_lower(".cxx") || FileName.endswith_lower(".hxx") ||
+      FileName.endswith_lower(".m") || FileName.endswith_lower(".mm")) {
+    Style->Language = FormatStyle::LK_Cpp;
+  }
+  if (FileName.endswith_lower(".js")) {
+    Style->Language = FormatStyle::LK_JavaScript;
+  }
+}
+
+FormatStyle getStyle(StringRef StyleName, StringRef FileName,
+                     StringRef FallbackStyle) {
   FormatStyle Style;
-  getPredefinedStyle(FallbackStyle, &Style);
+  if (!getPredefinedStyle(FallbackStyle, &Style)) {
+    llvm::errs() << "Invalid fallback style \"" << FallbackStyle
+                 << "\" using LLVM style\n";
+    return getLLVMStyle();
+  }
+  fillLanguageByFileName(FileName, &Style);
 
   if (StyleName.startswith("{")) {
     // Parse YAML/JSON style from the command line.
@@ -1475,9 +1684,11 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
     if (!getPredefinedStyle(StyleName, &Style))
       llvm::errs() << "Invalid value for -style, using " << FallbackStyle
                    << " style\n";
+    fillLanguageByFileName(FileName, &Style);
     return Style;
   }
 
+  SmallString<128> UnsuitableConfigFiles;
   SmallString<128> Path(FileName);
   llvm::sys::fs::make_absolute(Path);
   for (StringRef Directory = Path; !Directory.empty();
@@ -1506,12 +1717,18 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
       if (llvm::error_code ec =
               llvm::MemoryBuffer::getFile(ConfigFile.c_str(), Text)) {
         llvm::errs() << ec.message() << "\n";
-        continue;
+        break;
       }
       if (llvm::error_code ec = parseConfiguration(Text->getBuffer(), &Style)) {
+        if (ec == llvm::errc::not_supported) {
+          if (!UnsuitableConfigFiles.empty())
+            UnsuitableConfigFiles.append(", ");
+          UnsuitableConfigFiles.append(ConfigFile);
+          continue;
+        }
         llvm::errs() << "Error reading " << ConfigFile << ": " << ec.message()
                      << "\n";
-        continue;
+        break;
       }
       DEBUG(llvm::dbgs() << "Using configuration file " << ConfigFile << "\n");
       return Style;
@@ -1519,6 +1736,11 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName) {
   }
   llvm::errs() << "Can't find usable .clang-format, using " << FallbackStyle
                << " style\n";
+  if (!UnsuitableConfigFiles.empty()) {
+    llvm::errs() << "Configuration file(s) do(es) not support "
+                 << getLanguageName(Style.Language) << ": "
+                 << UnsuitableConfigFiles << "\n";
+  }
   return Style;
 }
 

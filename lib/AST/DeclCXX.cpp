@@ -722,6 +722,13 @@ void CXXRecordDecl::addedMember(Decl *D) {
       if (FieldRec->getDefinition()) {
         addedClassSubobject(FieldRec);
 
+        // We may need to perform overload resolution to determine whether a
+        // field can be moved if it's const or volatile qualified.
+        if (T.getCVRQualifiers() & (Qualifiers::Const | Qualifiers::Volatile)) {
+          data().NeedOverloadResolutionForMoveConstructor = true;
+          data().NeedOverloadResolutionForMoveAssignment = true;
+        }
+
         // C++11 [class.ctor]p5, C++11 [class.copy]p11:
         //   A defaulted [special member] for a class X is defined as
         //   deleted if:
@@ -1907,8 +1914,6 @@ NamespaceDecl *UsingDirectiveDecl::getNominatedNamespace() {
   return cast_or_null<NamespaceDecl>(NominatedNamespace);
 }
 
-void NamespaceDecl::anchor() { }
-
 NamespaceDecl::NamespaceDecl(DeclContext *DC, bool Inline, 
                              SourceLocation StartLoc,
                              SourceLocation IdLoc, IdentifierInfo *Id,
@@ -1932,6 +1937,16 @@ NamespaceDecl *NamespaceDecl::Create(ASTContext &C, DeclContext *DC,
 NamespaceDecl *NamespaceDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   return new (C, ID) NamespaceDecl(0, false, SourceLocation(), SourceLocation(),
                                    0, 0);
+}
+
+NamespaceDecl *NamespaceDecl::getNextRedeclaration() {
+  return RedeclLink.getNext();
+}
+NamespaceDecl *NamespaceDecl::getPreviousDeclImpl() {
+  return getPreviousDecl();
+}
+NamespaceDecl *NamespaceDecl::getMostRecentDeclImpl() {
+  return getMostRecentDecl();
 }
 
 void NamespaceAliasDecl::anchor() { }
