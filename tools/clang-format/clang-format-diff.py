@@ -37,7 +37,7 @@ binary = 'clang-format'
 def main():
   parser = argparse.ArgumentParser(description=
                                    'Reformat changed lines in diff. Without -i '
-                                   'option just output the diff that would be'
+                                   'option just output the diff that would be '
                                    'introduced.')
   parser.add_argument('-i', action='store_true', default=False,
                       help='apply edits to files instead of displaying a diff')
@@ -85,11 +85,8 @@ def main():
     if args.style:
       command.extend(['-style', args.style])
     p = subprocess.Popen(command, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE,
-                         stdin=subprocess.PIPE)
+                         stderr=None, stdin=subprocess.PIPE)
     stdout, stderr = p.communicate()
-    if stderr:
-      print stderr
     if p.returncode != 0:
       sys.exit(p.returncode);
 
@@ -102,7 +99,7 @@ def main():
                                   '(before formatting)', '(after formatting)')
       diff_string = string.join(diff, '')
       if len(diff_string) > 0:
-        print diff_string
+        sys.stdout.write(diff_string)
 
 if __name__ == '__main__':
   main()

@@ -1694,7 +1694,7 @@ static void emitArgInfo(const Record &R, std::stringstream &OS) {
 }
 
 static void GenerateDefaultAppertainsTo(raw_ostream &OS) {
-  OS << "static bool DefaultAppertainsTo(Sema &, const AttributeList &,";
+  OS << "static bool defaultAppertainsTo(Sema &, const AttributeList &,";
   OS << "const Decl *) {\n";
   OS << "  return true;\n";
   OS << "}\n\n";
@@ -1848,7 +1848,7 @@ static std::string GenerateAppertainsTo(const Record &Attr, raw_ostream &OS) {
   // If the attribute does not contain a Subjects definition, then use the
   // default appertainsTo logic.
   if (Attr.isValueUnset("Subjects"))
-    return "DefaultAppertainsTo";
+    return "defaultAppertainsTo";
 
   const Record *SubjectObj = Attr.getValueAsDef("Subjects");
   std::vector<Record*> Subjects = SubjectObj->getValueAsListOfDefs("Subjects");
@@ -1856,14 +1856,14 @@ static std::string GenerateAppertainsTo(const Record &Attr, raw_ostream &OS) {
   // If the list of subjects is empty, it is assumed that the attribute
   // appertains to everything.
   if (Subjects.empty())
-    return "DefaultAppertainsTo";
+    return "defaultAppertainsTo";
 
   bool Warn = SubjectObj->getValueAsDef("Diag")->getValueAsBit("Warn");
 
   // Otherwise, generate an appertainsTo check specific to this attribute which
   // checks all of the given subjects against the Decl passed in. Return the
   // name of that check to the caller.
-  std::string FnName = Attr.getName() + "AppertainsTo";
+  std::string FnName = "check" + Attr.getName() + "AppertainsTo";
   std::stringstream SS;
   SS << "static bool " << FnName << "(Sema &S, const AttributeList &Attr, ";
   SS << "const Decl *D) {\n";
@@ -1900,14 +1900,64 @@ static std::string GenerateAppertainsTo(const Record &Attr, raw_ostream &OS) {
   return FnName;
 }
 
+static void GenerateDefaultLangOptRequirements(raw_ostream &OS) {
+  OS << "static bool defaultDiagnoseLangOpts(Sema &, ";
+  OS << "const AttributeList &) {\n";
+  OS << "  return true;\n";
+  OS << "}\n\n";
+}
+
+static std::string GenerateLangOptRequirements(const Record &R,
+                                               raw_ostream &OS) {
+  // If the attribute has an empty or unset list of language requirements,
+  // return the default handler.
+  std::vector<Record *> LangOpts = R.getValueAsListOfDefs("LangOpts");
+  if (LangOpts.empty())
+    return "defaultDiagnoseLangOpts";
+
+  // Generate the test condition, as well as a unique function name for the
+  // diagnostic test. The list of options should usually be short (one or two
+  // options), and the uniqueness isn't strictly necessary (it is just for
+  // codegen efficiency).
+  std::string FnName = "check", Test;
+  for (std::vector<Record *>::const_iterator I = LangOpts.begin(),
+       E = LangOpts.end(); I != E; ++I) {
+    std::string Part = (*I)->getValueAsString("Name");
+    Test += "S.LangOpts." + Part;
+    if (I + 1 != E)
+      Test += " || ";
+    FnName += Part;
+  }
+  FnName += "LangOpts";
+
+  // If this code has already been generated, simply return the previous
+  // instance of it.
+  static std::set<std::string> CustomLangOptsSet;
+  std::set<std::string>::iterator I = CustomLangOptsSet.find(FnName);
+  if (I != CustomLangOptsSet.end())
+    return *I;
+
+  OS << "static bool " << FnName << "(Sema &S, const AttributeList &Attr) {\n";
+  OS << "  if (" << Test << ")\n";
+  OS << "    return true;\n\n";
+  OS << "  S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) ";
+  OS << "<< Attr.getName();\n";
+  OS << "  return false;\n";
+  OS << "}\n\n";
+
+  CustomLangOptsSet.insert(FnName);
+  return FnName;
+}
+
 /// Emits the parsed attribute helpers
 void EmitClangAttrParsedAttrImpl(RecordKeeper &Records, raw_ostream &OS) {
   emitSourceFileHeader("Parsed attribute helpers", OS);
 
   ParsedAttrMap Attrs = getParsedAttrList(Records);
 
-  // Generate the default appertainsTo diagnostic method.
+  // Generate the default appertainsTo and language option diagnostic methods.
   GenerateDefaultAppertainsTo(OS);
+  GenerateDefaultLangOptRequirements(OS);
 
   // Generate the appertainsTo diagnostic methods and write their names into
   // another mapping. At the same time, generate the AttrInfoMap object
@@ -1922,6 +1972,7 @@ void EmitClangAttrParsedAttrImpl(RecordKeeper &Records, raw_ostream &OS) {
     emitArgInfo(*I->second, SS);
     SS << ", " << I->second->getValueAsBit("HasCustomParsing");
     SS << ", " << GenerateAppertainsTo(*I->second, OS);
+    SS << ", " << GenerateLangOptRequirements(*I->second, OS);
     SS << " }";
 
     if (I + 1 != E)

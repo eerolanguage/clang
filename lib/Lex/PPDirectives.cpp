@@ -409,35 +409,33 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation IfTokenLoc,
       } else if (Sub == "lif") {  // "elif".
         PPConditionalInfo &CondInfo = CurPPLexer->peekConditionalLevel();
 
-        bool ShouldEnter;
-        const SourceLocation ConditionalBegin = CurPPLexer->getSourceLocation();
+        // If this is a #elif with a #else before it, report the error.
+        if (CondInfo.FoundElse) Diag(Tok, diag::pp_err_elif_after_else);
+
         // If this is in a skipping block or if we're already handled this #if
         // block, don't bother parsing the condition.
         if (CondInfo.WasSkipping || CondInfo.FoundNonSkip) {
           DiscardUntilEndOfDirective();
-          ShouldEnter = false;
         } else {
+          const SourceLocation CondBegin = CurPPLexer->getSourceLocation();
           // Restore the value of LexingRawMode so that identifiers are
           // looked up, etc, inside the #elif expression.
           assert(CurPPLexer->LexingRawMode && "We have to be skipping here!");
           CurPPLexer->LexingRawMode = false;
           IdentifierInfo *IfNDefMacro = 0;
-          ShouldEnter = EvaluateDirectiveExpression(IfNDefMacro);
+          const bool CondValue = EvaluateDirectiveExpression(IfNDefMacro);
           CurPPLexer->LexingRawMode = true;
-        }
-        const SourceLocation ConditionalEnd = CurPPLexer->getSourceLocation();
-
-        // If this is a #elif with a #else before it, report the error.
-        if (CondInfo.FoundElse) Diag(Tok, diag::pp_err_elif_after_else);
-
-        // If this condition is true, enter it!
-        if (ShouldEnter) {
-          CondInfo.FoundNonSkip = true;
-          if (Callbacks)
+          if (Callbacks) {
+            const SourceLocation CondEnd = CurPPLexer->getSourceLocation();
             Callbacks->Elif(Tok.getLocation(),
-                            SourceRange(ConditionalBegin, ConditionalEnd),
-                            ShouldEnter, CondInfo.IfLoc);
-          break;
+                            SourceRange(CondBegin, CondEnd),
+                            CondValue, CondInfo.IfLoc);
+          }
+          // If this condition is true, enter it!
+          if (CondValue) {
+            CondInfo.FoundNonSkip = true;
+            break;
+          }
         }
       }
     }
@@ -545,7 +543,8 @@ Module *Preprocessor::getModuleForLocation(SourceLocation FilenameLoc) {
     return HeaderInfo.getModuleMap().SourceModule; // Compiling a source.
   }
   // Try to determine the module of the include directive.
-  FileID IDOfIncl = SourceMgr.getFileID(FilenameLoc);
+  // FIXME: Look into directly passing the FileEntry from LookupFile instead.
+  FileID IDOfIncl = SourceMgr.getFileID(SourceMgr.getSpellingLoc(FilenameLoc));
   if (const FileEntry *EntryOfIncl = SourceMgr.getFileEntryForID(IDOfIncl)) {
     // The include comes from a file.
     return ModMap.findModuleForHeader(EntryOfIncl).getModule();
@@ -616,7 +615,7 @@ void Preprocessor::verifyModuleInclude(SourceLocation FilenameLoc,
   if (RequestingModule && getLangOpts().ModulesDeclUse &&
       violatesUseDeclarations(RequestingModule, RequestedModule.getModule()))
     Diag(FilenameLoc, diag::error_undeclared_use_of_module)
-        << Filename;
+        << RequestingModule->getFullModuleName() << Filename;
 }
 
 const FileEntry *Preprocessor::LookupFile(

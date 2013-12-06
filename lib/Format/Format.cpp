@@ -439,12 +439,13 @@ public:
 
   /// \brief Formats the line starting at \p State, simply keeping all of the
   /// input's line breaking decisions.
-  void format(unsigned FirstIndent, const AnnotatedLine *Line) {
+  void format(unsigned FirstIndent, const AnnotatedLine *Line,
+              bool LineIsMerged) {
     LineState State =
         Indenter->getInitialState(FirstIndent, Line, /*DryRun=*/false);
     while (State.NextToken != NULL) {
       bool Newline =
-          Indenter->mustBreak(State) ||
+          (!LineIsMerged && Indenter->mustBreak(State)) ||
           (Indenter->canBreak(State) && State.NextToken->NewlinesBefore > 0);
       Indenter->addTokenToState(State, Newline, /*DryRun=*/false);
     }
@@ -468,7 +469,7 @@ public:
     if (TheLine->Last->Type == TT_LineComment)
       return 0;
 
-    if (Indent > Style.ColumnLimit)
+    if (Style.ColumnLimit > 0 && Indent > Style.ColumnLimit)
       return 0;
 
     unsigned Limit =
@@ -658,6 +659,14 @@ public:
       if (static_cast<int>(Indent) + Offset >= 0)
         Indent += Offset;
       unsigned MergedLines = Joiner.tryFitMultipleLinesInOne(Indent, I, E);
+      if (MergedLines > 0 && Style.ColumnLimit == 0) {
+        // Disallow line merging if there is a break at the start of one of the
+        // input lines.
+        for (unsigned i = 0; i < MergedLines; ++i) {
+          if (I[i + 1]->First->NewlinesBefore > 0)
+            MergedLines = 0;
+        }
+      }
       if (!DryRun) {
         for (unsigned i = 0; i < MergedLines; ++i) {
           join(*I[i], *I[i + 1]);
@@ -702,7 +711,8 @@ public:
           // FIXME: Implement nested blocks for ColumnLimit = 0.
           NoColumnLimitFormatter Formatter(Indenter);
           if (!DryRun)
-            Formatter.format(Indent, &TheLine);
+            Formatter.format(Indent, &TheLine,
+                             /*LineIsMerged=*/MergedLines > 0);
         } else {
           Penalty += format(TheLine, Indent, DryRun);
         }

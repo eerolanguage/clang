@@ -122,8 +122,8 @@ AttributeList::Kind AttributeList::getKind(const IdentifierInfo *Name,
   StringRef AttrName = Name->getName();
 
   // Normalize the attribute name, __foo__ becomes foo.
-  if (AttrName.startswith("__") && AttrName.endswith("__") &&
-      AttrName.size() >= 4)
+  if (AttrName.size() >= 4 && AttrName.startswith("__") &&
+      AttrName.endswith("__"))
     AttrName = AttrName.substr(2, AttrName.size() - 4);
 
   SmallString<64> Buf;
@@ -155,6 +155,7 @@ struct ParsedAttrInfo {
 
   bool (*DiagAppertainsToDecl)(Sema &S, const AttributeList &Attr,
                                const Decl *);
+  bool (*DiagLangOpts)(Sema &S, const AttributeList &Attr);
 };
 
 namespace {
@@ -179,4 +180,8 @@ bool AttributeList::hasCustomParsing() const {
 
 bool AttributeList::diagnoseAppertainsTo(Sema &S, const Decl *D) const {
   return getInfo(*this).DiagAppertainsToDecl(S, *this, D);
+}
+
+bool AttributeList::diagnoseLangOpts(Sema &S) const {
+  return getInfo(*this).DiagLangOpts(S, *this);
 }

@@ -1542,6 +1542,10 @@ bool CursorVisitor::VisitDecayedTypeLoc(DecayedTypeLoc TL) {
   return Visit(TL.getOriginalLoc());
 }
 
+bool CursorVisitor::VisitAdjustedTypeLoc(AdjustedTypeLoc TL) {
+  return Visit(TL.getOriginalLoc());
+}
+
 bool CursorVisitor::VisitTemplateSpecializationTypeLoc(
                                              TemplateSpecializationTypeLoc TL) {
   // Visit the template name.
@@ -2671,7 +2675,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
   // FIXME: Add a flag for modules.
   TranslationUnitKind TUKind
     = (options & CXTranslationUnit_Incomplete)? TU_Prefix : TU_Complete;
-  bool CacheCodeCompetionResults
+  bool CacheCodeCompletionResults
     = options & CXTranslationUnit_CacheCompletionResults;
   bool IncludeBriefCommentsInCodeCompletion
     = options & CXTranslationUnit_IncludeBriefCommentsInCodeCompletion;
@@ -2757,7 +2761,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
                                  /*RemappedFilesKeepOriginalName=*/true,
                                  PrecompilePreamble,
                                  TUKind,
-                                 CacheCodeCompetionResults,
+                                 CacheCodeCompletionResults,
                                  IncludeBriefCommentsInCodeCompletion,
                                  /*AllowPCHWithCompilerErrors=*/true,
                                  SkipFunctionBodies,
@@ -6488,6 +6492,47 @@ CXTUResourceUsage clang_getCXTUResourceUsage(CXTranslationUnit TU) {
 void clang_disposeCXTUResourceUsage(CXTUResourceUsage usage) {
   if (usage.data)
     delete (MemUsageEntries*) usage.data;
+}
+
+CXSourceRangeList *clang_getSkippedRanges(CXTranslationUnit TU, CXFile file) {
+  CXSourceRangeList *skipped = new CXSourceRangeList;
+  skipped->count = 0;
+  skipped->ranges = 0;
+
+  if (!file)
+    return skipped;
+
+  ASTUnit *astUnit = cxtu::getASTUnit(TU);
+  PreprocessingRecord *ppRec = astUnit->getPreprocessor().getPreprocessingRecord();
+  if (!ppRec)
+    return skipped;
+
+  ASTContext &Ctx = astUnit->getASTContext();
+  SourceManager &sm = Ctx.getSourceManager();
+  FileEntry *fileEntry = static_cast<FileEntry *>(file);
+  FileID wantedFileID = sm.translateFile(fileEntry);
+
+  const std::vector<SourceRange> &SkippedRanges = ppRec->getSkippedRanges();
+  std::vector<SourceRange> wantedRanges;
+  for (std::vector<SourceRange>::const_iterator i = SkippedRanges.begin(), ei = SkippedRanges.end();
+       i != ei; ++i) {
+    if (sm.getFileID(i->getBegin()) == wantedFileID || sm.getFileID(i->getEnd()) == wantedFileID)
+      wantedRanges.push_back(*i);
+  }
+
+  skipped->count = wantedRanges.size();
+  skipped->ranges = new CXSourceRange[skipped->count];
+  for (unsigned i = 0, ei = skipped->count; i != ei; ++i)
+    skipped->ranges[i] = cxloc::translateSourceRange(Ctx, wantedRanges[i]);
+
+  return skipped;
+}
+
+void clang_disposeSourceRangeList(CXSourceRangeList *ranges) {
+  if (ranges) {
+    delete[] ranges->ranges;
+    delete ranges;
+  }
 }
 
 } // end extern "C"

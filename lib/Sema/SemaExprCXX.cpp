@@ -333,6 +333,34 @@ ParsedType Sema::getDestructorType(const DeclSpec& DS, ParsedType ObjectType) {
     return ParsedType();
 }
 
+bool Sema::checkLiteralOperatorId(const CXXScopeSpec &SS,
+                                  const UnqualifiedId &Name) {
+  assert(Name.getKind() == UnqualifiedId::IK_LiteralOperatorId);
+
+  if (!SS.isValid())
+    return false;
+
+  switch (SS.getScopeRep()->getKind()) {
+  case NestedNameSpecifier::Identifier:
+  case NestedNameSpecifier::TypeSpec:
+  case NestedNameSpecifier::TypeSpecWithTemplate:
+    // Per C++11 [over.literal]p2, literal operators can only be declared at
+    // namespace scope. Therefore, this unqualified-id cannot name anything.
+    // Reject it early, because we have no AST representation for this in the
+    // case where the scope is dependent.
+    Diag(Name.getLocStart(), diag::err_literal_operator_id_outside_namespace)
+      << SS.getScopeRep();
+    return true;
+
+  case NestedNameSpecifier::Global:
+  case NestedNameSpecifier::Namespace:
+  case NestedNameSpecifier::NamespaceAlias:
+    return false;
+  }
+
+  llvm_unreachable("unknown nested name specifier kind");
+}
+
 /// \brief Build a C++ typeid expression with a type operand.
 ExprResult Sema::BuildCXXTypeId(QualType TypeInfoType,
                                 SourceLocation TypeidLoc,
@@ -2205,8 +2233,7 @@ bool Sema::FindDeallocationFunction(SourceLocation StartLoc, CXXRecordDecl *RD,
     return true;
   }
 
-  // Look for a global declaration.
-  Operator = FindUsualDeallocationFunction(StartLoc, true, Name);
+  Operator = 0;
   return false;
 }
 
@@ -2356,7 +2383,7 @@ Sema::ActOnCXXDelete(SourceLocation StartLoc, bool UseGlobal,
 
         // Otherwise, the usual operator delete[] should be the
         // function we just found.
-        else if (isa<CXXMethodDecl>(OperatorDelete))
+        else if (OperatorDelete && isa<CXXMethodDecl>(OperatorDelete))
           UsualArrayDeleteWantsSize = (OperatorDelete->getNumParams() == 2);
       }
 
@@ -5022,7 +5049,7 @@ Sema::MaybeCreateExprWithCleanups(ExprResult SubExpr) {
 }
 
 Expr *Sema::MaybeCreateExprWithCleanups(Expr *SubExpr) {
-  assert(SubExpr && "sub expression can't be null!");
+  assert(SubExpr && "subexpression can't be null!");
 
   CleanupVarDeclMarking();
 
@@ -5043,7 +5070,7 @@ Expr *Sema::MaybeCreateExprWithCleanups(Expr *SubExpr) {
 }
 
 Stmt *Sema::MaybeCreateStmtWithCleanups(Stmt *SubStmt) {
-  assert(SubStmt && "sub statement can't be null!");
+  assert(SubStmt && "sub-statement can't be null!");
 
   CleanupVarDeclMarking();
 
@@ -5927,13 +5954,30 @@ static void CheckLambdaCaptures(Expr *const FE,
 
 ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC,
                                      bool DiscardedValue,
-                                     bool IsConstexpr) {
+                                     bool IsConstexpr, 
+                                     bool IsLambdaInitCaptureInitializer) {
   ExprResult FullExpr = Owned(FE);
 
   if (!FullExpr.get())
     return ExprError();
-
-  if (DiagnoseUnexpandedParameterPack(FullExpr.get()))
+ 
+  // If we are an init-expression in a lambdas init-capture, we should not 
+  // diagnose an unexpanded pack now (will be diagnosed once lambda-expr 
+  // containing full-expression is done).
+  // template<class ... Ts> void test(Ts ... t) {
+  //   test([&a(t)]() { <-- (t) is an init-expr that shouldn't be diagnosed now.
+  //     return a;
+  //   }() ...);
+  // }
+  // FIXME: This is a hack. It would be better if we pushed the lambda scope
+  // when we parse the lambda introducer, and teach capturing (but not
+  // unexpanded pack detection) to walk over LambdaScopeInfos which don't have a
+  // corresponding class yet (that is, have LambdaScopeInfo either represent a
+  // lambda where we've entered the introducer but not the body, or represent a
+  // lambda where we've entered the body, depending on where the
+  // parser/instantiation has got to).
+  if (!IsLambdaInitCaptureInitializer && 
+      DiagnoseUnexpandedParameterPack(FullExpr.get()))
     return ExprError();
 
   // Top-level expressions default to 'id' when we're in a debugger.

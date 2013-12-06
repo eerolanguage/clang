@@ -1625,6 +1625,17 @@ Parser::TryAnnotateName(bool IsAddressOfOperand,
   return ANK_Unresolved;
 }
 
+bool Parser::TryKeywordIdentFallback(bool DisableKeyword) {
+  assert(Tok.isNot(tok::identifier));
+  Diag(Tok, diag::ext_keyword_as_ident)
+    << PP.getSpelling(Tok)
+    << DisableKeyword;
+  if (DisableKeyword)
+    Tok.getIdentifierInfo()->RevertTokenIDToIdentifier();
+  Tok.setKind(tok::identifier);
+  return true;
+}
+
 /// TryAnnotateTypeOrScopeToken - If the current token position is on a
 /// typename (possibly qualified in C++) or a C++ scope specifier not followed
 /// by a typename, TryAnnotateTypeOrScopeToken will replace one or more tokens
@@ -1712,7 +1723,8 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
                                      Tok.getLocation());
     } else if (Tok.is(tok::annot_template_id)) {
       TemplateIdAnnotation *TemplateId = takeTemplateIdAnnotation(Tok);
-      if (TemplateId->Kind == TNK_Function_template) {
+      if (TemplateId->Kind != TNK_Type_template &&
+          TemplateId->Kind != TNK_Dependent_template_name) {
         Diag(Tok, diag::err_typename_refers_to_non_type_template)
           << Tok.getAnnotationRange();
         return true;
@@ -1836,8 +1848,7 @@ bool Parser::TryAnnotateTypeOrScopeTokenAfterScopeSpec(bool EnteringContext,
       // annotation token to a type annotation token now.
       AnnotateTemplateIdTokenAsType();
       return false;
-    } else if (TemplateId->Kind == TNK_Var_template)
-      return false;
+    }
   }
 
   if (SS.isEmpty())

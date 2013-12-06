@@ -1477,7 +1477,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc) {
 
   FullExprArg FullCond(Actions.MakeFullExpr(Cond.get(), WhileLoc));
 
-  // C99 6.8.5p5 - In C99, the body of the if statement is a scope, even if
+  // C99 6.8.5p5 - In C99, the body of the while statement is a scope, even if
   // there is no compound stmt.  C90 does not have this clause.  We only do this
   // if the body isn't a compound statement to avoid push/pop in common cases.
   //
@@ -1526,7 +1526,7 @@ StmtResult Parser::ParseDoStatement() {
 
   ParseScope DoScope(this, ScopeFlags);
 
-  // C99 6.8.5p5 - In C99, the body of the if statement is a scope, even if
+  // C99 6.8.5p5 - In C99, the body of the do statement is a scope, even if
   // there is no compound stmt.  C90 does not have this clause. We only do this
   // if the body isn't a compound statement to avoid push/pop in common cases.
   //
@@ -1916,7 +1916,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
                                                      T.getCloseLocation());
   }
 
-  // C99 6.8.5p5 - In C99, the body of the if statement is a scope, even if
+  // C99 6.8.5p5 - In C99, the body of the for statement is a scope, even if
   // there is no compound stmt.  C90 does not have this clause.  We only do this
   // if the body isn't a compound statement to avoid push/pop in common cases.
   //
@@ -2105,8 +2105,8 @@ StmtResult Parser::ParseReturnStatement() {
           << R.get()->getSourceRange();
     } else
         R = ParseExpression();
-    if (R.isInvalid()) {  // Skip to the semicolon, but don't consume it.
-      SkipUntil(tok::semi, StopBeforeMatch);
+    if (R.isInvalid()) {
+      SkipUntil(tok::r_brace, StopAtSemi | StopBeforeMatch);
       return StmtError();
     }
   }
@@ -2295,30 +2295,33 @@ ExprResult Parser::ParseMSAsmIdentifier(llvm::SmallVectorImpl<Token> &LineToks,
                                     TemplateKWLoc,
                                     Id);
 
-  // If we've run into the poison token we inserted before, or there
-  // was a parsing error, then claim the entire line.
-  if (Invalid || Tok.is(EndOfStream)) {
-    NumLineToksConsumed = LineToks.size() - 2;
-
-    // Otherwise, claim up to the start of the next token.
+  // Figure out how many tokens we are into LineToks.
+  unsigned LineIndex = 0;
+  if (Tok.is(EndOfStream)) {
+    LineIndex = LineToks.size() - 2;
   } else {
-    // Figure out how many tokens we are into LineToks.
-    unsigned LineIndex = 0;
     while (LineToks[LineIndex].getLocation() != Tok.getLocation()) {
       LineIndex++;
       assert(LineIndex < LineToks.size() - 2); // we added two extra tokens
     }
+  }
 
+  // If we've run into the poison token we inserted before, or there
+  // was a parsing error, then claim the entire line.
+  if (Invalid || Tok.is(EndOfStream)) {
+    NumLineToksConsumed = LineToks.size() - 2;
+  } else {
+    // Otherwise, claim up to the start of the next token.
     NumLineToksConsumed = LineIndex;
   }
-      
-  // Finally, restore the old parsing state by consuming all the
-  // tokens we staged before, implicitly killing off the
-  // token-lexer we pushed.
-  for (unsigned n = LineToks.size() - 2 - NumLineToksConsumed; n != 0; --n) {
+
+  // Finally, restore the old parsing state by consuming all the tokens we
+  // staged before, implicitly killing off the token-lexer we pushed.
+  for (unsigned i = 0, e = LineToks.size() - LineIndex - 2; i != e; ++i) {
     ConsumeAnyToken();
   }
-  ConsumeToken(EndOfStream);
+  assert(Tok.is(EndOfStream));
+  ConsumeToken();
 
   // Leave LineToks in its original state.
   LineToks.pop_back();
@@ -2940,7 +2943,7 @@ StmtResult Parser::ParseCXXTryBlock() {
 ///
 ///       [Borland] try-block:
 ///         'try' compound-statement seh-except-block
-///         'try' compound-statment  seh-finally-block
+///         'try' compound-statement seh-finally-block
 ///
 StmtResult Parser::ParseCXXTryBlockCommon(SourceLocation TryLoc, bool FnTry) {
   if (Tok.isNot(tok::l_brace))

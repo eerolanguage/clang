@@ -2508,7 +2508,7 @@ DeclarationName InitializedEntity::getName() const {
     return VariableOrMember->getDeclName();
 
   case EK_LambdaCapture:
-    return Capture.Var->getDeclName();
+    return DeclarationName(Capture.VarID);
       
   case EK_Result:
   case EK_Exception:
@@ -2610,7 +2610,7 @@ unsigned InitializedEntity::dumpImpl(raw_ostream &OS) const {
   case EK_BlockElement: OS << "Block"; break;
   case EK_LambdaCapture:
     OS << "LambdaCapture ";
-    getCapturedVar()->printName(OS);
+    OS << DeclarationName(Capture.VarID);
     break;
   }
 
@@ -6198,7 +6198,7 @@ InitializationSequence::Perform(Sema &S,
 
     case SK_OCLSamplerInit: {
       assert(Step->Type->isSamplerT() && 
-             "Sampler initialization on non sampler type.");
+             "Sampler initialization on non-sampler type.");
 
       QualType SourceType = CurInit.get()->getType();
 
@@ -6214,7 +6214,7 @@ InitializationSequence::Perform(Sema &S,
     }
     case SK_OCLZeroEvent: {
       assert(Step->Type->isEventT() && 
-             "Event initialization on non event type.");
+             "Event initialization on non-event type.");
 
       CurInit = S.ImpCastExprToType(CurInit.take(), Step->Type,
                                     CK_ZeroToOCLEvent,

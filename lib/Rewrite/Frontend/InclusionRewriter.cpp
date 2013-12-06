@@ -366,6 +366,7 @@ bool InclusionRewriter::Process(FileID FileId,
   // The next byte to be copied from the source file, which may be non-zero if
   // the lexer handled a BOM.
   unsigned NextToWrite = SM.getFileOffset(RawLex.getSourceLocation());
+  assert(SM.getLineNumber(FileId, NextToWrite) == 1);
   int Line = 1; // The current input file line number.
 
   Token RawToken;

@@ -2558,6 +2558,45 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
     }
   }
 
+  if (Method && Method->getMethodFamily() == OMF_init &&
+      getCurFunction()->ObjCIsDesignatedInit &&
+      (SuperLoc.isValid() || isSelfExpr(Receiver))) {
+    bool isDesignatedInitChain = false;
+    if (SuperLoc.isValid()) {
+      if (const ObjCObjectPointerType *
+            OCIType = ReceiverType->getAsObjCInterfacePointerType()) {
+        if (const ObjCInterfaceDecl *ID = OCIType->getInterfaceDecl()) {
+          if (ID->isDesignatedInitializer(Sel)) {
+            isDesignatedInitChain = true;
+            getCurFunction()->ObjCWarnForNoDesignatedInitChain = false;
+          }
+        }
+      }
+    }
+    if (!isDesignatedInitChain) {
+      const ObjCMethodDecl *InitMethod = 0;
+      bool isDesignated =
+        getCurMethodDecl()->isDesignatedInitializerForTheInterface(&InitMethod);
+      assert(isDesignated && InitMethod);
+      (void)isDesignated;
+      Diag(SelLoc, SuperLoc.isValid() ?
+             diag::warn_objc_designated_init_non_designated_init_call :
+             diag::warn_objc_designated_init_non_super_designated_init_call);
+      Diag(InitMethod->getLocation(),
+           diag::note_objc_designated_init_marked_here);
+    }
+  }
+
+  if (Method && Method->getMethodFamily() == OMF_init &&
+      getCurFunction()->ObjCIsSecondaryInit &&
+      (SuperLoc.isValid() || isSelfExpr(Receiver))) {
+    if (SuperLoc.isValid()) {
+      Diag(SelLoc, diag::warn_objc_secondary_init_super_init_call);
+    } else {
+      getCurFunction()->ObjCWarnForNoInitDelegation = false;
+    }
+  }
+
   // Check the message arguments.
   unsigned NumArgs = ArgsIn.size();
   Expr **Args = ArgsIn.data();
@@ -3400,7 +3439,7 @@ static bool CheckObjCBridgeCFCast(Sema &S, QualType castType, Expr *castExpr) {
 }
 
 void Sema::CheckTollFreeBridgeCast(QualType castType, Expr *castExpr) {
-  // warn in presense of __bridge casting to or from a toll free bridge cast.
+  // warn in presence of __bridge casting to or from a toll free bridge cast.
   ARCConversionTypeClass exprACTC = classifyTypeForARCConversion(castExpr->getType());
   ARCConversionTypeClass castACTC = classifyTypeForARCConversion(castType);
   if (castACTC == ACTC_retainable && exprACTC == ACTC_coreFoundation) {

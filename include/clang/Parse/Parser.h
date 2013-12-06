@@ -136,9 +136,9 @@ class Parser : public CodeCompletionHandler {
   mutable IdentifierInfo *Ident_final;
   mutable IdentifierInfo *Ident_override;
 
-  // C++ type trait keywords that have can be reverted to identifiers and
-  // still used as type traits.
-  llvm::SmallDenseMap<IdentifierInfo *, tok::TokenKind> RevertableTypeTraits;
+  // C++ type trait keywords that can be reverted to identifiers and still be
+  // used as type traits.
+  llvm::SmallDenseMap<IdentifierInfo *, tok::TokenKind> RevertibleTypeTraits;
 
   OwningPtr<PragmaHandler> AlignHandler;
   OwningPtr<PragmaHandler> GCCVisibilityHandler;
@@ -192,6 +192,10 @@ class Parser : public CodeCompletionHandler {
     void operator++() {
       ++Depth;
       ++AddedLevels;
+    }
+    void addDepth(unsigned D) {
+      Depth += D;
+      AddedLevels += D;
     }
     unsigned getDepth() const { return Depth; }
   };
@@ -569,6 +573,13 @@ private:
   bool TryAltiVecTokenOutOfLine(DeclSpec &DS, SourceLocation Loc,
                                 const char *&PrevSpec, unsigned &DiagID,
                                 bool &isInvalid);
+
+  /// TryKeywordIdentFallback - For compatibility with system headers using
+  /// keywords as identifiers, attempt to convert the current token to an
+  /// identifier and optionally disable the keyword for the remainder of the
+  /// translation unit. This returns false if the token was not replaced,
+  /// otherwise emits a diagnostic and returns true.
+  bool TryKeywordIdentFallback(bool DisableKeyword);
 
   /// \brief Get the TemplateIdAnnotation from the token.
   TemplateIdAnnotation *takeTemplateIdAnnotation(const Token &tok);
@@ -2116,6 +2127,11 @@ private:
                                   SourceLocation AvailabilityLoc,
                                   ParsedAttributes &attrs,
                                   SourceLocation *endLoc);
+  
+  void ParseObjCBridgeRelatedAttribute(IdentifierInfo &ObjCBridgeRelated,
+                                       SourceLocation ObjCBridgeRelatedLoc,
+                                       ParsedAttributes &attrs,
+                                       SourceLocation *endLoc);
 
   bool IsThreadSafetyAttribute(StringRef AttrName);
   void ParseThreadSafetyAttribute(IdentifierInfo &AttrName,

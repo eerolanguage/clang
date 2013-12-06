@@ -949,7 +949,7 @@ void Driver::BuildUniversalActions(const ToolChain &TC,
 
 /// \brief Check that the file referenced by Value exists. If it doesn't,
 /// issue a diagnostic and return false.
-static bool DiagnoseInputExistance(const Driver &D, const DerivedArgList &Args,
+static bool DiagnoseInputExistence(const Driver &D, const DerivedArgList &Args,
                                    StringRef Value) {
   if (!D.getCheckInputsExist())
     return true;
@@ -1076,19 +1076,19 @@ void Driver::BuildInputs(const ToolChain &TC, const DerivedArgList &Args,
         Ty = InputType;
       }
 
-      if (DiagnoseInputExistance(*this, Args, Value))
+      if (DiagnoseInputExistence(*this, Args, Value))
         Inputs.push_back(std::make_pair(Ty, A));
 
     } else if (A->getOption().matches(options::OPT__SLASH_Tc)) {
       StringRef Value = A->getValue();
-      if (DiagnoseInputExistance(*this, Args, Value)) {
+      if (DiagnoseInputExistence(*this, Args, Value)) {
         Arg *InputArg = MakeInputArg(Args, Opts, A->getValue());
         Inputs.push_back(std::make_pair(types::TY_C, InputArg));
       }
       A->claim();
     } else if (A->getOption().matches(options::OPT__SLASH_Tp)) {
       StringRef Value = A->getValue();
-      if (DiagnoseInputExistance(*this, Args, Value)) {
+      if (DiagnoseInputExistence(*this, Args, Value)) {
         Arg *InputArg = MakeInputArg(Args, Opts, A->getValue());
         Inputs.push_back(std::make_pair(types::TY_CXX, InputArg));
       }
@@ -1459,6 +1459,7 @@ static const Tool *SelectToolForJob(Compilation &C, const ToolChain *TC,
 
   if (TC->useIntegratedAs() &&
       !C.getArgs().hasArg(options::OPT_save_temps) &&
+      !C.getArgs().hasArg(options::OPT_via_file_asm) &&
       !C.getArgs().hasArg(options::OPT__SLASH_FA) &&
       !C.getArgs().hasArg(options::OPT__SLASH_Fa) &&
       isa<AssembleJobAction>(JA) &&

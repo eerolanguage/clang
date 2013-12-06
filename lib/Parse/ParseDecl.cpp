@@ -260,6 +260,12 @@ void Parser::ParseGNUAttributeArgs(IdentifierInfo *AttrName,
     ParseAvailabilityAttribute(*AttrName, AttrNameLoc, Attrs, EndLoc);
     return;
   }
+  
+  if (AttrKind == AttributeList::AT_ObjCBridgeRelated) {
+    ParseObjCBridgeRelatedAttribute(*AttrName, AttrNameLoc, Attrs, EndLoc);
+    return;
+  }
+  
   // Thread safety attributes are parsed in an unevaluated context.
   // FIXME: Share the bulk of the parsing code here and just pull out
   // the unevaluated context.
@@ -289,7 +295,8 @@ void Parser::ParseGNUAttributeArgs(IdentifierInfo *AttrName,
 
     // If we don't know how to parse this attribute, but this is the only
     // token in this argument, assume it's meant to be an identifier.
-    if (AttrKind == AttributeList::UnknownAttribute) {
+    if (AttrKind == AttributeList::UnknownAttribute ||
+        AttrKind == AttributeList::IgnoredAttribute) {
       const Token &Next = NextToken();
       IsIdentifierArg = Next.is(tok::r_paren) || Next.is(tok::comma);
     }
@@ -959,6 +966,90 @@ void Parser::ParseAvailabilityAttribute(IdentifierInfo &Availability,
                AttributeList::AS_GNU);
 }
 
+/// \brief Parse the contents of the "objc_bridge_related" attribute.
+/// objc_bridge_related '(' related_class ',' opt-class_method ',' opt-instance_method ')'
+/// related_class:
+///     Identifier
+///
+/// opt-class_method:
+///     Identifier: | <empty>
+///
+/// opt-instance_method:
+///     Identifier | <empty>
+///
+void Parser::ParseObjCBridgeRelatedAttribute(IdentifierInfo &ObjCBridgeRelated,
+                                SourceLocation ObjCBridgeRelatedLoc,
+                                ParsedAttributes &attrs,
+                                SourceLocation *endLoc) {
+  // Opening '('.
+  BalancedDelimiterTracker T(*this, tok::l_paren);
+  if (T.consumeOpen()) {
+    Diag(Tok, diag::err_expected_lparen);
+    return;
+  }
+  
+  // Parse the related class name.
+  if (Tok.isNot(tok::identifier)) {
+    Diag(Tok, diag::err_objcbridge_related_expected_related_class);
+    SkipUntil(tok::r_paren, StopAtSemi);
+    return;
+  }
+  IdentifierLoc *RelatedClass = ParseIdentifierLoc();
+  if (Tok.isNot(tok::comma)) {
+    Diag(Tok, diag::err_expected_comma);
+    SkipUntil(tok::r_paren, StopAtSemi);
+    return;
+  }
+  ConsumeToken();
+  
+  // Parse optional class method name.
+  IdentifierLoc *ClassMethod = 0;
+  if (Tok.is(tok::identifier)) {
+    ClassMethod = ParseIdentifierLoc();
+    if (Tok.isNot(tok::colon)) {
+      Diag(Tok, diag::err_objcbridge_related_selector_name);
+      SkipUntil(tok::r_paren, StopAtSemi);
+      return;
+    }
+    ConsumeToken();
+  }
+  if (Tok.isNot(tok::comma)) {
+    if (Tok.is(tok::colon))
+      Diag(Tok, diag::err_objcbridge_related_selector_name);
+    else
+      Diag(Tok, diag::err_expected_comma);
+    SkipUntil(tok::r_paren, StopAtSemi);
+    return;
+  }
+  ConsumeToken();
+  
+  // Parse optional instance method name.
+  IdentifierLoc *InstanceMethod = 0;
+  if (Tok.is(tok::identifier))
+    InstanceMethod = ParseIdentifierLoc();
+  else if (Tok.isNot(tok::r_paren)) {
+    Diag(Tok, diag::err_expected_rparen);
+    SkipUntil(tok::r_paren, StopAtSemi);
+    return;
+  }
+  
+  // Closing ')'.
+  if (T.consumeClose())
+    return;
+  
+  if (endLoc)
+    *endLoc = T.getCloseLocation();
+  
+  // Record this attribute
+  attrs.addNew(&ObjCBridgeRelated,
+               SourceRange(ObjCBridgeRelatedLoc, T.getCloseLocation()),
+               0, ObjCBridgeRelatedLoc,
+               RelatedClass,
+               ClassMethod,
+               InstanceMethod,
+               AttributeList::AS_GNU);
+  
+}
 
 // Late Parsed Attributes:
 // See other examples of late parsing in lib/Parse/ParseCXXInlineMethods
@@ -2824,10 +2915,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       // then treat __is_signed as an identifier rather than as a keyword.
       if (DS.getTypeSpecType() == TST_bool &&
           DS.getTypeQualifiers() == DeclSpec::TQ_const &&
-          DS.getStorageClassSpec() == DeclSpec::SCS_static) {
-        Tok.getIdentifierInfo()->RevertTokenIDToIdentifier();
-        Tok.setKind(tok::identifier);
-      }
+          DS.getStorageClassSpec() == DeclSpec::SCS_static)
+        TryKeywordIdentFallback(true);
 
       // We're done with the declaration-specifiers.
       goto DoneWithDeclSpec;
@@ -4602,10 +4691,9 @@ void Parser::ParseTypeQualifierListOpt(DeclSpec &DS,
       // GNU libc headers in C mode use '__uptr' as an identifer which conflicts
       // with the MS modifier keyword.
       if (VendorAttributesAllowed && !getLangOpts().CPlusPlus &&
-          IdentifierRequired && DS.isEmpty() && NextToken().is(tok::semi) &&
-          PP.getSourceManager().isInSystemHeader(Loc)) {
-        Tok.setKind(tok::identifier);
-        continue;
+          IdentifierRequired && DS.isEmpty() && NextToken().is(tok::semi)) {
+        if (TryKeywordIdentFallback(false))
+          continue;
       }
     case tok::kw___sptr:
     case tok::kw___w64:

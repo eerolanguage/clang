@@ -129,6 +129,13 @@ class SubjectList<list<AttrSubject> subjects, SubjectDiag diag = WarnDiag,
   string CustomDiag = customDiag;
 }
 
+class LangOpt<string name> {
+  string Name = name;
+}
+def MicrosoftExt : LangOpt<"MicrosoftExt">;
+def Borland : LangOpt<"Borland">;
+def CUDA : LangOpt<"CUDA">;
+
 class Attr {
   // The various ways in which an attribute can be spelled in source
   list<Spelling> Spellings;
@@ -155,6 +162,9 @@ class Attr {
   // content. Eg) It parses 3 args, but semantically takes 4 args.  Opts out of
   // common attribute error checking.
   bit HasCustomParsing = 0;
+  // Lists language options, one of which is required to be true for the
+  // attribute to be applicable. If empty, no language options are required.
+  list<LangOpt> LangOpts = [];
   // Any additional text that should be included verbatim in the class.
   code AdditionalMembers = [{}];
 }
@@ -352,31 +362,37 @@ def Constructor : InheritableAttr {
 def CUDAConstant : InheritableAttr {
   let Spellings = [GNU<"constant">];
   let Subjects = SubjectList<[Var]>;
+  let LangOpts = [CUDA];
 }
 
 def CUDADevice : InheritableAttr {
   let Spellings = [GNU<"device">];
   let Subjects = SubjectList<[Function, Var]>;
+  let LangOpts = [CUDA];
 }
 
 def CUDAGlobal : InheritableAttr {
   let Spellings = [GNU<"global">];
   let Subjects = SubjectList<[Function]>;
+  let LangOpts = [CUDA];
 }
 
 def CUDAHost : InheritableAttr {
   let Spellings = [GNU<"host">];
   let Subjects = SubjectList<[Function]>;
+  let LangOpts = [CUDA];
 }
 
 def CUDALaunchBounds : InheritableAttr {
   let Spellings = [GNU<"launch_bounds">];
   let Args = [IntArgument<"MaxThreads">, DefaultIntArgument<"MinBlocks", 0>];
+  let LangOpts = [CUDA];
 }
 
 def CUDAShared : InheritableAttr {
   let Spellings = [GNU<"shared">];
   let Subjects = SubjectList<[Var]>;
+  let LangOpts = [CUDA];
 }
 
 def C11NoReturn : InheritableAttr {
@@ -499,9 +515,13 @@ def MSABI : InheritableAttr {
 }
 
 def MSP430Interrupt : InheritableAttr, TargetSpecificAttr {
+  // FIXME: this attribute is spelled the same as the ARMInterrupt attribute,
+  // but two attributes cannot currently share the same name because of the
+  // getAttrKind function. However, in this case, the attributes are for
+  // different targets, so sharing the same name but different arguments is a
+  // reasonable design. For now, this attribute will remain having no spelling.
   let Spellings = [];
   let Args = [UnsignedArgument<"Number">];
-  let SemaHandler = 0;
 }
 
 def Mips16 : InheritableAttr, TargetSpecificAttr {
@@ -599,6 +619,15 @@ def ObjCBridgeMutable : InheritableAttr {
   let Args = [IdentifierArgument<"BridgedType">];
 }
 
+def ObjCBridgeRelated : InheritableAttr {
+  let Spellings = [GNU<"objc_bridge_related">];
+  let Subjects = SubjectList<[Record], ErrorDiag>;
+  let Args = [IdentifierArgument<"RelatedClass">,
+          IdentifierArgument<"ClassMethod">,
+          IdentifierArgument<"InstanceMethod">];
+ let HasCustomParsing = 1;
+}
+
 def NSReturnsRetained : InheritableAttr {
   let Spellings = [GNU<"ns_returns_retained">];
 //  let Subjects = SubjectList<[ObjCMethod, ObjCProperty, Function]>;
@@ -666,6 +695,11 @@ def ObjCSuppressProtocol : InheritableAttr {
   let Spellings = [GNU<"objc_suppress_protocol_methods">];
   let Subjects = SubjectList<[ObjCInterface], ErrorDiag>;
   let Args = [IdentifierArgument<"Protocol">];
+}
+
+def ObjCDesignatedInitializer : Attr {
+  let Spellings = [GNU<"objc_designated_initializer">];
+  let Subjects = SubjectList<[ObjCMethod], ErrorDiag>;
 }
 
 def Overloadable : Attr {
@@ -823,6 +857,7 @@ def Uuid : InheritableAttr {
   let Spellings = [GNU<"uuid">];
   let Args = [StringArgument<"Guid">];
 //  let Subjects = SubjectList<[CXXRecord]>;
+  let LangOpts = [MicrosoftExt, Borland];
 }
 
 def VectorSize : TypeAttr {
@@ -1151,22 +1186,28 @@ def MsStruct : InheritableAttr {
 
 def DLLExport : InheritableAttr, TargetSpecificAttr {
   let Spellings = [Declspec<"dllexport">];
+  let Subjects = SubjectList<[Function, Var]>;
 }
 
 def DLLImport : InheritableAttr, TargetSpecificAttr {
   let Spellings = [Declspec<"dllimport">];
+  // Technically, the subjects for DllImport are Function and Var, but there is
+  // custom semantic handling required when MicrosoftExt is true.
 }
 
 def ForceInline : InheritableAttr {
   let Spellings = [Keyword<"__forceinline">];
+  let LangOpts = [MicrosoftExt];
 }
 
 def SelectAny : InheritableAttr {
   let Spellings = [Declspec<"selectany">];
+  let LangOpts = [MicrosoftExt];
 }
 
-def Win64 : InheritableAttr {
+def Win64 : IgnoredAttr {
   let Spellings = [Keyword<"__w64">];
+  let LangOpts = [MicrosoftExt];
 }
 
 def Ptr32 : TypeAttr {
@@ -1185,7 +1226,9 @@ def UPtr : TypeAttr {
   let Spellings = [Keyword<"__uptr">];
 }
 
-class MSInheritanceAttr : InheritableAttr;
+class MSInheritanceAttr : InheritableAttr {
+  let LangOpts = [MicrosoftExt];
+}
 
 def SingleInheritance : MSInheritanceAttr {
   let Spellings = [Keyword<"__single_inheritance">];

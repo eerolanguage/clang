@@ -58,6 +58,9 @@ def ext_plain_complex : ExtWarn<
 def ext_integer_complex : Extension<
   "complex integer types are a GNU extension">, InGroup<GNUComplexInteger>;
 def ext_thread_before : Extension<"'__thread' before '%0'">;
+def ext_keyword_as_ident : ExtWarn<
+  "keyword '%0' will be treated as an identifier %select{here|for the remainder of the translation unit}1">,
+  InGroup<KeywordCompat>;
 
 def error_empty_enum : Error<"use of empty enum">;
 def err_invalid_sign_spec : Error<"'%0' cannot be signed or unsigned">;
@@ -579,8 +582,8 @@ def err_class_on_template_template_param : Error<
   "template template parameter requires 'class' after the parameter list">;
 def err_template_spec_syntax_non_template : Error<
   "identifier followed by '<' indicates a class template specialization but "
-  "%0 %select{does not refer to a template|refers to a function "
-  "template|<unused>|refers to a template template parameter}1">;
+  "%0 %select{does not refer to a template|refers to a function template|"
+  "<unused>|refers to a variable template|<unused>}1">;
 def err_id_after_template_in_nested_name_spec : Error<
   "expected template name after 'template' keyword in nested name specifier">;
 def err_two_right_angle_brackets_need_space : Error<
@@ -644,7 +647,7 @@ def err_expected_semi_after_tagdecl : Error<
   "expected ';' after %0">;
 
 def err_typename_refers_to_non_type_template : Error<
-  "typename specifier refers to a non-template">;
+  "typename specifier refers to a non-type template">;
 def err_expected_type_name_after_typename : Error<
   "expected an identifier or template-id after '::'">;
 def err_explicit_spec_non_template : Error<
@@ -754,6 +757,13 @@ def err_zero_version : Error<
   "version number must have non-zero major, minor, or sub-minor version">;
 def err_availability_expected_platform : Error<
   "expected a platform name, e.g., 'macosx'">;
+  
+// objc_bridge_related attribute
+def err_objcbridge_related_expected_related_class : Error<
+  "expected a related ObjectiveC class name, e.g., 'NSColor'">;
+def err_objcbridge_related_selector_name : Error<
+  "expected a class method selector with single argument, e.g., 'colorWithCGColor:'">;
+
 def err_availability_expected_change : Error<
   "expected 'introduced', 'deprecated', or 'obsoleted'">;
 def err_availability_unknown_change : Error<

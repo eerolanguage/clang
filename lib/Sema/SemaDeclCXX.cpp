@@ -6192,6 +6192,10 @@ bool Sema::CheckDestructor(CXXDestructorDecl *Destructor) {
     Context.DeclarationNames.getCXXOperatorName(OO_Delete);
     if (FindDeallocationFunction(Loc, RD, Name, OperatorDelete))
       return true;
+    // If there's no class-specific operator delete, look up the global
+    // non-array delete.
+    if (!OperatorDelete)
+      OperatorDelete = FindUsualDeallocationFunction(Loc, true, Name);
 
     MarkFunctionReferenced(Loc, OperatorDelete);
     
@@ -10322,7 +10326,7 @@ void Sema::DefineImplicitLambdaToFunctionPointerConversion(
   SynthesizedFunctionScope Scope(*this, Conv);
   DiagnosticErrorTrap Trap(Diags);
    
-  // Retreive the static invoker...
+  // Retrieve the static invoker...
   CXXMethodDecl *Invoker = Lambda->getLambdaStaticInvoker();
   // ... and get the corresponding specialization for a generic lambda.
   if (Lambda->isGenericLambda()) {
@@ -12133,11 +12137,13 @@ void Sema::ActOnCXXEnterDeclInitializer(Scope *S, Decl *D) {
   // If there is no declaration, there was an error parsing it.
   if (D == 0 || D->isInvalidDecl()) return;
 
-  // We should only get called for declarations with scope specifiers, like:
-  //   int foo::bar;
-  assert(D->isOutOfLine());
-  EnterDeclaratorContext(S, D->getDeclContext());
-  
+  // We will always have a nested name specifier here, but this declaration
+  // might not be out of line if the specifier names the current namespace:
+  //   extern int n;
+  //   int ::n = 0;
+  if (D->isOutOfLine())
+    EnterDeclaratorContext(S, D->getDeclContext());
+
   // If we are parsing the initializer for a static data member, push a
   // new expression evaluation context that is associated with this static
   // data member.
@@ -12152,10 +12158,10 @@ void Sema::ActOnCXXExitDeclInitializer(Scope *S, Decl *D) {
   if (D == 0 || D->isInvalidDecl()) return;
 
   if (isStaticDataMember(D))
-    PopExpressionEvaluationContext();  
+    PopExpressionEvaluationContext();
 
-  assert(D->isOutOfLine());
-  ExitDeclaratorContext(S);
+  if (D->isOutOfLine())
+    ExitDeclaratorContext(S);
 }
 
 /// ActOnCXXConditionDeclarationExpr - Parsed a condition declaration of a

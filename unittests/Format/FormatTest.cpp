@@ -9,8 +9,9 @@
 
 #define DEBUG_TYPE "format-test"
 
+#include "FormatTestUtils.h"
+
 #include "clang/Format/Format.h"
-#include "clang/Lex/Lexer.h"
 #include "llvm/Support/Debug.h"
 #include "gtest/gtest.h"
 
@@ -37,46 +38,6 @@ protected:
     return format(Code, 0, Code.size(), Style);
   }
 
-  std::string messUp(llvm::StringRef Code) {
-    std::string MessedUp(Code.str());
-    bool InComment = false;
-    bool InPreprocessorDirective = false;
-    bool JustReplacedNewline = false;
-    for (unsigned i = 0, e = MessedUp.size() - 1; i != e; ++i) {
-      if (MessedUp[i] == '/' && MessedUp[i + 1] == '/') {
-        if (JustReplacedNewline)
-          MessedUp[i - 1] = '\n';
-        InComment = true;
-      } else if (MessedUp[i] == '#' && (JustReplacedNewline || i == 0)) {
-        if (i != 0)
-          MessedUp[i - 1] = '\n';
-        InPreprocessorDirective = true;
-      } else if (MessedUp[i] == '\\' && MessedUp[i + 1] == '\n') {
-        MessedUp[i] = ' ';
-        MessedUp[i + 1] = ' ';
-      } else if (MessedUp[i] == '\n') {
-        if (InComment) {
-          InComment = false;
-        } else if (InPreprocessorDirective) {
-          InPreprocessorDirective = false;
-        } else {
-          JustReplacedNewline = true;
-          MessedUp[i] = ' ';
-        }
-      } else if (MessedUp[i] != ' ') {
-        JustReplacedNewline = false;
-      }
-    }
-    std::string WithoutWhitespace;
-    if (MessedUp[0] != ' ')
-      WithoutWhitespace.push_back(MessedUp[0]);
-    for (unsigned i = 1, e = MessedUp.size(); i != e; ++i) {
-      if (MessedUp[i] != ' ' || MessedUp[i - 1] != ' ')
-        WithoutWhitespace.push_back(MessedUp[i]);
-    }
-    return WithoutWhitespace;
-  }
-
   FormatStyle getLLVMStyleWithColumns(unsigned ColumnLimit) {
     FormatStyle Style = getLLVMStyle();
     Style.ColumnLimit = ColumnLimit;
@@ -91,7 +52,7 @@ protected:
 
   void verifyFormat(llvm::StringRef Code,
                     const FormatStyle &Style = getLLVMStyle()) {
-    EXPECT_EQ(Code.str(), format(messUp(Code), Style));
+    EXPECT_EQ(Code.str(), format(test::messUp(Code), Style));
   }
 
   void verifyGoogleFormat(llvm::StringRef Code) {
@@ -107,11 +68,11 @@ protected:
 };
 
 TEST_F(FormatTest, MessUp) {
-  EXPECT_EQ("1 2 3", messUp("1 2 3"));
-  EXPECT_EQ("1 2 3\n", messUp("1\n2\n3\n"));
-  EXPECT_EQ("a\n//b\nc", messUp("a\n//b\nc"));
-  EXPECT_EQ("a\n#b\nc", messUp("a\n#b\nc"));
-  EXPECT_EQ("a\n#b c d\ne", messUp("a\n#b\\\nc\\\nd\ne"));
+  EXPECT_EQ("1 2 3", test::messUp("1 2 3"));
+  EXPECT_EQ("1 2 3\n", test::messUp("1\n2\n3\n"));
+  EXPECT_EQ("a\n//b\nc", test::messUp("a\n//b\nc"));
+  EXPECT_EQ("a\n#b\nc", test::messUp("a\n#b\nc"));
+  EXPECT_EQ("a\n#b c d\ne", test::messUp("a\n#b\\\nc\\\nd\ne"));
 }
 
 //===----------------------------------------------------------------------===//
@@ -1770,7 +1731,7 @@ TEST_F(FormatTest, FormatsNamespaces) {
 
   // This code is more common than we thought; if we
   // layout this correctly the semicolon will go into
-  // its own line, which is undesireable.
+  // its own line, which is undesirable.
   verifyFormat("namespace {};");
   verifyFormat("namespace {\n"
                "class A {};\n"
@@ -2871,7 +2832,7 @@ TEST_F(FormatTest, ConstructorInitializers) {
                "          aaaaaaaaaaaaaaaaaaaaaaaaa(aaaa, aaaa)) {}");
 
   // Here a line could be saved by splitting the second initializer onto two
-  // lines, but that is not desireable.
+  // lines, but that is not desirable.
   verifyFormat("Constructor()\n"
                "    : aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaa),\n"
                "      aaaaaaaaaaa(aaaaaaaaaaa),\n"
@@ -3598,7 +3559,7 @@ TEST_F(FormatTest, BreaksConditionalExpressionsAfterOperator) {
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaa;",
                Style);
   verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaa =\n"
-               "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ?\n" 
+               "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ?\n"
                "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa :\n"
                "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;",
                Style);
@@ -4597,6 +4558,9 @@ TEST_F(FormatTest, FormatsArrays) {
       "llvm::outs() << \"aaaaaaaaaaaa: \"\n"
       "             << (*aaaaaaaiaaaaaaa)[aaaaaaaaaaaaaaaaaaaaaaaaa]\n"
       "                                  [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa];");
+
+  verifyGoogleFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<int>\n"
+                     "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[aaaaaaaaaaaa];");
 }
 
 TEST_F(FormatTest, LineStartsWithSpecialCharacter) {
@@ -4930,6 +4894,36 @@ TEST_F(FormatTest, PullTrivialFunctionDefinitionsIntoSingleLine) {
 
   verifyFormat("void f() {}", getLLVMStyleWithColumns(11));
   verifyFormat("void f() {\n}", getLLVMStyleWithColumns(10));
+  verifyFormat("class C {\n"
+               "  C()\n"
+               "      : iiiiiiii(nullptr),\n"
+               "        kkkkkkk(nullptr),\n"
+               "        mmmmmmm(nullptr),\n"
+               "        nnnnnnn(nullptr) {}\n"
+               "};",
+               getGoogleStyle());
+
+  FormatStyle NoColumnLimit = getLLVMStyle();
+  NoColumnLimit.ColumnLimit = 0;
+  EXPECT_EQ("A() : b(0) {}", format("A():b(0){}", NoColumnLimit));
+  EXPECT_EQ("class C {\n"
+            "  A() : b(0) {}\n"
+            "};", format("class C{A():b(0){}};", NoColumnLimit));
+  EXPECT_EQ("A()\n"
+            "    : b(0) {\n"
+            "}",
+            format("A()\n:b(0)\n{\n}", NoColumnLimit));
+
+  FormatStyle DoNotMergeNoColumnLimit = NoColumnLimit;
+  DoNotMergeNoColumnLimit.AllowShortFunctionsOnASingleLine = false;
+  EXPECT_EQ("A()\n"
+            "    : b(0) {\n"
+            "}",
+            format("A():b(0){}", DoNotMergeNoColumnLimit));
+  EXPECT_EQ("A()\n"
+            "    : b(0) {\n"
+            "}",
+            format("A()\n:b(0)\n{\n}", DoNotMergeNoColumnLimit));
 }
 
 TEST_F(FormatTest, UnderstandContextOfRecordTypeKeywords) {
@@ -7379,12 +7373,18 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
 
   // Constructor initializers are formatted one per line with the "," on the
   // new line.
-  verifyFormat("Constructor()\n"
-               "    : aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
-               "    , aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaa, // break\n"
-               "                               aaaaaaaaaaaaaa)\n"
-               "    , aaaaaaaaaaaaaaaaaaaaaaa() {}",
-               Style);
+  EXPECT_EQ(
+      "Constructor()\n"
+      "    : aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+      "    , aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaa, // break\n"
+      "                               aaaaaaaaaaaaaa)\n"
+      "    , aaaaaaaaaaaaaaaaaaaaaaa() {}",
+      format("Constructor()\n"
+             "    : aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+             "    , aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaa, // break\n"
+             "                               aaaaaaaaaaaaaa)\n"
+             "    , aaaaaaaaaaaaaaaaaaaaaaa() {}",
+             Style));
 
   // Access specifiers should be aligned left.
   verifyFormat("class C {\n"
@@ -7561,42 +7561,9 @@ TEST_F(FormatTest, SpacesInAngles) {
   Spaces.Standard = FormatStyle::LS_Cpp11;
   Spaces.SpacesInAngles = true;
   verifyFormat("A< A< int > >();", Spaces);
-  
+
   Spaces.SpacesInAngles = false;
   verifyFormat("A<A<int>>();", Spaces);
-}
-
-TEST_F(FormatTest, UnderstandsJavaScript) {
-  FormatStyle JS = getLLVMStyle();
-  FormatStyle JS10Columns = getLLVMStyleWithColumns(10);
-  FormatStyle JS20Columns = getLLVMStyleWithColumns(20);
-  JS.Language = JS10Columns.Language = JS20Columns.Language =
-      FormatStyle::LK_JavaScript;
-
-  verifyFormat("a == = b;", JS);
-  verifyFormat("a != = b;", JS);
-
-  verifyFormat("a === b;", JS);
-  verifyFormat("aaaaaaa ===\n    b;", JS10Columns);
-  verifyFormat("a !== b;", JS);
-  verifyFormat("aaaaaaa !==\n    b;", JS10Columns);
-  verifyFormat("if (a + b + c +\n"
-               "        d !==\n"
-               "    e + f + g)\n"
-               "  q();",
-               JS20Columns);
-
-  verifyFormat("a >> >= b;", JS);
-
-  verifyFormat("a >>> b;", JS);
-  verifyFormat("aaaaaaa >>>\n    b;", JS10Columns);
-  verifyFormat("a >>>= b;", JS);
-  verifyFormat("aaaaaaa >>>=\n    b;", JS10Columns);
-  verifyFormat("if (a + b + c +\n"
-               "        d >>>\n"
-               "    e + f + g)\n"
-               "  q();",
-               JS20Columns);
 }
 
 } // end namespace tooling

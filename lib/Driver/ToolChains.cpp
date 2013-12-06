@@ -125,7 +125,7 @@ static const char *GetArmArchForMCpu(StringRef Value) {
     .Cases("arm1136j-s", "arm1136jf-s", "arm1176jz-s", "arm1176jzf-s", "armv6")
     .Case("cortex-m0", "armv6m")
     .Cases("cortex-a5", "cortex-a7", "cortex-a8", "armv7")
-    .Cases("cortex-a9", "cortex-a12", "cortex-a15", "armv7")
+    .Cases("cortex-a9", "cortex-a12", "cortex-a15", "krait", "armv7")
     .Cases("cortex-r4", "cortex-r5", "armv7r")
     .Case("cortex-a9-mp", "armv7f")
     .Case("cortex-m3", "armv7m")
@@ -864,7 +864,7 @@ DerivedArgList *Darwin::TranslateArgs(const DerivedArgList &Args,
     // Check whether the target provides libc++.
     StringRef where;
 
-    // Complain about targetting iOS < 5.0 in any way.
+    // Complain about targeting iOS < 5.0 in any way.
     if (isTargetIPhoneOS() && isIPhoneOSVersionLT(5, 0))
       where = "iOS 5.0";
 
@@ -1008,7 +1008,7 @@ static StringRef getGCCToolchainDir(const ArgList &Args) {
   return GCC_INSTALL_PREFIX;
 }
 
-/// \brief Construct a GCCInstallationDetector from the driver.
+/// \brief Initialize a GCCInstallationDetector from the driver.
 ///
 /// This performs all of the autodetection and sets up the various paths.
 /// Once constructed, a GCCInstallationDetector is essentially immutable.
@@ -1017,9 +1017,9 @@ static StringRef getGCCToolchainDir(const ArgList &Args) {
 /// should instead pull the target out of the driver. This is currently
 /// necessary because the driver doesn't store the final version of the target
 /// triple.
-Generic_GCC::GCCInstallationDetector::GCCInstallationDetector(
-    const Driver &D, const llvm::Triple &TargetTriple, const ArgList &Args)
-    : IsValid(false) {
+void
+Generic_GCC::GCCInstallationDetector::init(
+    const Driver &D, const llvm::Triple &TargetTriple, const ArgList &Args) {
   llvm::Triple BiarchVariantTriple =
       TargetTriple.isArch32Bit() ? TargetTriple.get64BitArchVariant()
                                  : TargetTriple.get32BitArchVariant();
@@ -1556,7 +1556,7 @@ void Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple(
 
 Generic_GCC::Generic_GCC(const Driver &D, const llvm::Triple& Triple,
                          const ArgList &Args)
-  : ToolChain(D, Triple, Args), GCCInstallation(getDriver(), Triple, Args) {
+  : ToolChain(D, Triple, Args), GCCInstallation() {
   getProgramPaths().push_back(getDriver().getInstalledDir());
   if (getDriver().getInstalledDir() != getDriver().Dir)
     getProgramPaths().push_back(getDriver().Dir);
@@ -2353,6 +2353,7 @@ static StringRef getMultilibDir(const llvm::Triple &Triple,
 
 Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   : Generic_ELF(D, Triple, Args) {
+  GCCInstallation.init(D, Triple, Args);
   llvm::Triple::ArchType Arch = Triple.getArch();
   std::string SysRoot = computeSysRoot();
 
@@ -2450,7 +2451,7 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
     // <prefix>/<libdir>/gcc/<triple>/<version>. This decision is somewhat
     // debatable, but is the reality today. We need to search this tree even
     // when we have a sysroot somewhere else. It is the responsibility of
-    // whomever is doing the cross build targetting a sysroot using a GCC
+    // whomever is doing the cross build targeting a sysroot using a GCC
     // installation that is *not* within the system root to ensure two things:
     //
     //  1) Any DSOs that are linked in from this tree or from the install path

@@ -1198,15 +1198,13 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
        Tok.is(tok::kw___is_scalar) ||
        Tok.is(tok::kw___is_signed) ||
        Tok.is(tok::kw___is_unsigned) ||
-       Tok.is(tok::kw___is_void))) {
+       Tok.is(tok::kw___is_void)))
     // GNU libstdc++ 4.2 and libc++ use certain intrinsic names as the
     // name of struct templates, but some are keywords in GCC >= 4.3
     // and Clang. Therefore, when we see the token sequence "struct
     // X", make X into a normal identifier rather than a keyword, to
     // allow libstdc++ 4.2 and libc++ to work properly.
-    Tok.getIdentifierInfo()->RevertTokenIDToIdentifier();
-    Tok.setKind(tok::identifier);
-  }
+    TryKeywordIdentFallback(true);
 
   // Parse the (optional) nested-name-specifier.
   CXXScopeSpec &SS = DS.getTypeSpecScope();
@@ -1289,6 +1287,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
       if (SS.isNotEmpty())
         Range.setBegin(SS.getBeginLoc());
 
+      // FIXME: Name may be null here.
       Diag(TemplateId->LAngleLoc, diag::err_template_spec_syntax_non_template)
         << TemplateId->Name << static_cast<int>(TemplateId->Kind) << Range;
 
@@ -1430,7 +1429,13 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
         << DeclSpec::getSpecifierName(TagType);
     }
 
-    SkipUntil(tok::comma, StopAtSemi);
+    // If we are parsing a definition and stop at a base-clause, continue on
+    // until the semicolon.  Continuing from the comma will just trick us into
+    // thinking we are seeing a variable declaration.
+    if (TUK == Sema::TUK_Definition && Tok.is(tok::colon))
+      SkipUntil(tok::semi, StopBeforeMatch);
+    else
+      SkipUntil(tok::comma, StopAtSemi);
     return;
   }
 

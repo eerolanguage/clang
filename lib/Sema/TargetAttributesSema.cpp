@@ -61,7 +61,7 @@ namespace {
     ARMAttributesSema() { }
     bool ProcessDeclAttribute(Scope *scope, Decl *D,
                               const AttributeList &Attr, Sema &S) const {
-      if (Attr.getName()->getName() == "interrupt") {
+      if (Attr.getKind() == AttributeList::AT_ARMInterrupt) {
         HandleARMInterruptAttr(D, Attr, S);
         return true;
       }
@@ -72,13 +72,6 @@ namespace {
 
 static void HandleMSP430InterruptAttr(Decl *d,
                                       const AttributeList &Attr, Sema &S) {
-    // Check the attribute arguments.
-    if (Attr.getNumArgs() != 1) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-        << Attr.getName() << 1;
-      return;
-    }
-
     // FIXME: Check for decl - it should be void ()(void).
 
     Expr *NumParamsExpr = static_cast<Expr *>(Attr.getArgAsExpr(0));
@@ -108,6 +101,8 @@ namespace {
     MSP430AttributesSema() { }
     bool ProcessDeclAttribute(Scope *scope, Decl *D,
                               const AttributeList &Attr, Sema &S) const {
+      // Because this attribute has no spelling (see the FIXME in Attr.td as to
+      // why), we must check for the name instead of the attribute kind.
       if (Attr.getName()->getName() == "interrupt") {
         HandleMSP430InterruptAttr(D, Attr, S);
         return true;
@@ -120,13 +115,6 @@ namespace {
 static void HandleX86ForceAlignArgPointerAttr(Decl *D,
                                               const AttributeList& Attr,
                                               Sema &S) {
-  // Check the attribute arguments.
-  if (Attr.getNumArgs() != 0) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 0;
-    return;
-  }
-
   // If we try to apply it to a function pointer, don't warn, but don't
   // do anything, either. It doesn't matter anyway, because there's nothing
   // special about calling a force_align_arg_pointer function.
@@ -173,13 +161,6 @@ DLLImportAttr *Sema::mergeDLLImportAttr(Decl *D, SourceRange Range,
 }
 
 static void HandleDLLImportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
-  // check the attribute arguments.
-  if (Attr.getNumArgs() != 0) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 0;
-    return;
-  }
-
   // Attribute can be applied only to functions or variables.
   FunctionDecl *FD = dyn_cast<FunctionDecl>(D);
   if (!FD && !isa<VarDecl>(D)) {
@@ -195,7 +176,7 @@ static void HandleDLLImportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
   // Currently, the dllimport attribute is ignored for inlined functions.
   // Warning is emitted.
   if (FD && FD->isInlineSpecified()) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "dllimport";
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
     return;
   }
 
@@ -220,26 +201,11 @@ DLLExportAttr *Sema::mergeDLLExportAttr(Decl *D, SourceRange Range,
 }
 
 static void HandleDLLExportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
-  // check the attribute arguments.
-  if (Attr.getNumArgs() != 0) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 0;
-    return;
-  }
-
-  // Attribute can be applied only to functions or variables.
-  FunctionDecl *FD = dyn_cast<FunctionDecl>(D);
-  if (!FD && !isa<VarDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
-      << Attr.getName() << 2 /*variable and function*/;
-    return;
-  }
-
   // Currently, the dllexport attribute is ignored for inlined functions, unless
   // the -fkeep-inline-functions flag has been used. Warning is emitted;
-  if (FD && FD->isInlineSpecified()) {
+  if (isa<FunctionDecl>(D) && cast<FunctionDecl>(D)->isInlineSpecified()) {
     // FIXME: ... unless the -fkeep-inline-functions flag has been used.
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "dllexport";
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << Attr.getName();
     return;
   }
 
@@ -277,52 +243,19 @@ namespace {
   };
 }
 
-static void HandleMips16Attr(Decl *D, const AttributeList &Attr, Sema &S) {
-  // check the attribute arguments.
-  if (Attr.getNumArgs()) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 0;
-    return;
-  }
-  // Attribute can only be applied to function types.
-  if (!isa<FunctionDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
-      << Attr.getName() << /* function */0;
-    return;
-  }
-  D->addAttr(::new (S.Context) Mips16Attr(Attr.getRange(), S.Context,
-                                          Attr.getAttributeSpellingListIndex()));
-}
-
-static void HandleNoMips16Attr(Decl *D, const AttributeList &Attr, Sema &S) {
-  // check the attribute arguments.
-  if (Attr.getNumArgs()) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 0;
-    return;
-  }
-  // Attribute can only be applied to function types.
-  if (!isa<FunctionDecl>(D)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type)
-      << Attr.getName() << /* function */0;
-    return;
-  }
-  D->addAttr(::new (S.Context)
-             NoMips16Attr(Attr.getRange(), S.Context,
-                          Attr.getAttributeSpellingListIndex()));
-}
-
 namespace {
   class MipsAttributesSema : public TargetAttributesSema {
   public:
     MipsAttributesSema() { }
     bool ProcessDeclAttribute(Scope *scope, Decl *D, const AttributeList &Attr,
                               Sema &S) const {
-      if (Attr.getName()->getName() == "mips16") {
-        HandleMips16Attr(D, Attr, S);
+      if (Attr.getKind() == AttributeList::AT_Mips16) {
+        D->addAttr(::new (S.Context) Mips16Attr(Attr.getRange(), S.Context,
+          Attr.getAttributeSpellingListIndex()));
         return true;
-      } else if (Attr.getName()->getName() == "nomips16") {
-        HandleNoMips16Attr(D, Attr, S);
+      } else if (Attr.getKind() == AttributeList::AT_NoMips16) {
+        D->addAttr(::new (S.Context) NoMips16Attr(Attr.getRange(), S.Context,
+                                        Attr.getAttributeSpellingListIndex()));
         return true;
       }
       return false;

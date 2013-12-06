@@ -451,6 +451,19 @@ public:
     return ImplementationControl(DeclImplementation);
   }
 
+  /// Returns true if this specific method declaration is marked with the
+  /// designated initializer attribute.
+  bool isThisDeclarationADesignatedInitializer() const;
+
+  /// Returns true if the method selector resolves to a designated initializer
+  /// in the class's interface.
+  ///
+  /// \param InitMethod if non-null and the function returns true, it receives
+  /// the method declaration that was marked with the designated initializer
+  /// attribute.
+  bool isDesignatedInitializerForTheInterface(
+      const ObjCMethodDecl **InitMethod = 0) const;
+
   /// \brief Determine whether this method has a body.
   virtual bool hasBody() const { return Body.isValid(); }
 
@@ -661,6 +674,22 @@ class ObjCInterfaceDecl : public ObjCContainerDecl
     /// declared in the implementation.
     mutable bool IvarListMissingImplementation : 1;
 
+    /// Indicates that this interface decl contains at least one initializer
+    /// marked with the 'objc_designated_initializer' attribute.
+    bool HasDesignatedInitializers : 1;
+
+    enum InheritedDesignatedInitializersState {
+      /// We didn't calculate whether the designated initializers should be
+      /// inherited or not.
+      IDI_Unknown = 0,
+      /// Designated initializers are inherited for the super class.
+      IDI_Inherited = 1,
+      /// The class does not inherit designated initializers.
+      IDI_NotInherited = 2
+    };
+    /// One of the \c InheritedDesignatedInitializersState enumeratos.
+    mutable unsigned InheritedDesignatedInitializers : 2;
+
     /// \brief The location of the superclass, if any.
     SourceLocation SuperClassLoc;
     
@@ -671,7 +700,9 @@ class ObjCInterfaceDecl : public ObjCContainerDecl
 
     DefinitionData() : Definition(), SuperClass(), CategoryList(), IvarList(), 
                        ExternallyCompleted(),
-                       IvarListMissingImplementation(true) { }
+                       IvarListMissingImplementation(true),
+                       HasDesignatedInitializers(),
+                       InheritedDesignatedInitializers(IDI_Unknown) { }
   };
 
   ObjCInterfaceDecl(DeclContext *DC, SourceLocation atLoc, IdentifierInfo *Id,
@@ -727,6 +758,14 @@ public:
   /// the external AST source will be responsible for filling in its contents
   /// when a complete class is required.
   void setExternallyCompleted();
+
+  /// Indicate that this interface decl contains at least one initializer
+  /// marked with the 'objc_designated_initializer' attribute.
+  void setHasDesignatedInitializers();
+
+  /// Returns true if this interface decl contains at least one initializer
+  /// marked with the 'objc_designated_initializer' attribute.
+  bool hasDesignatedInitializers() const;
 
   const ObjCProtocolList &getReferencedProtocols() const {
     assert(hasDefinition() && "Caller did not check for forward reference!");
@@ -866,6 +905,26 @@ public:
   void mergeClassExtensionProtocolList(ObjCProtocolDecl *const* List,
                                        unsigned Num,
                                        ASTContext &C);
+
+  /// Returns the designated initializers for the interface.
+  ///
+  /// If this declaration does not have methods marked as designated
+  /// initializers then the interface inherits the designated initializers of
+  /// its super class.
+  void getDesignatedInitializers(
+                  llvm::SmallVectorImpl<const ObjCMethodDecl *> &Methods) const;
+
+  /// Returns true if the given selector is a designated initializer for the
+  /// interface.
+  ///
+  /// If this declaration does not have methods marked as designated
+  /// initializers then the interface inherits the designated initializers of
+  /// its super class.
+  ///
+  /// \param InitMethod if non-null and the function returns true, it receives
+  /// the method that was marked as a designated initializer.
+  bool isDesignatedInitializer(Selector Sel,
+                               const ObjCMethodDecl **InitMethod = 0) const;
 
   /// \brief Determine whether this particular declaration of this class is
   /// actually also a definition.
@@ -1227,6 +1286,10 @@ public:
   friend class ASTReader;
   friend class ASTDeclReader;
   friend class ASTDeclWriter;
+
+private:
+  const ObjCInterfaceDecl *findInterfaceWithDesignatedInitializers() const;
+  bool inheritsDesignatedInitializers() const;
 };
 
 /// ObjCIvarDecl - Represents an ObjC instance variable. In general, ObjC

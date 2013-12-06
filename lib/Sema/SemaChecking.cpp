@@ -6190,8 +6190,9 @@ bool Sema::CheckParmsForFunctionDef(ParmVarDecl *const *P,
     // MSVC destroys objects passed by value in the callee.  Therefore a
     // function definition which takes such a parameter must be able to call the
     // object's destructor.
-    if (getLangOpts().CPlusPlus &&
-        Context.getTargetInfo().getCXXABI().isArgumentDestroyedByCallee()) {
+    if (getLangOpts().CPlusPlus && Context.getTargetInfo()
+                                       .getCXXABI()
+                                       .areArgsDestroyedLeftToRightInCallee()) {
       if (const RecordType *RT = Param->getType()->getAs<RecordType>())
         FinalizeVarWithDestructor(Param, RT);
     }
@@ -6784,7 +6785,7 @@ void Sema::checkUnsafeExprAssigns(SourceLocation Loc,
                               Expr *LHS, Expr *RHS) {
   QualType LHSType;
   // PropertyRef on LHS type need be directly obtained from
-  // its declaration as it has a PsuedoType.
+  // its declaration as it has a PseudoType.
   ObjCPropertyRefExpr *PRE
     = dyn_cast<ObjCPropertyRefExpr>(LHS->IgnoreParens());
   if (PRE && !PRE->isImplicitProperty()) {

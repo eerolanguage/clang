@@ -395,7 +395,7 @@ llvm::Value *DefaultABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
 
 ABIArgInfo DefaultABIInfo::classifyArgumentType(QualType Ty) const {
   if (isAggregateTypeForABI(Ty)) {
-    // Records with non trivial destructors/constructors should not be passed
+    // Records with non-trivial destructors/constructors should not be passed
     // by value.
     if (isRecordReturnIndirect(Ty, getCXXABI()))
       return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
@@ -809,7 +809,7 @@ ABIArgInfo X86_32ABIInfo::getIndirectResult(QualType Ty, bool ByVal,
                                             unsigned &FreeRegs) const {
   if (!ByVal) {
     if (FreeRegs) {
-      --FreeRegs; // Non byval indirects just use one pointer.
+      --FreeRegs; // Non-byval indirects just use one pointer.
       return ABIArgInfo::getIndirectInReg(0, false);
     }
     return ABIArgInfo::getIndirect(0, false);
@@ -4573,7 +4573,7 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
   // Values that are not 1, 2, 4 or 8 bytes in size are passed indirectly.
   uint64_t Size = getContext().getTypeSize(Ty);
   if (Size != 8 && Size != 16 && Size != 32 && Size != 64)
-    return ABIArgInfo::getIndirect(0);
+    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
   // Handle small structures.
   if (const RecordType *RT = Ty->getAs<RecordType>()) {
@@ -4581,7 +4581,7 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
     // fail the size test above.
     const RecordDecl *RD = RT->getDecl();
     if (RD->hasFlexibleArrayMember())
-      return ABIArgInfo::getIndirect(0);
+      return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
     // The structure is passed as an unextended integer, a float, or a double.
     llvm::Type *PassTy;
@@ -4598,7 +4598,7 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
 
   // Non-structure compounds are passed indirectly.
   if (isCompoundType(Ty))
-    return ABIArgInfo::getIndirect(0);
+    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
   return ABIArgInfo::getDirect(0);
 }
