@@ -4882,8 +4882,13 @@ CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
   case Type::STK_BlockPointer:
   case Type::STK_ObjCObjectPointer:
     switch (DestTy->getScalarTypeKind()) {
-    case Type::STK_CPointer:
+    case Type::STK_CPointer: {
+      unsigned SrcAS = SrcTy->getPointeeType().getAddressSpace();
+      unsigned DestAS = DestTy->getPointeeType().getAddressSpace();
+      if (SrcAS != DestAS)
+        return CK_AddressSpaceConversion;
       return CK_BitCast;
+    }
     case Type::STK_BlockPointer:
       return (SrcKind == Type::STK_BlockPointer
                 ? CK_BitCast : CK_AnyPointerToBlockPointerCast);
@@ -5173,9 +5178,9 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
     }
   }
 
-  if (getLangOpts().CPlusPlus && !castType->isVoidType())
-    Diag(CastExpr->getLocStart(), diag::warn_old_style_cast)
-        << SourceRange(LParenLoc, RParenLoc);
+  if (getLangOpts().CPlusPlus && !castType->isVoidType() &&
+      !getSourceManager().isInSystemMacro(LParenLoc))
+    Diag(LParenLoc, diag::warn_old_style_cast) << CastExpr->getSourceRange();
 
   return BuildCStyleCastExpr(LParenLoc, castTInfo, RParenLoc, CastExpr);
 }
@@ -7886,10 +7891,14 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
       diagnoseDistinctPointerComparison(*this, Loc, LHS, RHS, /*isError*/false);
     }
     if (LCanPointeeTy != RCanPointeeTy) {
+      unsigned AddrSpaceL = LCanPointeeTy.getAddressSpace();
+      unsigned AddrSpaceR = RCanPointeeTy.getAddressSpace();
+      CastKind Kind = AddrSpaceL != AddrSpaceR ? CK_AddressSpaceConversion
+                                               : CK_BitCast;
       if (LHSIsNull && !RHSIsNull)
-        LHS = ImpCastExprToType(LHS.take(), RHSType, CK_BitCast);
+        LHS = ImpCastExprToType(LHS.take(), RHSType, Kind);
       else
-        RHS = ImpCastExprToType(RHS.take(), LHSType, CK_BitCast);
+        RHS = ImpCastExprToType(RHS.take(), LHSType, Kind);
     }
     return ResultTy;
   }
@@ -10726,6 +10735,9 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
     MayHaveConvFixit = true;
     break;
   case IncompatiblePointer:
+    if (getLangOpts().ObjC1 &&
+        CheckObjCBridgeRelatedConversions(Loc, DstType, SrcType, SrcExpr))
+      return false;
     MakeObjCStringLiteralFixItHint(*this, DstType, SrcExpr, Hint, IsNSString);
       DiagKind =
         (Action == AA_Passing_CFAudited ?
@@ -10805,6 +10817,9 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
     DiagKind = diag::err_arc_weak_unavailable_assign;
     break;
   case Incompatible:
+    if (getLangOpts().ObjC1 &&
+        CheckObjCBridgeRelatedConversions(Loc, DstType, SrcType, SrcExpr))
+      return true;
     DiagKind = diag::err_typecheck_convert_incompatible;
     ConvHints.tryToFixConversion(SrcExpr, SrcType, DstType, *this);
     MayHaveConvFixit = true;
@@ -11265,37 +11280,34 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
 
   // Note that this declaration has been used.
   if (CXXConstructorDecl *Constructor = dyn_cast<CXXConstructorDecl>(Func)) {
+    Constructor = cast<CXXConstructorDecl>(Constructor->getFirstDecl());
     if (Constructor->isDefaulted() && !Constructor->isDeleted()) {
       if (Constructor->isDefaultConstructor()) {
         if (Constructor->isTrivial())
           return;
-        if (!Constructor->isUsed(false))
-          DefineImplicitDefaultConstructor(Loc, Constructor);
+        DefineImplicitDefaultConstructor(Loc, Constructor);
       } else if (Constructor->isCopyConstructor()) {
-        if (!Constructor->isUsed(false))
-          DefineImplicitCopyConstructor(Loc, Constructor);
+        DefineImplicitCopyConstructor(Loc, Constructor);
       } else if (Constructor->isMoveConstructor()) {
-        if (!Constructor->isUsed(false))
-          DefineImplicitMoveConstructor(Loc, Constructor);
+        DefineImplicitMoveConstructor(Loc, Constructor);
       }
     } else if (Constructor->getInheritedConstructor()) {
-      if (!Constructor->isUsed(false))
-        DefineInheritingConstructor(Loc, Constructor);
+      DefineInheritingConstructor(Loc, Constructor);
     }
 
     MarkVTableUsed(Loc, Constructor->getParent());
   } else if (CXXDestructorDecl *Destructor =
                  dyn_cast<CXXDestructorDecl>(Func)) {
-    if (Destructor->isDefaulted() && !Destructor->isDeleted() &&
-        !Destructor->isUsed(false))
+    Destructor = cast<CXXDestructorDecl>(Destructor->getFirstDecl());
+    if (Destructor->isDefaulted() && !Destructor->isDeleted())
       DefineImplicitDestructor(Loc, Destructor);
     if (Destructor->isVirtual())
       MarkVTableUsed(Loc, Destructor->getParent());
   } else if (CXXMethodDecl *MethodDecl = dyn_cast<CXXMethodDecl>(Func)) {
-    if (MethodDecl->isDefaulted() && !MethodDecl->isDeleted() &&
-        MethodDecl->isOverloadedOperator() &&
+    if (MethodDecl->isOverloadedOperator() &&
         MethodDecl->getOverloadedOperator() == OO_Equal) {
-      if (!MethodDecl->isUsed(false)) {
+      MethodDecl = cast<CXXMethodDecl>(MethodDecl->getFirstDecl());
+      if (MethodDecl->isDefaulted() && !MethodDecl->isDeleted()) {
         if (MethodDecl->isCopyAssignmentOperator())
           DefineImplicitCopyAssignment(Loc, MethodDecl);
         else
@@ -11303,7 +11315,8 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
       }
     } else if (isa<CXXConversionDecl>(MethodDecl) &&
                MethodDecl->getParent()->isLambda()) {
-      CXXConversionDecl *Conversion = cast<CXXConversionDecl>(MethodDecl);
+      CXXConversionDecl *Conversion =
+          cast<CXXConversionDecl>(MethodDecl->getFirstDecl());
       if (Conversion->isLambdaToBlockPointerConversion())
         DefineImplicitLambdaToBlockPointerConversion(Loc, Conversion);
       else

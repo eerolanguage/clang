@@ -1740,16 +1740,9 @@ static void handleAttrWithMessage(Sema &S, Decl *D,
 
 static void handleObjCSuppresProtocolAttr(Sema &S, Decl *D,
                                           const AttributeList &Attr) {
-  IdentifierLoc *Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
-
-  if (!Parm) {
-    S.Diag(D->getLocStart(), diag::err_objc_attr_not_id) << Attr.getName() << 1;
-    return;
-  }
-
   D->addAttr(::new (S.Context)
-             ObjCSuppressProtocolAttr(Attr.getRange(), S.Context, Parm->Ident,
-                                      Attr.getAttributeSpellingListIndex()));
+          ObjCExplicitProtocolImplAttr(Attr.getRange(), S.Context,
+                                       Attr.getAttributeSpellingListIndex()));
 }
 
 static bool checkAvailabilityAttr(Sema &S, SourceRange Range,
@@ -2356,12 +2349,6 @@ static void handleSectionAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  // This attribute cannot be applied to local variables.
-  if (isa<VarDecl>(D) && cast<VarDecl>(D)->hasLocalStorage()) {
-    S.Diag(LiteralLoc, diag::err_attribute_section_local_variable);
-    return;
-  }
-  
   unsigned Index = Attr.getAttributeSpellingListIndex();
   SectionAttr *NewAttr = S.mergeSectionAttr(D, Attr.getRange(), Str, Index);
   if (NewAttr)
@@ -3733,24 +3720,9 @@ static void handleObjCBridgeRelatedAttr(Sema &S, Scope *Sc, Decl *D,
 
 static void handleObjCDesignatedInitializer(Sema &S, Decl *D,
                                             const AttributeList &Attr) {
-  SourceLocation Loc = Attr.getLoc();
-  ObjCMethodDecl *Method = cast<ObjCMethodDecl>(D);
-
-  if (Method->getMethodFamily() != OMF_init) {
-    S.Diag(D->getLocStart(), diag::err_attr_objc_designated_not_init_family)
-    << SourceRange(Loc, Loc);
-    return;
-  }
-  ObjCInterfaceDecl *IFace =
-      dyn_cast<ObjCInterfaceDecl>(Method->getDeclContext());
-  if (!IFace) {
-    S.Diag(D->getLocStart(), diag::err_attr_objc_designated_not_interface)
-    << SourceRange(Loc, Loc);
-    return;
-  }
-
+  ObjCInterfaceDecl *IFace = cast<ObjCInterfaceDecl>(D->getDeclContext());
   IFace->setHasDesignatedInitializers();
-  Method->addAttr(::new (S.Context)
+  D->addAttr(::new (S.Context)
                   ObjCDesignatedInitializerAttr(Attr.getRange(), S.Context,
                                          Attr.getAttributeSpellingListIndex()));
 }
@@ -4047,7 +4019,7 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     handleSimpleAttribute<ArcWeakrefUnavailableAttr>(S, D, Attr); break;
   case AttributeList::AT_ObjCRootClass:
     handleSimpleAttribute<ObjCRootClassAttr>(S, D, Attr); break;
-  case AttributeList::AT_ObjCSuppressProtocol:
+  case AttributeList::AT_ObjCExplicitProtocolImpl:
     handleObjCSuppresProtocolAttr(S, D, Attr);
     break;
   case AttributeList::AT_ObjCRequiresPropertyDefs:
@@ -4245,6 +4217,7 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D,
   for (const AttributeList* l = AttrList; l; l = l->getNext())
     ProcessDeclAttribute(*this, S, D, *l, IncludeCXX11Attributes);
 
+  // FIXME: We should be able to handle these cases in TableGen.
   // GCC accepts
   // static int a9 __attribute__((weakref));
   // but that looks really pointless. We reject it.
@@ -4253,6 +4226,24 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D,
     cast<NamedDecl>(D)->getNameAsString();
     D->dropAttr<WeakRefAttr>();
     return;
+  }
+
+  if (!D->hasAttr<OpenCLKernelAttr>()) {
+    // These attributes cannot be applied to a non-kernel function.
+    if (D->hasAttr<ReqdWorkGroupSizeAttr>()) {
+      Diag(D->getLocation(), diag::err_opencl_kernel_attr)
+          << "reqd_work_group_size";
+      D->setInvalidDecl();
+    }
+    if (D->hasAttr<WorkGroupSizeHintAttr>()) {
+      Diag(D->getLocation(), diag::err_opencl_kernel_attr)
+          << "work_group_size_hint";
+      D->setInvalidDecl();
+    }
+    if (D->hasAttr<VecTypeHintAttr>()) {
+      Diag(D->getLocation(), diag::err_opencl_kernel_attr) << "vec_type_hint";
+      D->setInvalidDecl();
+    }
   }
 }
 

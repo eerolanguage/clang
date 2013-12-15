@@ -767,6 +767,12 @@ public:
   /// marked with the 'objc_designated_initializer' attribute.
   bool hasDesignatedInitializers() const;
 
+  /// Returns true if this interface decl declares a designated initializer
+  /// or it inherites one from its super class.
+  bool declaresOrInheritsDesignatedInitializers() const {
+    return hasDesignatedInitializers() || inheritsDesignatedInitializers();
+  }
+
   const ObjCProtocolList &getReferencedProtocols() const {
     assert(hasDefinition() && "Caller did not check for forward reference!");
     if (data().ExternallyCompleted)
@@ -983,10 +989,6 @@ public:
       (superCls && superCls->hasDefinition()) ? superCls->getDefinition() 
                                               : superCls; 
   }
-
-  /// \brief Returns true if this class is marked to suppress being
-  /// used to determine if a subclass conforms to a protocol.
-  bool shouldSuppressProtocol(const ObjCProtocolDecl *P) const;
 
   /// \brief Iterator that walks over the list of categories, filtering out
   /// those that do not meet specific criteria.
@@ -1206,8 +1208,7 @@ public:
   ObjCMethodDecl *lookupMethod(Selector Sel, bool isInstance,
                                bool shallowCategoryLookup = false,
                                bool followSuper = true,
-                               const ObjCCategoryDecl *C = 0,
-                               const ObjCProtocolDecl *P = 0) const;
+                               const ObjCCategoryDecl *C = 0) const;
 
   /// Lookup an instance method for a given selector.
   ObjCMethodDecl *lookupInstanceMethod(Selector Sel) const {

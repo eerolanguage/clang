@@ -11,7 +11,7 @@
 // which is used in GCC 3.2 and newer (and many compilers that are
 // ABI-compatible with GCC):
 //
-//   http://www.codesourcery.com/public/cxx-abi/abi.html
+//   http://mentorembedded.github.io/cxx-abi/abi.html#mangling
 //
 //===----------------------------------------------------------------------===//
 #include "clang/AST/Mangle.h"
@@ -2583,7 +2583,6 @@ recurse:
   case Expr::ConvertVectorExprClass:
   case Expr::StmtExprClass:
   case Expr::UnaryTypeTraitExprClass:
-  case Expr::BinaryTypeTraitExprClass:
   case Expr::TypeTraitExprClass:
   case Expr::ArrayTypeTraitExprClass:
   case Expr::ExpressionTraitExprClass:

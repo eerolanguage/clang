@@ -31,75 +31,85 @@
 #include <queue>
 #include <string>
 
+using clang::format::FormatStyle;
+
 namespace llvm {
 namespace yaml {
+template <> struct ScalarEnumerationTraits<FormatStyle::LanguageKind> {
+  static void enumeration(IO &IO, FormatStyle::LanguageKind &Value) {
+    IO.enumCase(Value, "Cpp", FormatStyle::LK_Cpp);
+    IO.enumCase(Value, "JavaScript", FormatStyle::LK_JavaScript);
+  }
+};
+
+template <> struct ScalarEnumerationTraits<FormatStyle::LanguageStandard> {
+  static void enumeration(IO &IO, FormatStyle::LanguageStandard &Value) {
+    IO.enumCase(Value, "Cpp03", FormatStyle::LS_Cpp03);
+    IO.enumCase(Value, "C++03", FormatStyle::LS_Cpp03);
+    IO.enumCase(Value, "Cpp11", FormatStyle::LS_Cpp11);
+    IO.enumCase(Value, "C++11", FormatStyle::LS_Cpp11);
+    IO.enumCase(Value, "Auto", FormatStyle::LS_Auto);
+  }
+};
+
+template <> struct ScalarEnumerationTraits<FormatStyle::UseTabStyle> {
+  static void enumeration(IO &IO, FormatStyle::UseTabStyle &Value) {
+    IO.enumCase(Value, "Never", FormatStyle::UT_Never);
+    IO.enumCase(Value, "false", FormatStyle::UT_Never);
+    IO.enumCase(Value, "Always", FormatStyle::UT_Always);
+    IO.enumCase(Value, "true", FormatStyle::UT_Always);
+    IO.enumCase(Value, "ForIndentation", FormatStyle::UT_ForIndentation);
+  }
+};
+
+template <> struct ScalarEnumerationTraits<FormatStyle::BraceBreakingStyle> {
+  static void enumeration(IO &IO, FormatStyle::BraceBreakingStyle &Value) {
+    IO.enumCase(Value, "Attach", FormatStyle::BS_Attach);
+    IO.enumCase(Value, "Linux", FormatStyle::BS_Linux);
+    IO.enumCase(Value, "Stroustrup", FormatStyle::BS_Stroustrup);
+    IO.enumCase(Value, "Allman", FormatStyle::BS_Allman);
+    IO.enumCase(Value, "GNU", FormatStyle::BS_GNU);
+  }
+};
+
 template <>
-struct ScalarEnumerationTraits<clang::format::FormatStyle::LanguageKind> {
+struct ScalarEnumerationTraits<FormatStyle::NamespaceIndentationKind> {
   static void enumeration(IO &IO,
-                          clang::format::FormatStyle::LanguageKind &Value) {
-    IO.enumCase(Value, "Cpp", clang::format::FormatStyle::LK_Cpp);
-    IO.enumCase(Value, "JavaScript", clang::format::FormatStyle::LK_JavaScript);
+                          FormatStyle::NamespaceIndentationKind &Value) {
+    IO.enumCase(Value, "None", FormatStyle::NI_None);
+    IO.enumCase(Value, "Inner", FormatStyle::NI_Inner);
+    IO.enumCase(Value, "All", FormatStyle::NI_All);
   }
 };
 
 template <>
-struct ScalarEnumerationTraits<clang::format::FormatStyle::LanguageStandard> {
+struct ScalarEnumerationTraits<FormatStyle::SpaceBeforeParensOptions> {
   static void enumeration(IO &IO,
-                          clang::format::FormatStyle::LanguageStandard &Value) {
-    IO.enumCase(Value, "Cpp03", clang::format::FormatStyle::LS_Cpp03);
-    IO.enumCase(Value, "C++03", clang::format::FormatStyle::LS_Cpp03);
-    IO.enumCase(Value, "Cpp11", clang::format::FormatStyle::LS_Cpp11);
-    IO.enumCase(Value, "C++11", clang::format::FormatStyle::LS_Cpp11);
-    IO.enumCase(Value, "Auto", clang::format::FormatStyle::LS_Auto);
+                          FormatStyle::SpaceBeforeParensOptions &Value) {
+    IO.enumCase(Value, "Never", FormatStyle::SBPO_Never);
+    IO.enumCase(Value, "ControlStatements",
+                FormatStyle::SBPO_ControlStatements);
+    IO.enumCase(Value, "Always", FormatStyle::SBPO_Always);
+
+    // For backward compatibility.
+    IO.enumCase(Value, "false", FormatStyle::SBPO_Never);
+    IO.enumCase(Value, "true", FormatStyle::SBPO_ControlStatements);
   }
 };
 
-template <>
-struct ScalarEnumerationTraits<clang::format::FormatStyle::UseTabStyle> {
-  static void enumeration(IO &IO,
-                          clang::format::FormatStyle::UseTabStyle &Value) {
-    IO.enumCase(Value, "Never", clang::format::FormatStyle::UT_Never);
-    IO.enumCase(Value, "false", clang::format::FormatStyle::UT_Never);
-    IO.enumCase(Value, "Always", clang::format::FormatStyle::UT_Always);
-    IO.enumCase(Value, "true", clang::format::FormatStyle::UT_Always);
-    IO.enumCase(Value, "ForIndentation",
-                clang::format::FormatStyle::UT_ForIndentation);
-  }
-};
+template <> struct MappingTraits<FormatStyle> {
+  static void mapping(IO &IO, FormatStyle &Style) {
+    // When reading, read the language first, we need it for getPredefinedStyle.
+    IO.mapOptional("Language", Style.Language);
 
-template <>
-struct ScalarEnumerationTraits<clang::format::FormatStyle::BraceBreakingStyle> {
-  static void
-  enumeration(IO &IO, clang::format::FormatStyle::BraceBreakingStyle &Value) {
-    IO.enumCase(Value, "Attach", clang::format::FormatStyle::BS_Attach);
-    IO.enumCase(Value, "Linux", clang::format::FormatStyle::BS_Linux);
-    IO.enumCase(Value, "Stroustrup", clang::format::FormatStyle::BS_Stroustrup);
-    IO.enumCase(Value, "Allman", clang::format::FormatStyle::BS_Allman);
-  }
-};
-
-template <>
-struct ScalarEnumerationTraits<
-    clang::format::FormatStyle::NamespaceIndentationKind> {
-  static void
-  enumeration(IO &IO,
-              clang::format::FormatStyle::NamespaceIndentationKind &Value) {
-    IO.enumCase(Value, "None", clang::format::FormatStyle::NI_None);
-    IO.enumCase(Value, "Inner", clang::format::FormatStyle::NI_Inner);
-    IO.enumCase(Value, "All", clang::format::FormatStyle::NI_All);
-  }
-};
-
-template <> struct MappingTraits<clang::format::FormatStyle> {
-  static void mapping(llvm::yaml::IO &IO, clang::format::FormatStyle &Style) {
     if (IO.outputting()) {
       StringRef StylesArray[] = { "LLVM",    "Google", "Chromium",
-                                  "Mozilla", "WebKit" };
+                                  "Mozilla", "WebKit", "GNU" };
       ArrayRef<StringRef> Styles(StylesArray);
       for (size_t i = 0, e = Styles.size(); i < e; ++i) {
         StringRef StyleName(Styles[i]);
-        clang::format::FormatStyle PredefinedStyle;
-        if (clang::format::getPredefinedStyle(StyleName, &PredefinedStyle) &&
+        FormatStyle PredefinedStyle;
+        if (getPredefinedStyle(StyleName, Style.Language, &PredefinedStyle) &&
             Style == PredefinedStyle) {
           IO.mapOptional("# BasedOnStyle", StyleName);
           break;
@@ -109,16 +119,17 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
       StringRef BasedOnStyle;
       IO.mapOptional("BasedOnStyle", BasedOnStyle);
       if (!BasedOnStyle.empty()) {
-        clang::format::FormatStyle::LanguageKind Language = Style.Language;
-        if (!clang::format::getPredefinedStyle(BasedOnStyle, &Style)) {
+        FormatStyle::LanguageKind OldLanguage = Style.Language;
+        FormatStyle::LanguageKind Language =
+            ((FormatStyle *)IO.getContext())->Language;
+        if (!getPredefinedStyle(BasedOnStyle, Language, &Style)) {
           IO.setError(Twine("Unknown value for BasedOnStyle: ", BasedOnStyle));
           return;
         }
-        Style.Language = Language;
+        Style.Language = OldLanguage;
       }
     }
 
-    IO.mapOptional("Language", Style.Language);
     IO.mapOptional("AccessModifierOffset", Style.AccessModifierOffset);
     IO.mapOptional("ConstructorInitializerIndentWidth",
                    Style.ConstructorInitializerIndentWidth);
@@ -179,41 +190,42 @@ template <> struct MappingTraits<clang::format::FormatStyle> {
     IO.mapOptional("SpaceInEmptyParentheses", Style.SpaceInEmptyParentheses);
     IO.mapOptional("SpacesInCStyleCastParentheses",
                    Style.SpacesInCStyleCastParentheses);
-    IO.mapOptional("SpaceAfterControlStatementKeyword",
-                   Style.SpaceAfterControlStatementKeyword);
     IO.mapOptional("SpaceBeforeAssignmentOperators",
                    Style.SpaceBeforeAssignmentOperators);
     IO.mapOptional("ContinuationIndentWidth", Style.ContinuationIndentWidth);
+
+    // For backward compatibility.
+    if (!IO.outputting()) {
+      IO.mapOptional("SpaceAfterControlStatementKeyword",
+                     Style.SpaceBeforeParens);
+    }
+    IO.mapOptional("SpaceBeforeParens", Style.SpaceBeforeParens);
   }
 };
 
 // Allows to read vector<FormatStyle> while keeping default values.
-// Elements will be written or read starting from the 1st element.
-// When writing, the 0th element is ignored.
-// When reading, keys that are not present in the serialized form will be
-// copied from the 0th element of the vector. If the first element had no
-// Language specified, it will be treated as the default one for the following
-// elements.
-template <>
-struct DocumentListTraits<std::vector<clang::format::FormatStyle> > {
-  static size_t size(IO &io, std::vector<clang::format::FormatStyle> &Seq) {
-    return Seq.size() - 1;
+// IO.getContext() should contain a pointer to the FormatStyle structure, that
+// will be used to get default values for missing keys.
+// If the first element has no Language specified, it will be treated as the
+// default one for the following elements.
+template <> struct DocumentListTraits<std::vector<FormatStyle> > {
+  static size_t size(IO &IO, std::vector<FormatStyle> &Seq) {
+    return Seq.size();
   }
-  static clang::format::FormatStyle &
-  element(IO &io, std::vector<clang::format::FormatStyle> &Seq, size_t Index) {
-    if (Index + 2 > Seq.size()) {
-      assert(Index + 2 == Seq.size() + 1);
-      clang::format::FormatStyle Template;
-      if (Seq.size() > 1 &&
-          Seq[1].Language == clang::format::FormatStyle::LK_None) {
-        Template = Seq[1];
-      } else {
+  static FormatStyle &element(IO &IO, std::vector<FormatStyle> &Seq,
+                              size_t Index) {
+    if (Index >= Seq.size()) {
+      assert(Index == Seq.size());
+      FormatStyle Template;
+      if (Seq.size() > 0 && Seq[0].Language == FormatStyle::LK_None) {
         Template = Seq[0];
-        Template.Language = clang::format::FormatStyle::LK_None;
+      } else {
+        Template = *((const FormatStyle*)IO.getContext());
+        Template.Language = FormatStyle::LK_None;
       }
-      Seq.resize(Index + 2, Template);
+      Seq.resize(Index + 1, Template);
     }
-    return Seq[Index + 1];
+    return Seq[Index];
   }
 };
 }
@@ -221,13 +233,6 @@ struct DocumentListTraits<std::vector<clang::format::FormatStyle> > {
 
 namespace clang {
 namespace format {
-
-void setDefaultPenalties(FormatStyle &Style) {
-  Style.PenaltyBreakComment = 60;
-  Style.PenaltyBreakFirstLessLess = 120;
-  Style.PenaltyBreakString = 1000;
-  Style.PenaltyExcessCharacter = 1000000;
-}
 
 FormatStyle getLLVMStyle() {
   FormatStyle LLVMStyle;
@@ -266,12 +271,15 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.SpacesInParentheses = false;
   LLVMStyle.SpaceInEmptyParentheses = false;
   LLVMStyle.SpacesInCStyleCastParentheses = false;
-  LLVMStyle.SpaceAfterControlStatementKeyword = true;
+  LLVMStyle.SpaceBeforeParens = FormatStyle::SBPO_ControlStatements;
   LLVMStyle.SpaceBeforeAssignmentOperators = true;
   LLVMStyle.ContinuationIndentWidth = 4;
   LLVMStyle.SpacesInAngles = false;
 
-  setDefaultPenalties(LLVMStyle);
+  LLVMStyle.PenaltyBreakComment = 60;
+  LLVMStyle.PenaltyBreakFirstLessLess = 120;
+  LLVMStyle.PenaltyBreakString = 1000;
+  LLVMStyle.PenaltyExcessCharacter = 1000000;
   LLVMStyle.PenaltyReturnTypeOnItsOwnLine = 60;
   LLVMStyle.PenaltyBreakBeforeFirstCallParameter = 19;
 
@@ -279,52 +287,37 @@ FormatStyle getLLVMStyle() {
 }
 
 FormatStyle getGoogleStyle() {
-  FormatStyle GoogleStyle;
-  GoogleStyle.Language = FormatStyle::LK_Cpp;
+  FormatStyle GoogleStyle = getLLVMStyle();
   GoogleStyle.AccessModifierOffset = -1;
   GoogleStyle.AlignEscapedNewlinesLeft = true;
-  GoogleStyle.AlignTrailingComments = true;
-  GoogleStyle.AllowAllParametersOfDeclarationOnNextLine = true;
-  GoogleStyle.AllowShortFunctionsOnASingleLine = true;
   GoogleStyle.AllowShortIfStatementsOnASingleLine = true;
   GoogleStyle.AllowShortLoopsOnASingleLine = true;
   GoogleStyle.AlwaysBreakBeforeMultilineStrings = true;
   GoogleStyle.AlwaysBreakTemplateDeclarations = true;
-  GoogleStyle.BinPackParameters = true;
-  GoogleStyle.BreakBeforeBinaryOperators = false;
-  GoogleStyle.BreakBeforeTernaryOperators = true;
-  GoogleStyle.BreakBeforeBraces = FormatStyle::BS_Attach;
-  GoogleStyle.BreakConstructorInitializersBeforeComma = false;
-  GoogleStyle.ColumnLimit = 80;
   GoogleStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = true;
-  GoogleStyle.ConstructorInitializerIndentWidth = 4;
   GoogleStyle.Cpp11BracedListStyle = true;
   GoogleStyle.DerivePointerBinding = true;
-  GoogleStyle.ExperimentalAutoDetectBinPacking = false;
   GoogleStyle.IndentCaseLabels = true;
   GoogleStyle.IndentFunctionDeclarationAfterType = true;
-  GoogleStyle.IndentWidth = 2;
-  GoogleStyle.TabWidth = 8;
-  GoogleStyle.MaxEmptyLinesToKeep = 1;
-  GoogleStyle.NamespaceIndentation = FormatStyle::NI_None;
   GoogleStyle.ObjCSpaceBeforeProtocolList = false;
   GoogleStyle.PointerBindsToType = true;
   GoogleStyle.SpacesBeforeTrailingComments = 2;
   GoogleStyle.Standard = FormatStyle::LS_Auto;
-  GoogleStyle.UseTab = FormatStyle::UT_Never;
-  GoogleStyle.SpacesInParentheses = false;
-  GoogleStyle.SpaceInEmptyParentheses = false;
-  GoogleStyle.SpacesInCStyleCastParentheses = false;
-  GoogleStyle.SpaceAfterControlStatementKeyword = true;
-  GoogleStyle.SpaceBeforeAssignmentOperators = true;
-  GoogleStyle.ContinuationIndentWidth = 4;
-  GoogleStyle.SpacesInAngles = false;
 
-  setDefaultPenalties(GoogleStyle);
   GoogleStyle.PenaltyReturnTypeOnItsOwnLine = 200;
   GoogleStyle.PenaltyBreakBeforeFirstCallParameter = 1;
 
   return GoogleStyle;
+}
+
+FormatStyle getGoogleJSStyle() {
+  FormatStyle GoogleJSStyle = getGoogleStyle();
+  GoogleJSStyle.Language = FormatStyle::LK_JavaScript;
+  GoogleJSStyle.BreakBeforeTernaryOperators = false;
+  // FIXME: Currently unimplemented:
+  // var arr = [1, 2, 3];  // No space after [ or before ].
+  // var obj = {a: 1, b: 2, c: 3};  // No space after ':'.
+  return GoogleJSStyle;
 }
 
 FormatStyle getChromiumStyle() {
@@ -364,56 +357,79 @@ FormatStyle getWebKitStyle() {
   return Style;
 }
 
-bool getPredefinedStyle(StringRef Name, FormatStyle *Style) {
-  if (Name.equals_lower("llvm"))
-    *Style = getLLVMStyle();
-  else if (Name.equals_lower("chromium"))
-    *Style = getChromiumStyle();
-  else if (Name.equals_lower("mozilla"))
-    *Style = getMozillaStyle();
-  else if (Name.equals_lower("google"))
-    *Style = getGoogleStyle();
-  else if (Name.equals_lower("webkit"))
-    *Style = getWebKitStyle();
-  else
-    return false;
+FormatStyle getGNUStyle() {
+  FormatStyle Style = getLLVMStyle();
+  Style.BreakBeforeBinaryOperators = true;
+  Style.BreakBeforeBraces = FormatStyle::BS_GNU;
+  Style.BreakBeforeTernaryOperators = true;
+  Style.ColumnLimit = 79;
+  Style.SpaceBeforeParens = FormatStyle::SBPO_Always;
+  return Style;
+}
 
+bool getPredefinedStyle(StringRef Name, FormatStyle::LanguageKind Language,
+                        FormatStyle *Style) {
+  if (Name.equals_lower("llvm")) {
+    *Style = getLLVMStyle();
+  } else if (Name.equals_lower("chromium")) {
+    *Style = getChromiumStyle();
+  } else if (Name.equals_lower("mozilla")) {
+    *Style = getMozillaStyle();
+  } else if (Name.equals_lower("google")) {
+    *Style = Language == FormatStyle::LK_JavaScript ? getGoogleJSStyle()
+                                                    : getGoogleStyle();
+  } else if (Name.equals_lower("webkit")) {
+    *Style = getWebKitStyle();
+  } else if (Name.equals_lower("gnu")) {
+    *Style = getGNUStyle();
+  } else {
+    return false;
+  }
+
+  Style->Language = Language;
   return true;
 }
 
 llvm::error_code parseConfiguration(StringRef Text, FormatStyle *Style) {
   assert(Style);
-  assert(Style->Language != FormatStyle::LK_None);
+  FormatStyle::LanguageKind Language = Style->Language;
+  assert(Language != FormatStyle::LK_None);
   if (Text.trim().empty())
     return llvm::make_error_code(llvm::errc::invalid_argument);
 
   std::vector<FormatStyle> Styles;
-  // DocumentListTraits<vector<FormatStyle>> uses 0th element as the default one
-  // for the fields, keys for which are missing from the configuration.
-  Styles.push_back(*Style);
   llvm::yaml::Input Input(Text);
+  // DocumentListTraits<vector<FormatStyle>> uses the context to get default
+  // values for the fields, keys for which are missing from the configuration.
+  // Mapping also uses the context to get the language to find the correct
+  // base style.
+  Input.setContext(Style);
   Input >> Styles;
   if (Input.error())
     return Input.error();
 
-  for (unsigned i = 1; i < Styles.size(); ++i) {
+  for (unsigned i = 0; i < Styles.size(); ++i) {
     // Ensures that only the first configuration can skip the Language option.
-    if (Styles[i].Language == FormatStyle::LK_None && i != 1)
+    if (Styles[i].Language == FormatStyle::LK_None && i != 0)
       return llvm::make_error_code(llvm::errc::invalid_argument);
     // Ensure that each language is configured at most once.
-    for (unsigned j = 1; j < i; ++j) {
-      if (Styles[i].Language == Styles[j].Language)
+    for (unsigned j = 0; j < i; ++j) {
+      if (Styles[i].Language == Styles[j].Language) {
+        DEBUG(llvm::dbgs()
+              << "Duplicate languages in the config file on positions " << j
+              << " and " << i << "\n");
         return llvm::make_error_code(llvm::errc::invalid_argument);
+      }
     }
   }
   // Look for a suitable configuration starting from the end, so we can
   // find the configuration for the specific language first, and the default
-  // configuration (which can only be at slot 1) after it.
-  for (unsigned i = Styles.size() - 1; i > 0; --i) {
-    if (Styles[i].Language == Styles[0].Language ||
+  // configuration (which can only be at slot 0) after it.
+  for (int i = Styles.size() - 1; i >= 0; --i) {
+    if (Styles[i].Language == Language ||
         Styles[i].Language == FormatStyle::LK_None) {
       *Style = Styles[i];
-      Style->Language = Styles[0].Language;
+      Style->Language = Language;
       return llvm::make_error_code(llvm::errc::success);
     }
   }
@@ -489,7 +505,7 @@ public:
                  : 0;
     }
     if (TheLine->Last->is(tok::l_brace)) {
-      return Style.BreakBeforeBraces == clang::format::FormatStyle::BS_Attach
+      return Style.BreakBeforeBraces == FormatStyle::BS_Attach
                  ? tryMergeSimpleBlock(I, E, Limit)
                  : 0;
     }
@@ -546,7 +562,8 @@ private:
       SmallVectorImpl<AnnotatedLine *>::const_iterator E, unsigned Limit) {
     if (Limit == 0)
       return 0;
-    if (Style.BreakBeforeBraces == FormatStyle::BS_Allman &&
+    if ((Style.BreakBeforeBraces == FormatStyle::BS_Allman ||
+         Style.BreakBeforeBraces == FormatStyle::BS_GNU) &&
         I[1]->First->is(tok::l_brace))
       return 0;
     if (I[1]->InPPDirective != (*I)->InPPDirective ||
@@ -1658,28 +1675,22 @@ const char *StyleOptionHelpDescription =
     "parameters, e.g.:\n"
     "  -style=\"{BasedOnStyle: llvm, IndentWidth: 8}\"";
 
-static void fillLanguageByFileName(StringRef FileName, FormatStyle *Style) {
-  if (FileName.endswith_lower(".c") || FileName.endswith_lower(".h") ||
-      FileName.endswith_lower(".cpp") || FileName.endswith_lower(".hpp") ||
-      FileName.endswith_lower(".cc") || FileName.endswith_lower(".hh") ||
-      FileName.endswith_lower(".cxx") || FileName.endswith_lower(".hxx") ||
-      FileName.endswith_lower(".m") || FileName.endswith_lower(".mm")) {
-    Style->Language = FormatStyle::LK_Cpp;
-  }
+static FormatStyle::LanguageKind getLanguageByFileName(StringRef FileName) {
   if (FileName.endswith_lower(".js")) {
-    Style->Language = FormatStyle::LK_JavaScript;
+    return FormatStyle::LK_JavaScript;
   }
+  return FormatStyle::LK_Cpp;
 }
 
 FormatStyle getStyle(StringRef StyleName, StringRef FileName,
                      StringRef FallbackStyle) {
-  FormatStyle Style;
-  if (!getPredefinedStyle(FallbackStyle, &Style)) {
+  FormatStyle Style = getLLVMStyle();
+  Style.Language = getLanguageByFileName(FileName);
+  if (!getPredefinedStyle(FallbackStyle, Style.Language, &Style)) {
     llvm::errs() << "Invalid fallback style \"" << FallbackStyle
                  << "\" using LLVM style\n";
-    return getLLVMStyle();
+    return Style;
   }
-  fillLanguageByFileName(FileName, &Style);
 
   if (StyleName.startswith("{")) {
     // Parse YAML/JSON style from the command line.
@@ -1691,13 +1702,13 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName,
   }
 
   if (!StyleName.equals_lower("file")) {
-    if (!getPredefinedStyle(StyleName, &Style))
+    if (!getPredefinedStyle(StyleName, Style.Language, &Style))
       llvm::errs() << "Invalid value for -style, using " << FallbackStyle
                    << " style\n";
-    fillLanguageByFileName(FileName, &Style);
     return Style;
   }
 
+  // Look for .clang-format/_clang-format file in the file's parent directories.
   SmallString<128> UnsuitableConfigFiles;
   SmallString<128> Path(FileName);
   llvm::sys::fs::make_absolute(Path);

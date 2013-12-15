@@ -2082,7 +2082,8 @@ TEST_F(FormatTest, HashInMacroDefinition) {
 }
 
 TEST_F(FormatTest, RespectWhitespaceInMacroDefinitions) {
-  verifyFormat("#define A (1)");
+  EXPECT_EQ("#define A (x)", format("#define A (x)"));
+  EXPECT_EQ("#define A(x)", format("#define A(x)"));
 }
 
 TEST_F(FormatTest, EmptyLinesInMacroDefinitions) {
@@ -4854,6 +4855,17 @@ TEST_F(FormatTest, FormatsBracedListsInColumnLayout) {
                "         { aaaaaaaaaaaaaaaaaaaaa },\n"
                "         { aaaaaaaaaaaaaaaaa } };",
                getLLVMStyleWithColumns(60));
+
+  // No column layout for nested lists.
+  // FIXME: For some nested lists, we can do better.
+  verifyFormat(
+      "SomeStruct my_struct_array = {\n"
+      "  { aaaaaa, aaaaaaaa, aaaaaaaaaa, aaaaaaaaa, aaaaaaaaa, aaaaaaaaaa,\n"
+      "    aaaaaaaaaaaaa, aaaaaaa, aaa },\n"
+      "  { aaaa, aaaa, aaaa, aaaa, aaaa, aaaa, aaaa, aaa },\n"
+      "  { aaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaa,\n"
+      "    aaaaaaaaaaaa, a, aaaaaaaaaa, aaaaaaaaa, aaa },\n"
+      "};");
 }
 
 TEST_F(FormatTest, PullTrivialFunctionDefinitionsIntoSingleLine) {
@@ -6649,9 +6661,9 @@ TEST_F(FormatTest, CalculatesOriginalColumn) {
                    getLLVMStyle()));
 }
 
-TEST_F(FormatTest, ConfigurableSpaceAfterControlStatementKeyword) {
+TEST_F(FormatTest, ConfigurableSpaceBeforeParens) {
   FormatStyle NoSpace = getLLVMStyle();
-  NoSpace.SpaceAfterControlStatementKeyword = false;
+  NoSpace.SpaceBeforeParens = FormatStyle::SBPO_Never;
 
   verifyFormat("while(true)\n"
                "  continue;", NoSpace);
@@ -6668,6 +6680,42 @@ TEST_F(FormatTest, ConfigurableSpaceAfterControlStatementKeyword) {
                "default:\n"
                "  break;\n"
                "}", NoSpace);
+
+  FormatStyle Space = getLLVMStyle();
+  Space.SpaceBeforeParens = FormatStyle::SBPO_Always;
+
+  verifyFormat("int f ();", Space);
+  verifyFormat("void f (int a, T b) {\n"
+               "  while (true)\n"
+               "    continue;\n"
+               "}",
+               Space);
+  verifyFormat("if (true)\n"
+               "  f ();\n"
+               "else if (true)\n"
+               "  f ();",
+               Space);
+  verifyFormat("do {\n"
+               "  do_something ();\n"
+               "} while (something ());",
+               Space);
+  verifyFormat("switch (x) {\n"
+               "default:\n"
+               "  break;\n"
+               "}",
+               Space);
+  verifyFormat("A::A () : a (1) {}", Space);
+  verifyFormat("void f () __attribute__ ((asdf));", Space);
+  verifyFormat("*(&a + 1);\n"
+               "&((&a)[1]);\n"
+               "a[(b + c) * d];\n"
+               "(((a + 1) * 2) + 3) * 4;",
+               Space);
+  verifyFormat("#define A(x) x", Space);
+  verifyFormat("#define A (x) x", Space);
+  verifyFormat("#if defined(x)\n"
+               "#endif",
+               Space);
 }
 
 TEST_F(FormatTest, ConfigurableSpacesInParentheses) {
@@ -6887,6 +6935,91 @@ TEST_F(FormatTest, AllmanBraceBreaking) {
                BreakBeforeBraceShortIfs);
 }
 
+TEST_F(FormatTest, GNUBraceBreaking) {
+  FormatStyle GNUBraceStyle = getLLVMStyle();
+  GNUBraceStyle.BreakBeforeBraces = FormatStyle::BS_GNU;
+  verifyFormat("namespace a\n"
+               "{\n"
+               "class A\n"
+               "{\n"
+               "  void f()\n"
+               "  {\n"
+               "    int a;\n"
+               "    {\n"
+               "      int b;\n"
+               "    }\n"
+               "    if (true)\n"
+               "      {\n"
+               "        a();\n"
+               "        b();\n"
+               "      }\n"
+               "  }\n"
+               "  void g() { return; }\n"
+               "}\n"
+               "}",
+               GNUBraceStyle);
+
+  verifyFormat("void f()\n"
+               "{\n"
+               "  if (true)\n"
+               "    {\n"
+               "      a();\n"
+               "    }\n"
+               "  else if (false)\n"
+               "    {\n"
+               "      b();\n"
+               "    }\n"
+               "  else\n"
+               "    {\n"
+               "      c();\n"
+               "    }\n"
+               "}\n",
+               GNUBraceStyle);
+
+  verifyFormat("void f()\n"
+               "{\n"
+               "  for (int i = 0; i < 10; ++i)\n"
+               "    {\n"
+               "      a();\n"
+               "    }\n"
+               "  while (false)\n"
+               "    {\n"
+               "      b();\n"
+               "    }\n"
+               "  do\n"
+               "    {\n"
+               "      c();\n"
+               "    }\n"
+               "  while (false);\n"
+               "}\n",
+               GNUBraceStyle);
+
+  verifyFormat("void f(int a)\n"
+               "{\n"
+               "  switch (a)\n"
+               "    {\n"
+               "    case 0:\n"
+               "      break;\n"
+               "    case 1:\n"
+               "      {\n"
+               "        break;\n"
+               "      }\n"
+               "    case 2:\n"
+               "      {\n"
+               "      }\n"
+               "      break;\n"
+               "    default:\n"
+               "      break;\n"
+               "    }\n"
+               "}\n",
+               GNUBraceStyle);
+
+  verifyFormat("enum X\n"
+               "{\n"
+               "  Y = 0,\n"
+               "}\n",
+               GNUBraceStyle);
+}
 TEST_F(FormatTest, CatchExceptionReferenceBinding) {
   verifyFormat("void f() {\n"
                "  try {\n"
@@ -6902,42 +7035,93 @@ TEST_F(FormatTest, UnderstandsPragmas) {
   verifyFormat("#pragma omp reduction(+ : var)");
 }
 
-bool allStylesEqual(ArrayRef<FormatStyle> Styles) {
-  for (size_t i = 1; i < Styles.size(); ++i)
-    if (!(Styles[0] == Styles[i]))
-      return false;
-  return true;
-}
+#define EXPECT_ALL_STYLES_EQUAL(Styles)                                        \
+  for (size_t i = 1; i < Styles.size(); ++i)                                   \
+    EXPECT_EQ(Styles[0], Styles[i]) << "Style #" << i << " of "                \
+                                    << Styles.size()                           \
+                                    << " differs from Style #0"
 
 TEST_F(FormatTest, GetsPredefinedStyleByName) {
-  FormatStyle Styles[3];
+  SmallVector<FormatStyle, 3> Styles;
+  Styles.resize(3);
 
   Styles[0] = getLLVMStyle();
-  EXPECT_TRUE(getPredefinedStyle("LLVM", &Styles[1]));
-  EXPECT_TRUE(getPredefinedStyle("lLvM", &Styles[2]));
-  EXPECT_TRUE(allStylesEqual(Styles));
+  EXPECT_TRUE(getPredefinedStyle("LLVM", FormatStyle::LK_Cpp, &Styles[1]));
+  EXPECT_TRUE(getPredefinedStyle("lLvM", FormatStyle::LK_Cpp, &Styles[2]));
+  EXPECT_ALL_STYLES_EQUAL(Styles);
 
   Styles[0] = getGoogleStyle();
-  EXPECT_TRUE(getPredefinedStyle("Google", &Styles[1]));
-  EXPECT_TRUE(getPredefinedStyle("gOOgle", &Styles[2]));
-  EXPECT_TRUE(allStylesEqual(Styles));
+  EXPECT_TRUE(getPredefinedStyle("Google", FormatStyle::LK_Cpp, &Styles[1]));
+  EXPECT_TRUE(getPredefinedStyle("gOOgle", FormatStyle::LK_Cpp, &Styles[2]));
+  EXPECT_ALL_STYLES_EQUAL(Styles);
+
+  Styles[0] = getGoogleJSStyle();
+  EXPECT_TRUE(
+      getPredefinedStyle("Google", FormatStyle::LK_JavaScript, &Styles[1]));
+  EXPECT_TRUE(
+      getPredefinedStyle("gOOgle", FormatStyle::LK_JavaScript, &Styles[2]));
+  EXPECT_ALL_STYLES_EQUAL(Styles);
 
   Styles[0] = getChromiumStyle();
-  EXPECT_TRUE(getPredefinedStyle("Chromium", &Styles[1]));
-  EXPECT_TRUE(getPredefinedStyle("cHRoMiUM", &Styles[2]));
-  EXPECT_TRUE(allStylesEqual(Styles));
+  EXPECT_TRUE(getPredefinedStyle("Chromium", FormatStyle::LK_Cpp, &Styles[1]));
+  EXPECT_TRUE(getPredefinedStyle("cHRoMiUM", FormatStyle::LK_Cpp, &Styles[2]));
+  EXPECT_ALL_STYLES_EQUAL(Styles);
 
   Styles[0] = getMozillaStyle();
-  EXPECT_TRUE(getPredefinedStyle("Mozilla", &Styles[1]));
-  EXPECT_TRUE(getPredefinedStyle("moZILla", &Styles[2]));
-  EXPECT_TRUE(allStylesEqual(Styles));
+  EXPECT_TRUE(getPredefinedStyle("Mozilla", FormatStyle::LK_Cpp, &Styles[1]));
+  EXPECT_TRUE(getPredefinedStyle("moZILla", FormatStyle::LK_Cpp, &Styles[2]));
+  EXPECT_ALL_STYLES_EQUAL(Styles);
 
   Styles[0] = getWebKitStyle();
-  EXPECT_TRUE(getPredefinedStyle("WebKit", &Styles[1]));
-  EXPECT_TRUE(getPredefinedStyle("wEbKit", &Styles[2]));
-  EXPECT_TRUE(allStylesEqual(Styles));
+  EXPECT_TRUE(getPredefinedStyle("WebKit", FormatStyle::LK_Cpp, &Styles[1]));
+  EXPECT_TRUE(getPredefinedStyle("wEbKit", FormatStyle::LK_Cpp, &Styles[2]));
+  EXPECT_ALL_STYLES_EQUAL(Styles);
 
-  EXPECT_FALSE(getPredefinedStyle("qwerty", &Styles[0]));
+  Styles[0] = getGNUStyle();
+  EXPECT_TRUE(getPredefinedStyle("GNU", FormatStyle::LK_Cpp, &Styles[1]));
+  EXPECT_TRUE(getPredefinedStyle("gnU", FormatStyle::LK_Cpp, &Styles[2]));
+  EXPECT_ALL_STYLES_EQUAL(Styles);
+
+  EXPECT_FALSE(getPredefinedStyle("qwerty", FormatStyle::LK_Cpp, &Styles[0]));
+}
+
+TEST_F(FormatTest, GetsCorrectBasedOnStyle) {
+  SmallVector<FormatStyle, 8> Styles;
+  Styles.resize(2);
+
+  Styles[0] = getGoogleStyle();
+  Styles[1] = getLLVMStyle();
+  EXPECT_EQ(0, parseConfiguration("BasedOnStyle: Google", &Styles[1]).value());
+  EXPECT_ALL_STYLES_EQUAL(Styles);
+
+  Styles.resize(5);
+  Styles[0] = getGoogleJSStyle();
+  Styles[1] = getLLVMStyle();
+  Styles[1].Language = FormatStyle::LK_JavaScript;
+  EXPECT_EQ(0, parseConfiguration("BasedOnStyle: Google", &Styles[1]).value());
+
+  Styles[2] = getLLVMStyle();
+  Styles[2].Language = FormatStyle::LK_JavaScript;
+  EXPECT_EQ(0, parseConfiguration("Language: JavaScript\n"
+                                  "BasedOnStyle: Google",
+                                  &Styles[2]).value());
+
+  Styles[3] = getLLVMStyle();
+  Styles[3].Language = FormatStyle::LK_JavaScript;
+  EXPECT_EQ(0, parseConfiguration("BasedOnStyle: Google\n"
+                                  "Language: JavaScript",
+                                  &Styles[3]).value());
+
+  Styles[4] = getLLVMStyle();
+  Styles[4].Language = FormatStyle::LK_JavaScript;
+  EXPECT_EQ(0, parseConfiguration("---\n"
+                                  "BasedOnStyle: LLVM\n"
+                                  "IndentWidth: 123\n"
+                                  "---\n"
+                                  "BasedOnStyle: Google\n"
+                                  "Language: JavaScript",
+                                  &Styles[4]).value());
+  EXPECT_ALL_STYLES_EQUAL(Styles);
 }
 
 #define CHECK_PARSE(TEXT, FIELD, VALUE)                                        \
@@ -6977,7 +7161,6 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(SpacesInAngles);
   CHECK_PARSE_BOOL(SpaceInEmptyParentheses);
   CHECK_PARSE_BOOL(SpacesInCStyleCastParentheses);
-  CHECK_PARSE_BOOL(SpaceAfterControlStatementKeyword);
   CHECK_PARSE_BOOL(SpaceBeforeAssignmentOperators);
 
   CHECK_PARSE("AccessModifierOffset: -1234", AccessModifierOffset, -1234);
@@ -7009,6 +7192,19 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE("UseTab: ForIndentation", UseTab, FormatStyle::UT_ForIndentation);
   CHECK_PARSE("UseTab: Always", UseTab, FormatStyle::UT_Always);
 
+  Style.SpaceBeforeParens = FormatStyle::SBPO_Always;
+  CHECK_PARSE("SpaceBeforeParens: Never", SpaceBeforeParens,
+              FormatStyle::SBPO_Never);
+  CHECK_PARSE("SpaceBeforeParens: Always", SpaceBeforeParens,
+              FormatStyle::SBPO_Always);
+  CHECK_PARSE("SpaceBeforeParens: ControlStatements", SpaceBeforeParens,
+              FormatStyle::SBPO_ControlStatements);
+  // For backward compatibility:
+  CHECK_PARSE("SpaceAfterControlStatementKeyword: false", SpaceBeforeParens,
+              FormatStyle::SBPO_Never);
+  CHECK_PARSE("SpaceAfterControlStatementKeyword: true", SpaceBeforeParens,
+              FormatStyle::SBPO_ControlStatements);
+
   Style.ColumnLimit = 123;
   FormatStyle BaseStyle = getLLVMStyle();
   CHECK_PARSE("BasedOnStyle: LLVM", ColumnLimit, BaseStyle.ColumnLimit);
@@ -7021,6 +7217,9 @@ TEST_F(FormatTest, ParsesConfiguration) {
               FormatStyle::BS_Linux);
   CHECK_PARSE("BreakBeforeBraces: Stroustrup", BreakBeforeBraces,
               FormatStyle::BS_Stroustrup);
+  CHECK_PARSE("BreakBeforeBraces: Allman", BreakBeforeBraces,
+              FormatStyle::BS_Allman);
+  CHECK_PARSE("BreakBeforeBraces: GNU", BreakBeforeBraces, FormatStyle::BS_GNU);
 
   Style.NamespaceIndentation = FormatStyle::NI_All;
   CHECK_PARSE("NamespaceIndentation: None", NamespaceIndentation,
@@ -7130,6 +7329,23 @@ TEST_F(FormatTest, ParsesConfigurationWithLanguages) {
                                &Style));
 
   EXPECT_EQ(FormatStyle::LK_Cpp, Style.Language);
+}
+
+TEST_F(FormatTest, UsesLanguageForBasedOnStyle) {
+  FormatStyle Style = {};
+  Style.Language = FormatStyle::LK_JavaScript;
+  Style.BreakBeforeTernaryOperators = true;
+  CHECK_PARSE("BasedOnStyle: Google", BreakBeforeTernaryOperators, false);
+  Style.BreakBeforeTernaryOperators = true;
+  CHECK_PARSE("---\n"
+              "BasedOnStyle: Google\n"
+              "---\n"
+              "Language: JavaScript\n"
+              "IndentWidth: 76\n"
+              "...\n",
+              BreakBeforeTernaryOperators, false);
+  EXPECT_EQ(76u, Style.IndentWidth);
+  EXPECT_EQ(FormatStyle::LK_JavaScript, Style.Language);
 }
 
 #undef CHECK_PARSE

@@ -54,7 +54,8 @@ llvm::Constant *CodeGenModule::GetAddrOfThunk(GlobalDecl GD,
   Out.flush();
 
   llvm::Type *Ty = getTypes().GetFunctionTypeForVTable(GD);
-  return GetOrCreateLLVMFunction(Name, Ty, GD, /*ForVTable=*/true);
+  return GetOrCreateLLVMFunction(Name, Ty, GD, /*ForVTable=*/true,
+                                 /*DontDefer*/ true);
 }
 
 static void setThunkVisibility(CodeGenModule &CGM, const CXXMethodDecl *MD,
@@ -422,14 +423,15 @@ void CodeGenVTables::emitThunk(GlobalDecl GD, const ThunkInfo &Thunk,
     // expensive/sucky at the moment, so don't generate the thunk unless
     // we have to.
     // FIXME: Do something better here; GenerateVarArgsThunk is extremely ugly.
-    if (!UseAvailableExternallyLinkage)
+    if (!UseAvailableExternallyLinkage) {
       CodeGenFunction(CGM).GenerateVarArgsThunk(ThunkFn, FnInfo, GD, Thunk);
+      CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable);
+    }
   } else {
     // Normal thunk body generation.
     CodeGenFunction(CGM).GenerateThunk(ThunkFn, FnInfo, GD, Thunk);
+    CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable);
   }
-
-  CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable);
 }
 
 void CodeGenVTables::maybeEmitThunkForVTable(GlobalDecl GD,

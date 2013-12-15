@@ -822,10 +822,12 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     Opts.ObjCMTAction |= FrontendOptions::ObjCMT_AtomicProperty;
   if (Args.hasArg(OPT_objcmt_ns_nonatomic_iosonly))
     Opts.ObjCMTAction |= FrontendOptions::ObjCMT_NsAtomicIOSOnlyProperty;
+  if (Args.hasArg(OPT_objcmt_migrate_designated_init))
+    Opts.ObjCMTAction |= FrontendOptions::ObjCMT_DesignatedInitializer;
   if (Args.hasArg(OPT_objcmt_migrate_all))
     Opts.ObjCMTAction |= FrontendOptions::ObjCMT_MigrateDecls;
 
-  Opts.ObjCMTWhiteListPath = Args.getLastArgValue(OPT_objcmt_white_list_dir_path);
+  Opts.ObjCMTWhiteListPath = Args.getLastArgValue(OPT_objcmt_whitelist_dir_path);
 
   if (Opts.ARCMTAction != FrontendOptions::ARCMT_None &&
       Opts.ObjCMTAction != FrontendOptions::ObjCMT_None) {

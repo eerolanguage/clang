@@ -184,8 +184,12 @@ def objcmt_returns_innerpointer_property : Flag<["-"], "objcmt-returns-innerpoin
   HelpText<"Enable migration to annotate property with NS_RETURNS_INNER_POINTER">;
 def objcmt_ns_nonatomic_iosonly: Flag<["-"], "objcmt-ns-nonatomic-iosonly">, Flags<[CC1Option]>,
   HelpText<"Enable migration to use NS_NONATOMIC_IOSONLY macro for setting property's 'atomic' attribute">;
-def objcmt_white_list_dir_path: Joined<["-"], "objcmt-white-list-dir-path=">, Flags<[CC1Option]>,
+def objcmt_migrate_designated_init : Flag<["-"], "objcmt-migrate-designated-init">, Flags<[CC1Option]>,
+  HelpText<"Enable migration to infer NS_DESIGNATED_INITIALIZER for initializer methods">;
+def objcmt_whitelist_dir_path: Joined<["-"], "objcmt-whitelist-dir-path=">, Flags<[CC1Option]>,
   HelpText<"Only modify files with a filename contained in the provided directory path">;
+def objcmt_white_list_dir_path: Joined<["-"], "objcmt-white-list-dir-path=">, Flags<[CC1Option]>,
+    Alias<objcmt_whitelist_dir_path>;
 
 // Make sure all other -ccc- options are rejected.
 def ccc_ : Joined<["-"], "ccc-">, Group<internal_Group>, Flags<[Unsupported]>;
@@ -419,8 +423,6 @@ def fdiagnostics_print_source_range_info : Flag<["-"], "fdiagnostics-print-sourc
     HelpText<"Print source range spans in numeric form">;
 def fdiagnostics_show_option : Flag<["-"], "fdiagnostics-show-option">, Group<f_Group>,
     Flags<[CC1Option]>, HelpText<"Print option name with mappable diagnostics">;
-def fdiagnostics_show_name : Flag<["-"], "fdiagnostics-show-name">, Group<f_Group>,
-    Flags<[CC1Option]>, HelpText<"Print diagnostic name">;
 def fdiagnostics_show_note_include_stack : Flag<["-"], "fdiagnostics-show-note-include-stack">,
     Group<f_Group>,  Flags<[CC1Option]>, HelpText<"Display include stacks for diagnostic notes">;
 def fdiagnostics_format_EQ : Joined<["-"], "fdiagnostics-format=">, Group<f_clang_Group>;
@@ -566,7 +568,7 @@ def fmsc_version : Joined<["-"], "fmsc-version=">, Group<f_Group>, Flags<[CC1Opt
   HelpText<"Version of the Microsoft C/C++ compiler to report in _MSC_VER (0 = don't define it (default))">;
 def fdelayed_template_parsing : Flag<["-"], "fdelayed-template-parsing">, Group<f_Group>,
   HelpText<"Parse templated function definitions at the end of the "
-           "translation unit ">,  Flags<[CC1Option]>;
+           "translation unit">,  Flags<[CC1Option]>;
 def fmodules_cache_path : Joined<["-"], "fmodules-cache-path=">, Group<i_Group>,
   Flags<[DriverOption, CC1Option]>, MetaVarName<"<directory>">,
   HelpText<"Specify the module cache path">;
@@ -629,7 +631,6 @@ def fno_cxx_modules : Flag <["-"], "fno-cxx-modules">, Group<f_Group>,
   Flags<[DriverOption]>;
 def fno_diagnostics_fixit_info : Flag<["-"], "fno-diagnostics-fixit-info">, Group<f_Group>,
   Flags<[CC1Option]>, HelpText<"Do not include fixit information in diagnostics">;
-def fno_diagnostics_show_name : Flag<["-"], "fno-diagnostics-show-name">, Group<f_Group>;
 def fno_diagnostics_show_option : Flag<["-"], "fno-diagnostics-show-option">, Group<f_Group>;
 def fno_diagnostics_show_note_include_stack : Flag<["-"], "fno-diagnostics-show-note-include-stack">,
     Flags<[CC1Option]>, Group<f_Group>;
@@ -1232,7 +1233,7 @@ def rtlib_EQ : Joined<["-", "--"], "rtlib=">;
 def r : Flag<["-"], "r">;
 def save_temps : Flag<["-", "--"], "save-temps">, Flags<[DriverOption]>,
   HelpText<"Save intermediate compilation results">;
-def via_file_asm : Flag<["-", "--"], "via-file-asm">, Flags<[DriverOption]>,
+def via_file_asm : Flag<["-", "--"], "via-file-asm">, InternalDebugOpt,
   HelpText<"Write assembly to file for input to assemble jobs">;
 def sectalign : MultiArg<["-"], "sectalign", 3>;
 def sectcreate : MultiArg<["-"], "sectcreate", 3>;

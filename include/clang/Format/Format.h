@@ -218,7 +218,11 @@ struct FormatStyle {
     /// Like \c Attach, but break before function definitions.
     BS_Stroustrup,
     /// Always break before braces.
-    BS_Allman
+    BS_Allman,
+    /// Always break before braces and add an extra level of indentation to
+    /// braces of control statements, not to those of class, function
+    /// or other definitions.
+    BS_GNU
   };
 
   /// \brief The brace breaking style to use.
@@ -256,9 +260,22 @@ struct FormatStyle {
   /// \brief If \c false, spaces may be inserted into C style casts.
   bool SpacesInCStyleCastParentheses;
 
-  /// \brief If \c true, spaces will be inserted between 'for'/'if'/'while'/...
-  /// and '('.
-  bool SpaceAfterControlStatementKeyword;
+  /// \brief Different ways to put a space before opening parentheses.
+  enum SpaceBeforeParensOptions {
+    /// Never put a space before opening parentheses.
+    SBPO_Never,
+    /// Put a space before opening parentheses only after control statement
+    /// keywords (<tt>for/if/while...</tt>).
+    SBPO_ControlStatements,
+    /// Always put a space before opening parentheses, except when it's
+    /// prohibited by the syntax rules (in function-like macro definitions) or
+    /// when determined by other style rules (after unary operators, opening
+    /// parentheses, etc.)
+    SBPO_Always
+  };
+
+  /// \brief Defines in which cases to put a space before opening parentheses.
+  SpaceBeforeParensOptions SpaceBeforeParens;
 
   /// \brief If \c false, spaces will be removed before assignment operators.
   bool SpaceBeforeAssignmentOperators;
@@ -315,8 +332,7 @@ struct FormatStyle {
            SpacesInAngles == R.SpacesInAngles &&
            SpaceInEmptyParentheses == R.SpaceInEmptyParentheses &&
            SpacesInCStyleCastParentheses == R.SpacesInCStyleCastParentheses &&
-           SpaceAfterControlStatementKeyword ==
-               R.SpaceAfterControlStatementKeyword &&
+           SpaceBeforeParens == R.SpaceBeforeParens &&
            SpaceBeforeAssignmentOperators == R.SpaceBeforeAssignmentOperators &&
            ContinuationIndentWidth == R.ContinuationIndentWidth;
   }
@@ -330,6 +346,11 @@ FormatStyle getLLVMStyle();
 /// http://google-styleguide.googlecode.com/svn/trunk/cppguide.xml.
 FormatStyle getGoogleStyle();
 
+/// \brief Returns a format style complying with Google's JavaScript style
+/// guide:
+/// http://google-styleguide.googlecode.com/svn/trunk/javascriptguide.xml.
+FormatStyle getGoogleJSStyle();
+
 /// \brief Returns a format style complying with Chromium's style guide:
 /// http://www.chromium.org/developers/coding-style.
 FormatStyle getChromiumStyle();
@@ -342,15 +363,26 @@ FormatStyle getMozillaStyle();
 /// http://www.webkit.org/coding/coding-style.html
 FormatStyle getWebKitStyle();
 
-/// \brief Gets a predefined style by name.
+/// \brief Returns a format style complying with GNU Coding Standards:
+/// http://www.gnu.org/prep/standards/standards.html
+FormatStyle getGNUStyle();
+
+/// \brief Gets a predefined style for the specified language by name.
 ///
 /// Currently supported names: LLVM, Google, Chromium, Mozilla. Names are
 /// compared case-insensitively.
 ///
 /// Returns \c true if the Style has been set.
-bool getPredefinedStyle(StringRef Name, FormatStyle *Style);
+bool getPredefinedStyle(StringRef Name, FormatStyle::LanguageKind Language,
+                        FormatStyle *Style);
 
 /// \brief Parse configuration from YAML-formatted text.
+///
+/// Style->Language is used to get the base style, if the \c BasedOnStyle
+/// option is present.
+///
+/// When \c BasedOnStyle is not present, options not present in the YAML
+/// document, are retained in \p Style.
 llvm::error_code parseConfiguration(StringRef Text, FormatStyle *Style);
 
 /// \brief Gets configuration in a YAML string.

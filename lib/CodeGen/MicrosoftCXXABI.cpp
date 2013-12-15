@@ -156,6 +156,10 @@ public:
                            CallExpr::const_arg_iterator ArgBeg,
                            CallExpr::const_arg_iterator ArgEnd);
 
+  void EmitDestructorCall(CodeGenFunction &CGF, const CXXDestructorDecl *DD,
+                          CXXDtorType Type, bool ForVirtualBase,
+                          bool Delegating, llvm::Value *This);
+
   void emitVTableDefinitions(CodeGenVTables &CGVT, const CXXRecordDecl *RD);
 
   llvm::Value *getVTableAddressPointInStructor(
@@ -807,6 +811,20 @@ void MicrosoftCXXABI::EmitConstructorCall(CodeGenFunction &CGF,
                         ImplicitParam, ImplicitParamTy, ArgBeg, ArgEnd);
 }
 
+void MicrosoftCXXABI::EmitDestructorCall(CodeGenFunction &CGF,
+                                         const CXXDestructorDecl *DD,
+                                         CXXDtorType Type, bool ForVirtualBase,
+                                         bool Delegating, llvm::Value *This) {
+  llvm::Value *Callee = CGM.GetAddrOfCXXDestructor(DD, Type);
+
+  if (DD->isVirtual())
+    This = adjustThisArgumentForVirtualCall(CGF, GlobalDecl(DD, Type), This);
+
+  // FIXME: Provide a source location here.
+  CGF.EmitCXXMemberCall(DD, SourceLocation(), Callee, ReturnValueSlot(), This,
+                        /*ImplicitParam=*/0, /*ImplicitParamTy=*/QualType(), 0, 0);
+}
+
 void MicrosoftCXXABI::emitVTableDefinitions(CodeGenVTables &CGVT,
                                             const CXXRecordDecl *RD) {
   MicrosoftVTableContext &VFTContext = CGM.getMicrosoftVTableContext();
@@ -1443,9 +1461,9 @@ MicrosoftCXXABI::BuildMemberPointer(const CXXRecordDecl *RD,
       FirstField = llvm::Constant::getNullValue(CGM.VoidPtrTy);
     } else {
       SmallString<256> ThunkName;
-      int OffsetInVFTable =
-          ML.Index *
-          getContext().getTypeSizeInChars(getContext().VoidPtrTy).getQuantity();
+      CharUnits PointerWidth = getContext().toCharUnitsFromBits(
+          getContext().getTargetInfo().getPointerWidth(0));
+      uint64_t OffsetInVFTable = ML.Index * PointerWidth.getQuantity();
       llvm::raw_svector_ostream Out(ThunkName);
       getMangleContext().mangleVirtualMemPtrThunk(MD, OffsetInVFTable, Out);
       Out.flush();

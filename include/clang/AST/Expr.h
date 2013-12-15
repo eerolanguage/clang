@@ -764,11 +764,6 @@ public:
       SmallVectorImpl<const Expr *> &CommaLHS,
       SmallVectorImpl<SubobjectAdjustment> &Adjustments) const;
 
-  /// Skip irrelevant expressions to find what should be materialize for
-  /// binding with a reference.
-  const Expr *
-  findMaterializedTemporary(const MaterializeTemporaryExpr *&MTE) const;
-
   static bool classof(const Stmt *T) {
     return T->getStmtClass() >= firstExprConstant &&
            T->getStmtClass() <= lastExprConstant;
@@ -2633,7 +2628,7 @@ public:
 private:
   Stmt *Op;
 
-  void CheckCastConsistency() const;
+  bool CastConsistency() const;
 
   const CXXBaseSpecifier * const *path_buffer() const {
     return const_cast<CastExpr*>(this)->path_buffer();
@@ -2664,9 +2659,7 @@ protected:
     assert(kind != CK_Invalid && "creating cast with invalid cast kind");
     CastExprBits.Kind = kind;
     setBasePathSize(BasePathSize);
-#ifndef NDEBUG
-    CheckCastConsistency();
-#endif
+    assert(CastConsistency());
   }
 
   /// \brief Construct an empty cast.

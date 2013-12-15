@@ -59,7 +59,8 @@ def ext_integer_complex : Extension<
   "complex integer types are a GNU extension">, InGroup<GNUComplexInteger>;
 def ext_thread_before : Extension<"'__thread' before '%0'">;
 def ext_keyword_as_ident : ExtWarn<
-  "keyword '%0' will be treated as an identifier %select{here|for the remainder of the translation unit}1">,
+  "keyword '%0' will be made available as an identifier "
+  "%select{here|for the remainder of the translation unit}1">,
   InGroup<KeywordCompat>;
 
 def error_empty_enum : Error<"use of empty enum">;
@@ -779,6 +780,11 @@ def warn_availability_and_unavailable : Warning<
 // Type safety attributes
 def err_type_safety_unknown_flag : Error<
   "invalid comparison flag %0; use 'layout_compatible' or 'must_be_null'">;
+
+// Type traits
+def err_type_trait_arity : Error<
+  "type trait requires %0%select{| or more}1 argument%select{|s}2; have "
+  "%3 argument%s3">;
 
 // Language specific pragmas
 // - Generic warnings

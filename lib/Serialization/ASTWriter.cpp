@@ -776,7 +776,6 @@ static void AddStmtsExprs(llvm::BitstreamWriter &Stream,
   RECORD(EXPR_CXX_UNARY_TYPE_TRAIT);
   RECORD(EXPR_CXX_NOEXCEPT);
   RECORD(EXPR_OPAQUE_VALUE);
-  RECORD(EXPR_BINARY_TYPE_TRAIT);
   RECORD(EXPR_PACK_EXPANSION);
   RECORD(EXPR_SIZEOF_PACK);
   RECORD(EXPR_SUBST_NON_TYPE_TEMPLATE_PARM_PACK);
@@ -5092,6 +5091,7 @@ void ASTWriter::AddCXXDefinitionData(const CXXRecordDecl *D, RecordDataImpl &Rec
   Record.push_back(Data.HasProtectedFields);
   Record.push_back(Data.HasPublicFields);
   Record.push_back(Data.HasMutableFields);
+  Record.push_back(Data.HasVariantMembers);
   Record.push_back(Data.HasOnlyCMembers);
   Record.push_back(Data.HasInClassInitializer);
   Record.push_back(Data.HasUninitializedReferenceMember);

@@ -559,8 +559,6 @@ def err_inconsistent_ivar_count : Error<
   "inconsistent number of instance variables specified">;
 def warn_undef_method_impl : Warning<"method definition for %0 not found">,
   InGroup<DiagGroup<"incomplete-implementation">>;
-def note_required_for_protocol_at : 
-  Note<"required for direct or indirect protocol %0">;
 
 def warn_conflicting_overriding_ret_types : Warning<
   "conflicting return type in "
@@ -709,8 +707,8 @@ def warn_owning_getter_rule : Warning<
   " convention for returning 'owned' objects">,
   InGroup<DiagGroup<"objc-property-matches-cocoa-ownership-rule">>;
 def warn_auto_synthesizing_protocol_property :Warning<
-  "auto property synthesis will not synthesize property"
-  " declared in a protocol">,
+  "auto property synthesis will not synthesize property %0"
+  " declared in protocol %1">,
   InGroup<DiagGroup<"objc-protocol-property-synthesis">>;
 def warn_no_autosynthesis_shared_ivar_property : Warning <
   "auto property synthesis will not synthesize property "
@@ -830,9 +828,6 @@ def error_dynamic_property_ivar_decl : Error<
 def error_duplicate_ivar_use : Error<
   "synthesized properties %0 and %1 both claim instance variable %2">;
 def error_property_implemented : Error<"property %0 is already implemented">;
-def warn_objc_property_attr_mutually_exclusive : Warning<
-  "property attributes '%0' and '%1' are mutually exclusive">,
-  InGroup<ReadOnlySetterAttrs>, DefaultIgnore;
 def warn_objc_missing_super_call : Warning<
   "method possibly missing a [super %0] call">,
   InGroup<ObjCMissingSuperCalls>;
@@ -860,7 +855,7 @@ def warn_unimplemented_selector:  Warning<
 def warning_multiple_selectors: Warning<
   "multiple selectors named %0 found">, InGroup<SelectorTypeMismatch>, DefaultIgnore;
 def warn_unimplemented_protocol_method : Warning<
-  "method %0 in protocol not implemented">, InGroup<Protocol>;
+  "method %0 in protocol %1 not implemented">, InGroup<Protocol>;
 
 // C++ declarations
 def err_static_assert_expression_is_not_constant : Error<
@@ -1949,8 +1944,6 @@ def err_only_annotate_after_access_spec : Error<
 
 def err_attribute_section_invalid_for_target : Error<
   "argument to 'section' attribute is not valid for this target: %0">;
-def err_attribute_section_local_variable : Error<
-  "'section' attribute is not valid on local variables">;
 def warn_mismatched_section : Warning<
   "section does not match previous declaration">, InGroup<Section>;
 
@@ -2045,7 +2038,9 @@ def warn_attribute_wrong_decl_type : Warning<
   "variables and fields|variables, data members and tag types|"
   "types and namespaces|Objective-C interfaces|methods and properties|"
   "struct or union|struct, union or class|types|"
-  "Objective-C instance methods|variables, functions and classes}1">,
+  "Objective-C instance methods|init methods of interface declarations|"
+  "variables, functions and classes|Objective-C protocols|"
+  "functions and global variables}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<
   "%0 attribute only applies to %select{functions|unions|"
@@ -2057,7 +2052,9 @@ def err_attribute_wrong_decl_type : Error<
   "variables and fields|variables, data members and tag types|"
   "types and namespaces|Objective-C interfaces|methods and properties|"
   "struct or union|struct, union or class|types|"
-  "Objective-C instance methods|variables, functions and classes}1">;
+  "Objective-C instance methods|init methods of interface declarations|"
+  "variables, functions and classes|Objective-C protocols|"
+  "functions and global variables}1">;
 def warn_type_attribute_wrong_type : Warning<
   "'%0' only applies to %select{function|pointer|"
   "Objective-C object or block pointer}1 types; type here is %2">,
@@ -2436,10 +2433,6 @@ def note_protocol_decl : Note<
   "protocol is declared here">;
 
 // objc_designated_initializer attribute diagnostics.
-def err_attr_objc_designated_not_init_family : Error<
-  "'objc_designated_initializer' only applies to methods of the init family">;
-def err_attr_objc_designated_not_interface : Error<
-  "'objc_designated_initializer' only applies to methods of interface declarations">;
 def warn_objc_designated_init_missing_super_call : Warning<
   "designated initializer missing a 'super' call to a designated initializer of the super class">,
   InGroup<ObjCDesignatedInit>;
@@ -2476,6 +2469,17 @@ def warn_objc_invalid_bridge : Warning<
 def warn_objc_invalid_bridge_to_cf : Warning<
   "%0 cannot bridge to %1">, InGroup<ObjCBridge>;
 
+// objc_bridge_related attribute diagnostics.
+def err_objc_bridged_related_invalid_class : Error<
+  "could not find Objective-C class %0 to convert %1 to %2">;
+def err_objc_bridged_related_invalid_class_name : Error<
+  "%0 must be name of an Objective-C class to be able to convert %1 to %2">;
+ def err_objc_bridged_related_unknown_method : Error<
+ "%0 cannot be directly converted to %1">;
+def err_objc_bridged_related_known_method : Error<
+ "%0 must be explicitly converted to %1; use %select{%objcclass2|%objcinstance2}3 "
+ "method for this conversion">;
+  
 // Function Parameter Semantic Analysis.
 def err_param_with_void_type : Error<"argument may not have 'void' type">;
 def err_void_only_param : Error<
@@ -3940,6 +3944,9 @@ def note_exits_cleanup : Note<
   "jump exits scope of variable with __attribute__((cleanup))">;
 def note_exits_dtor : Note<
   "jump exits scope of variable with non-trivial destructor">;
+def note_exits_temporary_dtor : Note<
+  "jump exits scope of lifetime-extended temporary with non-trivial "
+  "destructor">;
 def note_exits___block : Note<
   "jump exits scope of __block variable">;
 def note_exits_objc_try : Note<
@@ -5750,9 +5757,6 @@ def note_inequality_comparison_to_or_assign : Note<
 
 def err_incomplete_type_used_in_type_trait_expr : Error<
   "incomplete type %0 used in type trait expression">;
-def err_type_trait_arity : Error<
-  "type trait requires %0%select{| or more}1 argument%select{|s}2; have "
-  "%3 argument%s3">;
   
 def err_dimension_expr_not_constant_integer : Error<
   "dimension expression does not evaluate to a constant unsigned int">;
@@ -6736,6 +6740,8 @@ def err_wrong_sampler_addressspace: Error<
 def err_opencl_global_invalid_addr_space : Error<
   "global variables must have a constant address space qualifier">;
 def err_opencl_no_main : Error<"%select{function|kernel}0 cannot be called 'main'">;
+def err_opencl_kernel_attr :
+  Error<"attribute '%0' can only be applied to a kernel function">;
 } // end of sema category
 
 let CategoryName = "OpenMP Issue" in {

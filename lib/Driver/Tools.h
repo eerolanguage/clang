@@ -201,6 +201,13 @@ namespace hexagon {
   };
 } // end namespace hexagon.
 
+namespace arm {
+  StringRef getARMTargetCPU(const llvm::opt::ArgList &Args,
+                            const llvm::Triple &Triple);
+  const char* getARMCPUForMArch(const llvm::opt::ArgList &Args,
+                                const llvm::Triple &Triple);
+  const char* getLLVMArchSuffixForARM(StringRef CPU);
+}
 
 namespace darwin {
   llvm::Triple::ArchType getArchTypeForDarwinArchName(StringRef Str);
@@ -606,6 +613,10 @@ namespace visualstudio {
   };
 } // end namespace visualstudio
 
+namespace arm {
+  StringRef getARMFloatABI(const Driver &D, const llvm::opt::ArgList &Args,
+                         const llvm::Triple &Triple);
+}
 namespace XCore {
   // For XCore, we do not need to instantiate tools for PreProcess, PreCompile and Compile.
   // We simply use "clang -cc1" for those actions.

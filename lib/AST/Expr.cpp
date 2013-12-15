@@ -105,37 +105,6 @@ const Expr *Expr::skipRValueSubobjectAdjustments(
   return E;
 }
 
-const Expr *
-Expr::findMaterializedTemporary(const MaterializeTemporaryExpr *&MTE) const {
-  const Expr *E = this;
-
-  // This might be a default initializer for a reference member. Walk over the
-  // wrapper node for that.
-  if (const CXXDefaultInitExpr *DAE = dyn_cast<CXXDefaultInitExpr>(E))
-    E = DAE->getExpr();
-
-  // Look through single-element init lists that claim to be lvalues. They're
-  // just syntactic wrappers in this case.
-  if (const InitListExpr *ILE = dyn_cast<InitListExpr>(E)) {
-    if (ILE->getNumInits() == 1 && ILE->isGLValue()) {
-      E = ILE->getInit(0);
-      if (const CXXDefaultInitExpr *DAE = dyn_cast<CXXDefaultInitExpr>(E))
-        E = DAE->getExpr();
-    }
-  }
-
-  // Look through expressions for materialized temporaries (for now).
-  if (const MaterializeTemporaryExpr *M
-      = dyn_cast<MaterializeTemporaryExpr>(E)) {
-    MTE = M;
-    E = M->GetTemporaryExpr();
-  }
-
-  if (const CXXDefaultArgExpr *DAE = dyn_cast<CXXDefaultArgExpr>(E))
-    E = DAE->getExpr();
-  return E;
-}
-
 /// isKnownToHaveBooleanValue - Return true if this is an integer expression
 /// that is known to return 0 or 1.  This happens for _Bool/bool expressions
 /// but also int expressions which are produced by things like comparisons in
@@ -1421,7 +1390,7 @@ SourceLocation MemberExpr::getLocEnd() const {
   return EndLoc;
 }
 
-void CastExpr::CheckCastConsistency() const {
+bool CastExpr::CastConsistency() const {
   switch (getCastKind()) {
   case CK_DerivedToBase:
   case CK_UncheckedDerivedToBase:
@@ -1474,6 +1443,11 @@ void CastExpr::CheckCastConsistency() const {
     assert(getSubExpr()->getType()->isFunctionType());
     goto CheckNoBasePath;
 
+  case CK_AddressSpaceConversion:
+    assert(getType()->isPointerType());
+    assert(getSubExpr()->getType()->isPointerType());
+    assert(getType()->getPointeeType().getAddressSpace() !=
+           getSubExpr()->getType()->getPointeeType().getAddressSpace());
   // These should not have an inheritance path.
   case CK_Dynamic:
   case CK_ToUnion:
@@ -1524,6 +1498,7 @@ void CastExpr::CheckCastConsistency() const {
     assert(path_empty() && "Cast kind should not have a base path!");
     break;
   }
+  return true;
 }
 
 const char *CastExpr::getCastKindName() const {
@@ -1636,6 +1611,8 @@ const char *CastExpr::getCastKindName() const {
     return "BuiltinFnToFnPtr";
   case CK_ZeroToOCLEvent:
     return "ZeroToOCLEvent";
+  case CK_AddressSpaceConversion:
+    return "AddressSpaceConversion";
   }
 
   llvm_unreachable("Unhandled cast kind!");
@@ -2822,7 +2799,6 @@ bool Expr::HasSideEffects(const ASTContext &Ctx) const {
   case CXXScalarValueInitExprClass:
   case TypeTraitExprClass:
   case UnaryTypeTraitExprClass:
-  case BinaryTypeTraitExprClass:
   case ArrayTypeTraitExprClass:
   case ExpressionTraitExprClass:
   case CXXNoexceptExprClass:

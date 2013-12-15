@@ -316,7 +316,7 @@ void LookupResult::configure() {
   }
 }
 
-void LookupResult::sanityImpl() const {
+bool LookupResult::sanity() const {
   // Note that this function is never called by NDEBUG builds. See
   // LookupResult::sanity().
   assert(ResultKind != NotFound || Decls.size() == 0);
@@ -331,6 +331,7 @@ void LookupResult::sanityImpl() const {
   assert((Paths != NULL) == (ResultKind == Ambiguous &&
                              (Ambiguity == AmbiguousBaseSubobjectTypes ||
                               Ambiguity == AmbiguousBaseSubobjects)));
+  return true;
 }
 
 // Necessary because CXXBasePaths is not complete in Sema.h
