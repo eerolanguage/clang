@@ -2186,9 +2186,9 @@ static void mergeParamDeclAttributes(ParmVarDecl *newDecl,
   //   The first declaration of a function shall specify the
   //   carries_dependency attribute for its declarator-id if any declaration
   //   of the function specifies the carries_dependency attribute.
-  if (newDecl->hasAttr<CarriesDependencyAttr>() &&
-      !oldDecl->hasAttr<CarriesDependencyAttr>()) {
-    S.Diag(newDecl->getAttr<CarriesDependencyAttr>()->getLocation(),
+  const CarriesDependencyAttr *CDA = newDecl->getAttr<CarriesDependencyAttr>();
+  if (CDA && !oldDecl->hasAttr<CarriesDependencyAttr>()) {
+    S.Diag(CDA->getLocation(),
            diag::err_carries_dependency_missing_on_first_decl) << 1/*Param*/;
     // Find the first declaration of the parameter.
     // FIXME: Should we build redeclaration chains for function parameters?
@@ -2602,10 +2602,9 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S,
     //   The first declaration of a function shall specify the noreturn
     //   attribute if any declaration of that function specifies the noreturn
     //   attribute.
-    if (New->hasAttr<CXX11NoReturnAttr>() &&
-        !Old->hasAttr<CXX11NoReturnAttr>()) {
-      Diag(New->getAttr<CXX11NoReturnAttr>()->getLocation(),
-           diag::err_noreturn_missing_on_first_decl);
+    const CXX11NoReturnAttr *NRA = New->getAttr<CXX11NoReturnAttr>();
+    if (NRA && !Old->hasAttr<CXX11NoReturnAttr>()) {
+      Diag(NRA->getLocation(), diag::err_noreturn_missing_on_first_decl);
       Diag(Old->getFirstDecl()->getLocation(),
            diag::note_noreturn_missing_first_decl);
     }
@@ -2614,9 +2613,9 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, Decl *OldD, Scope *S,
     //   The first declaration of a function shall specify the
     //   carries_dependency attribute for its declarator-id if any declaration
     //   of the function specifies the carries_dependency attribute.
-    if (New->hasAttr<CarriesDependencyAttr>() &&
-        !Old->hasAttr<CarriesDependencyAttr>()) {
-      Diag(New->getAttr<CarriesDependencyAttr>()->getLocation(),
+    const CarriesDependencyAttr *CDA = New->getAttr<CarriesDependencyAttr>();
+    if (CDA && !Old->hasAttr<CarriesDependencyAttr>()) {
+      Diag(CDA->getLocation(),
            diag::err_carries_dependency_missing_on_first_decl) << 0/*Function*/;
       Diag(Old->getFirstDecl()->getLocation(),
            diag::note_carries_dependency_missing_first_decl) << 0/*Function*/;
@@ -3040,9 +3039,9 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
   mergeDeclAttributes(New, Old);
   // Warn if an already-declared variable is made a weak_import in a subsequent 
   // declaration
-  if (New->getAttr<WeakImportAttr>() &&
+  if (New->hasAttr<WeakImportAttr>() &&
       Old->getStorageClass() == SC_None &&
-      !Old->getAttr<WeakImportAttr>()) {
+      !Old->hasAttr<WeakImportAttr>()) {
     Diag(New->getLocation(), diag::warn_weak_import) << New->getDeclName();
     Diag(Old->getLocation(), diag::note_previous_definition);
     // Remove weak_import attribute on new declaration.
@@ -6373,7 +6372,7 @@ static FunctionDecl* CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
       // any translation unit may need to emit a deleting destructor.
       if (SemaRef.Context.getTargetInfo().getCXXABI().isMicrosoft() &&
           !Record->isDependentType() && Record->getDefinition() &&
-          !Record->isBeingDefined()) {
+          !Record->isBeingDefined() && !NewDD->isDeleted()) {
         SemaRef.CheckDestructor(NewDD);
       }
 
@@ -9717,7 +9716,7 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
   // Checking attributes of current function definition
   // dllimport attribute.
   DLLImportAttr *DA = FD->getAttr<DLLImportAttr>();
-  if (DA && (!FD->getAttr<DLLExportAttr>())) {
+  if (DA && (!FD->hasAttr<DLLExportAttr>())) {
     // dllimport attribute cannot be directly applied to definition.
     // Microsoft accepts dllimport for functions defined within class scope. 
     if (!DA->isInherited() &&
@@ -10109,7 +10108,7 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
     unsigned FormatIdx;
     bool HasVAListArg;
     if (Context.BuiltinInfo.isPrintfLike(BuiltinID, FormatIdx, HasVAListArg)) {
-      if (!FD->getAttr<FormatAttr>()) {
+      if (!FD->hasAttr<FormatAttr>()) {
         const char *fmt = "printf";
         unsigned int NumParams = FD->getNumParams();
         if (FormatIdx < NumParams && // NumParams may be 0 (e.g. vfprintf)
@@ -10123,7 +10122,7 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
     }
     if (Context.BuiltinInfo.isScanfLike(BuiltinID, FormatIdx,
                                              HasVAListArg)) {
-     if (!FD->getAttr<FormatAttr>())
+     if (!FD->hasAttr<FormatAttr>())
        FD->addAttr(::new (Context) FormatAttr(FD->getLocation(), Context,
                                               &Context.Idents.get("scanf"),
                                               FormatIdx+1,
@@ -10135,16 +10134,16 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
     // IRgen to use LLVM intrinsics for such functions.
     if (!getLangOpts().MathErrno &&
         Context.BuiltinInfo.isConstWithoutErrno(BuiltinID)) {
-      if (!FD->getAttr<ConstAttr>())
+      if (!FD->hasAttr<ConstAttr>())
         FD->addAttr(::new (Context) ConstAttr(FD->getLocation(), Context));
     }
 
     if (Context.BuiltinInfo.isReturnsTwice(BuiltinID) &&
-        !FD->getAttr<ReturnsTwiceAttr>())
+        !FD->hasAttr<ReturnsTwiceAttr>())
       FD->addAttr(::new (Context) ReturnsTwiceAttr(FD->getLocation(), Context));
-    if (Context.BuiltinInfo.isNoThrow(BuiltinID) && !FD->getAttr<NoThrowAttr>())
+    if (Context.BuiltinInfo.isNoThrow(BuiltinID) && !FD->hasAttr<NoThrowAttr>())
       FD->addAttr(::new (Context) NoThrowAttr(FD->getLocation(), Context));
-    if (Context.BuiltinInfo.isConst(BuiltinID) && !FD->getAttr<ConstAttr>())
+    if (Context.BuiltinInfo.isConst(BuiltinID) && !FD->hasAttr<ConstAttr>())
       FD->addAttr(::new (Context) ConstAttr(FD->getLocation(), Context));
   }
 
@@ -10164,7 +10163,7 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
   if (Name->isStr("asprintf") || Name->isStr("vasprintf")) {
     // FIXME: asprintf and vasprintf aren't C99 functions. Should they be
     // target-specific builtins, perhaps?
-    if (!FD->getAttr<FormatAttr>())
+    if (!FD->hasAttr<FormatAttr>())
       FD->addAttr(::new (Context) FormatAttr(FD->getLocation(), Context,
                                              &Context.Idents.get("printf"), 2,
                                              Name->isStr("vasprintf") ? 0 : 3));
@@ -10173,7 +10172,7 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
   if (Name->isStr("__CFStringMakeConstantString")) {
     // We already have a __builtin___CFStringMakeConstantString,
     // but builds that use -fno-constant-cfstrings don't go through that.
-    if (!FD->getAttr<FormatArgAttr>())
+    if (!FD->hasAttr<FormatArgAttr>())
       FD->addAttr(::new (Context) FormatArgAttr(FD->getLocation(), Context, 1));
   }
 }
@@ -12128,12 +12127,6 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
             if (getLangOpts().CPlusPlus11)
               AdjustDestructorExceptionSpec(CXXRecord,
                                             CXXRecord->getDestructor());
-
-            // The Microsoft ABI requires that we perform the destructor body
-            // checks (i.e. operator delete() lookup) at every declaration, as
-            // any translation unit may need to emit a deleting destructor.
-            if (Context.getTargetInfo().getCXXABI().isMicrosoft())
-              CheckDestructor(CXXRecord->getDestructor());
           }
 
           // Add any implicitly-declared members to this class.
@@ -12836,7 +12829,7 @@ void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceLocation LBraceLoc,
   // The C99 rule is modified by a gcc extension 
   QualType BestPromotionType;
 
-  bool Packed = Enum->getAttr<PackedAttr>() ? true : false;
+  bool Packed = Enum->hasAttr<PackedAttr>();
   // -fshort-enums is the equivalent to specifying the packed attribute on all
   // enum definitions.
   if (LangOpts.ShortEnums)

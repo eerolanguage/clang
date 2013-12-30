@@ -1062,38 +1062,6 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
     }
     break;
 
-  case DeclSpec::TST_image1d_t:
-    Result = Context.OCLImage1dTy;
-    break;
-
-  case DeclSpec::TST_image1d_array_t:
-    Result = Context.OCLImage1dArrayTy;
-    break;
-
-  case DeclSpec::TST_image1d_buffer_t:
-    Result = Context.OCLImage1dBufferTy;
-    break;
-
-  case DeclSpec::TST_image2d_t:
-    Result = Context.OCLImage2dTy;
-    break;
-
-  case DeclSpec::TST_image2d_array_t:
-    Result = Context.OCLImage2dArrayTy;
-    break;
-
-  case DeclSpec::TST_image3d_t:
-    Result = Context.OCLImage3dTy;
-    break;
-
-  case DeclSpec::TST_sampler_t:
-    Result = Context.OCLSamplerTy;
-    break;
-
-  case DeclSpec::TST_event_t:
-    Result = Context.OCLEventTy;
-    break;
-
   case DeclSpec::TST_error:
     Result = Context.IntTy;
     declarator.setInvalidType(true);
@@ -1815,8 +1783,9 @@ QualType Sema::BuildMemberPointerType(QualType T, QualType Class,
         // figure out the inheritance model.
         for (CXXRecordDecl::redecl_iterator I = RD->redecls_begin(),
              E = RD->redecls_end(); I != E; ++I) {
-          I->addAttr(::new (Context) UnspecifiedInheritanceAttr(
-              RD->getSourceRange(), Context));
+          I->addAttr(::new (Context) MSInheritanceAttr(RD->getSourceRange(),
+                                                       Context,
+                                 MSInheritanceAttr::UnspecifiedSpellingIndex));
         }
       }
     }

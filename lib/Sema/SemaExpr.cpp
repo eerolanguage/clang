@@ -112,32 +112,16 @@ static AvailabilityResult DiagnoseAvailabilityOfDecl(Sema &S,
             
     case AR_Deprecated:
       if (S.getCurContextAvailability() != AR_Deprecated)
-        S.EmitDeprecationWarning(D, Message, Loc, UnknownObjCClass, ObjCPDecl);
+        S.EmitAvailabilityWarning(Sema::AD_Deprecation,
+                                  D, Message, Loc, UnknownObjCClass, ObjCPDecl);
       break;
-            
+
     case AR_Unavailable:
-      if (S.getCurContextAvailability() != AR_Unavailable) {
-        if (Message.empty()) {
-          if (!UnknownObjCClass) {
-            S.Diag(Loc, diag::err_unavailable) << D->getDeclName();
-            if (ObjCPDecl)
-              S.Diag(ObjCPDecl->getLocation(), diag::note_property_attribute)
-                << ObjCPDecl->getDeclName() << 1;
-          }
-          else
-            S.Diag(Loc, diag::warn_unavailable_fwdclass_message) 
-              << D->getDeclName();
-        }
-        else
-          S.Diag(Loc, diag::err_unavailable_message) 
-            << D->getDeclName() << Message;
-        S.Diag(D->getLocation(), diag::note_unavailable_here)
-                  << isa<FunctionDecl>(D) << false;
-        if (ObjCPDecl)
-          S.Diag(ObjCPDecl->getLocation(), diag::note_property_attribute)
-          << ObjCPDecl->getDeclName() << 1;
-      }
+      if (S.getCurContextAvailability() != AR_Unavailable)
+        S.EmitAvailabilityWarning(Sema::AD_Unavailable,
+                                  D, Message, Loc, UnknownObjCClass, ObjCPDecl);
       break;
+
     }
     return Result;
 }
@@ -177,8 +161,8 @@ void Sema::NoteDeletedFunction(FunctionDecl *Decl) {
     }
   }
 
-  Diag(Decl->getLocation(), diag::note_unavailable_here)
-    << 1 << true;
+  Diag(Decl->getLocation(), diag::note_availability_specified_here)
+    << Decl << true;
 }
 
 /// \brief Determine whether a FunctionDecl was ever declared with an
@@ -6648,6 +6632,14 @@ Sema::CheckSingleAssignmentConstraints(QualType LHSType, ExprResult &RHS,
     if (getLangOpts().ObjCAutoRefCount)
       CheckObjCARCConversion(SourceRange(), Ty, E, CCK_ImplicitConversion,
                              DiagnoseCFAudited);
+    if (getLangOpts().ObjC1 &&
+        (CheckObjCBridgeRelatedConversions(E->getLocStart(),
+                                          LHSType, E->getType(), E) ||
+         ConversionToObjCStringLiteralCheck(LHSType, E))) {
+      RHS = Owned(E);
+      return Compatible;
+    }
+    
     RHS = ImpCastExprToType(E, Ty, Kind);
   }
   return result;
@@ -10458,7 +10450,7 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
   if (!BSI->ReturnType.isNull())
     RetTy = BSI->ReturnType;
 
-  bool NoReturn = BSI->TheDecl->getAttr<NoReturnAttr>();
+  bool NoReturn = BSI->TheDecl->hasAttr<NoReturnAttr>();
   QualType BlockTy;
 
   // Set the captured variables on the block.
@@ -10667,38 +10659,37 @@ ExprResult Sema::ActOnGNUNullExpr(SourceLocation TokenLoc) {
   return Owned(new (Context) GNUNullExpr(Ty, TokenLoc));
 }
 
-static void MakeObjCStringLiteralFixItHint(Sema& SemaRef, QualType DstType,
-                                           Expr *SrcExpr, FixItHint &Hint,
-                                           bool &IsNSString) {
-  if (!SemaRef.getLangOpts().ObjC1)
-    return;
+bool
+Sema::ConversionToObjCStringLiteralCheck(QualType DstType, Expr *&Exp) {
+  if (!getLangOpts().ObjC1)
+    return false;
 
   const ObjCObjectPointerType *PT = DstType->getAs<ObjCObjectPointerType>();
   if (!PT)
-    return;
+    return false;
 
-  // Check if the destination is of type 'id'.
   if (!PT->isObjCIdType()) {
     // Check if the destination is the 'NSString' interface.
     const ObjCInterfaceDecl *ID = PT->getInterfaceDecl();
     if (!ID || !ID->getIdentifier()->isStr("NSString"))
-      return;
-    IsNSString = true;
+      return false;
   }
-
+  
   // Ignore any parens, implicit casts (should only be
   // array-to-pointer decays), and not-so-opaque values.  The last is
   // important for making this trigger for property assignments.
-  SrcExpr = SrcExpr->IgnoreParenImpCasts();
+  Expr *SrcExpr = Exp->IgnoreParenImpCasts();
   if (OpaqueValueExpr *OV = dyn_cast<OpaqueValueExpr>(SrcExpr))
     if (OV->getSourceExpr())
       SrcExpr = OV->getSourceExpr()->IgnoreParenImpCasts();
 
   StringLiteral *SL = dyn_cast<StringLiteral>(SrcExpr);
   if (!SL || !SL->isAscii())
-    return;
-
-  Hint = FixItHint::CreateInsertion(SL->getLocStart(), "@");
+    return false;
+  Diag(SL->getLocStart(), diag::err_missing_atsign_prefix)
+    << FixItHint::CreateInsertion(SL->getLocStart(), "@");
+  Exp = BuildObjCStringLiteral(SL->getLocStart(), SL).take();
+  return true;
 }
 
 bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
@@ -10717,7 +10708,6 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
   ConversionFixItGenerator ConvHints;
   bool MayHaveConvFixit = false;
   bool MayHaveFunctionDiff = false;
-  bool IsNSString = false;
 
   switch (ConvTy) {
   case Compatible:
@@ -10735,10 +10725,6 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
     MayHaveConvFixit = true;
     break;
   case IncompatiblePointer:
-    if (getLangOpts().ObjC1 &&
-        CheckObjCBridgeRelatedConversions(Loc, DstType, SrcType, SrcExpr))
-      return false;
-    MakeObjCStringLiteralFixItHint(*this, DstType, SrcExpr, Hint, IsNSString);
       DiagKind =
         (Action == AA_Passing_CFAudited ?
           diag::err_arc_typecheck_convert_incompatible_pointer :
@@ -10752,8 +10738,6 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
       SrcType = SrcType.getUnqualifiedType();
       DstType = DstType.getUnqualifiedType();
     }
-    else if (IsNSString && !Hint.isNull())
-      DiagKind = diag::warn_missing_atsign_prefix;
     MayHaveConvFixit = true;
     break;
   case IncompatiblePointerSign:
@@ -10817,9 +10801,6 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
     DiagKind = diag::err_arc_weak_unavailable_assign;
     break;
   case Incompatible:
-    if (getLangOpts().ObjC1 &&
-        CheckObjCBridgeRelatedConversions(Loc, DstType, SrcType, SrcExpr))
-      return true;
     DiagKind = diag::err_typecheck_convert_incompatible;
     ConvHints.tryToFixConversion(SrcExpr, SrcType, DstType, *this);
     MayHaveConvFixit = true;
@@ -11706,6 +11687,15 @@ static ExprResult addAsFieldToClosureType(Sema &S,
                                   SourceLocation Loc,
                                   bool RefersToEnclosingLocal) {
   CXXRecordDecl *Lambda = LSI->Lambda;
+
+  // Make sure that by-copy captures are of a complete type.
+  if (!DeclRefType->isDependentType() &&
+      !DeclRefType->isReferenceType() &&
+      S.RequireCompleteType(Loc, DeclRefType,
+                            diag::err_capture_of_incomplete_type,
+                            Var->getDeclName())) {
+    return ExprError();
+  }
 
   // Build the non-static data member.
   FieldDecl *Field

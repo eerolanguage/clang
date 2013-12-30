@@ -3074,7 +3074,19 @@ public:
     switch (getTarget().getTriple().getEnvironment()) {
     case llvm::Triple::Android:
     case llvm::Triple::EABI:
+    case llvm::Triple::EABIHF:
     case llvm::Triple::GNUEABI:
+    case llvm::Triple::GNUEABIHF:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  bool isEABIHF() const {
+    switch (getTarget().getTriple().getEnvironment()) {
+    case llvm::Triple::EABIHF:
+    case llvm::Triple::GNUEABIHF:
       return true;
     default:
       return false;
@@ -3214,7 +3226,7 @@ void ARMABIInfo::computeInfo(CGFunctionInfo &FI) const {
 /// Return the default calling convention that LLVM will use.
 llvm::CallingConv::ID ARMABIInfo::getLLVMDefaultCC() const {
   // The default calling convention that LLVM will infer.
-  if (getTarget().getTriple().getEnvironment() == llvm::Triple::GNUEABIHF)
+  if (isEABIHF())
     return llvm::CallingConv::ARM_AAPCS_VFP;
   else if (isEABI())
     return llvm::CallingConv::ARM_AAPCS;
@@ -4267,7 +4279,7 @@ SetTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
     // CUDA __global__ functions get a kernel metadata entry.  Since
     // __global__ functions cannot be called from the device, we do not
     // need to set the noinline attribute.
-    if (FD->getAttr<CUDAGlobalAttr>())
+    if (FD->hasAttr<CUDAGlobalAttr>())
       addKernelMetadata(F);
   }
 }
@@ -5008,9 +5020,8 @@ void TCETargetCodeGenInfo::SetTargetAttributes(const Decl *D,
     if (FD->hasAttr<OpenCLKernelAttr>()) {
       // OpenCL C Kernel functions are not subject to inlining
       F->addFnAttr(llvm::Attribute::NoInline);
-          
-      if (FD->hasAttr<ReqdWorkGroupSizeAttr>()) {
-
+      const ReqdWorkGroupSizeAttr *Attr = FD->getAttr<ReqdWorkGroupSizeAttr>();
+      if (Attr) {
         // Convert the reqd_work_group_size() attributes to metadata.
         llvm::LLVMContext &Context = F->getContext();
         llvm::NamedMDNode *OpenCLMetadata = 
@@ -5020,14 +5031,11 @@ void TCETargetCodeGenInfo::SetTargetAttributes(const Decl *D,
         Operands.push_back(F);
 
         Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty, 
-                             llvm::APInt(32, 
-                             FD->getAttr<ReqdWorkGroupSizeAttr>()->getXDim())));
+                             llvm::APInt(32, Attr->getXDim())));
         Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty,
-                             llvm::APInt(32,
-                               FD->getAttr<ReqdWorkGroupSizeAttr>()->getYDim())));
+                             llvm::APInt(32, Attr->getYDim())));
         Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty, 
-                             llvm::APInt(32, 
-                               FD->getAttr<ReqdWorkGroupSizeAttr>()->getZDim())));
+                             llvm::APInt(32, Attr->getZDim())));
 
         // Add a boolean constant operand for "required" (true) or "hint" (false)
         // for implementing the work_group_size_hint attr later. Currently 

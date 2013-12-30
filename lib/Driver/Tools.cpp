@@ -190,7 +190,9 @@ static void AddLinkerInputs(const ToolChain &TC,
   }
 
   // LIBRARY_PATH - included following the user specified library paths.
-  addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
+  //                and only supported on native toolchains.
+  if (!TC.isCrossCompiling())
+    addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 }
 
 /// \brief Determine whether Objective-C automated reference counting is
@@ -652,6 +654,9 @@ StringRef tools::arm::getARMFloatABI(const Driver &D, const ArgList &Args,
       case llvm::Triple::GNUEABI:
         FloatABI = "softfp";
         break;
+      case llvm::Triple::EABIHF:
+        FloatABI = "hard";
+        break;
       case llvm::Triple::EABI:
         // EABI is always AAPCS, and if it was not marked 'hard', it's softfp
         FloatABI = "softfp";
@@ -757,6 +762,7 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
     case llvm::Triple::GNUEABIHF:
       ABIName = "aapcs-linux";
       break;
+    case llvm::Triple::EABIHF:
     case llvm::Triple::EABI:
       ABIName = "aapcs";
       break;

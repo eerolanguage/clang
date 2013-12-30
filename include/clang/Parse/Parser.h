@@ -136,9 +136,10 @@ class Parser : public CodeCompletionHandler {
   mutable IdentifierInfo *Ident_final;
   mutable IdentifierInfo *Ident_override;
 
-  // C++ type trait keywords that can be reverted to identifiers and still be
-  // used as type traits.
-  llvm::SmallDenseMap<IdentifierInfo *, tok::TokenKind> RevertibleTypeTraits;
+  // Some token kinds such as C++ type traits can be reverted to identifiers and
+  // still get used as keywords depending on context.
+  llvm::SmallDenseMap<const IdentifierInfo *, tok::TokenKind>
+  ContextualKeywords;
 
   OwningPtr<PragmaHandler> AlignHandler;
   OwningPtr<PragmaHandler> GCCVisibilityHandler;
@@ -278,17 +279,33 @@ public:
   /// This does not work with all kinds of tokens: strings and specific other
   /// tokens must be consumed with custom methods below.  This returns the
   /// location of the consumed token.
-  SourceLocation ConsumeToken(bool ConsumeCodeCompletionTok = false) {
-    assert(!isTokenStringLiteral() && !isTokenParen() && !isTokenBracket() &&
-           !isTokenBrace() &&
+  SourceLocation ConsumeToken() {
+    assert(!isTokenSpecial() &&
            "Should consume special tokens with Consume*Token");
 
-    if (!ConsumeCodeCompletionTok && Tok.is(tok::code_completion))
+    if (LLVM_UNLIKELY(Tok.is(tok::code_completion)))
       return handleUnexpectedCodeCompletionToken();
 
     PrevTokLocation = Tok.getLocation();
     PP.Lex(Tok);
     return PrevTokLocation;
+  }
+
+  bool TryConsumeToken(tok::TokenKind Expected) {
+    if (Tok.isNot(Expected))
+      return false;
+    assert(!isTokenSpecial() &&
+           "Should consume special tokens with Consume*Token");
+    PrevTokLocation = Tok.getLocation();
+    PP.Lex(Tok);
+    return true;
+  }
+
+  bool TryConsumeToken(tok::TokenKind Expected, SourceLocation &Loc) {
+    if (!TryConsumeToken(Expected))
+      return false;
+    Loc = PrevTokLocation;
+    return true;
   }
 
   SourceLocation ConsumeTokenNoArgs() {
@@ -312,11 +329,14 @@ private:
   bool isTokenBrace() const {
     return Tok.getKind() == tok::l_brace || Tok.getKind() == tok::r_brace;
   }
-
   /// isTokenStringLiteral - True if this token is a string-literal.
-  ///
   bool isTokenStringLiteral() const {
     return tok::isStringLiteral(Tok.getKind());
+  }
+  /// isTokenSpecial - True if this token requires special consumption methods.
+  bool isTokenSpecial() const {
+    return isTokenStringLiteral() || isTokenParen() || isTokenBracket() ||
+           isTokenBrace();
   }
 
   /// \brief Returns true if the current token is '=' or is a type of '='.
@@ -335,8 +355,10 @@ private:
       return ConsumeBrace();
     else if (isTokenStringLiteral())
       return ConsumeStringToken();
+    else if (ConsumeCodeCompletionTok && Tok.is(tok::code_completion))
+      return ConsumeCodeCompletionToken();
     else
-      return ConsumeToken(ConsumeCodeCompletionTok);
+      return ConsumeToken();
   }
 
   /// ConsumeParen - This consume method keeps the paren count up-to-date.
@@ -580,6 +602,12 @@ private:
   /// translation unit. This returns false if the token was not replaced,
   /// otherwise emits a diagnostic and returns true.
   bool TryKeywordIdentFallback(bool DisableKeyword);
+
+  /// TryIdentKeywordUpgrade - Convert the current identifier token back to
+  /// its original kind and return true if it was disabled by
+  /// TryKeywordIdentFallback(), otherwise return false. Use this to
+  /// contextually enable keywords.
+  bool TryIdentKeywordUpgrade();
 
   /// \brief Get the TemplateIdAnnotation from the token.
   TemplateIdAnnotation *takeTemplateIdAnnotation(const Token &tok);

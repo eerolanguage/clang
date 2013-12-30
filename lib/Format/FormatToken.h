@@ -58,6 +58,7 @@ enum TokenType {
   TT_StartOfName,
   TT_TemplateCloser,
   TT_TemplateOpener,
+  TT_TrailingAnnotation,
   TT_TrailingReturnArrow,
   TT_TrailingUnaryOperator,
   TT_UnaryOperator,
@@ -265,6 +266,7 @@ struct FormatToken {
   }
 
   bool isNot(tok::TokenKind Kind) const { return Tok.isNot(Kind); }
+  bool isStringLiteral() const { return tok::isStringLiteral(Tok.getKind()); }
 
   bool isObjCAtKeyword(tok::ObjCKeywordKind Kind) const {
     return Tok.isObjCAtKeyword(Kind);

@@ -276,7 +276,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.ContinuationIndentWidth = 4;
   LLVMStyle.SpacesInAngles = false;
 
-  LLVMStyle.PenaltyBreakComment = 60;
+  LLVMStyle.PenaltyBreakComment = 300;
   LLVMStyle.PenaltyBreakFirstLessLess = 120;
   LLVMStyle.PenaltyBreakString = 1000;
   LLVMStyle.PenaltyExcessCharacter = 1000000;
@@ -455,13 +455,12 @@ public:
 
   /// \brief Formats the line starting at \p State, simply keeping all of the
   /// input's line breaking decisions.
-  void format(unsigned FirstIndent, const AnnotatedLine *Line,
-              bool LineIsMerged) {
+  void format(unsigned FirstIndent, const AnnotatedLine *Line) {
     LineState State =
         Indenter->getInitialState(FirstIndent, Line, /*DryRun=*/false);
     while (State.NextToken != NULL) {
       bool Newline =
-          (!LineIsMerged && Indenter->mustBreak(State)) ||
+          Indenter->mustBreak(State) ||
           (Indenter->canBreak(State) && State.NextToken->NewlinesBefore > 0);
       Indenter->addTokenToState(State, Newline, /*DryRun=*/false);
     }
@@ -669,12 +668,20 @@ public:
       int Offset = getIndentOffset(*FirstTok);
 
       // Determine indent and try to merge multiple unwrapped lines.
-      while (IndentForLevel.size() <= TheLine.Level)
-        IndentForLevel.push_back(-1);
-      IndentForLevel.resize(TheLine.Level + 1);
-      unsigned Indent = getIndent(IndentForLevel, TheLine.Level);
+      unsigned Indent;
+      if (TheLine.InPPDirective) {
+        Indent = TheLine.Level * Style.IndentWidth;
+      } else {
+        while (IndentForLevel.size() <= TheLine.Level)
+          IndentForLevel.push_back(-1);
+        IndentForLevel.resize(TheLine.Level + 1);
+        Indent = getIndent(IndentForLevel, TheLine.Level);
+      }
+      unsigned LevelIndent = Indent;
       if (static_cast<int>(Indent) + Offset >= 0)
         Indent += Offset;
+
+      // Merge multiple lines if possible.
       unsigned MergedLines = Joiner.tryFitMultipleLinesInOne(Indent, I, E);
       if (MergedLines > 0 && Style.ColumnLimit == 0) {
         // Disallow line merging if there is a break at the start of one of the
@@ -691,7 +698,6 @@ public:
       }
       I += MergedLines;
 
-      unsigned LevelIndent = getIndent(IndentForLevel, TheLine.Level);
       bool FixIndentation =
           FixBadIndentation && (LevelIndent != FirstTok->OriginalColumn);
       if (TheLine.First->is(tok::eof)) {
@@ -728,13 +734,13 @@ public:
           // FIXME: Implement nested blocks for ColumnLimit = 0.
           NoColumnLimitFormatter Formatter(Indenter);
           if (!DryRun)
-            Formatter.format(Indent, &TheLine,
-                             /*LineIsMerged=*/MergedLines > 0);
+            Formatter.format(Indent, &TheLine);
         } else {
           Penalty += format(TheLine, Indent, DryRun);
         }
 
-        IndentForLevel[TheLine.Level] = LevelIndent;
+        if (!TheLine.InPPDirective)
+          IndentForLevel[TheLine.Level] = LevelIndent;
       } else if (TheLine.ChildrenAffected) {
         format(TheLine.Children, DryRun);
       } else {
@@ -757,7 +763,7 @@ public:
 
             if (static_cast<int>(LevelIndent) - Offset >= 0)
               LevelIndent -= Offset;
-            if (Tok->isNot(tok::comment))
+            if (Tok->isNot(tok::comment) && !TheLine.InPPDirective)
               IndentForLevel[TheLine.Level] = LevelIndent;
           } else if (!DryRun) {
             Whitespaces->addUntouchableToken(*Tok, TheLine.InPPDirective);

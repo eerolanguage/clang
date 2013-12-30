@@ -1005,7 +1005,13 @@ llvm::DICompositeType CGDebugInfo::getOrCreateInstanceMethodType(
 
   llvm::DIArray EltTypeArray = DBuilder.getOrCreateArray(Elts);
 
-  return DBuilder.createSubroutineType(Unit, EltTypeArray);
+  unsigned Flags = 0;
+  if (Func->getExtProtoInfo().RefQualifier == RQ_LValue)
+    Flags |= llvm::DIDescriptor::FlagLValueReference;
+  if (Func->getExtProtoInfo().RefQualifier == RQ_RValue)
+    Flags |= llvm::DIDescriptor::FlagRValueReference;
+
+  return DBuilder.createSubroutineType(Unit, EltTypeArray, Flags);
 }
 
 /// isFunctionLocalClass - Return true if CXXRecordDecl is defined
@@ -1084,6 +1090,10 @@ CGDebugInfo::CreateCXXMemberFunction(const CXXMethodDecl *Method,
   }
   if (Method->hasPrototype())
     Flags |= llvm::DIDescriptor::FlagPrototyped;
+  if (Method->getRefQualifier() == RQ_LValue)
+    Flags |= llvm::DIDescriptor::FlagLValueReference;
+  if (Method->getRefQualifier() == RQ_RValue)
+    Flags |= llvm::DIDescriptor::FlagRValueReference;
 
   llvm::DIArray TParamsArray = CollectFunctionTemplateParams(Method, Unit);
   llvm::DISubprogram SP =
@@ -1829,11 +1839,13 @@ llvm::DIType CGDebugInfo::CreateType(const MemberPointerType *Ty,
   if (!Ty->getPointeeType()->isFunctionType())
     return DBuilder.createMemberPointerType(
         getOrCreateType(Ty->getPointeeType(), U), ClassType);
+
+  const FunctionProtoType *FPT =
+    Ty->getPointeeType()->getAs<FunctionProtoType>();
   return DBuilder.createMemberPointerType(getOrCreateInstanceMethodType(
-      CGM.getContext().getPointerType(
-          QualType(Ty->getClass(), Ty->getPointeeType().getCVRQualifiers())),
-      Ty->getPointeeType()->getAs<FunctionProtoType>(), U),
-                                          ClassType);
+      CGM.getContext().getPointerType(QualType(Ty->getClass(),
+                                               FPT->getTypeQuals())),
+      FPT, U), ClassType);
 }
 
 llvm::DIType CGDebugInfo::CreateType(const AtomicType *Ty,

@@ -421,9 +421,7 @@ static const RecordType *getRecordType(QualType QT) {
 static bool checkBaseClassIsLockableCallback(const CXXBaseSpecifier *Specifier,
                                              CXXBasePath &Path, void *Unused) {
   const RecordType *RT = Specifier->getType()->getAs<RecordType>();
-  if (RT->getDecl()->getAttr<LockableAttr>())
-    return true;
-  return false;
+  return RT->getDecl()->hasAttr<LockableAttr>();
 }
 
 
@@ -451,7 +449,7 @@ static void checkForLockableRecord(Sema &S, Decl *D, const AttributeList &Attr,
 
   // Check if the type is lockable.
   RecordDecl *RD = RT->getDecl();
-  if (RD->getAttr<LockableAttr>())
+  if (RD->hasAttr<LockableAttr>())
     return;
 
   // Else check if any base classes are lockable.
@@ -602,7 +600,7 @@ static bool checkAcquireOrderAttrCommon(Sema &S, Decl *D,
   QualType QT = cast<ValueDecl>(D)->getType();
   if (!QT->isDependentType()) {
     const RecordType *RT = getRecordType(QT);
-    if (!RT || !RT->getDecl()->getAttr<LockableAttr>()) {
+    if (!RT || !RT->getDecl()->hasAttr<LockableAttr>()) {
       S.Diag(Attr.getLoc(), diag::warn_thread_attribute_decl_not_lockable)
         << Attr.getName();
       return false;
@@ -1607,7 +1605,7 @@ static void handleVecReturnAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return result; // This will be returned in a register
   }
 */
-  if (D->getAttr<VecReturnAttr>()) {
+  if (D->hasAttr<VecReturnAttr>()) {
     S.Diag(Attr.getLoc(), diag::err_repeat_attribute) << "vecreturn";
     return;
   }
@@ -3352,7 +3350,8 @@ bool Sema::CheckRegparmAttr(const AttributeList &Attr, unsigned &numParams) {
   return false;
 }
 
-static void handleLaunchBoundsAttr(Sema &S, Decl *D, const AttributeList &Attr){
+static void handleLaunchBoundsAttr(Sema &S, Decl *D,
+                                   const AttributeList &Attr) {
   // check the attribute arguments.
   if (Attr.getNumArgs() != 1 && Attr.getNumArgs() != 2) {
     // FIXME: 0 is not okay.
@@ -3366,9 +3365,12 @@ static void handleLaunchBoundsAttr(Sema &S, Decl *D, const AttributeList &Attr){
     return;
   }
 
-  uint32_t MaxThreads, MinBlocks;
-  if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), MaxThreads, 1) ||
-      !checkUInt32Argument(S, Attr, Attr.getArgAsExpr(1), MinBlocks, 2))
+  uint32_t MaxThreads, MinBlocks = 0;
+  if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), MaxThreads, 1))
+    return;
+  if (Attr.getNumArgs() > 1 && !checkUInt32Argument(S, Attr,
+                                                    Attr.getArgAsExpr(1),
+                                                    MinBlocks, 2))
     return;
 
   D->addAttr(::new (S.Context)
@@ -3645,31 +3647,6 @@ static void handleCFUnknownTransferAttr(Sema &S, Decl *D,
   D->addAttr(::new (S.Context)
              CFUnknownTransferAttr(Attr.getRange(), S.Context,
              Attr.getAttributeSpellingListIndex()));
-}
-
-static void handleNSBridgedAttr(Sema &S, Scope *Sc, Decl *D,
-                                const AttributeList &Attr) {
-  IdentifierLoc *Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
-
-  // In Objective-C, verify that the type names an Objective-C type.
-  // We don't want to check this outside of ObjC because people sometimes
-  // do crazy C declarations of Objective-C types.
-  if (Parm && S.getLangOpts().ObjC1) {
-    // Check for an existing type with this name.
-    LookupResult R(S, DeclarationName(Parm->Ident), Parm->Loc,
-                   Sema::LookupOrdinaryName);
-    if (S.LookupName(R, Sc)) {
-      NamedDecl *Target = R.getFoundDecl();
-      if (Target && !isa<ObjCInterfaceDecl>(Target)) {
-        S.Diag(D->getLocStart(), diag::err_ns_bridged_not_interface);
-        S.Diag(Target->getLocStart(), diag::note_declared_at);
-      }
-    }
-  }
-
-  D->addAttr(::new (S.Context)
-             NSBridgedAttr(Attr.getRange(), S.Context, Parm ? Parm->Ident : 0,
-                           Attr.getAttributeSpellingListIndex()));
 }
 
 static void handleObjCBridgeAttr(Sema &S, Scope *Sc, Decl *D,
@@ -3968,9 +3945,6 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_ObjCRequiresSuper:
       handleObjCRequiresSuperAttr(S, D, Attr); break;
       
-  case AttributeList::AT_NSBridged:
-    handleNSBridgedAttr(S, scope, D, Attr); break;
-      
   case AttributeList::AT_ObjCBridge:
     handleObjCBridgeAttr(S, scope, D, Attr); break;
       
@@ -4091,12 +4065,8 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_Uuid:
     handleUuidAttr(S, D, Attr);
     break;
-  case AttributeList::AT_SingleInheritance:
-    handleSimpleAttribute<SingleInheritanceAttr>(S, D, Attr); break;
-  case AttributeList::AT_MultipleInheritance:
-    handleSimpleAttribute<MultipleInheritanceAttr>(S, D, Attr); break;
-  case AttributeList::AT_VirtualInheritance:
-    handleSimpleAttribute<VirtualInheritanceAttr>(S, D, Attr); break;
+  case AttributeList::AT_MSInheritance:
+    handleSimpleAttribute<MSInheritanceAttr>(S, D, Attr); break;
   case AttributeList::AT_ForceInline:
     handleSimpleAttribute<ForceInlineAttr>(S, D, Attr); break;
   case AttributeList::AT_SelectAny:
@@ -4477,9 +4447,11 @@ void Sema::PopParsingDeclaration(ParsingDeclState state, Decl *decl) {
 
       switch (diag.Kind) {
       case DelayedDiagnostic::Deprecation:
-        // Don't bother giving deprecation diagnostics if the decl is invalid.
+      case DelayedDiagnostic::Unavailable:
+        // Don't bother giving deprecation/unavailable diagnostics if
+        // the decl is invalid.
         if (!decl->isInvalidDecl())
-          HandleDelayedDeprecationCheck(diag, decl);
+          HandleDelayedAvailabilityCheck(diag, decl);
         break;
 
       case DelayedDiagnostic::Access:
@@ -4514,61 +4486,120 @@ static bool isDeclDeprecated(Decl *D) {
   return false;
 }
 
+static bool isDeclUnavailable(Decl *D) {
+  do {
+    if (D->isUnavailable())
+      return true;
+    // A category implicitly has the availability of the interface.
+    if (const ObjCCategoryDecl *CatD = dyn_cast<ObjCCategoryDecl>(D))
+      return CatD->getClassInterface()->isUnavailable();
+  } while ((D = cast_or_null<Decl>(D->getDeclContext())));
+  return false;
+}
+
 static void
-DoEmitDeprecationWarning(Sema &S, const NamedDecl *D, StringRef Message,
-                         SourceLocation Loc,
-                         const ObjCInterfaceDecl *UnknownObjCClass,
-                         const ObjCPropertyDecl *ObjCPropery) {
+DoEmitAvailabilityWarning(Sema &S,
+                          DelayedDiagnostic::DDKind K,
+                          Decl *Ctx,
+                          const NamedDecl *D,
+                          StringRef Message,
+                          SourceLocation Loc,
+                          const ObjCInterfaceDecl *UnknownObjCClass,
+                          const ObjCPropertyDecl *ObjCProperty) {
+
+  // Diagnostics for deprecated or unavailable.
+  unsigned diag, diag_message, diag_fwdclass_message;
+
+  // Matches 'diag::note_property_attribute' options.
+  unsigned property_note_select;
+
+  // Matches diag::note_availability_specified_here.
+  unsigned available_here_select_kind;
+
+  // Don't warn if our current context is deprecated or unavailable.
+  switch (K) {
+    case DelayedDiagnostic::Deprecation:
+      if (isDeclDeprecated(Ctx))
+        return;
+      diag = diag::warn_deprecated;
+      diag_message = diag::warn_deprecated_message;
+      diag_fwdclass_message = diag::warn_deprecated_fwdclass_message;
+      property_note_select = /* deprecated */ 0;
+      available_here_select_kind = /* deprecated */ 2;
+      break;
+
+    case DelayedDiagnostic::Unavailable:
+      if (isDeclUnavailable(Ctx))
+        return;
+      diag = diag::err_unavailable;
+      diag_message = diag::err_unavailable_message;
+      diag_fwdclass_message = diag::warn_unavailable_fwdclass_message;
+      property_note_select = /* unavailable */ 1;
+      available_here_select_kind = /* unavailable */ 0;
+      break;
+
+    default:
+      llvm_unreachable("Neither a deprecation or unavailable kind");
+  }
+
   DeclarationName Name = D->getDeclName();
   if (!Message.empty()) {
-    S.Diag(Loc, diag::warn_deprecated_message) << Name << Message;
-    S.Diag(D->getLocation(),
-           isa<ObjCMethodDecl>(D) ? diag::note_method_declared_at
-                                  : diag::note_previous_decl) << Name;
-    if (ObjCPropery)
-      S.Diag(ObjCPropery->getLocation(), diag::note_property_attribute)
-        << ObjCPropery->getDeclName() << 0;
+    S.Diag(Loc, diag_message) << Name << Message;
+    if (ObjCProperty)
+      S.Diag(ObjCProperty->getLocation(), diag::note_property_attribute)
+        << ObjCProperty->getDeclName() << property_note_select;
   } else if (!UnknownObjCClass) {
-    S.Diag(Loc, diag::warn_deprecated) << D->getDeclName();
-    S.Diag(D->getLocation(),
-           isa<ObjCMethodDecl>(D) ? diag::note_method_declared_at
-                                  : diag::note_previous_decl) << Name;
-    if (ObjCPropery)
-      S.Diag(ObjCPropery->getLocation(), diag::note_property_attribute)
-        << ObjCPropery->getDeclName() << 0;
+    S.Diag(Loc, diag) << Name;
+    if (ObjCProperty)
+      S.Diag(ObjCProperty->getLocation(), diag::note_property_attribute)
+        << ObjCProperty->getDeclName() << property_note_select;
   } else {
-    S.Diag(Loc, diag::warn_deprecated_fwdclass_message) << Name;
+    S.Diag(Loc, diag_fwdclass_message) << Name;
     S.Diag(UnknownObjCClass->getLocation(), diag::note_forward_class);
   }
+
+  S.Diag(D->getLocation(), diag::note_availability_specified_here)
+    << D << available_here_select_kind;
 }
 
-void Sema::HandleDelayedDeprecationCheck(DelayedDiagnostic &DD,
-                                         Decl *Ctx) {
-  if (isDeclDeprecated(Ctx))
-    return;
-
+void Sema::HandleDelayedAvailabilityCheck(DelayedDiagnostic &DD,
+                                          Decl *Ctx) {
   DD.Triggered = true;
-  DoEmitDeprecationWarning(*this, DD.getDeprecationDecl(),
-                           DD.getDeprecationMessage(), DD.Loc,
-                           DD.getUnknownObjCClass(),
-                           DD.getObjCProperty());
+  DoEmitAvailabilityWarning(*this,
+                            (DelayedDiagnostic::DDKind) DD.Kind,
+                            Ctx,
+                            DD.getDeprecationDecl(),
+                            DD.getDeprecationMessage(),
+                            DD.Loc,
+                            DD.getUnknownObjCClass(),
+                            DD.getObjCProperty());
 }
 
-void Sema::EmitDeprecationWarning(NamedDecl *D, StringRef Message,
-                                  SourceLocation Loc,
-                                  const ObjCInterfaceDecl *UnknownObjCClass,
-                                  const ObjCPropertyDecl  *ObjCProperty) {
+void Sema::EmitAvailabilityWarning(AvailabilityDiagnostic AD,
+                                   NamedDecl *D, StringRef Message,
+                                   SourceLocation Loc,
+                                   const ObjCInterfaceDecl *UnknownObjCClass,
+                                   const ObjCPropertyDecl  *ObjCProperty) {
   // Delay if we're currently parsing a declaration.
   if (DelayedDiagnostics.shouldDelayDiagnostics()) {
-    DelayedDiagnostics.add(DelayedDiagnostic::makeDeprecation(Loc, D, 
-                                                              UnknownObjCClass,
-                                                              ObjCProperty,
-                                                              Message));
+    DelayedDiagnostics.add(DelayedDiagnostic::makeAvailability(AD, Loc, D,
+                                                               UnknownObjCClass,
+                                                               ObjCProperty,
+                                                               Message));
     return;
   }
 
-  // Otherwise, don't warn if our current context is deprecated.
-  if (isDeclDeprecated(cast<Decl>(getCurLexicalContext())))
-    return;
-  DoEmitDeprecationWarning(*this, D, Message, Loc, UnknownObjCClass, ObjCProperty);
+  Decl *Ctx = cast<Decl>(getCurLexicalContext());
+  DelayedDiagnostic::DDKind K;
+  switch (AD) {
+    case AD_Deprecation:
+      K = DelayedDiagnostic::Deprecation;
+      break;
+    case AD_Unavailable:
+      K = DelayedDiagnostic::Unavailable;
+      break;
+  }
+
+  DoEmitAvailabilityWarning(*this, K, Ctx, D, Message, Loc,
+                            UnknownObjCClass, ObjCProperty);
 }

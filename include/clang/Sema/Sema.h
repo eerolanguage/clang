@@ -856,6 +856,8 @@ public:
   typedef llvm::MCAsmParserSemaCallback::InlineAsmIdentifierInfo
     InlineAsmIdentifierInfo;
 
+  void addImplicitTypedef(StringRef Name, QualType T);
+
 public:
   Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
        TranslationUnitKind TUKind = TU_Complete,
@@ -2168,13 +2170,13 @@ public:
                               CXXRecordDecl *ActingContext,
                               Expr *From, QualType ToType,
                               OverloadCandidateSet& CandidateSet,
-                              bool AllowObjCConversionOnExplicit = false);
+                              bool AllowObjCConversionOnExplicit);
   void AddTemplateConversionCandidate(FunctionTemplateDecl *FunctionTemplate,
                                       DeclAccessPair FoundDecl,
                                       CXXRecordDecl *ActingContext,
                                       Expr *From, QualType ToType,
                                       OverloadCandidateSet &CandidateSet,
-                                    bool AllowObjCConversionOnExplicit = false);
+                                      bool AllowObjCConversionOnExplicit);
   void AddSurrogateCandidate(CXXConversionDecl *Conversion,
                              DeclAccessPair FoundDecl,
                              CXXRecordDecl *ActingContext,
@@ -3105,12 +3107,15 @@ public:
 
   void redelayDiagnostics(sema::DelayedDiagnosticPool &pool);
 
-  void EmitDeprecationWarning(NamedDecl *D, StringRef Message,
-                              SourceLocation Loc,
-                              const ObjCInterfaceDecl *UnknownObjCClass,
-                              const ObjCPropertyDecl  *ObjCProperty);
+  enum AvailabilityDiagnostic { AD_Deprecation, AD_Unavailable };
 
-  void HandleDelayedDeprecationCheck(sema::DelayedDiagnostic &DD, Decl *Ctx);
+  void EmitAvailabilityWarning(AvailabilityDiagnostic AD,
+                               NamedDecl *D, StringRef Message,
+                               SourceLocation Loc,
+                               const ObjCInterfaceDecl *UnknownObjCClass,
+                               const ObjCPropertyDecl  *ObjCProperty);
+
+  void HandleDelayedAvailabilityCheck(sema::DelayedDiagnostic &DD, Decl *Ctx);
 
   bool makeUnavailableInSystemHeader(SourceLocation loc,
                                      StringRef message);
@@ -6970,7 +6975,9 @@ public:
   
   bool CheckObjCBridgeRelatedConversions(SourceLocation Loc,
                                          QualType DestType, QualType SrcType,
-                                         Expr *SrcExpr);
+                                         Expr *&SrcExpr);
+  
+  bool ConversionToObjCStringLiteralCheck(QualType DstType, Expr *&SrcExpr);
   
   bool checkInitMethod(ObjCMethodDecl *method, QualType receiverTypeIfCall);
 

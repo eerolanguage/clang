@@ -409,8 +409,7 @@ void CodeGenModule::setTLSMode(llvm::GlobalVariable *GV,
   TLM = GetLLVMTLSModel(CodeGenOpts.getDefaultTLSModel());
 
   // Override the TLS model if it is explicitly specified.
-  if (D.hasAttr<TLSModelAttr>()) {
-    const TLSModelAttr *Attr = D.getAttr<TLSModelAttr>();
+  if (const TLSModelAttr *Attr = D.getAttr<TLSModelAttr>()) {
     TLM = GetLLVMTLSModel(Attr->getModel());
   }
 
@@ -1941,11 +1940,11 @@ CodeGenModule::GetLLVMLinkageVarDefinition(const VarDecl *D, bool isConstant) {
              Linkage == GVA_ExplicitTemplateInstantiation)
     return llvm::GlobalVariable::WeakODRLinkage;
   else if (!getLangOpts().CPlusPlus && 
-           ((!CodeGenOpts.NoCommon && !D->getAttr<NoCommonAttr>()) ||
-             D->getAttr<CommonAttr>()) &&
+           ((!CodeGenOpts.NoCommon && !D->hasAttr<NoCommonAttr>()) ||
+             D->hasAttr<CommonAttr>()) &&
            !D->hasExternalStorage() && !D->getInit() &&
-           !D->getAttr<SectionAttr>() && !D->getTLSKind() &&
-           !D->getAttr<WeakImportAttr>()) {
+           !D->hasAttr<SectionAttr>() && !D->getTLSKind() &&
+           !D->hasAttr<WeakImportAttr>()) {
     // Thread local vars aren't considered common linkage.
     return llvm::GlobalVariable::CommonLinkage;
   } else if (D->getTLSKind() == VarDecl::TLS_Dynamic &&
@@ -2413,16 +2412,6 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
   return GV;
 }
 
-static RecordDecl *
-CreateRecordDecl(const ASTContext &Ctx, RecordDecl::TagKind TK,
-                 DeclContext *DC, IdentifierInfo *Id) {
-  SourceLocation Loc;
-  if (Ctx.getLangOpts().CPlusPlus)
-    return CXXRecordDecl::Create(Ctx, TK, DC, Loc, Loc, Id);
-  else
-    return RecordDecl::Create(Ctx, TK, DC, Loc, Loc, Id);
-}
-
 llvm::Constant *
 CodeGenModule::GetAddrOfConstantString(const StringLiteral *Literal) {
   unsigned StringLength = 0;
@@ -2465,9 +2454,7 @@ CodeGenModule::GetAddrOfConstantString(const StringLiteral *Literal) {
 
   if (!NSConstantStringType) {
     // Construct the type for a constant NSString.
-    RecordDecl *D = CreateRecordDecl(Context, TTK_Struct, 
-                                     Context.getTranslationUnitDecl(),
-                                   &Context.Idents.get("__builtin_NSString"));
+    RecordDecl *D = Context.buildImplicitRecord("__builtin_NSString");
     D->startDefinition();
       
     QualType FieldTypes[3];
@@ -2543,9 +2530,7 @@ CodeGenModule::GetAddrOfConstantString(const StringLiteral *Literal) {
 
 QualType CodeGenModule::getObjCFastEnumerationStateType() {
   if (ObjCFastEnumerationStateType.isNull()) {
-    RecordDecl *D = CreateRecordDecl(Context, TTK_Struct, 
-                                     Context.getTranslationUnitDecl(),
-                      &Context.Idents.get("__objcFastEnumerationState"));
+    RecordDecl *D = Context.buildImplicitRecord("__objcFastEnumerationState");
     D->startDefinition();
     
     QualType FieldTypes[] = {

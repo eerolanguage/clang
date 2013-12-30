@@ -784,6 +784,9 @@ def err_arc_perform_selector_retains : Error<
 def warn_arc_perform_selector_leaks : Warning<
   "performSelector may cause a leak because its selector is unknown">,
   InGroup<DiagGroup<"arc-performSelector-leaks">>;
+def warn_dealloc_in_category : Warning<
+"-dealloc is being overridden in a category">,
+InGroup<DeallocInCategory>;
 def err_gc_weak_property_strong_type : Error<
   "weak attribute declared on a __strong type property in GC mode">;
 def warn_receiver_is_weak : Warning <
@@ -940,6 +943,8 @@ def err_throw_abstract_type : Error<
 def err_array_of_abstract_type : Error<"array of abstract class type %0">;
 def err_capture_of_abstract_type : Error<
   "by-copy capture of value of abstract type %0">;
+def err_capture_of_incomplete_type : Error<
+  "by-copy capture of variable %0 with incomplete type %1">;
 
 def err_multiple_final_overriders : Error<
   "virtual function %q0 has more than one final overrider in %1">; 
@@ -1919,8 +1924,8 @@ def warn_objc_literal_comparison : Warning<
   "direct comparison of %select{an array literal|a dictionary literal|"
   "a numeric literal|a boxed expression|}0 has undefined behavior">,
   InGroup<ObjCLiteralComparison>;
-def warn_missing_atsign_prefix : Warning<
-  "string literal must be prefixed by '@' ">, InGroup<ObjCLiteralMissingAtSign>;
+def err_missing_atsign_prefix : Error<
+  "string literal must be prefixed by '@' ">;
 def warn_objc_string_literal_comparison : Warning<
   "direct comparison of a string literal has undefined behavior">, 
   InGroup<ObjCStringComparison>;
@@ -2454,9 +2459,6 @@ def warn_objc_implementation_missing_designated_init_override : Warning<
   "method override for the designated initializer of the superclass %objcinstance0 not found">,
   InGroup<ObjCDesignatedInit>;
 
-def err_ns_bridged_not_interface : Error<
-  "parameter of 'ns_bridged' attribute does not name an Objective-C class">;
-  
 // objc_bridge attribute diagnostics.
 def err_objc_attr_not_id : Error<
   "parameter of %0 attribute must be a single name of an Objective-C %select{class|protocol}1">;
@@ -2474,8 +2476,6 @@ def err_objc_bridged_related_invalid_class : Error<
   "could not find Objective-C class %0 to convert %1 to %2">;
 def err_objc_bridged_related_invalid_class_name : Error<
   "%0 must be name of an Objective-C class to be able to convert %1 to %2">;
- def err_objc_bridged_related_unknown_method : Error<
- "%0 cannot be directly converted to %1">;
 def err_objc_bridged_related_known_method : Error<
  "%0 must be explicitly converted to %1; use %select{%objcclass2|%objcinstance2}3 "
  "method for this conversion">;
@@ -3523,7 +3523,7 @@ def warn_deprecated : Warning<"%0 is deprecated">,
 def warn_deprecated_message : Warning<"%0 is deprecated: %1">,
     InGroup<DeprecatedDeclarations>;
 def warn_deprecated_fwdclass_message : Warning<
-    "%0 maybe deprecated because receiver type is unknown">,
+    "%0 may be deprecated because the receiver type is unknown">,
     InGroup<DeprecatedDeclarations>;
 def warn_deprecated_def : Warning<
     "Implementing deprecated %select{method|class|category}0">,
@@ -3531,9 +3531,10 @@ def warn_deprecated_def : Warning<
 def err_unavailable : Error<"%0 is unavailable">;
 def err_unavailable_message : Error<"%0 is unavailable: %1">;
 def warn_unavailable_fwdclass_message : Warning<
-    "%0 maybe unavailable because receiver type is unknown">;
-def note_unavailable_here : Note<
-  "%select{declaration|function}0 has been explicitly marked "
+    "%0 may be unavailable because the receiver type is unknown">,
+    InGroup<UnavailableDeclarations>;
+def note_availability_specified_here : Note<
+  "%0 has been explicitly marked "
   "%select{unavailable|deleted|deprecated}1 here">;
 def note_implicitly_deleted : Note<
   "explicitly defaulted function was implicitly deleted here">;

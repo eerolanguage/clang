@@ -3206,8 +3206,7 @@ static inline T *getObjCBridgeAttr(const TypedefType *TD) {
     QT = QT->getPointeeType();
     if (const RecordType *RT = QT->getAs<RecordType>())
       if (RecordDecl *RD = RT->getDecl())
-        if (RD->hasAttr<T>())
-          return RD->getAttr<T>();
+        return RD->getAttr<T>();
   }
   return 0;
 }
@@ -3542,7 +3541,7 @@ bool Sema::checkObjCBridgeRelatedComponents(SourceLocation Loc,
 bool
 Sema::CheckObjCBridgeRelatedConversions(SourceLocation Loc,
                                         QualType DestType, QualType SrcType,
-                                        Expr *SrcExpr) {
+                                        Expr *&SrcExpr) {
   ARCConversionTypeClass rhsExprACTC = classifyTypeForARCConversion(SrcType);
   ARCConversionTypeClass lhsExprACTC = classifyTypeForARCConversion(DestType);
   bool CfToNs = (rhsExprACTC == ACTC_coreFoundation && lhsExprACTC == ACTC_retainable);
@@ -3571,12 +3570,20 @@ Sema::CheckObjCBridgeRelatedConversions(SourceLocation Loc,
         << SrcType << DestType << ClassMethod->getSelector() << false
         << FixItHint::CreateInsertion(SrcExpr->getLocStart(), ExpressionString)
         << FixItHint::CreateInsertion(SrcExprEndLoc, "]");
+      Diag(RelatedClass->getLocStart(), diag::note_declared_at);
+      Diag(TDNDecl->getLocStart(), diag::note_declared_at);
+      
+      QualType receiverType =
+        Context.getObjCInterfaceType(RelatedClass);
+      // Argument.
+      Expr *args[] = { SrcExpr };
+      ExprResult msg = BuildClassMessageImplicit(receiverType, false,
+                                      ClassMethod->getLocation(),
+                                      ClassMethod->getSelector(), ClassMethod,
+                                      MultiExprArg(args, 1));
+      SrcExpr = msg.take();
+      return true;
     }
-    else
-      Diag(Loc, diag::err_objc_bridged_related_unknown_method)
-        << SrcType << DestType;
-    Diag(RelatedClass->getLocStart(), diag::note_declared_at);
-    Diag(TDNDecl->getLocStart(), diag::note_declared_at);
   }
   else {
     // Implicit conversion from ObjC type to CF object is needed.
@@ -3603,15 +3610,19 @@ Sema::CheckObjCBridgeRelatedConversions(SourceLocation Loc,
         << FixItHint::CreateInsertion(SrcExpr->getLocStart(), "[")
         << FixItHint::CreateInsertion(SrcExprEndLoc, ExpressionString);
       }
+      Diag(RelatedClass->getLocStart(), diag::note_declared_at);
+      Diag(TDNDecl->getLocStart(), diag::note_declared_at);
+      
+      ExprResult msg =
+        BuildInstanceMessageImplicit(SrcExpr, SrcType,
+                                     InstanceMethod->getLocation(),
+                                     InstanceMethod->getSelector(),
+                                     InstanceMethod, None);
+      SrcExpr = msg.take();
+      return true;
     }
-    else
-      Diag(Loc, diag::err_objc_bridged_related_unknown_method)
-        << SrcType << DestType;
-    Diag(RelatedClass->getLocStart(), diag::note_declared_at);
-    Diag(TDNDecl->getLocStart(), diag::note_declared_at);
   }
-  
-  return true;
+  return false;
 }
 
 Sema::ARCConversionResult
@@ -3711,6 +3722,13 @@ Sema::CheckObjCARCConversion(SourceRange castRange, QualType castType,
       CCK != CCK_ImplicitConversion)
     return ACR_unbridged;
 
+  // Do not issue bridge cast" diagnostic when implicit casting a cstring
+  // to 'NSString *'. Let caller issue a normal mismatched diagnostic with
+  // suitable fix-it.
+  if (castACTC == ACTC_retainable && exprACTC == ACTC_none &&
+      ConversionToObjCStringLiteralCheck(castType, castExpr))
+    return ACR_okay;
+  
   // Do not issue "bridge cast" diagnostic when implicit casting
   // a retainable object to a CF type parameter belonging to an audited
   // CF API function. Let caller issue a normal type mismatched diagnostic

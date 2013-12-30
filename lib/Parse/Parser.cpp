@@ -336,6 +336,8 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, SkipUntilFlags Flags) {
       // Ran out of tokens.
       return false;
 
+    case tok::annot_pragma_openmp_end:
+      // Stop before an OpenMP pragma boundary.
     case tok::annot_module_begin:
     case tok::annot_module_end:
     case tok::annot_module_include:
@@ -1551,8 +1553,8 @@ Parser::TryAnnotateName(bool IsAddressOfOperand,
 
   // Look up and classify the identifier. We don't perform any typo-correction
   // after a scope specifier, because in general we can't recover from typos
-  // there (eg, after correcting 'A::tempalte B<X>::C', we would need to jump
-  // back into scope specifier parsing).
+  // there (eg, after correcting 'A::tempalte B<X>::C' [sic], we would need to
+  // jump back into scope specifier parsing).
   Sema::NameClassification Classification
     = Actions.ClassifyName(getCurScope(), SS, Name, NameLoc, Next,
                            IsAddressOfOperand, SS.isEmpty() ? CCC : 0);
@@ -1625,13 +1627,31 @@ Parser::TryAnnotateName(bool IsAddressOfOperand,
 }
 
 bool Parser::TryKeywordIdentFallback(bool DisableKeyword) {
-  assert(Tok.isNot(tok::identifier));
+  assert(!Tok.is(tok::identifier) && !Tok.isAnnotation());
   Diag(Tok, diag::ext_keyword_as_ident)
     << PP.getSpelling(Tok)
     << DisableKeyword;
-  if (DisableKeyword)
-    Tok.getIdentifierInfo()->RevertTokenIDToIdentifier();
+  if (DisableKeyword) {
+    IdentifierInfo *II = Tok.getIdentifierInfo();
+    ContextualKeywords[II] = Tok.getKind();
+    II->RevertTokenIDToIdentifier();
+  }
   Tok.setKind(tok::identifier);
+  return true;
+}
+
+bool Parser::TryIdentKeywordUpgrade() {
+  assert(Tok.is(tok::identifier));
+  const IdentifierInfo *II = Tok.getIdentifierInfo();
+  assert(II->hasRevertedTokenIDToIdentifier());
+  // If we find that this is in fact the name of a type trait,
+  // update the token kind in place and parse again to treat it as
+  // the appropriate kind of type trait.
+  llvm::SmallDenseMap<const IdentifierInfo *, tok::TokenKind>::iterator Known =
+      ContextualKeywords.find(II);
+  if (Known == ContextualKeywords.end())
+    return false;
+  Tok.setKind(Known->second);
   return true;
 }
 

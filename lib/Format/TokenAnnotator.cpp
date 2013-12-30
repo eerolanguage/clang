@@ -367,7 +367,7 @@ private:
       if (!parseParens())
         return false;
       if (Line.MustBeDeclaration && Contexts.size() == 1 &&
-          !Contexts.back().IsExpression)
+          !Contexts.back().IsExpression && Line.First->Type != TT_ObjCProperty)
         Line.MightBeFunctionDecl = true;
       break;
     case tok::l_square:
@@ -605,12 +605,17 @@ private:
           Previous->Type = TT_PointerOrReference;
         }
       }
-    } else if (Current.isOneOf(tok::kw_return, tok::kw_throw) ||
-               (Current.is(tok::l_paren) && !Line.MustBeDeclaration &&
-                !Line.InPPDirective &&
-                (!Current.Previous ||
-                 !Current.Previous->isOneOf(tok::kw_for, tok::kw_catch)))) {
+    } else if (Current.isOneOf(tok::kw_return, tok::kw_throw)) {
       Contexts.back().IsExpression = true;
+    } else if (Current.is(tok::l_paren) && !Line.MustBeDeclaration &&
+               !Line.InPPDirective) {
+      bool ParametersOfFunctionType =
+          Current.Previous && Current.Previous->is(tok::r_paren) &&
+          Current.Previous->MatchingParen &&
+          Current.Previous->MatchingParen->Type == TT_FunctionTypeLParen;
+      bool IsForOrCatch = Current.Previous &&
+                          Current.Previous->isOneOf(tok::kw_for, tok::kw_catch);
+      Contexts.back().IsExpression = !ParametersOfFunctionType && !IsForOrCatch;
     } else if (Current.isOneOf(tok::r_paren, tok::greater, tok::comma)) {
       for (FormatToken *Previous = Current.Previous;
            Previous && Previous->isOneOf(tok::star, tok::amp);
@@ -710,6 +715,11 @@ private:
         if (PreviousNoComment &&
             PreviousNoComment->isOneOf(tok::comma, tok::l_brace))
           Current.Type = TT_DesignatedInitializerPeriod;
+      } else if (Current.isOneOf(tok::identifier, tok::kw_const) &&
+                 Line.MightBeFunctionDecl && Contexts.size() == 1) {
+        // Line.MightBeFunctionDecl can only be true after the parentheses of a
+        // function declaration have been found.
+        Current.Type = TT_TrailingAnnotation;
       }
     }
   }
@@ -1062,11 +1072,15 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
   FormatToken *Current = Line.First->Next;
   bool InFunctionDecl = Line.MightBeFunctionDecl;
   while (Current != NULL) {
-    if (Current->Type == TT_LineComment)
-      Current->SpacesRequiredBefore = Style.SpacesBeforeTrailingComments;
-    else if (Current->SpacesRequiredBefore == 0 &&
-             spaceRequiredBefore(Line, *Current))
+    if (Current->Type == TT_LineComment) {
+      if (Current->Previous->BlockKind == BK_BracedInit)
+        Current->SpacesRequiredBefore = Style.Cpp11BracedListStyle ? 0 : 1;
+      else
+        Current->SpacesRequiredBefore = Style.SpacesBeforeTrailingComments;
+    } else if (Current->SpacesRequiredBefore == 0 && 
+             spaceRequiredBefore(Line, *Current)) {
       Current->SpacesRequiredBefore = 1;
+    }
 
     Current->MustBreakBefore =
         Current->MustBreakBefore || mustBreakBefore(Line, *Current);
@@ -1134,7 +1148,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 0;
   if (Left.is(tok::comma))
     return 1;
-  if (Right.is(tok::l_square))
+  if (Right.is(tok::l_square) && Right.Type != TT_ObjCMethodExpr)
     return 250;
 
   if (Right.Type == TT_StartOfName || Right.is(tok::kw_operator)) {
@@ -1166,11 +1180,13 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 150;
   }
 
-  // Breaking before a trailing 'const' or not-function-like annotation is bad.
-  if (Left.is(tok::r_paren) && Line.Type != LT_ObjCProperty &&
-      (Right.is(tok::kw_const) || (Right.is(tok::identifier) && Right.Next &&
-                                   Right.Next->isNot(tok::l_paren))))
-    return 100;
+  if (Right.Type == TT_TrailingAnnotation && Right.Next &&
+      Right.Next->isNot(tok::l_paren)) {
+    // Breaking before a trailing annotation is bad unless it is function-like.
+    // Use a slightly higher penalty after ")" so that annotations like
+    // "const override" are kept together.
+    return Left.is(tok::r_paren) ? 100 : 120;
+  }
 
   // In for-loops, prefer breaking at ',' and ';'.
   if (Line.First->is(tok::kw_for) && Left.is(tok::equal))
@@ -1386,10 +1402,10 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
 bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
                                      const FormatToken &Right) {
   if (Right.is(tok::comment)) {
-    return Right.NewlinesBefore > 0;
+    return Right.Previous->BlockKind != BK_BracedInit &&
+           Right.NewlinesBefore > 0;
   } else if (Right.Previous->isTrailingComment() ||
-             (Right.is(tok::string_literal) &&
-              Right.Previous->is(tok::string_literal))) {
+             (Right.isStringLiteral() && Right.Previous->isStringLiteral())) {
     return true;
   } else if (Right.Previous->IsUnterminatedLiteral) {
     return true;
@@ -1402,7 +1418,8 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
              Right.Previous->MatchingParen->NestingLevel == 0 &&
              Style.AlwaysBreakTemplateDeclarations) {
     return true;
-  } else if (Right.Type == TT_CtorInitializerComma &&
+  } else if ((Right.Type == TT_CtorInitializerComma ||
+              Right.Type == TT_CtorInitializerColon) &&
              Style.BreakConstructorInitializersBeforeComma &&
              !Style.ConstructorInitializerAllOnOneLineOrOnePerLine) {
     return true;
@@ -1412,6 +1429,12 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
   } else if (Right.is(tok::l_brace) && (Right.BlockKind == BK_Block)) {
     return Style.BreakBeforeBraces == FormatStyle::BS_Allman ||
            Style.BreakBeforeBraces == FormatStyle::BS_GNU;
+  } else if (Right.is(tok::string_literal) &&
+             Right.TokenText.startswith("R\"")) {
+    // Raw string literals are special wrt. line breaks. The author has made a
+    // deliberate choice and might have aligned the contents of the string
+    // literal accordingly. Thus, we try keep existing line breaks.
+    return Right.NewlinesBefore > 0;
   }
   return false;
 }
@@ -1426,7 +1449,10 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
   if (Right.isTrailingComment())
     // We rely on MustBreakBefore being set correctly here as we should not
     // change the "binding" behavior of a comment.
-    return false;
+    // The first comment in a braced lists is always interpreted as belonging to
+    // the first list element. Otherwise, it should be placed outside of the
+    // list.
+    return Left.BlockKind == BK_BracedInit;
   if (Left.is(tok::question) && Right.is(tok::colon))
     return false;
   if (Right.Type == TT_ConditionalExpr || Right.is(tok::question))
