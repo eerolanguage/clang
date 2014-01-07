@@ -1102,7 +1102,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   }
 
   if (Tok.isNot(tok::r_brace) && !T.isIgnored()) {
-    Diag(Tok, diag::err_expected_rbrace);
+    Diag(Tok, diag::err_expected) << tok::r_brace;
     Diag(T.getOpenLocation(), diag::note_matching) << "{";
     // Recover by creating a compound statement with what we parsed so far,
     // instead of dropping everything and returning StmtError();

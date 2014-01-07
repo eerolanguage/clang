@@ -1349,7 +1349,7 @@ Decl *Parser::ParseObjCMethodDecl(SourceLocation mLoc,
               Diag(Tok, diag::err_not_allowed) << "'='";
             }
           } else {
-            Diag(Tok, diag::err_expected_equal_after) << ArgInfo.Name;
+            Diag(Tok, diag::err_expected_after) << ArgInfo.Name << tok::equal;
             DefaultExprs.push_back(ExprError());
           }
         }
