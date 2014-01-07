@@ -642,7 +642,9 @@ bool RecursiveASTVisitor<Derived>::TraverseTypeLoc(TypeLoc TL) {
 
 
 // Define the Traverse*Attr(Attr* A) methods
+#define VISITORCLASS RecursiveASTVisitor
 #include "clang/AST/AttrVisitor.inc"
+#undef VISITORCLASS
 
 
 template<typename Derived>
@@ -2169,10 +2171,6 @@ DEF_TRAVERSE_STMT(CXXUuidofExpr, {
     // but not if it's a type.
     if (S->isTypeOperand())
       TRY_TO(TraverseTypeLoc(S->getTypeOperandSourceInfo()->getTypeLoc()));
-  })
-
-DEF_TRAVERSE_STMT(UnaryTypeTraitExpr, {
-    TRY_TO(TraverseTypeLoc(S->getQueriedTypeSourceInfo()->getTypeLoc()));
   })
 
 DEF_TRAVERSE_STMT(TypeTraitExpr, {

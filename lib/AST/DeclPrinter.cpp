@@ -167,7 +167,7 @@ void Decl::printGroup(Decl** Begin, unsigned NumDecls,
   }
 }
 
-void DeclContext::dumpDeclContext() const {
+LLVM_DUMP_METHOD void DeclContext::dumpDeclContext() const {
   // Get the translation unit
   const DeclContext *DC = this;
   while (!DC->isTranslationUnit())
@@ -1078,13 +1078,13 @@ void DeclPrinter::VisitObjCPropertyDecl(ObjCPropertyDecl *PDecl) {
     }
 
     if (PDecl->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_getter) {
-      Out << (first ? ' ' : ',') << "getter = "
-          << PDecl->getGetterName().getAsString();
+      Out << (first ? ' ' : ',') << "getter = ";
+      PDecl->getGetterName().print(Out);
       first = false;
     }
     if (PDecl->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_setter) {
-      Out << (first ? ' ' : ',') << "setter = "
-          << PDecl->getSetterName().getAsString();
+      Out << (first ? ' ' : ',') << "setter = ";
+      PDecl->getSetterName().print(Out);
       first = false;
     }
 

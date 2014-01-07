@@ -12,39 +12,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/StringMatcher.h"
 #include "llvm/TableGen/TableGenBackend.h"
-#include "llvm/TableGen/Error.h"
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 #include <set>
+#include <sstream>
 
 using namespace llvm;
-
-static const std::vector<StringRef>
-getValueAsListOfStrings(Record &R, StringRef FieldName) {
-  ListInit *List = R.getValueAsListInit(FieldName);
-  assert (List && "Got a null ListInit");
-
-  std::vector<StringRef> Strings;
-  Strings.reserve(List->getSize());
-
-  for (ListInit::const_iterator i = List->begin(), e = List->end();
-       i != e;
-       ++i) {
-    assert(*i && "Got a null element in a ListInit");
-    if (StringInit *S = dyn_cast<StringInit>(*i))
-      Strings.push_back(S->getValue());
-    else
-      assert(false && "Got a non-string, non-code element in a ListInit");
-  }
-
-  return Strings;
-}
 
 static std::string ReadPCHRecord(StringRef type) {
   return StringSwitch<std::string>(type)
@@ -555,12 +534,12 @@ namespace {
 
   class EnumArgument : public Argument {
     std::string type;
-    std::vector<StringRef> values, enums, uniques;
+    std::vector<std::string> values, enums, uniques;
   public:
     EnumArgument(Record &Arg, StringRef Attr)
       : Argument(Arg, Attr), type(Arg.getValueAsString("Type")),
-        values(getValueAsListOfStrings(Arg, "Values")),
-        enums(getValueAsListOfStrings(Arg, "Enums")),
+        values(Arg.getValueAsListOfStrings("Values")),
+        enums(Arg.getValueAsListOfStrings("Enums")),
         uniques(enums)
     {
       // Calculate the various enum values
@@ -593,8 +572,8 @@ namespace {
       OS << type << " " << getUpperName();
     }
     void writeDeclarations(raw_ostream &OS) const {
-      std::vector<StringRef>::const_iterator i = uniques.begin(),
-                                             e = uniques.end();
+      std::vector<std::string>::const_iterator i = uniques.begin(),
+                                               e = uniques.end();
       // The last one needs to not have a comma.
       --e;
 
@@ -623,7 +602,7 @@ namespace {
     }
     void writeDump(raw_ostream &OS) const {
       OS << "    switch(SA->get" << getUpperName() << "()) {\n";
-      for (std::vector<StringRef>::const_iterator I = uniques.begin(),
+      for (std::vector<std::string>::const_iterator I = uniques.begin(),
            E = uniques.end(); I != E; ++I) {
         OS << "    case " << getAttrName() << "Attr::" << *I << ":\n";
         OS << "      OS << \" " << *I << "\";\n";
@@ -651,13 +630,13 @@ namespace {
   
   class VariadicEnumArgument: public VariadicArgument {
     std::string type, QualifiedTypeName;
-    std::vector<StringRef> values, enums, uniques;
+    std::vector<std::string> values, enums, uniques;
   public:
     VariadicEnumArgument(Record &Arg, StringRef Attr)
       : VariadicArgument(Arg, Attr, Arg.getValueAsString("Type")),
         type(Arg.getValueAsString("Type")),
-        values(getValueAsListOfStrings(Arg, "Values")),
-        enums(getValueAsListOfStrings(Arg, "Enums")),
+        values(Arg.getValueAsListOfStrings("Values")),
+        enums(Arg.getValueAsListOfStrings("Enums")),
         uniques(enums)
     {
       // Calculate the various enum values
@@ -673,8 +652,8 @@ namespace {
     bool isVariadicEnumArg() const { return true; }
     
     void writeDeclarations(raw_ostream &OS) const {
-      std::vector<StringRef>::const_iterator i = uniques.begin(),
-                                             e = uniques.end();
+      std::vector<std::string>::const_iterator i = uniques.begin(),
+                                               e = uniques.end();
       // The last one needs to not have a comma.
       --e;
 
@@ -693,7 +672,7 @@ namespace {
          << "_iterator I = SA->" << getLowerName() << "_begin(), E = SA->"
          << getLowerName() << "_end(); I != E; ++I) {\n";
       OS << "      switch(*I) {\n";
-      for (std::vector<StringRef>::const_iterator UI = uniques.begin(),
+      for (std::vector<std::string>::const_iterator UI = uniques.begin(),
            UE = uniques.end(); UI != UE; ++UI) {
         OS << "    case " << getAttrName() << "Attr::" << *UI << ":\n";
         OS << "      OS << \" " << *UI << "\";\n";
@@ -1620,7 +1599,7 @@ void EmitClangAttrASTVisitor(RecordKeeper &Records, raw_ostream &OS) {
       continue;
 
     OS << "template <typename Derived>\n"
-       << "bool RecursiveASTVisitor<Derived>::Traverse"
+       << "bool VISITORCLASS<Derived>::Traverse"
        << R.getName() << "Attr(" << R.getName() << "Attr *A) {\n"
        << "  if (!getDerived().VisitAttr(A))\n"
        << "    return false;\n"
@@ -1643,7 +1622,7 @@ void EmitClangAttrASTVisitor(RecordKeeper &Records, raw_ostream &OS) {
 
   // Write generic Traverse routine
   OS << "template <typename Derived>\n"
-     << "bool RecursiveASTVisitor<Derived>::TraverseAttr(Attr *A) {\n"
+     << "bool VISITORCLASS<Derived>::TraverseAttr(Attr *A) {\n"
      << "  if (!A)\n"
      << "    return true;\n"
      << "\n"

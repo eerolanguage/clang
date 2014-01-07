@@ -63,7 +63,8 @@ ContinuationIndenter::ContinuationIndenter(const FormatStyle &Style,
                                            bool BinPackInconclusiveFunctions)
     : Style(Style), SourceMgr(SourceMgr), Whitespaces(Whitespaces),
       Encoding(Encoding),
-      BinPackInconclusiveFunctions(BinPackInconclusiveFunctions) {}
+      BinPackInconclusiveFunctions(BinPackInconclusiveFunctions),
+      CommentPragmasRegex(Style.CommentPragmas) {}
 
 LineState ContinuationIndenter::getInitialState(unsigned FirstIndent,
                                                 const AnnotatedLine *Line,
@@ -181,10 +182,6 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
       State.Stack.back().ObjCSelectorNameFound &&
       State.Stack.back().BreakBeforeParameter)
     return true;
-  if (Current.Type == TT_CtorInitializerColon &&
-      (!Style.AllowShortFunctionsOnASingleLine ||
-       Style.BreakConstructorInitializersBeforeComma || Style.ColumnLimit != 0))
-    return true;
   if (Previous.ClosesTemplateDeclaration && State.ParenLevel == 0 &&
       !Current.isTrailingComment())
     return true;
@@ -198,6 +195,18 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
        (State.Stack.back().BreakBeforeParameter &&
         State.Stack.back().ContainsUnwrappedBuilder)))
     return true;
+
+  // The following could be precomputed as they do not depend on the state.
+  // However, as they should take effect only if the UnwrappedLine does not fit
+  // into the ColumnLimit, they are checked here in the ContinuationIndenter.
+  if (Previous.BlockKind == BK_Block && Previous.is(tok::l_brace) &&
+      !Current.isOneOf(tok::r_brace, tok::comment))
+    return true;
+  if (Current.Type == TT_CtorInitializerColon &&
+      (!Style.AllowShortFunctionsOnASingleLine ||
+       Style.BreakConstructorInitializersBeforeComma || Style.ColumnLimit != 0))
+    return true;
+
   return false;
 }
 
@@ -810,12 +819,16 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
       return 0;
     }
   } else if (Current.Type == TT_BlockComment && Current.isTrailingComment()) {
+    if (CommentPragmasRegex.match(Current.TokenText.substr(2)))
+      return 0;
     Token.reset(new BreakableBlockComment(
         Current, State.Line->Level, StartColumn, Current.OriginalColumn,
         !Current.Previous, State.Line->InPPDirective, Encoding, Style));
   } else if (Current.Type == TT_LineComment &&
              (Current.Previous == NULL ||
               Current.Previous->Type != TT_ImplicitStringLiteral)) {
+    if (CommentPragmasRegex.match(Current.TokenText.substr(2)))
+      return 0;
     Token.reset(new BreakableLineComment(Current, State.Line->Level,
                                          StartColumn, /*InPPDirective=*/false,
                                          Encoding, Style));

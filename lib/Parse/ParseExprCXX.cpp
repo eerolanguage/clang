@@ -11,11 +11,11 @@
 //
 //===----------------------------------------------------------------------===//
 #include "clang/AST/DeclTemplate.h"
-#include "clang/Parse/Parser.h"
 #include "RAIIObjectsForParser.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Lex/LiteralSupport.h"
 #include "clang/Parse/ParseDiagnostic.h"
+#include "clang/Parse/Parser.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
@@ -26,7 +26,9 @@ using namespace clang;
 
 static int SelectDigraphErrorMessage(tok::TokenKind Kind) {
   switch (Kind) {
-    case tok::kw_template:         return 0;
+    // template name
+    case tok::unknown:             return 0;
+    // casts
     case tok::kw_const_cast:       return 1;
     case tok::kw_dynamic_cast:     return 2;
     case tok::kw_reinterpret_cast: return 3;
@@ -93,7 +95,7 @@ void Parser::CheckForTemplateAndDigraph(Token &Next, ParsedType ObjectType,
                               Template, MemberOfUnknownSpecialization))
     return;
 
-  FixDigraph(*this, PP, Next, SecondToken, tok::kw_template,
+  FixDigraph(*this, PP, Next, SecondToken, tok::unknown,
              /*AtDigraph*/false);
 }
 
@@ -1009,10 +1011,8 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
 
     // Parse 'mutable'[opt].
     SourceLocation MutableLoc;
-    if (Tok.is(tok::kw_mutable)) {
-      MutableLoc = ConsumeToken();
+    if (TryConsumeToken(tok::kw_mutable, MutableLoc))
       DeclEndLoc = MutableLoc;
-    }
 
     // Parse exception-specification[opt].
     ExceptionSpecificationType ESpecType = EST_None;
@@ -1187,7 +1187,7 @@ ExprResult Parser::ParseCXXCasts() {
 
   SourceLocation RAngleBracketLoc = Tok.getLocation();
 
-  if (ExpectAndConsume(tok::greater, diag::err_expected_greater))
+  if (ExpectAndConsume(tok::greater))
     return ExprError(Diag(LAngleBracketLoc, diag::note_matching) << tok::less);
 
   SourceLocation LParenLoc, RParenLoc;
@@ -2685,18 +2685,11 @@ Parser::ParseCXXDeleteExpression(bool UseGlobal, SourceLocation Start) {
   return Actions.ActOnCXXDelete(Start, UseGlobal, ArrayDelete, Operand.take());
 }
 
-static UnaryTypeTrait UnaryTypeTraitFromTokKind(tok::TokenKind kind) {
-  switch(kind) {
-  default: llvm_unreachable("Not a known unary type trait.");
-#define TYPE_TRAIT_1(Spelling, Name, Key) \
-  case tok::kw_ ## Spelling: return UTT_ ## Name;
-#include "clang/Basic/TokenKinds.def"
-  }
-}
-
 static TypeTrait TypeTraitFromTokKind(tok::TokenKind kind) {
   switch (kind) {
   default: llvm_unreachable("Not a known type trait");
+#define TYPE_TRAIT_1(Spelling, Name, Key) \
+case tok::kw_ ## Spelling: return UTT_ ## Name;
 #define TYPE_TRAIT_2(Spelling, Name, Key) \
 case tok::kw_ ## Spelling: return BTT_ ## Name;
 #include "clang/Basic/TokenKinds.def"
@@ -2748,7 +2741,7 @@ ExprResult Parser::ParseTypeTrait() {
   SourceLocation Loc = ConsumeToken();
   
   BalancedDelimiterTracker Parens(*this, tok::l_paren);
-  if (Parens.expectAndConsume(diag::err_expected_lparen))
+  if (Parens.expectAndConsume())
     return ExprError();
 
   SmallVector<ParsedType, 2> Args;
@@ -2790,10 +2783,6 @@ ExprResult Parser::ParseTypeTrait() {
     return ExprError();
   }
 
-  if (Arity == 1)
-    return Actions.ActOnUnaryTypeTrait(UnaryTypeTraitFromTokKind(Kind), Loc,
-                                       Args[0], EndLoc);
-
   return Actions.ActOnTypeTrait(TypeTraitFromTokKind(Kind), Loc, Args, EndLoc);
 }
 
@@ -2809,7 +2798,7 @@ ExprResult Parser::ParseArrayTypeTrait() {
   SourceLocation Loc = ConsumeToken();
 
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (T.expectAndConsume(diag::err_expected_lparen))
+  if (T.expectAndConsume())
     return ExprError();
 
   TypeResult Ty = ParseTypeName();
@@ -2826,7 +2815,7 @@ ExprResult Parser::ParseArrayTypeTrait() {
                                        T.getCloseLocation());
   }
   case ATT_ArrayExtent: {
-    if (ExpectAndConsume(tok::comma, diag::err_expected_comma)) {
+    if (ExpectAndConsume(tok::comma)) {
       SkipUntil(tok::r_paren, StopAtSemi);
       return ExprError();
     }
@@ -2852,7 +2841,7 @@ ExprResult Parser::ParseExpressionTrait() {
   SourceLocation Loc = ConsumeToken();
 
   BalancedDelimiterTracker T(*this, tok::l_paren);
-  if (T.expectAndConsume(diag::err_expected_lparen))
+  if (T.expectAndConsume())
     return ExprError();
 
   ExprResult Expr = ParseExpression();

@@ -214,6 +214,8 @@ public:
   /// EmitLocation - Emit metadata to indicate a change in line/column
   /// information in the source file.
   /// \param ForceColumnInfo  Assume DebugColumnInfo option is true.
+  /// \param ForceScope       Force the location to be in a specific lexical
+  ///                         scope rather than the top of LexicalBlockStack.
   void EmitLocation(CGBuilderTy &Builder, SourceLocation Loc,
                     bool ForceColumnInfo = false);
 

@@ -13,8 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Basic/IdentifierTable.h"
-#include "clang/Basic/LangOptions.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/LangOptions.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -398,6 +398,10 @@ std::string Selector::getAsString() const {
 
   // We have a multiple keyword selector.
   return getMultiKeywordSelector()->getName();
+}
+
+void Selector::print(llvm::raw_ostream &OS) const {
+  OS << getAsString();
 }
 
 /// Interpreting the given string using the normal CamelCase

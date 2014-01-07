@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Sema/SemaInternal.h"
+#include "TypeLocBuilder.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTMutationListener.h"
@@ -34,7 +35,6 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "TypeLocBuilder.h"
 
 using namespace clang;
 
@@ -1747,13 +1747,13 @@ QualType Sema::BuildMemberPointerType(QualType T, QualType Class,
   //   with reference type, or "cv void."
   if (T->isReferenceType()) {
     Diag(Loc, diag::err_illegal_decl_mempointer_to_reference)
-      << (Entity? Entity.getAsString() : "type name") << T;
+      << getPrintableNameForEntity(Entity) << T;
     return QualType();
   }
 
   if (T->isVoidType()) {
     Diag(Loc, diag::err_illegal_decl_mempointer_to_void)
-      << (Entity? Entity.getAsString() : "type name");
+      << getPrintableNameForEntity(Entity);
     return QualType();
   }
 
@@ -3021,8 +3021,7 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
         D.setInvalidType(true);
       } else if (S.isDependentScopeSpecifier(SS) ||
                  dyn_cast_or_null<CXXRecordDecl>(S.computeDeclContext(SS))) {
-        NestedNameSpecifier *NNS
-          = static_cast<NestedNameSpecifier*>(SS.getScopeRep());
+        NestedNameSpecifier *NNS = SS.getScopeRep();
         NestedNameSpecifier *NNSPrefix = NNS->getPrefix();
         switch (NNS->getKind()) {
         case NestedNameSpecifier::Identifier:
@@ -5355,7 +5354,7 @@ QualType Sema::getElaboratedType(ElaboratedTypeKeyword Keyword,
     return T;
   NestedNameSpecifier *NNS;
   if (SS.isValid())
-    NNS = static_cast<NestedNameSpecifier *>(SS.getScopeRep());
+    NNS = SS.getScopeRep();
   else {
     if (Keyword == ETK_None)
       return T;

@@ -211,7 +211,8 @@ static bool checkAttributeNumArgs(Sema &S, const AttributeList &Attr,
 static bool checkAttributeAtLeastNumArgs(Sema &S, const AttributeList &Attr,
                                          unsigned Num) {
   if (getNumAttributeArgs(Attr) < Num) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_too_few_arguments) << Num;
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_few_arguments)
+      << Attr.getName() << Num;
     return false;
   }
 
@@ -244,13 +245,10 @@ static bool checkUInt32Argument(Sema &S, const AttributeList &Attr,
 /// declaration. Returns true if diagnosed.
 template <typename AttrTy>
 static bool checkAttrMutualExclusion(Sema &S, Decl *D,
-                                     const AttributeList &Attr,
-                                     const char *OtherName) {
-  // FIXME: it would be nice if OtherName did not have to be passed in, but was
-  // instead determined based on the AttrTy template parameter.
-  if (D->hasAttr<AttrTy>()) {
+                                     const AttributeList &Attr) {
+  if (AttrTy *A = D->getAttr<AttrTy>()) {
     S.Diag(Attr.getLoc(), diag::err_attributes_are_not_compatible)
-      << Attr.getName() << OtherName;
+      << Attr.getName() << A;
     return true;
   }
   return false;
@@ -429,7 +427,7 @@ static void checkForLockableRecord(Sema &S, Decl *D, const AttributeList &Attr,
   // Warn if could not get record type for this argument.
   if (!RT) {
     S.Diag(Attr.getLoc(), diag::warn_thread_attribute_argument_not_class)
-      << Attr.getName() << Ty.getAsString();
+      << Attr.getName() << Ty;
     return;
   }
 
@@ -455,7 +453,7 @@ static void checkForLockableRecord(Sema &S, Decl *D, const AttributeList &Attr,
   }
 
   S.Diag(Attr.getLoc(), diag::warn_thread_attribute_argument_not_lockable)
-    << Attr.getName() << Ty.getAsString();
+    << Attr.getName() << Ty;
 }
 
 /// \brief Thread Safety Analysis: Checks that all attribute arguments, starting
@@ -1264,13 +1262,15 @@ static void handleOwnershipAttr(Sema &S, Decl *D, const AttributeList &AL) {
   case OwnershipAttr::Takes:
   case OwnershipAttr::Holds:
     if (AL.getNumArgs() < 2) {
-      S.Diag(AL.getLoc(), diag::err_attribute_too_few_arguments) << 2;
+      S.Diag(AL.getLoc(), diag::err_attribute_too_few_arguments)
+        << AL.getName() << 2;
       return;
     }
     break;
   case OwnershipAttr::Returns:
     if (AL.getNumArgs() > 2) {
-      S.Diag(AL.getLoc(), diag::err_attribute_too_many_arguments) << 1;
+      S.Diag(AL.getLoc(), diag::err_attribute_too_many_arguments)
+        << AL.getName() << 1;
       return;
     }
     break;
@@ -1366,8 +1366,8 @@ static void handleWeakRefAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // we reject them
   const DeclContext *Ctx = D->getDeclContext()->getRedeclContext();
   if (!Ctx->isFileContext()) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_weakref_not_global_context) <<
-        nd->getNameAsString();
+    S.Diag(Attr.getLoc(), diag::err_attribute_weakref_not_global_context)
+      << nd;
     return;
   }
 
@@ -1425,7 +1425,7 @@ static void handleAliasAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 }
 
 static void handleColdAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  if (checkAttrMutualExclusion<HotAttr>(S, D, Attr, "hot"))
+  if (checkAttrMutualExclusion<HotAttr>(S, D, Attr))
     return;
 
   D->addAttr(::new (S.Context) ColdAttr(Attr.getRange(), S.Context,
@@ -1433,7 +1433,7 @@ static void handleColdAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 }
 
 static void handleHotAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  if (checkAttrMutualExclusion<ColdAttr>(S, D, Attr, "cold"))
+  if (checkAttrMutualExclusion<ColdAttr>(S, D, Attr))
     return;
 
   D->addAttr(::new (S.Context) HotAttr(Attr.getRange(), S.Context,
@@ -1639,7 +1639,8 @@ static void handleUsedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 static void handleConstructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // check the attribute arguments.
   if (Attr.getNumArgs() > 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 1;
     return;
   }
 
@@ -1656,7 +1657,8 @@ static void handleConstructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 static void handleDestructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // check the attribute arguments.
   if (Attr.getNumArgs() > 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 1;
     return;
   }
 
@@ -1675,7 +1677,8 @@ static void handleAttrWithMessage(Sema &S, Decl *D,
                                   const AttributeList &Attr) {
   unsigned NumArgs = Attr.getNumArgs();
   if (NumArgs > 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 1;
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 1;
     return;
   }
 
@@ -2079,7 +2082,8 @@ static void handleBlocksAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 static void handleSentinelAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // check the attribute arguments.
   if (Attr.getNumArgs() > 2) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 2;
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 2;
     return;
   }
 
@@ -2786,15 +2790,14 @@ void Sema::AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E,
       if (FD->isBitField())
         DiagKind = 3;
     } else if (!isa<TagDecl>(D)) {
-      Diag(AttrLoc, diag::err_attribute_wrong_decl_type)
-        << (TmpAttr.isC11() ? "'_Alignas'" : "'alignas'")
+      Diag(AttrLoc, diag::err_attribute_wrong_decl_type) << &TmpAttr
         << (TmpAttr.isC11() ? ExpectedVariableOrField
                             : ExpectedVariableFieldOrTag);
       return;
     }
     if (DiagKind != -1) {
       Diag(AttrLoc, diag::err_alignas_attribute_wrong_decl_type)
-        << TmpAttr.isC11() << DiagKind;
+        << &TmpAttr << DiagKind;
       return;
     }
   }
@@ -3284,7 +3287,8 @@ static void handleLaunchBoundsAttr(Sema &S, Decl *D,
   // check the attribute arguments.
   if (Attr.getNumArgs() != 1 && Attr.getNumArgs() != 2) {
     // FIXME: 0 is not okay.
-    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments) << 2;
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 2;
     return;
   }
 
@@ -3555,8 +3559,7 @@ static void handleObjCRequiresSuperAttr(Sema &S, Decl *D,
 
 static void handleCFAuditedTransferAttr(Sema &S, Decl *D,
                                         const AttributeList &Attr) {
-  if (checkAttrMutualExclusion<CFUnknownTransferAttr>(S, D, Attr,
-                                                      "cf_unknown_transfer"))
+  if (checkAttrMutualExclusion<CFUnknownTransferAttr>(S, D, Attr))
     return;
 
   D->addAttr(::new (S.Context)
@@ -3566,8 +3569,7 @@ static void handleCFAuditedTransferAttr(Sema &S, Decl *D,
 
 static void handleCFUnknownTransferAttr(Sema &S, Decl *D,
                                         const AttributeList &Attr) {
-  if (checkAttrMutualExclusion<CFAuditedTransferAttr>(S, D, Attr,
-                                                      "cf_audited_transfer"))
+  if (checkAttrMutualExclusion<CFAuditedTransferAttr>(S, D, Attr))
     return;
 
   D->addAttr(::new (S.Context)
@@ -4119,8 +4121,8 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D,
   // static int a9 __attribute__((weakref));
   // but that looks really pointless. We reject it.
   if (D->hasAttr<WeakRefAttr>() && !D->hasAttr<AliasAttr>()) {
-    Diag(AttrList->getLoc(), diag::err_attribute_weakref_without_alias) <<
-    cast<NamedDecl>(D)->getNameAsString();
+    Diag(AttrList->getLoc(), diag::err_attribute_weakref_without_alias)
+      << cast<NamedDecl>(D);
     D->dropAttr<WeakRefAttr>();
     return;
   }

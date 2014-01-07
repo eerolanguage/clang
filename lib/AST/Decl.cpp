@@ -1270,13 +1270,9 @@ static LinkageInfo getLVForDecl(const NamedDecl *D,
 }
 
 std::string NamedDecl::getQualifiedNameAsString() const {
-  return getQualifiedNameAsString(getASTContext().getPrintingPolicy());
-}
-
-std::string NamedDecl::getQualifiedNameAsString(const PrintingPolicy &P) const {
   std::string QualName;
   llvm::raw_string_ostream OS(QualName);
-  printQualifiedName(OS, P);
+  printQualifiedName(OS, getASTContext().getPrintingPolicy());
   return OS.str();
 }
 
@@ -3282,6 +3278,12 @@ EnumDecl *EnumDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
                                         0, 0, false, false, false);
   Enum->MayHaveOutOfDateDef = C.getLangOpts().Modules;
   return Enum;
+}
+
+SourceRange EnumDecl::getIntegerTypeRange() const {
+  if (const TypeSourceInfo *TI = getIntegerTypeSourceInfo())
+    return TI->getTypeLoc().getSourceRange();
+  return SourceRange();
 }
 
 void EnumDecl::completeDefinition(QualType NewType,

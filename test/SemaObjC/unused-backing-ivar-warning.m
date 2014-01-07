@@ -91,3 +91,59 @@ typedef char BOOL;
 }
 @end
 
+// rdar://15728901
+@interface GATTOperation : NSObject {
+    long operation;
+}
+@property(assign) long operation;
+@end
+
+@implementation GATTOperation
+@synthesize operation;
++ (id) operation {
+    return 0;
+}
+@end
+
+// rdar://15727327
+@interface Radar15727327 : NSObject
+@property (assign, readonly) long p;
+@property (assign) long q; // expected-note 2 {{property declared here}}
+@property (assign, readonly) long r; // expected-note {{property declared here}}
+- (long)Meth;
+@end
+
+@implementation Radar15727327
+@synthesize p;
+@synthesize q;
+@synthesize r;
+- (long)Meth { return p; }
+- (long) p { [self Meth]; return 0;  }
+- (long) q { return 0; } // expected-warning {{ivar 'q' which backs the property is not referenced in this property's accessor}}
+- (void) setQ : (long) val { } // expected-warning {{ivar 'q' which backs the property is not referenced in this property's accessor}}
+- (long) r { [self Meth]; return p; } // expected-warning {{ivar 'r' which backs the property is not referenced in this property's accessor}}
+@end
+
+@interface I1
+@property (readonly) int p1;
+@property (readonly) int p2; // expected-note {{property declared here}}
+@end
+
+@implementation I1
+@synthesize p1=_p1;
+@synthesize p2=_p2;
+
+-(int)p1 {
+  return [self getP1];
+}
+-(int)getP1 {
+  return _p1;
+}
+-(int)getP2 {
+  return _p2;
+}
+-(int)p2 {  // expected-warning {{ivar '_p2' which backs the property is not referenced in this property's accessor}}
+  Radar15727327 *o;
+  return [o Meth];
+}
+@end

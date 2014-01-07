@@ -28,8 +28,8 @@
 #include "clang/Analysis/Support/BumpVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
 
@@ -435,7 +435,7 @@ void LocationContext::dumpStack(raw_ostream &OS, StringRef Indent) const {
   }
 }
 
-void LocationContext::dumpStack() const {
+LLVM_DUMP_METHOD void LocationContext::dumpStack() const {
   dumpStack(llvm::errs());
 }
 

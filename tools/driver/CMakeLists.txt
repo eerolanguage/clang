@@ -70,7 +70,8 @@ endif()
 # Create the clang++ symlink in the build directory.
 set(clang_pp "${CLANG_RUNTIME_OUTPUT_INTDIR}/clang++${CMAKE_EXECUTABLE_SUFFIX}")
 add_custom_command(TARGET clang POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY} "${clang_binary}" "${clang_pp}")
+    COMMAND ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY} "${clang_binary}" "${clang_pp}"
+    WORKING_DIRECTORY "${CLANG_RUNTIME_OUTPUT_INTDIR}")
 
 set_property(DIRECTORY APPEND
   PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${clang_pp})
@@ -78,7 +79,8 @@ set_property(DIRECTORY APPEND
 # Create the clang-cl symlink in the build directory.
 set(clang_cl "${CLANG_RUNTIME_OUTPUT_INTDIR}/clang-cl${CMAKE_EXECUTABLE_SUFFIX}")
 add_custom_command(TARGET clang POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY} "${clang_binary}" "${clang_cl}")
+    COMMAND ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY} "${clang_binary}" "${clang_cl}"
+    WORKING_DIRECTORY "${CLANG_RUNTIME_OUTPUT_INTDIR}")
 
 set_property(DIRECTORY APPEND
   PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${clang_cl})
