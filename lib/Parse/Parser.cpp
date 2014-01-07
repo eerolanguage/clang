@@ -206,8 +206,11 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
 }
 
 bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
-  if (Tok.is(tok::semi) || Tok.is(tok::code_completion)) {
-    ConsumeToken();
+  if (TryConsumeToken(tok::semi))
+    return false;
+
+  if (Tok.is(tok::code_completion)) {
+    handleUnexpectedCodeCompletionToken();
     return false;
   }
 
@@ -348,7 +351,7 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, SkipUntilFlags Flags) {
 
     case tok::code_completion:
       if (!HasFlagsSet(Flags, StopAtCodeCompletion))
-        ConsumeToken();
+        handleUnexpectedCodeCompletionToken();
       return false;
         
     case tok::l_paren:
@@ -1921,8 +1924,8 @@ bool Parser::isTokenEqualOrEqualTypo() {
   case tok::pipeequal:           // |=
   case tok::equalequal:          // ==
     Diag(Tok, diag::err_invalid_token_after_declarator_suggest_equal)
-      << getTokenSimpleSpelling(Kind)
-      << FixItHint::CreateReplacement(SourceRange(Tok.getLocation()), "=");
+        << Kind
+        << FixItHint::CreateReplacement(SourceRange(Tok.getLocation()), "=");
   case tok::equal:
     return true;
   }
@@ -2051,7 +2054,7 @@ void Parser::ParseMicrosoftIfExistsExternalDeclaration() {
   
   BalancedDelimiterTracker Braces(*this, tok::l_brace);
   if (Braces.consumeOpen()) {
-    Diag(Tok, diag::err_expected_lbrace);
+    Diag(Tok, diag::err_expected) << tok::l_brace;
     return;
   }
 
@@ -2154,19 +2157,9 @@ bool BalancedDelimiterTracker::expectAndConsume(unsigned DiagID,
 
 bool BalancedDelimiterTracker::diagnoseMissingClose() {
   assert(!P.Tok.is(Close) && "Should have consumed closing delimiter");
-  
-  const char *LHSName = "unknown";
-  diag::kind DID;
-  switch (Close) {
-  default: llvm_unreachable("Unexpected balanced token");
-  case tok::r_paren : LHSName = "("; DID = diag::err_expected_rparen; break;
-  case tok::r_brace : LHSName = "{"; DID = diag::err_expected_rbrace; break;
-  case tok::r_square: LHSName = "["; DID = diag::err_expected_rsquare; break;
-  case tok::pipe    : LHSName = "|"; DID = diag::err_expected_pipe; break;
-  case tok::greater : LHSName = "<"; DID = diag::err_expected_greater; break;
-  }
-  P.Diag(P.Tok, DID);
-  P.Diag(LOpen, diag::note_matching) << LHSName;
+
+  P.Diag(P.Tok, diag::err_expected) << Close;
+  P.Diag(LOpen, diag::note_matching) << Kind;
 
   // If we're not already at some kind of closing bracket, skip to our closing
   // token.

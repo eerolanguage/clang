@@ -2282,8 +2282,7 @@ VTableLayout::VTableLayout(uint64_t NumVTableComponents,
 VTableLayout::~VTableLayout() { }
 
 ItaniumVTableContext::ItaniumVTableContext(ASTContext &Context)
-  : IsMicrosoftABI(Context.getTargetInfo().getCXXABI().isMicrosoft()) {
-}
+    : VTableContextBase(/*MS=*/false) {}
 
 ItaniumVTableContext::~ItaniumVTableContext() {
   llvm::DeleteContainerSeconds(VTableLayouts);
@@ -2348,8 +2347,6 @@ static VTableLayout *CreateVTableLayout(const ItaniumVTableBuilder &Builder) {
 
 void
 ItaniumVTableContext::computeVTableRelatedInformation(const CXXRecordDecl *RD) {
-  assert(!IsMicrosoftABI && "Shouldn't be called in this ABI!");
-
   const VTableLayout *&Entry = VTableLayouts[RD];
 
   // Check if we've computed this information before.
@@ -2543,6 +2540,8 @@ private:
       Components.push_back(VTableComponent::MakeFunction(MD));
     }
   }
+
+  bool NeedsReturnAdjustingThunk(const CXXMethodDecl *MD);
 
   /// AddMethods - Add the methods of this base subobject and the relevant
   /// subbases to the vftable we're currently laying out.
@@ -2803,6 +2802,24 @@ static void GroupNewVirtualOverloads(
     VirtualMethods.append(Groups[I].rbegin(), Groups[I].rend());
 }
 
+/// We need a return adjusting thunk for this method if its return type is
+/// not trivially convertible to the return type of any of its overridden
+/// methods.
+bool VFTableBuilder::NeedsReturnAdjustingThunk(const CXXMethodDecl *MD) {
+  OverriddenMethodsSetTy OverriddenMethods;
+  ComputeAllOverriddenMethods(MD, OverriddenMethods);
+  for (OverriddenMethodsSetTy::iterator I = OverriddenMethods.begin(),
+                                        E = OverriddenMethods.end();
+       I != E; ++I) {
+    const CXXMethodDecl *OverriddenMD = *I;
+    BaseOffset Adjustment =
+        ComputeReturnAdjustmentBaseOffset(Context, MD, OverriddenMD);
+    if (!Adjustment.isEmpty())
+      return true;
+  }
+  return false;
+}
+
 void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
                                 const CXXRecordDecl *LastVBase,
                                 BasesSetVectorTy &VisitedBases) {
@@ -2888,7 +2905,7 @@ void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
         AddThunk(MD, VTableThunks[OverriddenMethodInfo.VFTableIndex]);
       }
 
-      if (MD->getResultType() == OverriddenMD->getResultType()) {
+      if (!NeedsReturnAdjustingThunk(MD)) {
         // No return adjustment needed - just replace the overridden method info
         // with the current info.
         MethodInfo MI(OverriddenMethodInfo.VBTableIndex,
@@ -2899,30 +2916,30 @@ void VFTableBuilder::AddMethods(BaseSubobject Base, unsigned BaseDepth,
                "Should not have method info for this method yet!");
         MethodInfoMap.insert(std::make_pair(MD, MI));
         continue;
-      } else {
-        // In case we need a return adjustment, we'll add a new slot for
-        // the overrider and put a return-adjusting thunk where the overridden
-        // method was in the vftable.
-        // For now, just mark the overriden method as shadowed by a new slot.
-        OverriddenMethodInfo.Shadowed = true;
-        ForceThunk = true;
+      }
 
-        // Also apply this adjustment to the shadowed slots.
-        if (!ThisAdjustmentOffset.isEmpty()) {
-          // FIXME: this is O(N^2), can be O(N).
-          const CXXMethodDecl *SubOverride = OverriddenMD;
-          while ((SubOverride =
-                      FindNearestOverriddenMethod(SubOverride, VisitedBases))) {
-            MethodInfoMapTy::iterator SubOverrideIterator =
-                MethodInfoMap.find(SubOverride);
-            if (SubOverrideIterator == MethodInfoMap.end())
-              break;
-            MethodInfo &SubOverrideMI = SubOverrideIterator->second;
-            assert(SubOverrideMI.Shadowed);
-            VTableThunks[SubOverrideMI.VFTableIndex].This =
-                ThisAdjustmentOffset;
-            AddThunk(MD, VTableThunks[SubOverrideMI.VFTableIndex]);
-          }
+      // In case we need a return adjustment, we'll add a new slot for
+      // the overrider and put a return-adjusting thunk where the overridden
+      // method was in the vftable.
+      // For now, just mark the overriden method as shadowed by a new slot.
+      OverriddenMethodInfo.Shadowed = true;
+      ForceThunk = true;
+
+      // Also apply this adjustment to the shadowed slots.
+      if (!ThisAdjustmentOffset.isEmpty()) {
+        // FIXME: this is O(N^2), can be O(N).
+        const CXXMethodDecl *SubOverride = OverriddenMD;
+        while ((SubOverride =
+                    FindNearestOverriddenMethod(SubOverride, VisitedBases))) {
+          MethodInfoMapTy::iterator SubOverrideIterator =
+              MethodInfoMap.find(SubOverride);
+          if (SubOverrideIterator == MethodInfoMap.end())
+            break;
+          MethodInfo &SubOverrideMI = SubOverrideIterator->second;
+          assert(SubOverrideMI.Shadowed);
+          VTableThunks[SubOverrideMI.VFTableIndex].This =
+              ThisAdjustmentOffset;
+          AddThunk(MD, VTableThunks[SubOverrideMI.VFTableIndex]);
         }
       }
     } else if (Base.getBaseOffset() != WhichVFPtr.VFPtrFullOffset ||
@@ -3051,6 +3068,8 @@ void VFTableBuilder::dumpLayout(raw_ostream &Out) {
     case VTableComponent::CK_FunctionPointer: {
       const CXXMethodDecl *MD = Component.getFunctionDecl();
 
+      // FIXME: Figure out how to print the real thunk type, since they can
+      // differ in the return type.
       std::string Str = PredefinedExpr::ComputeName(
           PredefinedExpr::PrettyFunctionNoVirtual, MD);
       Out << Str;

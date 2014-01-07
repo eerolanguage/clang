@@ -149,6 +149,7 @@ namespace {
     // These functions print the argument contents formatted in different ways.
     virtual void writeAccessors(raw_ostream &OS) const = 0;
     virtual void writeAccessorDefinitions(raw_ostream &OS) const {}
+    virtual void writeASTVisitorTraversal(raw_ostream &OS) const {}
     virtual void writeCloneArgs(raw_ostream &OS) const = 0;
     virtual void writeTemplateInstantiationArgs(raw_ostream &OS) const = 0;
     virtual void writeTemplateInstantiation(raw_ostream &OS) const {}
@@ -794,6 +795,12 @@ namespace {
       : SimpleArgument(Arg, Attr, "Expr *")
     {}
 
+    virtual void writeASTVisitorTraversal(raw_ostream &OS) const {
+      OS << "  if (!"
+         << "getDerived().TraverseStmt(A->get" << getUpperName() << "()))\n";
+      OS << "    return false;\n";
+    }
+
     void writeTemplateInstantiationArgs(raw_ostream &OS) const {
       OS << "tempInst" << getUpperName();
     }
@@ -825,6 +832,19 @@ namespace {
     VariadicExprArgument(Record &Arg, StringRef Attr)
       : VariadicArgument(Arg, Attr, "Expr *")
     {}
+
+    virtual void writeASTVisitorTraversal(raw_ostream &OS) const {
+      OS << "  {\n";
+      OS << "    " << getType() << " *I = A->" << getLowerName()
+         << "_begin();\n";
+      OS << "    " << getType() << " *E = A->" << getLowerName()
+         << "_end();\n";
+      OS << "    for (; I != E; ++I) {\n";
+      OS << "      if (!getDerived().TraverseStmt(*I))\n";
+      OS << "        return false;\n";
+      OS << "    }\n";
+      OS << "  }\n";
+    }
 
     void writeTemplateInstantiationArgs(raw_ostream &OS) const {
       OS << "tempInst" << getUpperName() << ", "
@@ -952,6 +972,29 @@ static void writeAvailabilityValue(raw_ostream &OS) {
      << "  if (!getObsoleted().empty()) OS << \", obsoleted=\" << getObsoleted();\n"
      << "  if (getUnavailable()) OS << \", unavailable\";\n"
      << "  OS << \"";
+}
+
+static void writeGetSpellingFunction(Record &R, raw_ostream &OS) {
+  std::vector<Record *> Spellings = R.getValueAsListOfDefs("Spellings");
+
+  OS << "const char *" << R.getName() << "Attr::getSpelling() const {\n";
+  if (Spellings.empty()) {
+    OS << "  return \"(No spelling)\";\n}\n\n";
+    return;
+  }
+
+  OS << "  switch (SpellingListIndex) {\n"
+        "  default:\n"
+        "    llvm_unreachable(\"Unknown attribute spelling!\");\n"
+        "    return \"(No spelling)\";\n";
+
+  for (unsigned I = 0; I < Spellings.size(); ++I)
+    OS << "  case " << I << ":\n"
+          "    return \"" << Spellings[I]->getValueAsString("Name") << "\";\n";
+  // End of the switch statement.
+  OS << "  }\n";
+  // End of the getSpelling function.
+  OS << "}\n\n";
 }
 
 static void writePrettyPrintFunction(Record &R, std::vector<Argument*> &Args,
@@ -1197,6 +1240,7 @@ void EmitClangAttrClass(RecordKeeper &Records, raw_ostream &OS) {
     OS << "  virtual " << R.getName() << "Attr *clone (ASTContext &C) const;\n";
     OS << "  virtual void printPretty(raw_ostream &OS,\n"
        << "                           const PrintingPolicy &Policy) const;\n";
+    OS << "  virtual const char *getSpelling() const;\n";
 
     writeAttrAccessorDefinition(R, OS);
 
@@ -1328,6 +1372,7 @@ void EmitClangAttrImpl(RecordKeeper &Records, raw_ostream &OS) {
     OS << ", getSpellingListIndex());\n}\n\n";
 
     writePrettyPrintFunction(R, Args, OS);
+    writeGetSpellingFunction(R, OS);
   }
 }
 
@@ -1542,6 +1587,85 @@ void EmitClangAttrSpellingListIndex(RecordKeeper &Records, raw_ostream &OS) {
   OS << "  }\n";
   OS << "  return 0;\n";
 }
+
+// Emits code used by RecursiveASTVisitor to visit attributes
+void EmitClangAttrASTVisitor(RecordKeeper &Records, raw_ostream &OS) {
+  emitSourceFileHeader("Used by RecursiveASTVisitor to visit attributes.", OS);
+
+  std::vector<Record*> Attrs = Records.getAllDerivedDefinitions("Attr");
+
+  // Write method declarations for Traverse* methods.
+  // We emit this here because we only generate methods for attributes that
+  // are declared as ASTNodes.
+  OS << "#ifdef ATTR_VISITOR_DECLS_ONLY\n\n";
+  for (std::vector<Record*>::iterator I = Attrs.begin(), E = Attrs.end();
+       I != E; ++I) {
+    Record &R = **I;
+    if (!R.getValueAsBit("ASTNode"))
+      continue;
+    OS << "  bool Traverse"
+       << R.getName() << "Attr(" << R.getName() << "Attr *A);\n";
+    OS << "  bool Visit"
+       << R.getName() << "Attr(" << R.getName() << "Attr *A) {\n"
+       << "    return true; \n"
+       << "  };\n";
+  }
+  OS << "\n#else // ATTR_VISITOR_DECLS_ONLY\n\n";
+
+  // Write individual Traverse* methods for each attribute class.
+  for (std::vector<Record*>::iterator I = Attrs.begin(), E = Attrs.end();
+       I != E; ++I) {
+    Record &R = **I;
+    if (!R.getValueAsBit("ASTNode"))
+      continue;
+
+    OS << "template <typename Derived>\n"
+       << "bool RecursiveASTVisitor<Derived>::Traverse"
+       << R.getName() << "Attr(" << R.getName() << "Attr *A) {\n"
+       << "  if (!getDerived().VisitAttr(A))\n"
+       << "    return false;\n"
+       << "  if (!getDerived().Visit" << R.getName() << "Attr(A))\n"
+       << "    return false;\n";
+
+    std::vector<Record*> ArgRecords = R.getValueAsListOfDefs("Args");
+    for (std::vector<Record*>::iterator ri = ArgRecords.begin(),
+                                        re = ArgRecords.end();
+         ri != re; ++ri) {
+      Record &ArgRecord = **ri;
+      Argument *Arg = createArgument(ArgRecord, R.getName());
+      assert(Arg);
+      Arg->writeASTVisitorTraversal(OS);
+    }
+
+    OS << "  return true;\n";
+    OS << "}\n\n";
+  }
+
+  // Write generic Traverse routine
+  OS << "template <typename Derived>\n"
+     << "bool RecursiveASTVisitor<Derived>::TraverseAttr(Attr *A) {\n"
+     << "  if (!A)\n"
+     << "    return true;\n"
+     << "\n"
+     << "  switch (A->getKind()) {\n"
+     << "    default:\n"
+     << "      return true;\n";
+
+  for (std::vector<Record*>::iterator I = Attrs.begin(), E = Attrs.end();
+       I != E; ++I) {
+    Record &R = **I;
+    if (!R.getValueAsBit("ASTNode"))
+      continue;
+
+    OS << "    case attr::" << R.getName() << ":\n"
+       << "      return getDerived().Traverse" << R.getName() << "Attr("
+       << "cast<" << R.getName() << "Attr>(A));\n";
+  }
+  OS << "  }\n";  // end case
+  OS << "}\n";  // end function
+  OS << "#endif  // ATTR_VISITOR_DECLS_ONLY\n";
+}
+
 
 // Emits the LateParsed property for attributes.
 void EmitClangAttrLateParsedList(RecordKeeper &Records, raw_ostream &OS) {

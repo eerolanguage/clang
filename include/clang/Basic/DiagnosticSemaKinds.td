@@ -30,6 +30,10 @@ def warn_duplicate_enum_values : Warning<
   "been assigned">, InGroup<DiagGroup<"duplicate-enum">>, DefaultIgnore;
 def note_duplicate_element : Note<"element %0 also has value %1">;
 
+def warn_infinite_recursive_function : Warning<
+  "all paths through this function will call itself">,
+  InGroup<InfiniteRecursion>, DefaultIgnore;
+
 // Constant expressions
 def err_expr_not_ice : Error<
   "expression is not an %select{integer|integral}0 constant expression">;
@@ -371,8 +375,6 @@ def warn_redecl_library_builtin : Warning<
   "incompatible redeclaration of library function %0">,
   InGroup<DiagGroup<"incompatible-library-redeclaration">>;
 def err_builtin_definition : Error<"definition of builtin function %0">;
-def err_types_compatible_p_in_cplusplus : Error<
-  "__builtin_types_compatible_p is not valid in C++">;
 def warn_builtin_unknown : Warning<"use of unknown builtin %0">,
   InGroup<ImplicitFunctionDeclare>, DefaultError;
 def warn_dyn_class_memaccess : Warning<
@@ -396,11 +398,18 @@ def warn_sizeof_pointer_type_memaccess : Warning<
   "%select{destination|source}2; expected %3 or an explicit length">,
   InGroup<SizeofPointerMemaccess>;
 def warn_strlcpycat_wrong_size : Warning<
-  "size argument in %0 call appears to be size of the source; expected the size of "
-  "the destination">,
+  "size argument in %0 call appears to be size of the source; "
+  "expected the size of the destination">,
   InGroup<DiagGroup<"strlcpy-strlcat-size">>;
 def note_strlcpycat_wrong_size : Note<
   "change size argument to be the size of the destination">;
+def warn_memsize_comparison : Warning<
+  "size argument in %0 call is a comparison">,
+  InGroup<DiagGroup<"memsize-comparison">>;
+def warn_memsize_comparison_paren_note : Note<
+  "did you mean to compare the result of %0 instead?">;
+def warn_memsize_comparison_cast_note : Note<
+  "explicitly cast the argument to size_t to silence this warning">;
   
 def warn_strncat_large_size : Warning<
   "the value of the size argument in 'strncat' is too large, might lead to a " 
@@ -1841,17 +1850,17 @@ def err_init_priority_object_attr : Error<
 def err_attribute_argument_vec_type_hint : Error<
   "invalid attribute argument %0 - expecting a vector or vectorizable scalar type">;
 def err_attribute_argument_out_of_bounds : Error<
-  "'%0' attribute parameter %1 is out of bounds">;
+  "%0 attribute parameter %1 is out of bounds">;
 def err_attribute_uuid_malformed_guid : Error<
   "uuid attribute contains a malformed GUID">;
-def warn_nonnull_pointers_only : Warning<
-  "nonnull attribute only applies to pointer arguments">;
-def err_attribute_pointers_only : Error<
-  "%0 attribute only applies to pointer arguments">;
+def warn_attribute_pointers_only : Warning<
+  "%0 attribute only applies to pointer arguments">,
+  InGroup<IgnoredAttributes>;
+def err_attribute_pointers_only : Error<warn_attribute_pointers_only.Text>;
 def err_attribute_no_member_pointers : Error<
   "%0 attribute cannot be used with pointers to members">;
 def err_attribute_invalid_implicit_this_argument : Error<
-  "'%0' attribute is invalid for the implicit this argument">;
+  "%0 attribute is invalid for the implicit this argument">;
 def err_ownership_type : Error<
   "%0 attribute only applies to %select{pointer|integer}1 arguments">;
 def err_format_strftime_third_parameter : Error<
@@ -1956,14 +1965,10 @@ def err_anonymous_property: Error<
   "anonymous property is not supported">;
 def err_property_is_variably_modified: Error<
   "property '%0' has a variably modified type">;
-def err_no_getter_for_property : Error<
-  "no getter defined for property '%0'">;
-def err_no_setter_for_property : Error<
-  "no setter defined for property '%0'">;
-def error_cannot_find_suitable_getter : Error<
-  "cannot find suitable getter for property '%0'">;
-def error_cannot_find_suitable_setter : Error<
-  "cannot find suitable setter for property '%0'">;
+def err_no_accessor_for_property : Error<
+  "no %select{getter|setter}0 defined for property '%1'">;
+def error_cannot_find_suitable_accessor : Error<
+  "cannot find suitable %select{getter|setter}0 for property '%1'">;
 
 def err_attribute_aligned_not_power_of_two : Error<
   "requested alignment is not a power of 2">;
@@ -2047,19 +2052,7 @@ def warn_attribute_wrong_decl_type : Warning<
   "variables, functions and classes|Objective-C protocols|"
   "functions and global variables}1">,
   InGroup<IgnoredAttributes>;
-def err_attribute_wrong_decl_type : Error<
-  "%0 attribute only applies to %select{functions|unions|"
-  "variables and functions|functions and methods|parameters|"
-  "functions, methods and blocks|functions, methods, and classes|"
-  "functions, methods, and parameters|classes|variables|methods|"
-  "variables, functions and labels|fields and global variables|structs|"
-  "variables, functions and tag types|thread-local variables|"
-  "variables and fields|variables, data members and tag types|"
-  "types and namespaces|Objective-C interfaces|methods and properties|"
-  "struct or union|struct, union or class|types|"
-  "Objective-C instance methods|init methods of interface declarations|"
-  "variables, functions and classes|Objective-C protocols|"
-  "functions and global variables}1">;
+def err_attribute_wrong_decl_type : Error<warn_attribute_wrong_decl_type.Text>;
 def warn_type_attribute_wrong_type : Warning<
   "'%0' only applies to %select{function|pointer|"
   "Objective-C object or block pointer}1 types; type here is %2">,
@@ -2143,7 +2136,7 @@ def warn_thread_attribute_decl_not_lockable : Warning<
   "with 'lockable' attribute">,
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
 def warn_thread_attribute_decl_not_pointer : Warning<
-  "'%0' only applies to pointer types; type here is %1">,
+  "%0 only applies to pointer types; type here is %1">,
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
 def err_attribute_argument_out_of_range : Error<
   "%0 attribute parameter %1 is out of bounds: "
@@ -2358,14 +2351,13 @@ def warn_attribute_protected_visibility :
   InGroup<DiagGroup<"unsupported-visibility">>;
 def err_mismatched_visibility: Error<"visibility does not match previous declaration">;
 def note_previous_attribute : Note<"previous attribute is here">;
-def err_unknown_machine_mode : Error<"unknown machine mode %0">;
-def err_unsupported_machine_mode : Error<"unsupported machine mode %0">;
+def err_machine_mode : Error<"%select{unknown|unsupported}0 machine mode %1">;
 def err_mode_not_primitive : Error<
   "mode attribute only supported for integer and floating-point types">;
 def err_mode_wrong_type : Error<
   "type of machine mode does not match type of base type">;
 def err_attr_wrong_decl : Error<
-  "'%0' attribute invalid on this declaration, requires typedef or value">;
+  "%0 attribute invalid on this declaration, requires typedef or value">;
 def warn_attribute_nonnull_no_pointers : Warning<
   "'nonnull' attribute applied to function with no pointer arguments">,
   InGroup<IgnoredAttributes>;
@@ -5761,7 +5753,6 @@ def err_incomplete_type_used_in_type_trait_expr : Error<
   
 def err_dimension_expr_not_constant_integer : Error<
   "dimension expression does not evaluate to a constant unsigned int">;
-def err_expected_ident_or_lparen : Error<"expected identifier or '('">;
 
 def err_typecheck_cond_incompatible_operands_null : Error<
   "non-pointer operand type %0 incompatible with %select{NULL|nullptr}1">;
@@ -6742,7 +6733,7 @@ def err_opencl_global_invalid_addr_space : Error<
   "global variables must have a constant address space qualifier">;
 def err_opencl_no_main : Error<"%select{function|kernel}0 cannot be called 'main'">;
 def err_opencl_kernel_attr :
-  Error<"attribute '%0' can only be applied to a kernel function">;
+  Error<"attribute %0 can only be applied to a kernel function">;
 } // end of sema category
 
 let CategoryName = "OpenMP Issue" in {

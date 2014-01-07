@@ -1188,7 +1188,7 @@ ExprResult Parser::ParseCXXCasts() {
   SourceLocation RAngleBracketLoc = Tok.getLocation();
 
   if (ExpectAndConsume(tok::greater, diag::err_expected_greater))
-    return ExprError(Diag(LAngleBracketLoc, diag::note_matching) << "<");
+    return ExprError(Diag(LAngleBracketLoc, diag::note_matching) << tok::less);
 
   SourceLocation LParenLoc, RParenLoc;
   BalancedDelimiterTracker T(*this, tok::l_paren);
@@ -2164,7 +2164,7 @@ bool Parser::ParseUnqualifiedIdOperator(CXXScopeSpec &SS, bool EnteringContext,
       SuffixLoc = ConsumeToken();
       TokLocs.push_back(SuffixLoc);
     } else {
-      Diag(Tok.getLocation(), diag::err_expected_ident);
+      Diag(Tok.getLocation(), diag::err_expected) << tok::identifier;
       return true;
     }
 

@@ -3031,6 +3031,10 @@ TEST_F(FormatTest, BreaksFunctionDeclarations) {
   verifyGoogleFormat(
       "SomeLoooooooooooooooooooooooooooooogType operator<<(\n"
       "    const SomeLooooooooogType &a, const SomeLooooooooogType &b);");
+  verifyFormat("void aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "    int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 1);");
+  verifyFormat("aaaaaaaaaaaaaaaaaaaaaa\n"
+               "aaaaaaaaaaaaaaaaaaaaaaaaa(int aaaaaaaaaaaaaaaaaaaaaaaa = 1);");
 }
 
 TEST_F(FormatTest, TrailingReturnType) {
@@ -6997,6 +7001,16 @@ TEST_F(FormatTest, AllmanBraceBreaking) {
                "}\n",
                BreakBeforeBrace);
 
+  BreakBeforeBrace.ColumnLimit = 19;
+  verifyFormat("void f() { int i; }", BreakBeforeBrace);
+  BreakBeforeBrace.ColumnLimit = 18;
+  verifyFormat("void f()\n"
+               "{\n"
+               "  int i;\n"
+               "}",
+               BreakBeforeBrace);
+  BreakBeforeBrace.ColumnLimit = 80;
+
   FormatStyle BreakBeforeBraceShortIfs = BreakBeforeBrace;
   BreakBeforeBraceShortIfs.AllowShortIfStatementsOnASingleLine = true;
   BreakBeforeBraceShortIfs.AllowShortLoopsOnASingleLine = true;
@@ -7419,25 +7433,27 @@ TEST_F(FormatTest, ParsesConfigurationWithLanguages) {
   EXPECT_EQ(FormatStyle::LK_Cpp, Style.Language);
 }
 
+#undef CHECK_PARSE
+#undef CHECK_PARSE_BOOL
+
 TEST_F(FormatTest, UsesLanguageForBasedOnStyle) {
   FormatStyle Style = {};
   Style.Language = FormatStyle::LK_JavaScript;
   Style.BreakBeforeTernaryOperators = true;
-  CHECK_PARSE("BasedOnStyle: Google", BreakBeforeTernaryOperators, false);
+  EXPECT_EQ(0, parseConfiguration("BasedOnStyle: Google", &Style).value());
+  EXPECT_FALSE(Style.BreakBeforeTernaryOperators);
+
   Style.BreakBeforeTernaryOperators = true;
-  CHECK_PARSE("---\n"
+  EXPECT_EQ(0, parseConfiguration("---\n"
               "BasedOnStyle: Google\n"
               "---\n"
               "Language: JavaScript\n"
               "IndentWidth: 76\n"
-              "...\n",
-              BreakBeforeTernaryOperators, false);
+              "...\n", &Style).value());
+  EXPECT_FALSE(Style.BreakBeforeTernaryOperators);
   EXPECT_EQ(76u, Style.IndentWidth);
   EXPECT_EQ(FormatStyle::LK_JavaScript, Style.Language);
 }
-
-#undef CHECK_PARSE
-#undef CHECK_PARSE_BOOL
 
 TEST_F(FormatTest, ConfigurationRoundTripTest) {
   FormatStyle Style = getLLVMStyle();
@@ -7716,16 +7732,26 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
                "    : aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
                "    , aaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaa, // break\n"
                "                               aaaaaaaaaaaaaa)\n"
-               "    , aaaaaaaaaaaaaaaaaaaaaaa() {}",
-               Style);
-  verifyFormat("SomeClass::Constructor()\n"
-               "    : a(a) {}",
+               "    , aaaaaaaaaaaaaaaaaaaaaaa()\n"
+               "{\n"
+               "}",
                Style);
   verifyFormat("SomeClass::Constructor()\n"
                "    : a(a)\n"
-               "    , b(b)\n"
-               "    , c(c) {}",
+               "{\n"
+               "}",
                Style);
+  EXPECT_EQ("SomeClass::Constructor()\n"
+            "    : a(a)\n"
+            "{\n"
+            "}",
+            format("SomeClass::Constructor():a(a){}", Style));
+  verifyFormat("SomeClass::Constructor()\n"
+               "    : a(a)\n"
+               "    , b(b)\n"
+               "    , c(c)\n"
+               "{\n"
+               "}", Style);
   verifyFormat("SomeClass::Constructor()\n"
                "    : a(a)\n"
                "{\n"
@@ -7816,6 +7842,49 @@ TEST_F(FormatTest, FormatsBlocks) {
   verifyFormat("[operation setCompletionBlock:^{ [self onOperationDone]; }];");
   verifyFormat("int i = {[operation setCompletionBlock : ^{ [self "
                "onOperationDone]; }] };");
+  verifyFormat("[operation setCompletionBlock:^(int *i) { f(); }];");
+
+  verifyFormat("[operation setCompletionBlock:^{\n"
+               "    [self.delegate newDataAvailable];\n"
+               "}];",
+               getLLVMStyleWithColumns(60));
+  verifyFormat("dispatch_async(_fileIOQueue, ^{\n"
+               "    NSString *path = [self sessionFilePath];\n"
+               "    if (path) {\n"
+               "      // ...\n"
+               "    }\n"
+               "});");
+  verifyFormat("[[SessionService sharedService]\n"
+               "    loadWindowWithCompletionBlock:^(SessionWindow *window) {\n"
+               "        if (window) {\n"
+               "          [self windowDidLoad:window];\n"
+               "        } else {\n"
+               "          [self errorLoadingWindow];\n"
+               "        }\n"
+               "    }];");
+  verifyFormat("void (^largeBlock)(void) = ^{\n"
+               "    // ...\n"
+               "};\n",
+               getLLVMStyleWithColumns(40));
+  verifyFormat("[[SessionService sharedService]\n"
+               "    loadWindowWithCompletionBlock: //\n"
+               "        ^(SessionWindow *window) {\n"
+               "            if (window) {\n"
+               "              [self windowDidLoad:window];\n"
+               "            } else {\n"
+               "              [self errorLoadingWindow];\n"
+               "            }\n"
+               "        }];",
+               getLLVMStyleWithColumns(60));
+  verifyFormat("[myObject doSomethingWith:arg1\n"
+               "    firstBlock:^(Foo *a) {\n"
+               "        // ...\n"
+               "        int i;\n"
+               "    }\n"
+               "    secondBlock:^(Bar *b) {\n"
+               "        // ...\n"
+               "        int i;\n"
+               "    }];");
 }
 
 TEST_F(FormatTest, SupportsCRLF) {

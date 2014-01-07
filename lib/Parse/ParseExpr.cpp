@@ -306,7 +306,7 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
         
         Diag(Tok, diag::err_expected_colon)
           << FixItHint::CreateInsertion(FILoc, FIText);
-        Diag(OpToken, diag::note_matching) << "?";
+        Diag(OpToken, diag::note_matching) << tok::question;
         ColonLoc = Tok.getLocation();
       }
     }
@@ -991,7 +991,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::ampamp: {      // unary-expression: '&&' identifier
     SourceLocation AmpAmpLoc = ConsumeToken();
     if (Tok.isNot(tok::identifier))
-      return ExprError(Diag(Tok, diag::err_expected_ident));
+      return ExprError(Diag(Tok, diag::err_expected) << tok::identifier);
 
     if (getCurScope()->getFnParent() == 0)
       return ExprError(Diag(Tok, diag::err_address_of_label_outside_fn));
@@ -1410,8 +1410,8 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           SkipUntil(tok::greatergreatergreater, StopAtSemi);
         } else {
           // There was an error closing the brackets
-          Diag(Tok, diag::err_expected_ggg);
-          Diag(OpenLoc, diag::note_matching) << "<<<";
+          Diag(Tok, diag::err_expected) << tok::greatergreatergreater;
+          Diag(OpenLoc, diag::note_matching) << tok::lesslessless;
           SkipUntil(tok::greatergreatergreater, StopAtSemi);
           LHS = ExprError();
         }
@@ -1688,7 +1688,8 @@ Parser::ParseExprAfterUnaryExprOrTypeTrait(const Token &OpTok,
 
     isCastExpr = false;
     if (OpTok.is(tok::kw_typeof) && !getLangOpts().CPlusPlus) {
-      Diag(Tok,diag::err_expected_lparen_after_id) << OpTok.getIdentifierInfo();
+      Diag(Tok, diag::err_expected_after) << OpTok.getIdentifierInfo()
+                                          << tok::l_paren;
       return ExprError();
     }
 
@@ -1860,8 +1861,8 @@ ExprResult Parser::ParseBuiltinPrimaryExpression() {
 
   // All of these start with an open paren.
   if (Tok.isNot(tok::l_paren))
-    return ExprError(Diag(Tok, diag::err_expected_lparen_after_id)
-                       << BuiltinII);
+    return ExprError(Diag(Tok, diag::err_expected_after) << BuiltinII
+                                                         << tok::l_paren);
 
   BalancedDelimiterTracker PT(*this, tok::l_paren);
   PT.consumeOpen();
@@ -1879,7 +1880,7 @@ ExprResult Parser::ParseBuiltinPrimaryExpression() {
     TypeResult Ty = ParseTypeName();
 
     if (Tok.isNot(tok::r_paren)) {
-      Diag(Tok, diag::err_expected_rparen);
+      Diag(Tok, diag::err_expected) << tok::r_paren;
       Expr = ExprError();
     }
 
@@ -1902,7 +1903,7 @@ ExprResult Parser::ParseBuiltinPrimaryExpression() {
 
     // We must have at least one identifier here.
     if (Tok.isNot(tok::identifier)) {
-      Diag(Tok, diag::err_expected_ident);
+      Diag(Tok, diag::err_expected) << tok::identifier;
       SkipUntil(tok::r_paren, StopAtSemi);
       return ExprError();
     }
@@ -1924,7 +1925,7 @@ ExprResult Parser::ParseBuiltinPrimaryExpression() {
         Comps.back().LocStart = ConsumeToken();
 
         if (Tok.isNot(tok::identifier)) {
-          Diag(Tok, diag::err_expected_ident);
+          Diag(Tok, diag::err_expected) << tok::identifier;
           SkipUntil(tok::r_paren, StopAtSemi);
           return ExprError();
         }
@@ -1990,7 +1991,7 @@ ExprResult Parser::ParseBuiltinPrimaryExpression() {
       return Expr2;
     }
     if (Tok.isNot(tok::r_paren)) {
-      Diag(Tok, diag::err_expected_rparen);
+      Diag(Tok, diag::err_expected) << tok::r_paren;
       return ExprError();
     }
     Res = Actions.ActOnChooseExpr(StartLoc, Cond.take(), Expr1.take(),
@@ -2016,7 +2017,7 @@ ExprResult Parser::ParseBuiltinPrimaryExpression() {
     
     // Attempt to consume the r-paren.
     if (Tok.isNot(tok::r_paren)) {
-      Diag(Tok, diag::err_expected_rparen);
+      Diag(Tok, diag::err_expected) << tok::r_paren;
       SkipUntil(tok::r_paren, StopAtSemi);
       return ExprError();
     }
@@ -2044,7 +2045,7 @@ ExprResult Parser::ParseBuiltinPrimaryExpression() {
     
     // Attempt to consume the r-paren.
     if (Tok.isNot(tok::r_paren)) {
-      Diag(Tok, diag::err_expected_rparen);
+      Diag(Tok, diag::err_expected) << tok::r_paren;
       SkipUntil(tok::r_paren, StopAtSemi);
       return ExprError();
     }
