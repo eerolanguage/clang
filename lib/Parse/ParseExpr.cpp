@@ -2726,7 +2726,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
         Stmt = Actions.ActOnExprStmt(Res);
     }
     // Handle ^(int x | return x) closing paren
-    ExpectAndConsume(tok::r_paren, diag::err_expected_rparen, "");
+    ExpectAndConsume(tok::r_paren);
 
     if (!Stmt.isInvalid()) {     // make into a compound statement needed
       StmtVector Stmts; // by ActOnBlockStmtExpr)

@@ -1625,12 +1625,16 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
   else if (Actions.GetTypeFromParser(ReturnType)->isVoidType())
     FnBody = StmtResult(MessageExpr.take());
   else
-    FnBody = Actions.ActOnReturnStmt(mLoc, MessageExpr.take());
+    FnBody = Actions.ActOnReturnStmt(SourceLocation(), MessageExpr.take());
 
-  // If the function body could not built, make a bogus compoundstmt.
-  if (FnBody.isInvalid())
-      FnBody = Actions.ActOnCompoundStmt(mLoc, mLoc,
-                                         MultiStmtArg(), false);
+  {
+    Sema::CompoundScopeRAII CompoundScope(Actions);
+    StmtVector Stmts;
+    if (!FnBody.isInvalid())
+      Stmts.push_back(FnBody.release());
+    FnBody = Actions.ActOnCompoundStmt(mLoc, mLoc, Stmts, false);
+  }
+
   // Leave the function body scope.
   BodyScope.Exit();
 
