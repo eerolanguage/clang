@@ -406,12 +406,11 @@ Retry:
   }
 
   // If we reached this code, the statement must end in a semicolon.
-  if (Tok.is(tok::semi)) {
-    ConsumeToken();
-  } else if (getLangOpts().OptionalSemicolons && 
-             !PP.isInLegacyMode(Tok.getLocation())) {
-    // do nothing here, since semicolons are optional
-  } else if (!Res.isInvalid()) {
+  if (!TryConsumeToken(tok::semi) && !Res.isInvalid()) {
+    if (getLangOpts().OptionalSemicolons &&
+        !PP.isInLegacyMode(Tok.getLocation())) {
+      return Res;
+    }
     // If the result was valid, then we do want to diagnose this.  Use
     // ExpectAndConsume to emit the diagnostic, even though we know it won't
     // succeed.
@@ -702,8 +701,8 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
     if (TryConsumeToken(tok::colon, ColonLoc)) {
     } else if (isEero) { // colons are optional
       ColonLoc = PrevTokLocation;
-    // Treat "case blah;" as a typo for "case blah:".
     } else if (TryConsumeToken(tok::semi, ColonLoc)) {
+      // Treat "case blah;" as a typo for "case blah:".
       Diag(ColonLoc, diag::err_expected_after)
           << "'case'" << tok::colon
           << FixItHint::CreateReplacement(ColonLoc, ":");
@@ -792,8 +791,8 @@ StmtResult Parser::ParseDefaultStatement() {
   if (TryConsumeToken(tok::colon, ColonLoc)) {
   } else if (isEero) { // colons are optional
     ColonLoc = PrevTokLocation;
-  // Treat "default;" as a typo for "default:".
   } else if (TryConsumeToken(tok::semi, ColonLoc)) {
+    // Treat "default;" as a typo for "default:".
     Diag(ColonLoc, diag::err_expected_after)
         << "'default'" << tok::colon
         << FixItHint::CreateReplacement(ColonLoc, ":");
@@ -2730,8 +2729,8 @@ StmtResult Parser::ParseAsmStatement(bool &msAsm) {
 
         Clobbers.push_back(Clobber.release());
 
-        if (Tok.isNot(tok::comma)) break;
-        ConsumeToken();
+        if (!TryConsumeToken(tok::comma))
+          break;
       }
     }
   }
@@ -2807,8 +2806,8 @@ bool Parser::ParseAsmOperandsOpt(SmallVectorImpl<IdentifierInfo *> &Names,
     }
     Exprs.push_back(Res.release());
     // Eat the comma and continue parsing if it exists.
-    if (Tok.isNot(tok::comma)) return false;
-    ConsumeToken();
+    if (!TryConsumeToken(tok::comma))
+      return false;
   }
 }
 

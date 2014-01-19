@@ -90,7 +90,6 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
                              VersionTuple &PlatformMinVersion) {
   Builder.defineMacro("__APPLE_CC__", "6000");
   Builder.defineMacro("__APPLE__");
-  Builder.defineMacro("__MACH__");
   Builder.defineMacro("OBJC_NEW_PROPERTIES");
   // AddressSanitizer doesn't play well with source fortification, which is on
   // by default on Darwin.
@@ -154,7 +153,7 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
       Str[5] = '\0';
       Builder.defineMacro("__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__",
                           Str);
-    } else {
+    } else if (Triple.isMacOSX()) {
       // Note that the Driver allows versions which aren't representable in the
       // define (because we only get a single digit for the minor and micro
       // revision numbers). So, we limit them to the maximum representable
@@ -170,6 +169,10 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
       Builder.defineMacro("__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__", Str);
     }
   }
+
+  // Tell users about the kernel if there is one.
+  if (Triple.isOSDarwin())
+    Builder.defineMacro("__MACH__");
 
   PlatformMinVersion = VersionTuple(Maj, Min, Rev);
 }
@@ -619,6 +622,8 @@ public:
     this->DoubleAlign = 64;
     this->LongDoubleWidth = 64;
     this->LongDoubleAlign = 64;
+    this->LongLongWidth = 64;
+    this->LongLongAlign = 64;
     this->SizeType = TargetInfo::UnsignedInt;
     this->PtrDiffType = TargetInfo::SignedInt;
     this->IntPtrType = TargetInfo::SignedInt;
@@ -3027,7 +3032,7 @@ public:
     TLSSupported = false;
     WCharType = UnsignedShort;
     DoubleAlign = LongLongAlign = 64;
-    DescriptionString = "e-m:c-p:32:32-i64:64-f80:32-n8:16:32-S32";
+    DescriptionString = "e-m:w-p:32:32-i64:64-f80:32-n8:16:32-S32";
   }
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const {
@@ -3094,7 +3099,7 @@ public:
     TLSSupported = false;
     WCharType = UnsignedShort;
     DoubleAlign = LongLongAlign = 64;
-    DescriptionString = "e-m:c-p:32:32-i64:64-f80:32-n8:16:32-S32";
+    DescriptionString = "e-m:w-p:32:32-i64:64-f80:32-n8:16:32-S32";
   }
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const {
@@ -3921,10 +3926,9 @@ public:
       .Cases("arm1176jz-s", "arm1176jzf-s", "6ZK")
       .Cases("arm1136jf-s", "mpcorenovfp", "mpcore", "6K")
       .Cases("arm1156t2-s", "arm1156t2f-s", "6T2")
-      .Cases("cortex-a5", "cortex-a7", "cortex-a8", "7A")
+      .Cases("cortex-a5", "cortex-a7", "cortex-a8", "cortex-a9-mp", "7A")
       .Cases("cortex-a9", "cortex-a12", "cortex-a15", "krait", "7A")
       .Cases("cortex-r4", "cortex-r5", "7R")
-      .Case("cortex-a9-mp", "7F")
       .Case("swift", "7S")
       .Cases("cortex-m3", "cortex-m4", "7M")
       .Case("cortex-m0", "6M")
@@ -4528,6 +4532,12 @@ public:
       UIntMaxType = UnsignedLong;
     }
     Int64Type = IntMaxType;
+
+    // The SPARCv8 System V ABI has long double 128-bits in size, but 64-bit
+    // aligned. The SPARCv9 SCD 2.4.1 says 16-byte aligned.
+    LongDoubleWidth = 128;
+    LongDoubleAlign = 128;
+    LongDoubleFormat = &llvm::APFloat::IEEEquad;
   }
 
   virtual void getTargetDefines(const LangOptions &Opts,
@@ -5526,13 +5536,15 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
     switch (os) {
     case llvm::Triple::Linux:
       return new LinuxTargetInfo<AArch64TargetInfo>(Triple);
+    case llvm::Triple::NetBSD:
+      return new NetBSDTargetInfo<AArch64TargetInfo>(Triple);
     default:
       return new AArch64TargetInfo(Triple);
     }
 
   case llvm::Triple::arm:
   case llvm::Triple::thumb:
-    if (Triple.isOSDarwin())
+    if (Triple.isOSBinFormatMachO())
       return new DarwinARMTargetInfo(Triple);
 
     switch (os) {
@@ -5836,12 +5848,6 @@ TargetInfo *TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
   // Set the target ABI if specified.
   if (!Opts->ABI.empty() && !Target->setABI(Opts->ABI)) {
     Diags.Report(diag::err_target_unknown_abi) << Opts->ABI;
-    return 0;
-  }
-
-  // Set the target C++ ABI.
-  if (!Opts->CXXABI.empty() && !Target->setCXXABI(Opts->CXXABI)) {
-    Diags.Report(diag::err_target_unknown_cxxabi) << Opts->CXXABI;
     return 0;
   }
 

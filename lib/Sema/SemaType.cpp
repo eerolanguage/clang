@@ -22,7 +22,6 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/TypeLocVisitor.h"
-#include "clang/Basic/OpenCL.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
@@ -728,13 +727,15 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
       Result = Context.WCharTy;
     else if (DS.getTypeSpecSign() == DeclSpec::TSS_signed) {
       S.Diag(DS.getTypeSpecSignLoc(), diag::ext_invalid_sign_spec)
-        << DS.getSpecifierName(DS.getTypeSpecType());
+        << DS.getSpecifierName(DS.getTypeSpecType(),
+                               Context.getPrintingPolicy());
       Result = Context.getSignedWCharType();
     } else {
       assert(DS.getTypeSpecSign() == DeclSpec::TSS_unsigned &&
         "Unknown TSS value");
       S.Diag(DS.getTypeSpecSignLoc(), diag::ext_invalid_sign_spec)
-        << DS.getSpecifierName(DS.getTypeSpecType());
+        << DS.getSpecifierName(DS.getTypeSpecType(),
+                               Context.getPrintingPolicy());
       Result = Context.getUnsignedWCharType();
     }
     break;
@@ -1760,35 +1761,6 @@ QualType Sema::BuildMemberPointerType(QualType T, QualType Class,
   if (!Class->isDependentType() && !Class->isRecordType()) {
     Diag(Loc, diag::err_mempointer_in_nonclass_type) << Class;
     return QualType();
-  }
-
-  // C++ allows the class type in a member pointer to be an incomplete type.
-  // In the Microsoft ABI, the size of the member pointer can vary
-  // according to the class type, which means that we really need a
-  // complete type if possible, which means we need to instantiate templates.
-  //
-  // If template instantiation fails or the type is just incomplete, we have to
-  // add an extra slot to the member pointer.  Yes, this does cause problems
-  // when passing pointers between TUs that disagree about the size.
-  if (Context.getTargetInfo().getCXXABI().isMicrosoft()) {
-    CXXRecordDecl *RD = Class->getAsCXXRecordDecl();
-    if (RD && !RD->hasAttr<MSInheritanceAttr>()) {
-      // Lock in the inheritance model on the first use of a member pointer.
-      // Otherwise we may disagree about the size at different points in the TU.
-      // FIXME: MSVC picks a model on the first use that needs to know the size,
-      // rather than on the first mention of the type, e.g. typedefs.
-      if (RequireCompleteType(Loc, Class, 0) && !RD->isBeingDefined()) {
-        // We know it doesn't have an attribute and it's incomplete, so use the
-        // unspecified inheritance model.  If we're in the record body, we can
-        // figure out the inheritance model.
-        for (CXXRecordDecl::redecl_iterator I = RD->redecls_begin(),
-             E = RD->redecls_end(); I != E; ++I) {
-          I->addAttr(::new (Context) MSInheritanceAttr(RD->getSourceRange(),
-                                                       Context,
-                                 MSInheritanceAttr::UnspecifiedSpellingIndex));
-        }
-      }
-    }
   }
 
   // Adjust the default free function calling convention to the default method
@@ -3923,44 +3895,60 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
     return;
   }
 
-  // Check the attribute arguments.
-  if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 1;
-    Attr.setInvalid();
-    return;
-  }
-  Expr *ASArgExpr = static_cast<Expr *>(Attr.getArgAsExpr(0));
-  llvm::APSInt addrSpace(32);
-  if (ASArgExpr->isTypeDependent() || ASArgExpr->isValueDependent() ||
-      !ASArgExpr->isIntegerConstantExpr(addrSpace, S.Context)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
-      << Attr.getName() << AANT_ArgumentIntegerConstant
-      << ASArgExpr->getSourceRange();
-    Attr.setInvalid();
-    return;
-  }
-
-  // Bounds checking.
-  if (addrSpace.isSigned()) {
-    if (addrSpace.isNegative()) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_address_space_negative)
+  unsigned ASIdx;
+  if (Attr.getKind() == AttributeList::AT_AddressSpace) {
+    // Check the attribute arguments.
+    if (Attr.getNumArgs() != 1) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+        << Attr.getName() << 1;
+      Attr.setInvalid();
+      return;
+    }
+    Expr *ASArgExpr = static_cast<Expr *>(Attr.getArgAsExpr(0));
+    llvm::APSInt addrSpace(32);
+    if (ASArgExpr->isTypeDependent() || ASArgExpr->isValueDependent() ||
+        !ASArgExpr->isIntegerConstantExpr(addrSpace, S.Context)) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
+        << Attr.getName() << AANT_ArgumentIntegerConstant
         << ASArgExpr->getSourceRange();
       Attr.setInvalid();
       return;
     }
-    addrSpace.setIsSigned(false);
-  }
-  llvm::APSInt max(addrSpace.getBitWidth());
-  max = Qualifiers::MaxAddressSpace;
-  if (addrSpace > max) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_address_space_too_high)
-      << int(Qualifiers::MaxAddressSpace) << ASArgExpr->getSourceRange();
-    Attr.setInvalid();
-    return;
-  }
 
-  unsigned ASIdx = static_cast<unsigned>(addrSpace.getZExtValue());
+    // Bounds checking.
+    if (addrSpace.isSigned()) {
+      if (addrSpace.isNegative()) {
+        S.Diag(Attr.getLoc(), diag::err_attribute_address_space_negative)
+          << ASArgExpr->getSourceRange();
+        Attr.setInvalid();
+        return;
+      }
+      addrSpace.setIsSigned(false);
+    }
+    llvm::APSInt max(addrSpace.getBitWidth());
+    max = Qualifiers::MaxAddressSpace;
+    if (addrSpace > max) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_address_space_too_high)
+        << int(Qualifiers::MaxAddressSpace) << ASArgExpr->getSourceRange();
+      Attr.setInvalid();
+      return;
+    }
+    ASIdx = static_cast<unsigned>(addrSpace.getZExtValue());
+  } else {
+    // The keyword-based type attributes imply which address space to use.
+    switch (Attr.getKind()) {
+    case AttributeList::AT_OpenCLGlobalAddressSpace:
+      ASIdx = LangAS::opencl_global; break;
+    case AttributeList::AT_OpenCLLocalAddressSpace:
+      ASIdx = LangAS::opencl_local; break;
+    case AttributeList::AT_OpenCLConstantAddressSpace:
+      ASIdx = LangAS::opencl_constant; break;
+    default:
+      assert(Attr.getKind() == AttributeList::AT_OpenCLPrivateAddressSpace);
+      ASIdx = 0; break;
+    }
+  }
+  
   Type = S.Context.getAddrSpaceQualType(Type, ASIdx);
 }
 
@@ -4607,43 +4595,6 @@ void Sema::adjustMemberFunctionCC(QualType &T, bool IsStatic) {
   T = Context.getAdjustedType(T, Wrapped);
 }
 
-/// Handle OpenCL image access qualifiers: read_only, write_only, read_write
-static void HandleOpenCLImageAccessAttribute(QualType& CurType,
-                                             const AttributeList &Attr,
-                                             Sema &S) {
-  // Check the attribute arguments.
-  if (Attr.getNumArgs() != 1) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
-      << Attr.getName() << 1;
-    Attr.setInvalid();
-    return;
-  }
-  Expr *sizeExpr = static_cast<Expr *>(Attr.getArgAsExpr(0));
-  llvm::APSInt arg(32);
-  if (sizeExpr->isTypeDependent() || sizeExpr->isValueDependent() ||
-      !sizeExpr->isIntegerConstantExpr(arg, S.Context)) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_argument_type)
-      << Attr.getName() << AANT_ArgumentIntegerConstant
-      << sizeExpr->getSourceRange();
-    Attr.setInvalid();
-    return;
-  }
-  unsigned iarg = static_cast<unsigned>(arg.getZExtValue());
-  switch (iarg) {
-  case CLIA_read_only:
-  case CLIA_write_only:
-  case CLIA_read_write:
-    // Implemented in a separate patch
-    break;
-  default:
-    // Implemented in a separate patch
-    S.Diag(Attr.getLoc(), diag::err_attribute_invalid_size)
-      << sizeExpr->getSourceRange();
-    Attr.setInvalid();
-    break;
-  }
-}
-
 /// HandleVectorSizeAttribute - this attribute is only applicable to integral
 /// and float scalars, although arrays, pointers, and function return values are
 /// allowed in conjunction with this construct. Aggregates with this attribute
@@ -4757,6 +4708,7 @@ static bool isPermittedNeonBaseType(QualType &Ty,
       // AArch64 polynomial vectors are unsigned and support poly64.
       return BTy->getKind() == BuiltinType::UChar ||
              BTy->getKind() == BuiltinType::UShort ||
+             BTy->getKind() == BuiltinType::ULong ||
              BTy->getKind() == BuiltinType::ULongLong;
     } else {
       // AArch32 polynomial vector are signed.
@@ -4776,6 +4728,8 @@ static bool isPermittedNeonBaseType(QualType &Ty,
          BTy->getKind() == BuiltinType::UShort ||
          BTy->getKind() == BuiltinType::Int ||
          BTy->getKind() == BuiltinType::UInt ||
+         BTy->getKind() == BuiltinType::Long ||
+         BTy->getKind() == BuiltinType::ULong ||
          BTy->getKind() == BuiltinType::LongLong ||
          BTy->getKind() == BuiltinType::ULongLong ||
          BTy->getKind() == BuiltinType::Float ||
@@ -4900,6 +4854,10 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       // it it breaks large amounts of Linux software.
       attr.setUsedAsTypeAttr();
       break;
+    case AttributeList::AT_OpenCLPrivateAddressSpace:
+    case AttributeList::AT_OpenCLGlobalAddressSpace:
+    case AttributeList::AT_OpenCLLocalAddressSpace:
+    case AttributeList::AT_OpenCLConstantAddressSpace:
     case AttributeList::AT_AddressSpace:
       HandleAddressSpaceTypeAttribute(type, attr, state.getSema());
       attr.setUsedAsTypeAttr();
@@ -4928,7 +4886,8 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       attr.setUsedAsTypeAttr();
       break;
     case AttributeList::AT_OpenCLImageAccess:
-      HandleOpenCLImageAccessAttribute(type, attr, state.getSema());
+      // FIXME: there should be some type checking happening here, I would
+      // imagine, but the original handler's checking was entirely superfluous.
       attr.setUsedAsTypeAttr();
       break;
 
@@ -5115,6 +5074,18 @@ bool Sema::RequireCompleteTypeImpl(SourceLocation Loc, QualType T,
       if (!isSFINAEContext()) {
         // Recover by implicitly importing this module.
         createImplicitModuleImport(Loc, Owner);
+      }
+    }
+
+    // We lock in the inheritance model once somebody has asked us to ensure
+    // that a pointer-to-member type is complete.
+    if (Context.getTargetInfo().getCXXABI().isMicrosoft()) {
+      if (const MemberPointerType *MPTy = T->getAs<MemberPointerType>()) {
+        if (!MPTy->getClass()->isDependentType()) {
+          RequireCompleteType(Loc, QualType(MPTy->getClass(), 0), 0);
+
+          MPTy->getMostRecentCXXRecordDecl()->setMSInheritanceModel();
+        }
       }
     }
 

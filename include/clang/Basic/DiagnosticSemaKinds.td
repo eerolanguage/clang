@@ -711,8 +711,8 @@ def note_atomic_property_fixup_suggest : Note<"setter and getter must both be "
 def err_atomic_property_nontrivial_assign_op : Error<
   "atomic property of reference type %0 cannot have non-trivial assignment"
   " operator">;
-def warn_owning_getter_rule : Warning<
-  "property's synthesized getter follows Cocoa naming"
+def warn_cocoa_naming_owned_rule : Warning<
+  "property follows Cocoa naming"
   " convention for returning 'owned' objects">,
   InGroup<DiagGroup<"objc-property-matches-cocoa-ownership-rule">>;
 def warn_auto_synthesizing_protocol_property :Warning<
@@ -741,8 +741,8 @@ def warn_property_getter_owning_mismatch : Warning<
 def error_property_setter_ambiguous_use : Error<
   "synthesized properties %0 and %1 both claim setter %2 -"
   " use of this setter will cause unexpected behavior">;
-def err_ownin_getter_rule : Error<
-  "property's synthesized getter follows Cocoa naming"
+def err_cocoa_naming_owned_rule : Error<
+  "property follows Cocoa naming"
   " convention for returning 'owned' objects">;
 def warn_default_atomic_custom_getter_setter : Warning<
   "atomic by default property %0 has a user defined %select{getter|setter}1 "
@@ -863,9 +863,8 @@ def warn_auto_implicit_atomic_property : Warning<
   "property is assumed atomic when auto-synthesizing the property">,
   InGroup<ImplicitAtomic>, DefaultIgnore;
 def warn_unimplemented_selector:  Warning<
-  "creating selector for nonexistent method %0">, InGroup<Selector>, DefaultIgnore;
-def warning_multiple_selectors: Warning<
-  "multiple selectors named %0 found">, InGroup<SelectorTypeMismatch>, DefaultIgnore;
+  "no method with selector %0 is implemented in this translation unit">, 
+  InGroup<Selector>, DefaultIgnore;
 def warn_unimplemented_protocol_method : Warning<
   "method %0 in protocol %1 not implemented">, InGroup<Protocol>;
 
@@ -1747,6 +1746,8 @@ def err_constexpr_local_var_no_init : Error<
 def ext_constexpr_function_never_constant_expr : ExtWarn<
   "constexpr %select{function|constructor}0 never produces a "
   "constant expression">, InGroup<DiagGroup<"invalid-constexpr">>, DefaultError;
+def err_enable_if_never_constant_expr : Error<
+  "'enable_if' attribute expression never produces a constant expression">;
 def err_constexpr_body_no_return : Error<
   "no return statement in constexpr function">;
 def warn_cxx11_compat_constexpr_body_no_return : Warning<
@@ -2596,6 +2597,8 @@ def note_ovl_candidate_substitution_failure : Note<
     "candidate template ignored: substitution failure%0%1">;
 def note_ovl_candidate_disabled_by_enable_if : Note<
     "candidate template ignored: disabled by %0%1">;
+def note_ovl_candidate_disabled_by_enable_if_attr : Note<
+    "candidate disabled: %0">;
 def note_ovl_candidate_failed_overload_resolution : Note<
     "candidate template ignored: couldn't resolve reference to overloaded "
     "function %0">;
@@ -3422,6 +3425,8 @@ def note_template_declared_here : Note<
   "%select{function template|class template|variable template"
   "|type alias template|template template parameter}0 "
   "%1 declared here">;
+def err_alias_template_expansion_into_fixed_list : Error<
+  "pack expansion used as argument for non-pack parameter of alias template">;
 def note_parameter_type : Note<
   "parameter of type %0 is declared here">;
 
@@ -3978,8 +3983,8 @@ def err_flexible_array_virtual_base : Error<
 def err_flexible_array_empty_aggregate : Error<
   "flexible array member %0 not allowed in otherwise empty "
   "%select{struct|interface|union|class|enum}1">;
-def err_flexible_array_has_nonpod_type : Error<
-  "flexible array member %0 of non-POD element type %1">;
+def err_flexible_array_has_nontrivial_dtor : Error<
+  "flexible array member %0 of type %1 with non-trivial destruction">;
 def ext_flexible_array_in_struct : Extension<
   "%0 may not be nested in a struct due to flexible array member">,
   InGroup<FlexibleArrayExtensions>;

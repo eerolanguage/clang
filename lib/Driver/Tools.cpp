@@ -475,7 +475,7 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
   case llvm::Triple::arm:
   case llvm::Triple::ppc:
   case llvm::Triple::ppc64:
-    if (Triple.isOSDarwin())
+    if (Triple.isOSBinFormatMachO())
       return true;
     return false;
 
@@ -746,10 +746,11 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
   const char *ABIName = 0;
   if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ)) {
     ABIName = A->getValue();
-  } else if (Triple.isOSDarwin()) {
+  } else if (Triple.isOSBinFormatMachO()) {
     // The backend is hardwired to assume AAPCS for M-class processors, ensure
     // the frontend matches that.
     if (Triple.getEnvironment() == llvm::Triple::EABI ||
+        Triple.getEnvironment() == llvm::Triple::MachO ||
         StringRef(CPUName).startswith("cortex-m")) {
       ABIName = "aapcs";
     } else {
@@ -1191,7 +1192,7 @@ static const char *getX86TargetCPU(const ArgList &Args,
                                    const llvm::Triple &Triple) {
   if (const Arg *A = Args.getLastArg(options::OPT_march_EQ)) {
     if (StringRef(A->getValue()) != "native") {
-      if (Triple.isOSDarwin() && Triple.getArchName() == "x86_64h")
+      if (Triple.isOSBinFormatMachO() && Triple.getArchName() == "x86_64h")
         return "core-avx2";
 
       return A->getValue();
@@ -1216,7 +1217,7 @@ static const char *getX86TargetCPU(const ArgList &Args,
   bool Is64Bit = Triple.getArch() == llvm::Triple::x86_64;
 
   // FIXME: Need target hooks.
-  if (Triple.isOSDarwin()) {
+  if (Triple.isOSBinFormatMachO()) {
     if (Triple.getArchName() == "x86_64h")
       return "core-avx2";
     return Is64Bit ? "core2" : "yonah";
@@ -2558,7 +2559,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       // -gline-tables-only.
       CmdArgs.push_back("-gline-tables-only");
       // Default is dwarf-2 for darwin.
-      if (getToolChain().getTriple().isOSDarwin())
+      if (getToolChain().getTriple().isOSBinFormatMachO())
         CmdArgs.push_back("-gdwarf-2");
     } else if (A->getOption().matches(options::OPT_gdwarf_2))
       CmdArgs.push_back("-gdwarf-2");
@@ -2569,7 +2570,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     else if (!A->getOption().matches(options::OPT_g0) &&
              !A->getOption().matches(options::OPT_ggdb0)) {
       // Default is dwarf-2 for darwin.
-      if (getToolChain().getTriple().isOSDarwin())
+      if (getToolChain().getTriple().isOSBinFormatMachO())
         CmdArgs.push_back("-gdwarf-2");
       else
         CmdArgs.push_back("-g");
@@ -3727,7 +3728,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Finally add the compile command to the compilation.
-  if (Args.hasArg(options::OPT__SLASH_fallback)) {
+  if (Args.hasArg(options::OPT__SLASH_fallback) &&
+      Output.getType() == types::TY_Object) {
     tools::visualstudio::Compile CL(getToolChain());
     Command *CLCommand = CL.GetCommand(C, JA, Output, Inputs, Args,
                                        LinkingOutput);
@@ -3865,7 +3867,7 @@ ObjCRuntime Clang::AddObjCRuntimeArgs(const ArgList &args,
   // -fnext-runtime
   } else if (runtimeArg->getOption().matches(options::OPT_fnext_runtime)) {
     // On Darwin, make this use the default behavior for the toolchain.
-    if (getToolChain().getTriple().isOSDarwin()) {
+    if (getToolChain().getTriple().isOSBinFormatMachO()) {
       runtime = getToolChain().getDefaultObjCRuntime(isNonFragile);
 
     // Otherwise, build for a generic macosx port.
@@ -3933,10 +3935,6 @@ void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
   // users want.  The /Za flag to cl.exe turns this off, but it's not
   // implemented in clang.
   CmdArgs.push_back("--dependent-lib=oldnames");
-
-  // FIXME: Make this default for the win32 triple.
-  CmdArgs.push_back("-cxx-abi");
-  CmdArgs.push_back("microsoft");
 
   if (Arg *A = Args.getLastArg(options::OPT_show_includes))
     A->render(Args, CmdArgs);
@@ -4106,7 +4104,7 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
 
   // If using a driver driver, force the arch.
   llvm::Triple::ArchType Arch = getToolChain().getArch();
-  if (getToolChain().getTriple().isOSDarwin()) {
+  if (getToolChain().getTriple().isOSBinFormatMachO()) {
     CmdArgs.push_back("-arch");
 
     // FIXME: Remove these special cases.
@@ -4529,7 +4527,6 @@ const char *arm::getARMCPUForMArch(const ArgList &Args,
     .Cases("armv7", "armv7a", "armv7-a", "cortex-a8")
     .Cases("thumbv7", "thumbv7a", "cortex-a8")
     .Cases("armv7l", "armv7-l", "cortex-a8")
-    .Cases("armv7f", "armv7-f", "cortex-a9-mp")
     .Cases("armv7s", "armv7-s", "swift")
     .Cases("armv7r", "armv7-r", "cortex-r4")
     .Case("thumbv7r", "cortex-r4")
@@ -4591,19 +4588,18 @@ const char *arm::getLLVMArchSuffixForARM(StringRef CPU) {
     .Cases("arm1136j-s",  "arm1136jf-s",  "arm1176jz-s", "v6")
     .Cases("arm1176jzf-s",  "mpcorenovfp",  "mpcore", "v6")
     .Cases("arm1156t2-s",  "arm1156t2f-s", "v6t2")
-    .Cases("cortex-a5", "cortex-a7", "cortex-a8", "v7")
+    .Cases("cortex-a5", "cortex-a7", "cortex-a8", "cortex-a9-mp", "v7")
     .Cases("cortex-a9", "cortex-a12", "cortex-a15", "krait", "v7")
     .Cases("cortex-r4", "cortex-r5", "v7r")
     .Case("cortex-m0", "v6m")
     .Case("cortex-m3", "v7m")
     .Case("cortex-m4", "v7em")
-    .Case("cortex-a9-mp", "v7f")
     .Case("swift", "v7s")
     .Cases("cortex-a53", "cortex-a57", "v8")
     .Default("");
 }
 
-llvm::Triple::ArchType darwin::getArchTypeForDarwinArchName(StringRef Str) {
+llvm::Triple::ArchType darwin::getArchTypeForMachOArchName(StringRef Str) {
   // See arch(3) and llvm-gcc's driver-driver.c. We don't implement support for
   // archs which Darwin doesn't use.
 
@@ -4626,7 +4622,7 @@ llvm::Triple::ArchType darwin::getArchTypeForDarwinArchName(StringRef Str) {
     .Cases("x86_64", "x86_64h", llvm::Triple::x86_64)
     // This is derived from the driver driver.
     .Cases("arm", "armv4t", "armv5", "armv6", "armv6m", llvm::Triple::arm)
-    .Cases("armv7", "armv7em", "armv7f", "armv7k", "armv7m", llvm::Triple::arm)
+    .Cases("armv7", "armv7em", "armv7k", "armv7m", llvm::Triple::arm)
     .Cases("armv7s", "xscale", llvm::Triple::arm)
     .Case("r600", llvm::Triple::r600)
     .Case("nvptx", llvm::Triple::nvptx)
@@ -4634,6 +4630,18 @@ llvm::Triple::ArchType darwin::getArchTypeForDarwinArchName(StringRef Str) {
     .Case("amdil", llvm::Triple::amdil)
     .Case("spir", llvm::Triple::spir)
     .Default(llvm::Triple::UnknownArch);
+}
+
+void darwin::setTripleTypeForMachOArchName(llvm::Triple &T, StringRef Str) {
+  llvm::Triple::ArchType Arch = getArchTypeForMachOArchName(Str);
+  T.setArch(Arch);
+
+  if (Str == "x86_64h")
+    T.setArchName(Str);
+  else if (Str == "armv6m" || Str == "armv7m" || Str == "armv7em") {
+    T.setOS(llvm::Triple::UnknownOS);
+    T.setEnvironment(llvm::Triple::MachO);
+  }
 }
 
 const char *Clang::getBaseInputName(const ArgList &Args,
@@ -4704,7 +4712,7 @@ void darwin::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Derived from asm spec.
-  AddDarwinArch(Args, CmdArgs);
+  AddMachOArch(Args, CmdArgs);
 
   // Use -force_cpusubtype_ALL on x86 by default.
   if (getToolChain().getArch() == llvm::Triple::x86 ||
@@ -4715,8 +4723,7 @@ void darwin::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   if (getToolChain().getArch() != llvm::Triple::x86_64 &&
       (((Args.hasArg(options::OPT_mkernel) ||
          Args.hasArg(options::OPT_fapple_kext)) &&
-        (!getDarwinToolChain().isTargetIPhoneOS() ||
-         getDarwinToolChain().isIPhoneOSVersionLT(6, 0))) ||
+        getMachOToolChain().isKernelStatic()) ||
        Args.hasArg(options::OPT_static)))
     CmdArgs.push_back("-static");
 
@@ -4737,11 +4744,11 @@ void darwin::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
-void darwin::DarwinTool::anchor() {}
+void darwin::MachOTool::anchor() {}
 
-void darwin::DarwinTool::AddDarwinArch(const ArgList &Args,
-                                       ArgStringList &CmdArgs) const {
-  StringRef ArchName = getDarwinToolChain().getDarwinArchName(Args);
+void darwin::MachOTool::AddMachOArch(const ArgList &Args,
+                                     ArgStringList &CmdArgs) const {
+  StringRef ArchName = getMachOToolChain().getMachOArchName(Args);
 
   // Derived from darwin_arch spec.
   CmdArgs.push_back("-arch");
@@ -4769,7 +4776,7 @@ void darwin::Link::AddLinkArgs(Compilation &C,
                                ArgStringList &CmdArgs,
                                const InputInfoList &Inputs) const {
   const Driver &D = getToolChain().getDriver();
-  const toolchains::Darwin &DarwinTC = getDarwinToolChain();
+  const toolchains::MachO &MachOTC = getMachOToolChain();
 
   unsigned Version[3] = { 0, 0, 0 };
   if (Arg *A = Args.getLastArg(options::OPT_mlinker_version_EQ)) {
@@ -4781,27 +4788,10 @@ void darwin::Link::AddLinkArgs(Compilation &C,
         << A->getAsString(Args);
   }
 
-  // Newer linkers support -demangle, pass it if supported and not disabled by
+  // Newer linkers support -demangle. Pass it if supported and not disabled by
   // the user.
-  if (Version[0] >= 100 && !Args.hasArg(options::OPT_Z_Xlinker__no_demangle)) {
-    // Don't pass -demangle to ld_classic.
-    //
-    // FIXME: This is a temporary workaround, ld should be handling this.
-    bool UsesLdClassic = (getToolChain().getArch() == llvm::Triple::x86 &&
-                          Args.hasArg(options::OPT_static));
-    if (getToolChain().getArch() == llvm::Triple::x86) {
-      for (arg_iterator it = Args.filtered_begin(options::OPT_Xlinker,
-                                                 options::OPT_Wl_COMMA),
-             ie = Args.filtered_end(); it != ie; ++it) {
-        const Arg *A = *it;
-        for (unsigned i = 0, e = A->getNumValues(); i != e; ++i)
-          if (StringRef(A->getValue(i)) == "-kext")
-            UsesLdClassic = true;
-      }
-    }
-    if (!UsesLdClassic)
-      CmdArgs.push_back("-demangle");
-  }
+  if (Version[0] >= 100 && !Args.hasArg(options::OPT_Z_Xlinker__no_demangle))
+    CmdArgs.push_back("-demangle");
 
   if (Args.hasArg(options::OPT_rdynamic) && Version[0] >= 137)
     CmdArgs.push_back("-export_dynamic");
@@ -4827,7 +4817,7 @@ void darwin::Link::AddLinkArgs(Compilation &C,
   }
 
   if (!Args.hasArg(options::OPT_dynamiclib)) {
-    AddDarwinArch(Args, CmdArgs);
+    AddMachOArch(Args, CmdArgs);
     // FIXME: Why do this only on this path?
     Args.AddLastArg(CmdArgs, options::OPT_force__cpusubtype__ALL);
 
@@ -4863,7 +4853,7 @@ void darwin::Link::AddLinkArgs(Compilation &C,
     Args.AddAllArgsTranslated(CmdArgs, options::OPT_current__version,
                               "-dylib_current_version");
 
-    AddDarwinArch(Args, CmdArgs);
+    AddMachOArch(Args, CmdArgs);
 
     Args.AddAllArgsTranslated(CmdArgs, options::OPT_install__name,
                               "-dylib_install_name");
@@ -4872,7 +4862,7 @@ void darwin::Link::AddLinkArgs(Compilation &C,
   Args.AddLastArg(CmdArgs, options::OPT_all__load);
   Args.AddAllArgs(CmdArgs, options::OPT_allowable__client);
   Args.AddLastArg(CmdArgs, options::OPT_bind__at__load);
-  if (DarwinTC.isTargetIOSBased())
+  if (MachOTC.isTargetIOSBased())
     Args.AddLastArg(CmdArgs, options::OPT_arch__errors__fatal);
   Args.AddLastArg(CmdArgs, options::OPT_dead__strip);
   Args.AddLastArg(CmdArgs, options::OPT_no__dead__strip__inits__and__terms);
@@ -4886,25 +4876,7 @@ void darwin::Link::AddLinkArgs(Compilation &C,
   Args.AddAllArgs(CmdArgs, options::OPT_init);
 
   // Add the deployment target.
-  VersionTuple TargetVersion = DarwinTC.getTargetVersion();
-
-  // If we had an explicit -mios-simulator-version-min argument, honor that,
-  // otherwise use the traditional deployment targets. We can't just check the
-  // is-sim attribute because existing code follows this path, and the linker
-  // may not handle the argument.
-  //
-  // FIXME: We may be able to remove this, once we can verify no one depends on
-  // it.
-  if (Args.hasArg(options::OPT_mios_simulator_version_min_EQ)) {
-    CmdArgs.push_back("-ios_simulator_version_min");
-    CmdArgs.push_back(Args.MakeArgString(TargetVersion.getAsString()));
-  } else if (DarwinTC.isTargetIOSBased()) {
-    CmdArgs.push_back("-iphoneos_version_min");
-    CmdArgs.push_back(Args.MakeArgString(TargetVersion.getAsString()));
-  } else if (DarwinTC.isTargetMacOS()) {
-    CmdArgs.push_back("-macosx_version_min");
-    CmdArgs.push_back(Args.MakeArgString(TargetVersion.getAsString()));
-  }
+  MachOTC.addMinVersionArgs(Args, CmdArgs);
 
   Args.AddLastArg(CmdArgs, options::OPT_nomultidefs);
   Args.AddLastArg(CmdArgs, options::OPT_multi__module);
@@ -5019,95 +4991,8 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back(Output.getFilename());
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
-      !Args.hasArg(options::OPT_nostartfiles)) {
-    // Derived from startfile spec.
-    if (Args.hasArg(options::OPT_dynamiclib)) {
-      // Derived from darwin_dylib1 spec.
-      if (getDarwinToolChain().isTargetIOSSimulator()) {
-        // The simulator doesn't have a versioned crt1 file.
-        CmdArgs.push_back("-ldylib1.o");
-      } else if (getDarwinToolChain().isTargetIPhoneOS()) {
-        if (getDarwinToolChain().isIPhoneOSVersionLT(3, 1))
-          CmdArgs.push_back("-ldylib1.o");
-      } else if (getDarwinToolChain().isTargetMacOS()) {
-        if (getDarwinToolChain().isMacosxVersionLT(10, 5))
-          CmdArgs.push_back("-ldylib1.o");
-        else if (getDarwinToolChain().isMacosxVersionLT(10, 6))
-          CmdArgs.push_back("-ldylib1.10.5.o");
-      }
-    } else {
-      if (Args.hasArg(options::OPT_bundle)) {
-        if (!Args.hasArg(options::OPT_static)) {
-          // Derived from darwin_bundle1 spec.
-          if (getDarwinToolChain().isTargetIOSSimulator()) {
-            // The simulator doesn't have a versioned crt1 file.
-            CmdArgs.push_back("-lbundle1.o");
-          } else if (getDarwinToolChain().isTargetIPhoneOS()) {
-            if (getDarwinToolChain().isIPhoneOSVersionLT(3, 1))
-              CmdArgs.push_back("-lbundle1.o");
-          } else if (getDarwinToolChain().isTargetMacOS()) {
-            if (getDarwinToolChain().isMacosxVersionLT(10, 6))
-              CmdArgs.push_back("-lbundle1.o");
-          }
-        }
-      } else {
-        if (Args.hasArg(options::OPT_pg) &&
-            getToolChain().SupportsProfiling()) {
-          if (Args.hasArg(options::OPT_static) ||
-              Args.hasArg(options::OPT_object) ||
-              Args.hasArg(options::OPT_preload)) {
-            CmdArgs.push_back("-lgcrt0.o");
-          } else {
-            CmdArgs.push_back("-lgcrt1.o");
-
-            // darwin_crt2 spec is empty.
-          }
-          // By default on OS X 10.8 and later, we don't link with a crt1.o
-          // file and the linker knows to use _main as the entry point.  But,
-          // when compiling with -pg, we need to link with the gcrt1.o file,
-          // so pass the -no_new_main option to tell the linker to use the
-          // "start" symbol as the entry point.
-          if (getDarwinToolChain().isTargetMacOS() &&
-              !getDarwinToolChain().isMacosxVersionLT(10, 8))
-            CmdArgs.push_back("-no_new_main");
-        } else {
-          if (Args.hasArg(options::OPT_static) ||
-              Args.hasArg(options::OPT_object) ||
-              Args.hasArg(options::OPT_preload)) {
-            CmdArgs.push_back("-lcrt0.o");
-          } else {
-            // Derived from darwin_crt1 spec.
-            if (getDarwinToolChain().isTargetIOSSimulator()) {
-              // The simulator doesn't have a versioned crt1 file.
-              CmdArgs.push_back("-lcrt1.o");
-            } else if (getDarwinToolChain().isTargetIPhoneOS()) {
-              if (getDarwinToolChain().isIPhoneOSVersionLT(3, 1))
-                CmdArgs.push_back("-lcrt1.o");
-              else if (getDarwinToolChain().isIPhoneOSVersionLT(6, 0))
-                CmdArgs.push_back("-lcrt1.3.1.o");
-            } else if (getDarwinToolChain().isTargetMacOS()) {
-              if (getDarwinToolChain().isMacosxVersionLT(10, 5))
-                CmdArgs.push_back("-lcrt1.o");
-              else if (getDarwinToolChain().isMacosxVersionLT(10, 6))
-                CmdArgs.push_back("-lcrt1.10.5.o");
-              else if (getDarwinToolChain().isMacosxVersionLT(10, 8))
-                CmdArgs.push_back("-lcrt1.10.6.o");
-
-              // darwin_crt2 spec is empty.
-            }
-          }
-        }
-      }
-    }
-
-    if (getDarwinToolChain().isTargetMacOS() &&
-        Args.hasArg(options::OPT_shared_libgcc) &&
-        getDarwinToolChain().isMacosxVersionLT(10, 5)) {
-      const char *Str =
-        Args.MakeArgString(getToolChain().GetFilePath("crt3.o"));
-      CmdArgs.push_back(Str);
-    }
-  }
+      !Args.hasArg(options::OPT_nostartfiles))
+    getMachOToolChain().addStartObjectFileArgs(Args, CmdArgs);
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
@@ -5120,19 +5005,9 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (isObjCRuntimeLinked(Args) &&
       !Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
-    // Avoid linking compatibility stubs on i386 mac.
-    if (!getDarwinToolChain().isTargetMacOS() ||
-        getDarwinToolChain().getArch() != llvm::Triple::x86) {
-      // If we don't have ARC or subscripting runtime support, link in the
-      // runtime stubs.  We have to do this *before* adding any of the normal
-      // linker inputs so that its initializer gets run first.
-      ObjCRuntime runtime =
-        getDarwinToolChain().getDefaultObjCRuntime(/*nonfragile*/ true);
-      // We use arclite library for both ARC and subscripting support.
-      if ((!runtime.hasNativeARC() && isObjCAutoRefCount(Args)) ||
-          !runtime.hasSubscripting())
-        getDarwinToolChain().AddLinkARCArgs(Args, CmdArgs);
-    }
+    // We use arclite library for both ARC and subscripting support.
+    getMachOToolChain().AddLinkARCArgs(Args, CmdArgs);
+
     CmdArgs.push_back("-framework");
     CmdArgs.push_back("Foundation");
     // Link libobj.
@@ -5156,7 +5031,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
     // link_ssp spec is empty.
 
     // Let the tool chain choose which runtime library to link.
-    getDarwinToolChain().AddLinkRuntimeLibArgs(Args, CmdArgs);
+    getMachOToolChain().AddLinkRuntimeLibArgs(Args, CmdArgs);
   }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
@@ -6272,6 +6147,7 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
                                       const ArgList &Args,
                                       const char *LinkingOutput) const {
   ArgStringList CmdArgs;
+  bool NeedsKPIC = false;
 
   // Add --32/--64 to make sure we get the format we want.
   // This is incomplete
@@ -6291,6 +6167,14 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-a64");
     CmdArgs.push_back("-mppc64le");
     CmdArgs.push_back("-many");
+  } else if (getToolChain().getArch() == llvm::Triple::sparc) {
+    CmdArgs.push_back("-32");
+    CmdArgs.push_back("-Av8plusa");
+    NeedsKPIC = true;
+  } else if (getToolChain().getArch() == llvm::Triple::sparcv9) {
+    CmdArgs.push_back("-64");
+    CmdArgs.push_back("-Av9a");
+    NeedsKPIC = true;
   } else if (getToolChain().getArch() == llvm::Triple::arm) {
     StringRef MArch = getToolChain().getArchName();
     if (MArch == "armv7" || MArch == "armv7a" || MArch == "armv7-a")
@@ -6353,6 +6237,15 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back(Args.MakeArgString("-mmsa"));
     }
 
+    NeedsKPIC = true;
+  } else if (getToolChain().getArch() == llvm::Triple::systemz) {
+    // Always pass an -march option, since our default of z10 is later
+    // than the GNU assembler's default.
+    StringRef CPUName = getSystemZTargetCPU(Args);
+    CmdArgs.push_back(Args.MakeArgString("-march=" + CPUName));
+  }
+
+  if (NeedsKPIC) {
     Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
                                       options::OPT_fpic, options::OPT_fno_pic,
                                       options::OPT_fPIE, options::OPT_fno_PIE,
@@ -6364,11 +6257,6 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
          LastPICArg->getOption().matches(options::OPT_fpie))) {
       CmdArgs.push_back("-KPIC");
     }
-  } else if (getToolChain().getArch() == llvm::Triple::systemz) {
-    // Always pass an -march option, since our default of z10 is later
-    // than the GNU assembler's default.
-    StringRef CPUName = getSystemZTargetCPU(Args);
-    CmdArgs.push_back(Args.MakeArgString("-march=" + CPUName));
   }
 
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
@@ -6438,7 +6326,8 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
                                        const toolchains::Linux &ToolChain) {
   if (ToolChain.getTriple().getEnvironment() == llvm::Triple::Android)
     return "/system/bin/linker";
-  else if (ToolChain.getArch() == llvm::Triple::x86)
+  else if (ToolChain.getArch() == llvm::Triple::x86 ||
+           ToolChain.getArch() == llvm::Triple::sparc)
     return "/lib/ld-linux.so.2";
   else if (ToolChain.getArch() == llvm::Triple::aarch64)
     return "/lib/ld-linux-aarch64.so.1";
@@ -6463,6 +6352,8 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
            ToolChain.getArch() == llvm::Triple::ppc64le ||
            ToolChain.getArch() == llvm::Triple::systemz)
     return "/lib64/ld64.so.1";
+  else if (ToolChain.getArch() == llvm::Triple::sparcv9)
+    return "/lib64/ld-linux.so.2";
   else
     return "/lib64/ld-linux-x86-64.so.2";
 }
@@ -6525,6 +6416,10 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("elf32ppclinux");
   else if (ToolChain.getArch() == llvm::Triple::ppc64)
     CmdArgs.push_back("elf64ppc");
+  else if (ToolChain.getArch() == llvm::Triple::sparc)
+    CmdArgs.push_back("elf32_sparc");
+  else if (ToolChain.getArch() == llvm::Triple::sparcv9)
+    CmdArgs.push_back("elf64_sparc");
   else if (ToolChain.getArch() == llvm::Triple::mips)
     CmdArgs.push_back("elf32btsmip");
   else if (ToolChain.getArch() == llvm::Triple::mipsel)

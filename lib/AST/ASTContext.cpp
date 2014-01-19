@@ -2822,8 +2822,6 @@ static bool isCanonicalResultType(QualType T) {
           T.getObjCLifetime() == Qualifiers::OCL_ExplicitNone);
 }
 
-/// getFunctionType - Return a normal function type with a typed argument
-/// list.  isVariadic indicates whether the argument list includes '...'.
 QualType
 ASTContext::getFunctionType(QualType ResultTy, ArrayRef<QualType> ArgArray,
                             const FunctionProtoType::ExtProtoInfo &EPI) const {
@@ -7810,7 +7808,7 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) {
   if (!FD->isInlined())
     return External;
 
-  if ((!getLangOpts().CPlusPlus && !getLangOpts().MicrosoftMode) ||
+  if ((!getLangOpts().CPlusPlus && !getLangOpts().MSVCCompat) ||
       FD->hasAttr<GNUInlineAttr>()) {
     // GNU or C99 inline semantics. Determine whether this symbol should be
     // externally visible.

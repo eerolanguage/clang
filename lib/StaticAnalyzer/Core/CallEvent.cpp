@@ -387,7 +387,7 @@ bool AnyFunctionCall::argumentsMayEscape() const {
 }
 
 
-const FunctionDecl *SimpleCall::getDecl() const {
+const FunctionDecl *SimpleFunctionCall::getDecl() const {
   const FunctionDecl *D = getOriginExpr()->getDirectCallee();
   if (D)
     return D;
@@ -549,14 +549,14 @@ const BlockDataRegion *BlockCall::getBlockRegion() const {
 }
 
 CallEvent::param_iterator BlockCall::param_begin() const {
-  const BlockDecl *D = getBlockDecl();
+  const BlockDecl *D = getDecl();
   if (!D)
     return 0;
   return D->param_begin();
 }
 
 CallEvent::param_iterator BlockCall::param_end() const {
-  const BlockDecl *D = getBlockDecl();
+  const BlockDecl *D = getDecl();
   if (!D)
     return 0;
   return D->param_end();
@@ -863,8 +863,16 @@ RuntimeDefinition ObjCMethodCall::getRuntimeDefinition() const {
         Optional<const ObjCMethodDecl *> &Val = PMC[std::make_pair(IDecl, Sel)];
 
         // Query lookupPrivateMethod() if the cache does not hit.
-        if (!Val.hasValue())
+        if (!Val.hasValue()) {
           Val = IDecl->lookupPrivateMethod(Sel);
+
+          // If the method is a property accessor, we should try to "inline" it
+          // even if we don't actually have an implementation.
+          if (!*Val)
+            if (const ObjCMethodDecl *CompileTimeMD = E->getMethodDecl())
+              if (CompileTimeMD->isPropertyAccessor())
+                Val = IDecl->lookupInstanceMethod(Sel);
+        }
 
         const ObjCMethodDecl *MD = Val.getValue();
         if (CanBeSubClassed)
@@ -884,6 +892,17 @@ RuntimeDefinition ObjCMethodCall::getRuntimeDefinition() const {
   }
 
   return RuntimeDefinition();
+}
+
+bool ObjCMethodCall::argumentsMayEscape() const {
+  if (isInSystemHeader() && !isInstanceMessage()) {
+    Selector Sel = getSelector();
+    if (Sel.getNumArgs() == 1 &&
+        Sel.getIdentifierInfoForSlot(0)->isStr("valueWithPointer"))
+      return true;
+  }
+
+  return CallEvent::argumentsMayEscape();
 }
 
 void ObjCMethodCall::getInitialStackFrameContents(
@@ -921,7 +940,7 @@ CallEventManager::getSimpleCall(const CallExpr *CE, ProgramStateRef State,
 
   // Otherwise, it's a normal function call, static member function call, or
   // something we can't reason about.
-  return create<FunctionCall>(CE, State, LCtx);
+  return create<SimpleFunctionCall>(CE, State, LCtx);
 }
 
 

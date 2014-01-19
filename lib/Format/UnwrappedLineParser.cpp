@@ -762,15 +762,22 @@ bool UnwrappedLineParser::tryToParseLambda() {
   if (!tryToParseLambdaIntroducer())
     return false;
 
-  while (FormatTok->isNot(tok::l_brace)) {
+  while (FormatTok && FormatTok->isNot(tok::l_brace)) {
+    if (FormatTok->isSimpleTypeSpecifier()) {
+      nextToken();
+      continue;
+    }
     switch (FormatTok->Tok.getKind()) {
     case tok::l_brace:
       break;
     case tok::l_paren:
       parseParens();
       break;
+    case tok::less:
+    case tok::greater:
     case tok::identifier:
     case tok::kw_mutable:
+    case tok::arrow:
       nextToken();
       break;
     default:
@@ -956,7 +963,6 @@ void UnwrappedLineParser::parseSquare() {
   if (tryToParseLambda())
     return;
   do {
-    // llvm::errs() << FormatTok->Tok.getName() << "\n";
     switch (FormatTok->Tok.getKind()) {
     case tok::l_paren:
       parseParens();
@@ -1254,6 +1260,10 @@ void UnwrappedLineParser::parseObjCUntilAtEnd() {
     if (FormatTok->is(tok::l_brace)) {
       parseBlock(/*MustBeDeclaration=*/false);
       // In ObjC interfaces, nothing should be following the "}".
+      addUnwrappedLine();
+    } else if (FormatTok->is(tok::r_brace)) {
+      // Ignore stray "}". parseStructuralElement doesn't consume them.
+      nextToken();
       addUnwrappedLine();
     } else {
       parseStructuralElement();

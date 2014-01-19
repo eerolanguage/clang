@@ -1039,13 +1039,13 @@ static bool HasExtension(const Preprocessor &PP, const IdentifierInfo *II) {
            // C++1y features supported by other languages as extensions.
            .Case("cxx_binary_literals", true)
            .Case("cxx_init_captures", LangOpts.CPlusPlus11)
-           .Case("cxx_variable_templates", true)
+           .Case("cxx_variable_templates", LangOpts.CPlusPlus)
            .Default(false);
 }
 
 /// HasAttribute -  Return true if we recognize and implement the attribute
 /// specified by the given identifier.
-static bool HasAttribute(const IdentifierInfo *II) {
+static bool HasAttribute(const IdentifierInfo *II, const llvm::Triple &T) {
   StringRef Name = II->getName();
   // Normalize the attribute name, __foo__ becomes foo.
   if (Name.size() >= 4 && Name.startswith("__") && Name.endswith("__"))
@@ -1395,7 +1395,7 @@ void Preprocessor::ExpandBuiltinMacro(Token &Tok) {
       // Check for a builtin is trivial.
       Value = FeatureII->getBuiltinID() != 0;
     } else if (II == Ident__has_attribute)
-      Value = HasAttribute(FeatureII);
+      Value = HasAttribute(FeatureII, getTargetInfo().getTriple());
     else if (II == Ident__has_extension)
       Value = HasExtension(*this, FeatureII);
     else {

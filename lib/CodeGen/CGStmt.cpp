@@ -404,14 +404,14 @@ void CodeGenFunction::EmitGotoStmt(const GotoStmt &S) {
     EmitStopPoint(&S);
 
   EmitBranchThroughCleanup(getJumpDestForLabel(S.getLabel()));
-  PGO.setCurrentRegionCount(0);
+  PGO.setCurrentRegionUnreachable();
 }
 
 
 void CodeGenFunction::EmitIndirectGotoStmt(const IndirectGotoStmt &S) {
   if (const LabelDecl *Target = S.getConstantTarget()) {
     EmitBranchThroughCleanup(getJumpDestForLabel(Target));
-    PGO.setCurrentRegionCount(0);
+    PGO.setCurrentRegionUnreachable();
     return;
   }
 
@@ -428,7 +428,7 @@ void CodeGenFunction::EmitIndirectGotoStmt(const IndirectGotoStmt &S) {
   cast<llvm::PHINode>(IndGotoBB->begin())->addIncoming(V, CurBB);
 
   EmitBranch(IndGotoBB);
-  PGO.setCurrentRegionCount(0);
+  PGO.setCurrentRegionUnreachable();
 }
 
 void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
@@ -480,7 +480,7 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
     RunCleanupsScope ThenScope(*this);
     EmitStmt(S.getThen());
   }
-  Cnt.adjustFallThroughCount();
+  Cnt.adjustForControlFlow();
   EmitBranch(ContBlock);
 
   // Emit the 'else' code if present.
@@ -494,7 +494,7 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
       RunCleanupsScope ElseScope(*this);
       EmitStmt(Else);
     }
-    Cnt.adjustFallThroughCount();
+    Cnt.adjustForControlFlow();
     // There is no need to emit line number for unconditional branch.
     if (getDebugInfo())
       Builder.SetCurrentDebugLocation(llvm::DebugLoc());
@@ -569,7 +569,7 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S) {
     Cnt.beginRegion(Builder);
     EmitStmt(S.getBody());
   }
-  Cnt.adjustFallThroughCount();
+  Cnt.adjustForControlFlow();
 
   BreakContinueStack.pop_back();
 
@@ -612,7 +612,7 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S) {
     RunCleanupsScope BodyScope(*this);
     EmitStmt(S.getBody());
   }
-  Cnt.adjustFallThroughCount();
+  Cnt.adjustForControlFlow();
 
   BreakContinueStack.pop_back();
 
@@ -637,10 +637,9 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S) {
   uint64_t ExitCount = Cnt.getLoopExitCount();
 
   // As long as the condition is true, iterate the loop.
-  if (EmitBoolCondBranch) {
+  if (EmitBoolCondBranch)
     Builder.CreateCondBr(BoolCondVal, LoopBody, LoopExit.getBlock(),
                          PGO.createBranchWeights(LoopCount, ExitCount));
-  }
 
   // Emit the exit block.
   EmitBlock(LoopExit.getBlock());
@@ -733,7 +732,7 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S) {
     EmitBlock(Continue.getBlock());
     EmitStmt(S.getInc());
   }
-  Cnt.adjustFallThroughCount();
+  Cnt.adjustForControlFlow();
 
   BreakContinueStack.pop_back();
 
@@ -816,7 +815,7 @@ void CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S) {
   // If there is an increment, emit it next.
   EmitBlock(Continue.getBlock());
   EmitStmt(S.getInc());
-  Cnt.adjustFallThroughCount();
+  Cnt.adjustForControlFlow();
 
   BreakContinueStack.pop_back();
 
@@ -848,7 +847,7 @@ void CodeGenFunction::EmitReturnOfRValue(RValue RV, QualType Ty) {
                        /*init*/ true);
   }
   EmitBranchThroughCleanup(ReturnBlock);
-  PGO.setCurrentRegionCount(0);
+  PGO.setCurrentRegionUnreachable();
 }
 
 /// EmitReturnStmt - Note that due to GCC extensions, this can have an operand
@@ -871,7 +870,8 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
 
   // FIXME: Clean this up by using an LValue for ReturnTemp,
   // EmitStoreThroughLValue, and EmitAnyExpr.
-  if (S.getNRVOCandidate() && S.getNRVOCandidate()->isNRVOVariable()) {
+  if (getLangOpts().ElideConstructors &&
+      S.getNRVOCandidate() && S.getNRVOCandidate()->isNRVOVariable()) {
     // Apply the named return value optimization for this return statement,
     // which means doing nothing: the appropriate result has already been
     // constructed into the NRVO variable.
@@ -920,7 +920,7 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
 
   cleanupScope.ForceCleanup();
   EmitBranchThroughCleanup(ReturnBlock);
-  PGO.setCurrentRegionCount(0);
+  PGO.setCurrentRegionUnreachable();
 }
 
 void CodeGenFunction::EmitDeclStmt(const DeclStmt &S) {
@@ -950,7 +950,7 @@ void CodeGenFunction::EmitBreakStmt(const BreakStmt &S) {
   if (BC.CountBreak)
     BC.LoopCnt->getBreakCounter().beginRegion(Builder);
   EmitBranchThroughCleanup(BC.BreakBlock);
-  PGO.setCurrentRegionCount(0);
+  PGO.setCurrentRegionUnreachable();
 }
 
 void CodeGenFunction::EmitContinueStmt(const ContinueStmt &S) {
@@ -967,7 +967,7 @@ void CodeGenFunction::EmitContinueStmt(const ContinueStmt &S) {
   // non-local exits in PGO instrumentation.
   BC.LoopCnt->getContinueCounter().beginRegion(Builder);
   EmitBranchThroughCleanup(BC.ContinueBlock);
-  PGO.setCurrentRegionCount(0);
+  PGO.setCurrentRegionUnreachable();
 }
 
 /// EmitCaseStmtRange - If case statement range is not too big then
@@ -999,9 +999,10 @@ void CodeGenFunction::EmitCaseStmtRange(const CaseStmt &S) {
     // Range is small enough to add multiple switch instruction cases.
     uint64_t Total = CaseCnt.getCount() - CaseCnt.getParentCount();
     unsigned NCases = Range.getZExtValue() + 1;
-    // Divide the weights evenly between the cases, ensuring that the total
-    // weight is preserved. Ie, a weight of 5 over three cases will be
-    // distributed as weights of 2, 2, and 1.
+    // We only have one region counter for the entire set of cases here, so we
+    // need to divide the weights evenly between the generated cases, ensuring
+    // that the total weight is preserved. Ie, a weight of 5 over three cases
+    // will be distributed as weights of 2, 2, and 1.
     uint64_t Weight = Total / NCases, Rem = Total % NCases;
     for (unsigned I = 0; I != NCases; ++I) {
       if (SwitchWeights)
@@ -1073,30 +1074,6 @@ void CodeGenFunction::EmitCaseStmt(const CaseStmt &S) {
   RegionCounter CaseCnt = getPGORegionCounter(&S);
   llvm::ConstantInt *CaseVal =
     Builder.getInt(S.getLHS()->EvaluateKnownConstInt(getContext()));
-
-  // If the body of the case is just a 'break', try to not emit an empty block.
-  // If we're profiling or we're not optimizing, leave the block in for better
-  // debug and coverage analysis.
-  if (!CGM.getCodeGenOpts().ProfileInstrGenerate &&
-      CGM.getCodeGenOpts().OptimizationLevel > 0 &&
-      isa<BreakStmt>(S.getSubStmt())) {
-    JumpDest Block = BreakContinueStack.back().BreakBlock;
-
-    // Only do this optimization if there are no cleanups that need emitting.
-    if (isObviouslyBranchWithoutCleanups(Block)) {
-      if (SwitchWeights)
-        SwitchWeights->push_back(CaseCnt.getCount() - CaseCnt.getParentCount());
-      SwitchInsn->addCase(CaseVal, Block.getBlock());
-
-      // If there was a fallthrough into this case, make sure to redirect it to
-      // the end of the switch as well.
-      if (Builder.GetInsertBlock()) {
-        Builder.CreateBr(Block.getBlock());
-        Builder.ClearInsertionPoint();
-      }
-      return;
-    }
-  }
 
   EmitBlock(createBasicBlock("sw.bb"));
   llvm::BasicBlock *CaseDest = Builder.GetInsertBlock();
@@ -1383,7 +1360,6 @@ void CodeGenFunction::EmitSwitchStmt(const SwitchStmt &S) {
     const SwitchCase *Case = 0;
     if (FindCaseStatementsForValue(S, ConstantCondValue, CaseStmts,
                                    getContext(), Case)) {
-      PGO.setCurrentRegionCount(0);
       if (Case) {
         RegionCounter CaseCnt = getPGORegionCounter(Case);
         CaseCnt.beginRegion(Builder);
@@ -1439,7 +1415,7 @@ void CodeGenFunction::EmitSwitchStmt(const SwitchStmt &S) {
 
   // Clear the insertion point to indicate we are in unreachable code.
   Builder.ClearInsertionPoint();
-  PGO.setCurrentRegionCount(0);
+  PGO.setCurrentRegionUnreachable();
 
   // All break statements jump to NextBlock. If BreakContinueStack is non-empty
   // then reuse last ContinueBlock and that block's counter.

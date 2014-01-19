@@ -43,7 +43,6 @@ namespace ento {
 
 class AnalysisManager;
 class CallEvent;
-class SimpleCall;
 class CXXConstructorCall;
 
 class ExprEngine : public SubEngine {
@@ -201,7 +200,9 @@ public:
 
   void ProcessImplicitDtor(const CFGImplicitDtor D, ExplodedNode *Pred);
 
-  void ProcessAutomaticObjDtor(const CFGAutomaticObjDtor D, 
+  void ProcessNewAllocator(const CXXNewExpr *NE, ExplodedNode *Pred);
+
+  void ProcessAutomaticObjDtor(const CFGAutomaticObjDtor D,
                                ExplodedNode *Pred, ExplodedNodeSet &Dst);
   void ProcessDeleteDtor(const CFGDeleteDtor D,
                          ExplodedNode *Pred, ExplodedNodeSet &Dst);
