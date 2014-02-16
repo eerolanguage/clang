@@ -739,14 +739,16 @@ llvm::DIType CGDebugInfo::CreateType(const TypedefType *Ty, llvm::DIFile Unit) {
     return llvm::DIType();
   // We don't set size information, but do specify where the typedef was
   // declared.
-  unsigned Line = getLineNumber(Ty->getDecl()->getLocation());
+  SourceLocation Loc = Ty->getDecl()->getLocation();
+  llvm::DIFile File = getOrCreateFile(Loc);
+  unsigned Line = getLineNumber(Loc);
   const TypedefNameDecl *TyDecl = Ty->getDecl();
 
   llvm::DIDescriptor TypedefContext =
     getContextDescriptor(cast<Decl>(Ty->getDecl()->getDeclContext()));
 
   return
-    DBuilder.createTypedef(Src, TyDecl->getName(), Unit, Line, TypedefContext);
+    DBuilder.createTypedef(Src, TyDecl->getName(), File, Line, TypedefContext);
 }
 
 llvm::DIType CGDebugInfo::CreateType(const FunctionType *Ty,
@@ -754,15 +756,15 @@ llvm::DIType CGDebugInfo::CreateType(const FunctionType *Ty,
   SmallVector<llvm::Value *, 16> EltTys;
 
   // Add the result type at least.
-  EltTys.push_back(getOrCreateType(Ty->getResultType(), Unit));
+  EltTys.push_back(getOrCreateType(Ty->getReturnType(), Unit));
 
   // Set up remainder of arguments if there is a prototype.
   // FIXME: IF NOT, HOW IS THIS REPRESENTED?  llvm-gcc doesn't represent '...'!
   if (isa<FunctionNoProtoType>(Ty))
     EltTys.push_back(DBuilder.createUnspecifiedParameter());
   else if (const FunctionProtoType *FPT = dyn_cast<FunctionProtoType>(Ty)) {
-    for (unsigned i = 0, e = FPT->getNumArgs(); i != e; ++i)
-      EltTys.push_back(getOrCreateType(FPT->getArgType(i), Unit));
+    for (unsigned i = 0, e = FPT->getNumParams(); i != e; ++i)
+      EltTys.push_back(getOrCreateType(FPT->getParamType(i), Unit));
   }
 
   llvm::DIArray EltTypeArray = DBuilder.getOrCreateArray(EltTys);
@@ -2412,7 +2414,7 @@ llvm::DICompositeType CGDebugInfo::getOrCreateFunctionType(const Decl *D,
     SmallVector<llvm::Value *, 16> Elts;
 
     // First element is always return type. For 'void' functions it is NULL.
-    QualType ResultTy = OMethod->getResultType();
+    QualType ResultTy = OMethod->getReturnType();
 
     // Replace the instancetype keyword with the actual type.
     if (ResultTy == CGM.getContext().getObjCInstanceType())

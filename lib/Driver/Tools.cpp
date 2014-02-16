@@ -515,10 +515,6 @@ static void getAArch64FPUFeatures(const Driver &D, const Arg *A,
     Features.push_back("+crypto");
   } else if (FPU == "neon") {
     Features.push_back("+neon");
-  } else if (FPU == "none") {
-    Features.push_back("-fp-armv8");
-    Features.push_back("-crypto");
-    Features.push_back("-neon");
   } else
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
@@ -662,6 +658,10 @@ StringRef tools::arm::getARMFloatABI(const Driver &D, const ArgList &Args,
         // EABI is always AAPCS, and if it was not marked 'hard', it's softfp
         FloatABI = "softfp";
         break;
+      case llvm::Triple::MachO: {
+        FloatABI = "soft";
+        break;
+      }
       case llvm::Triple::Android: {
         std::string ArchName =
           arm::getLLVMArchSuffixForARM(arm::getARMTargetCPU(Args, Triple));
@@ -838,8 +838,8 @@ static void getMipsCPUAndABI(const ArgList &Args,
                              const llvm::Triple &Triple,
                              StringRef &CPUName,
                              StringRef &ABIName) {
-  const char *DefMips32CPU = "mips32";
-  const char *DefMips64CPU = "mips64";
+  const char *DefMips32CPU = "mips32r2";
+  const char *DefMips64CPU = "mips64r2";
 
   if (Arg *A = Args.getLastArg(options::OPT_march_EQ,
                                options::OPT_mcpu_EQ))
@@ -1223,10 +1223,9 @@ static const char *getX86TargetCPU(const ArgList &Args,
     return Is64Bit ? "core2" : "yonah";
   }
 
-  // All x86 devices running Android have core2 as their common
-  // denominator. This makes a better choice than pentium4.
+  // On Android use targets compatible with gcc
   if (Triple.getEnvironment() == llvm::Triple::Android)
-    return "core2";
+    return Is64Bit ? "x86-64" : "i686";
 
   // Everything else goes to x86-64 in 64-bit mode.
   if (Is64Bit)
@@ -1339,6 +1338,11 @@ static void getX86TargetFeatures(const llvm::Triple &Triple,
     Features.push_back("-fsgsbase");
   }
 
+  if (Triple.getEnvironment() == llvm::Triple::Android) {
+    // Add sse3 feature to comply with gcc on Android
+    Features.push_back("+sse3");
+  }
+
   // Now add any that the user explicitly requested on the command line,
   // which may override the defaults.
   for (arg_iterator it = Args.filtered_begin(options::OPT_m_x86_Features_Group),
@@ -1434,6 +1438,12 @@ static void getAArch64TargetFeatures(const Driver &D, const ArgList &Args,
   // Honor -mfpu=.
   if (const Arg *A = Args.getLastArg(options::OPT_mfpu_EQ))
     getAArch64FPUFeatures(D, A, Args, Features);
+
+  if (Args.getLastArg(options::OPT_mgeneral_regs_only)) {
+    Features.push_back("-fp-armv8");
+    Features.push_back("-crypto");
+    Features.push_back("-neon");
+  }
 }
 
 static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
@@ -1699,7 +1709,8 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
           CmdArgs.push_back("-fatal-assembler-warnings");
         } else if (Value == "--noexecstack") {
           CmdArgs.push_back("-mnoexecstack");
-        } else if (Value == "-compress-debug-sections") {
+        } else if (Value == "-compress-debug-sections" ||
+                   Value == "--compress-debug-sections") {
           D.Diag(diag::warn_missing_debug_compression);
         } else if (Value.startswith("-I")) {
           CmdArgs.push_back(Value.data());
@@ -1713,6 +1724,14 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
         }
       }
     }
+}
+
+// Until ARM libraries are build separately, we have them all in one library
+static StringRef getArchNameForCompilerRTLib(const ToolChain &TC) {
+  if (TC.getArch() == llvm::Triple::arm)
+    return "arm";
+  else
+    return TC.getArchName();
 }
 
 static void addProfileRTLinux(
@@ -1729,7 +1748,7 @@ static void addProfileRTLinux(
   SmallString<128> LibProfile(TC.getDriver().ResourceDir);
   llvm::sys::path::append(
       LibProfile, "lib", "linux",
-      Twine("libclang_rt.profile-") + TC.getArchName() + ".a");
+      Twine("libclang_rt.profile-") + getArchNameForCompilerRTLib(TC) + ".a");
 
   CmdArgs.push_back(Args.MakeArgString(LibProfile));
 }
@@ -1743,7 +1762,8 @@ static void addSanitizerRTLinkFlagsLinux(
   SmallString<128> LibSanitizer(TC.getDriver().ResourceDir);
   llvm::sys::path::append(
       LibSanitizer, "lib", "linux",
-      (Twine("libclang_rt.") + Sanitizer + "-" + TC.getArchName() + ".a"));
+      (Twine("libclang_rt.") + Sanitizer + "-" +
+          getArchNameForCompilerRTLib(TC) + ".a"));
 
   // Sanitizer runtime may need to come before -lstdc++ (or -lc++, libstdc++.a,
   // etc.) so that the linker picks custom versions of the global 'operator
@@ -1784,7 +1804,7 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
     SmallString<128> LibAsan(TC.getDriver().ResourceDir);
     llvm::sys::path::append(LibAsan, "lib", "linux",
         (Twine("libclang_rt.asan-") +
-            TC.getArchName() + "-android.so"));
+            getArchNameForCompilerRTLib(TC) + "-android.so"));
     CmdArgs.insert(CmdArgs.begin(), Args.MakeArgString(LibAsan));
   } else {
     if (!Args.hasArg(options::OPT_shared))
@@ -2130,6 +2150,29 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   bool PIE = getToolChain().isPIEDefault();
   bool PIC = PIE || getToolChain().isPICDefault();
   bool IsPICLevelTwo = PIC;
+
+  // Android-specific defaults for PIC/PIE
+  if (getToolChain().getTriple().getEnvironment() == llvm::Triple::Android) {
+    switch (getToolChain().getTriple().getArch()) {
+    case llvm::Triple::arm:
+    case llvm::Triple::thumb:
+    case llvm::Triple::mips:
+    case llvm::Triple::mipsel:
+    case llvm::Triple::mips64:
+    case llvm::Triple::mips64el:
+      PIC = true; // "-fpic"
+      break;
+
+    case llvm::Triple::x86:
+    case llvm::Triple::x86_64:
+      PIC = true; // "-fPIC"
+      IsPICLevelTwo = true;
+      break;
+
+    default:
+      break;
+    }
+  }
 
   // For the PIC and PIE flag options, this logic is different from the
   // legacy logic in very old versions of GCC, as that logic was just
@@ -2601,7 +2644,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-generate-gnu-dwarf-pub-sections");
   }
 
-  if (Args.hasArg(options::OPT_fdebug_types_section)) {
+  if (Args.hasFlag(options::OPT_fdebug_types_section,
+                   options::OPT_fno_debug_types_section, false)) {
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-generate-type-units");
   }
@@ -3326,9 +3370,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   ObjCRuntime objcRuntime = AddObjCRuntimeArgs(Args, CmdArgs, rewriteKind);
 
   // -fobjc-dispatch-method is only relevant with the nonfragile-abi, and
-  // legacy is the default. Next runtime is always legacy dispatch and
-  // -fno-objc-legacy-dispatch gets ignored silently.
-  if (objcRuntime.isNonFragile() && !objcRuntime.isNeXTFamily()) {
+  // legacy is the default. Except for deployment taget of 10.5,
+  // next runtime is always legacy dispatch and -fno-objc-legacy-dispatch
+  // gets ignored silently.
+  if (objcRuntime.isNonFragile()) {
     if (!Args.hasFlag(options::OPT_fobjc_legacy_dispatch,
                       options::OPT_fno_objc_legacy_dispatch,
                       objcRuntime.isLegacyDispatchDefaultForArch(
@@ -6344,10 +6389,13 @@ static bool hasMipsN32ABIArg(const ArgList &Args) {
 
 static StringRef getLinuxDynamicLinker(const ArgList &Args,
                                        const toolchains::Linux &ToolChain) {
-  if (ToolChain.getTriple().getEnvironment() == llvm::Triple::Android)
-    return "/system/bin/linker";
-  else if (ToolChain.getArch() == llvm::Triple::x86 ||
-           ToolChain.getArch() == llvm::Triple::sparc)
+  if (ToolChain.getTriple().getEnvironment() == llvm::Triple::Android) {
+    if (ToolChain.getTriple().isArch64Bit())
+      return "/system/bin/linker64";
+    else
+      return "/system/bin/linker";
+  } else if (ToolChain.getArch() == llvm::Triple::x86 ||
+             ToolChain.getArch() == llvm::Triple::sparc)
     return "/lib/ld-linux.so.2";
   else if (ToolChain.getArch() == llvm::Triple::aarch64)
     return "/lib/ld-linux-aarch64.so.1";

@@ -364,10 +364,10 @@ CXXMethodDecl *Sema::startLambdaDefinition(CXXRecordDecl *Class,
   // dependent type.
   if (Class->isDependentContext() || TemplateParams) {
     const FunctionProtoType *FPT = MethodType->castAs<FunctionProtoType>();
-    QualType Result = FPT->getResultType();
+    QualType Result = FPT->getReturnType();
     if (Result->isUndeducedType()) {
       Result = SubstAutoType(Result, Context.DependentTy);
-      MethodType = Context.getFunctionType(Result, FPT->getArgTypes(),
+      MethodType = Context.getFunctionType(Result, FPT->getParamTypes(),
                                            FPT->getExtProtoInfo());
     }
   }
@@ -456,8 +456,8 @@ void Sema::buildLambdaScope(LambdaScopeInfo *LSI,
   LSI->Mutable = Mutable;
 
   if (ExplicitResultType) {
-    LSI->ReturnType = CallOperator->getResultType();
-    
+    LSI->ReturnType = CallOperator->getReturnType();
+
     if (!LSI->ReturnType->isDependentType() &&
         !LSI->ReturnType->isVoidType()) {
       if (RequireCompleteType(CallOperator->getLocStart(), LSI->ReturnType,
@@ -1164,8 +1164,9 @@ static void addFunctionPointerConversion(Sema &S,
     InvokerExtInfo.TypeQuals = 0;
     assert(InvokerExtInfo.RefQualifier == RQ_None && 
         "Lambda's call operator should not have a reference qualifier");
-    InvokerFunctionTy = S.Context.getFunctionType(CallOpProto->getResultType(),
-        CallOpProto->getArgTypes(), InvokerExtInfo);
+    InvokerFunctionTy =
+        S.Context.getFunctionType(CallOpProto->getReturnType(),
+                                  CallOpProto->getParamTypes(), InvokerExtInfo);
     PtrToFunctionTy = S.Context.getPointerType(InvokerFunctionTy);
   }
 
@@ -1209,7 +1210,7 @@ static void addFunctionPointerConversion(Sema &S,
       ConvTSI->getTypeLoc().getAs<FunctionProtoTypeLoc>();
   // Get the result of the conversion function which is a pointer-to-function.
   PointerTypeLoc PtrToFunctionTL = 
-      ConvTL.getResultLoc().getAs<PointerTypeLoc>();
+      ConvTL.getReturnLoc().getAs<PointerTypeLoc>();
   // Do the same for the TypeSourceInfo that is used to name the conversion
   // operator.
   PointerTypeLoc ConvNamePtrToFunctionTL = 
@@ -1244,8 +1245,8 @@ static void addFunctionPointerConversion(Sema &S,
                                              From->getTypeSourceInfo(),
                                              From->getStorageClass(),
                                              /*DefaultArg=*/0));
-    CallOpConvTL.setArg(I, From);
-    CallOpConvNameTL.setArg(I, From);
+    CallOpConvTL.setParam(I, From);
+    CallOpConvNameTL.setParam(I, From);
   }
 
   CXXConversionDecl *Conversion 
@@ -1331,7 +1332,7 @@ static void addBlockPointerConversion(Sema &S,
     FunctionProtoType::ExtProtoInfo ExtInfo = Proto->getExtProtoInfo();
     ExtInfo.TypeQuals = 0;
     QualType FunctionTy = S.Context.getFunctionType(
-        Proto->getResultType(), Proto->getArgTypes(), ExtInfo);
+        Proto->getReturnType(), Proto->getParamTypes(), ExtInfo);
     BlockPtrTy = S.Context.getBlockPointerType(FunctionTy);
   }
 
@@ -1456,7 +1457,7 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
       const FunctionProtoType *Proto
         = CallOperator->getType()->getAs<FunctionProtoType>();
       QualType FunctionTy = Context.getFunctionType(
-          LSI->ReturnType, Proto->getArgTypes(), Proto->getExtProtoInfo());
+          LSI->ReturnType, Proto->getParamTypes(), Proto->getExtProtoInfo());
       CallOperator->setType(FunctionTy);
     }
     // C++ [expr.prim.lambda]p7:

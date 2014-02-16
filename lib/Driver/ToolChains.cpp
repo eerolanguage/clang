@@ -281,7 +281,7 @@ void MachO::AddLinkRuntimeLib(const ArgList &Args, ArgStringList &CmdArgs,
                               StringRef DarwinStaticLib, bool AlwaysLink,
                               bool IsEmbedded) const {
   SmallString<128> P(getDriver().ResourceDir);
-  llvm::sys::path::append(P, "lib", IsEmbedded ? "darwin_embedded" : "darwin",
+  llvm::sys::path::append(P, "lib", IsEmbedded ? "macho_embedded" : "darwin",
                           DarwinStaticLib);
 
   // For now, allow missing resource libraries to support developers who may
@@ -991,7 +991,7 @@ void Darwin::addMinVersionArgs(const llvm::opt::ArgList &Args,
   // it.
   if (Args.hasArg(options::OPT_mios_simulator_version_min_EQ))
     CmdArgs.push_back("-ios_simulator_version_min");
-  else if (isTargetIPhoneOS())
+  else if (isTargetIOSBased())
     CmdArgs.push_back("-iphoneos_version_min");
   else {
     assert(isTargetMacOS() && "unexpected target");
@@ -1007,8 +1007,7 @@ void Darwin::addStartObjectFileArgs(const llvm::opt::ArgList &Args,
   if (Args.hasArg(options::OPT_dynamiclib)) {
     // Derived from darwin_dylib1 spec.
     if (isTargetIOSSimulator()) {
-      // The simulator doesn't have a versioned crt1 file.
-      CmdArgs.push_back("-ldylib1.o");
+      ; // iOS simulator does not need dylib1.o.
     } else if (isTargetIPhoneOS()) {
       if (isIPhoneOSVersionLT(3, 1))
         CmdArgs.push_back("-ldylib1.o");
@@ -1023,8 +1022,7 @@ void Darwin::addStartObjectFileArgs(const llvm::opt::ArgList &Args,
       if (!Args.hasArg(options::OPT_static)) {
         // Derived from darwin_bundle1 spec.
         if (isTargetIOSSimulator()) {
-          // The simulator doesn't have a versioned crt1 file.
-          CmdArgs.push_back("-lbundle1.o");
+          ; // iOS simulator does not need bundle1.o.
         } else if (isTargetIPhoneOS()) {
           if (isIPhoneOSVersionLT(3, 1))
             CmdArgs.push_back("-lbundle1.o");
@@ -1059,8 +1057,7 @@ void Darwin::addStartObjectFileArgs(const llvm::opt::ArgList &Args,
         } else {
           // Derived from darwin_crt1 spec.
           if (isTargetIOSSimulator()) {
-            // The simulator doesn't have a versioned crt1 file.
-            CmdArgs.push_back("-lcrt1.o");
+            ; // iOS simulator does not need crt1.o.
           } else if (isTargetIPhoneOS()) {
             if (isIPhoneOSVersionLT(3, 1))
               CmdArgs.push_back("-lcrt1.o");
@@ -1295,7 +1292,8 @@ void Generic_GCC::GCCInstallationDetector::print(raw_ostream &OS) const {
   static const char *const X86_64Triples[] = {
     "x86_64-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-linux-gnu",
     "x86_64-redhat-linux6E", "x86_64-redhat-linux", "x86_64-suse-linux",
-    "x86_64-manbo-linux-gnu", "x86_64-linux-gnu", "x86_64-slackware-linux"
+    "x86_64-manbo-linux-gnu", "x86_64-linux-gnu", "x86_64-slackware-linux",
+    "x86_64-linux-android"
   };
   static const char *const X86LibDirs[] = { "/lib32", "/lib" };
   static const char *const X86Triples[] = {
@@ -1317,7 +1315,8 @@ void Generic_GCC::GCCInstallationDetector::print(raw_ostream &OS) const {
                                                "mips-mti-linux-gnu" };
   static const char *const MIPS64ELLibDirs[] = { "/lib64", "/lib" };
   static const char *const MIPS64ELTriples[] = { "mips64el-linux-gnu",
-                                                 "mips-mti-linux-gnu" };
+                                                 "mips-mti-linux-gnu",
+                                                 "mips64el-linux-android" };
 
   static const char *const PPCLibDirs[] = { "/lib32", "/lib" };
   static const char *const PPCTriples[] = {
@@ -2698,6 +2697,17 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
       addPathIfExists(LibPath + "/../" + Multilib, Paths);
     }
   }
+
+  // Similar to the logic for GCC above, if we currently running Clang inside
+  // of the requested system root, add its parent multilib library paths to
+  // those searched.
+  // FIXME: It's not clear whether we should use the driver's installed
+  // directory ('Dir' below) or the ResourceDir.
+  if (StringRef(D.Dir).startswith(SysRoot)) {
+    addPathIfExists(D.Dir + "/../lib/" + MultiarchTriple, Paths);
+    addPathIfExists(D.Dir + "/../" + Multilib, Paths);
+  }
+
   addPathIfExists(SysRoot + "/lib/" + MultiarchTriple, Paths);
   addPathIfExists(SysRoot + "/lib/../" + Multilib, Paths);
   addPathIfExists(SysRoot + "/usr/lib/" + MultiarchTriple, Paths);
@@ -2726,6 +2736,15 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
     if (StringRef(LibPath).startswith(SysRoot))
       addPathIfExists(LibPath, Paths);
   }
+
+  // Similar to the logic for GCC above, if we are currently running Clang
+  // inside of the requested system root, add its parent library path to those
+  // searched.
+  // FIXME: It's not clear whether we should use the driver's installed
+  // directory ('Dir' below) or the ResourceDir.
+  if (StringRef(D.Dir).startswith(SysRoot))
+    addPathIfExists(D.Dir + "/../lib", Paths);
+
   addPathIfExists(SysRoot + "/lib", Paths);
   addPathIfExists(SysRoot + "/usr/lib", Paths);
 }
@@ -2945,9 +2964,24 @@ void Linux::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
 
   // Check if libc++ has been enabled and provide its include paths if so.
   if (GetCXXStdlibType(DriverArgs) == ToolChain::CST_Libcxx) {
-    // libc++ is always installed at a fixed path on Linux currently.
-    addSystemInclude(DriverArgs, CC1Args,
-                     getDriver().SysRoot + "/usr/include/c++/v1");
+    const std::string LibCXXIncludePathCandidates[] = {
+      // The primary location is within the Clang installation.
+      // FIXME: We shouldn't hard code 'v1' here to make Clang future proof to
+      // newer ABI versions.
+      getDriver().Dir + "/../include/c++/v1",
+
+      // We also check the system as for a long time this is the only place Clang looked.
+      // FIXME: We should really remove this. It doesn't make any sense.
+      getDriver().SysRoot + "/usr/include/c++/v1"
+    };
+    for (unsigned i = 0; i < llvm::array_lengthof(LibCXXIncludePathCandidates);
+         ++i) {
+      if (!llvm::sys::fs::exists(LibCXXIncludePathCandidates[i]))
+        continue;
+      // Add the first candidate that exists.
+      addSystemInclude(DriverArgs, CC1Args, LibCXXIncludePathCandidates[i]);
+      break;
+    }
     return;
   }
 
@@ -2971,7 +3005,7 @@ void Linux::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
                                MIPSABIDirSuffix, DriverArgs, CC1Args))
     return;
 
-  const std::string IncludePathCandidates[] = {
+  const std::string LibStdCXXIncludePathCandidates[] = {
     // Gentoo is weird and places its headers inside the GCC install, so if the
     // first attempt to find the headers fails, try these patterns.
     InstallDir.str() + "/include/g++-v" + Version.MajorStr + "." +
@@ -2984,8 +3018,9 @@ void Linux::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
     LibDir.str() + "/../include/c++",
   };
 
-  for (unsigned i = 0; i < llvm::array_lengthof(IncludePathCandidates); ++i) {
-    if (addLibStdCXXIncludePaths(IncludePathCandidates[i],
+  for (unsigned i = 0; i < llvm::array_lengthof(LibStdCXXIncludePathCandidates);
+       ++i) {
+    if (addLibStdCXXIncludePaths(LibStdCXXIncludePathCandidates[i],
                                  TripleStr + MIPSABIDirSuffix + BiarchSuffix,
                                  DriverArgs, CC1Args))
       break;

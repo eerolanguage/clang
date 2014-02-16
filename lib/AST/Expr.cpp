@@ -588,13 +588,15 @@ std::string PredefinedExpr::ComputeName(IdentType IT, const Decl *CurrentDecl) {
     // not a constructor or destructor.
     if ((isa<CXXMethodDecl>(FD) &&
          cast<CXXMethodDecl>(FD)->getParent()->isLambda()) ||
-        (FT && FT->getResultType()->getAs<AutoType>()))
+        (FT && FT->getReturnType()->getAs<AutoType>()))
       Proto = "auto " + Proto;
-    else if (FT && FT->getResultType()->getAs<DecltypeType>())
-      FT->getResultType()->getAs<DecltypeType>()->getUnderlyingType()
+    else if (FT && FT->getReturnType()->getAs<DecltypeType>())
+      FT->getReturnType()
+          ->getAs<DecltypeType>()
+          ->getUnderlyingType()
           .getAsStringInternal(Proto, Policy);
     else if (!isa<CXXConstructorDecl>(FD) && !isa<CXXDestructorDecl>(FD))
-      AFT->getResultType().getAsStringInternal(Proto, Policy);
+      AFT->getReturnType().getAsStringInternal(Proto, Policy);
 
     Out << Proto;
 
@@ -1225,7 +1227,7 @@ QualType CallExpr::getCallReturnType() const {
     CalleeType = Expr::findBoundMemberType(getCallee());
     
   const FunctionType *FnType = CalleeType->castAs<FunctionType>();
-  return FnType->getResultType();
+  return FnType->getReturnType();
 }
 
 SourceLocation CallExpr::getLocStart() const {
@@ -3059,6 +3061,9 @@ Expr::isNullPointerConstant(ASTContext &Ctx,
             Pointee->isVoidType() &&                              // to void*
             CE->getSubExpr()->getType()->isIntegerType())         // from int.
           return CE->getSubExpr()->isNullPointerConstant(Ctx, NPC);
+      // Or an integer cast.
+      } else if (CE->getType()->isIntegerType()) {
+        return CE->getSubExpr()->isNullPointerConstant(Ctx, NPC);
       }
     }
   } else if (const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(this)) {

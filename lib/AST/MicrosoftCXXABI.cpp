@@ -92,26 +92,12 @@ static bool usesMultipleInheritanceModel(const CXXRecordDecl *RD) {
   return false;
 }
 
-static MSInheritanceAttr::Spelling
-MSInheritanceAttrToModel(const MSInheritanceAttr *Attr) {
-  if (Attr->IsSingle())
-    return MSInheritanceAttr::Keyword_single_inheritance;
-  else if (Attr->IsMultiple())
-    return MSInheritanceAttr::Keyword_multiple_inheritance;
-  else if (Attr->IsVirtual())
-    return MSInheritanceAttr::Keyword_virtual_inheritance;
-  
-  assert(Attr->IsUnspecified() && "Expected unspecified inheritance attr");
-  return MSInheritanceAttr::Keyword_unspecified_inheritance;
-}
-
-static MSInheritanceAttr::Spelling
-calculateInheritanceModel(const CXXRecordDecl *RD) {
-  if (!RD->hasDefinition())
+MSInheritanceAttr::Spelling CXXRecordDecl::calculateInheritanceModel() const {
+  if (!hasDefinition())
     return MSInheritanceAttr::Keyword_unspecified_inheritance;
-  if (RD->getNumVBases() > 0)
+  if (getNumVBases() > 0)
     return MSInheritanceAttr::Keyword_virtual_inheritance;
-  if (usesMultipleInheritanceModel(RD))
+  if (usesMultipleInheritanceModel(this))
     return MSInheritanceAttr::Keyword_multiple_inheritance;
   return MSInheritanceAttr::Keyword_single_inheritance;
 }
@@ -120,7 +106,7 @@ MSInheritanceAttr::Spelling
 CXXRecordDecl::getMSInheritanceModel() const {
   MSInheritanceAttr *IA = getAttr<MSInheritanceAttr>();
   assert(IA && "Expected MSInheritanceAttr on the CXXRecordDecl!");
-  return MSInheritanceAttrToModel(IA);
+  return IA->getSemanticSpelling();
 }
 
 void CXXRecordDecl::setMSInheritanceModel() {
@@ -128,7 +114,7 @@ void CXXRecordDecl::setMSInheritanceModel() {
     return;
 
   addAttr(MSInheritanceAttr::CreateImplicit(
-      getASTContext(), calculateInheritanceModel(this), getSourceRange()));
+      getASTContext(), calculateInheritanceModel(), getSourceRange()));
 }
 
 // Returns the number of pointer and integer slots used to represent a member
@@ -211,8 +197,20 @@ std::pair<uint64_t, unsigned> MicrosoftCXXABI::getMemberPointerWidthAndAlign(
   unsigned PtrSize = Target.getPointerWidth(0);
   unsigned IntSize = Target.getIntWidth();
   uint64_t Width = Ptrs * PtrSize + Ints * IntSize;
-  unsigned Align = Ptrs > 0 ? Target.getPointerAlign(0) : Target.getIntAlign();
-  Width = llvm::RoundUpToAlignment(Width, Align);
+  unsigned Align;
+
+  // When MSVC does x86_32 record layout, it aligns aggregate member pointers to
+  // 8 bytes.  However, __alignof usually returns 4 for data memptrs and 8 for
+  // function memptrs.
+  if (Ptrs + Ints > 1 && Target.getTriple().getArch() == llvm::Triple::x86)
+    Align = 8 * 8;
+  else if (Ptrs)
+    Align = Target.getPointerAlign(0);
+  else
+    Align = Target.getIntAlign();
+
+  if (Target.getTriple().getArch() == llvm::Triple::x86_64)
+    Width = llvm::RoundUpToAlignment(Width, Align);
   return std::make_pair(Width, Align);
 }
 

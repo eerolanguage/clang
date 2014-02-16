@@ -168,7 +168,7 @@ static bool validateBoxingMethod(Sema &S, SourceLocation Loc,
   }
 
   // Make sure the return type is reasonable.
-  QualType ReturnType = Method->getResultType();
+  QualType ReturnType = Method->getReturnType();
   if (!ReturnType->isObjCObjectPointerType()) {
     S.Diag(Loc, diag::err_objc_literal_method_sig)
       << Sel;
@@ -240,16 +240,15 @@ static ObjCMethodDecl *getNSNumberFactoryMethod(Sema &S, SourceLocation Loc,
   ObjCMethodDecl *Method = S.NSNumberDecl->lookupClassMethod(Sel);
   if (!Method && S.getLangOpts().DebuggerObjCLiteral) {
     // create a stub definition this NSNumber factory method.
-    TypeSourceInfo *ResultTInfo = 0;
-    Method = ObjCMethodDecl::Create(CX, SourceLocation(), SourceLocation(), Sel,
-                                    S.NSNumberPointer, ResultTInfo,
-                                    S.NSNumberDecl,
-                                    /*isInstance=*/false, /*isVariadic=*/false,
-                                    /*isPropertyAccessor=*/false,
-                                    /*isImplicitlyDeclared=*/true,
-                                    /*isDefined=*/false,
-                                    ObjCMethodDecl::Required,
-                                    /*HasRelatedResultType=*/false);
+    TypeSourceInfo *ReturnTInfo = 0;
+    Method =
+        ObjCMethodDecl::Create(CX, SourceLocation(), SourceLocation(), Sel,
+                               S.NSNumberPointer, ReturnTInfo, S.NSNumberDecl,
+                               /*isInstance=*/false, /*isVariadic=*/false,
+                               /*isPropertyAccessor=*/false,
+                               /*isImplicitlyDeclared=*/true,
+                               /*isDefined=*/false, ObjCMethodDecl::Required,
+                               /*HasRelatedResultType=*/false);
     ParmVarDecl *value = ParmVarDecl::Create(S.Context, Method,
                                              SourceLocation(), SourceLocation(),
                                              &CX.Idents.get("value"),
@@ -524,17 +523,15 @@ ExprResult Sema::BuildObjCBoxedExpr(SourceRange SR, Expr *ValueExpr) {
         BoxingMethod = NSStringDecl->lookupClassMethod(stringWithUTF8String);
         if (!BoxingMethod && getLangOpts().DebuggerObjCLiteral) {
           // Debugger needs to work even if NSString hasn't been defined.
-          TypeSourceInfo *ResultTInfo = 0;
-          ObjCMethodDecl *M =
-            ObjCMethodDecl::Create(Context, SourceLocation(), SourceLocation(),
-                                   stringWithUTF8String, NSStringPointer,
-                                   ResultTInfo, NSStringDecl,
-                                   /*isInstance=*/false, /*isVariadic=*/false,
-                                   /*isPropertyAccessor=*/false,
-                                   /*isImplicitlyDeclared=*/true,
-                                   /*isDefined=*/false,
-                                   ObjCMethodDecl::Required,
-                                   /*HasRelatedResultType=*/false);
+          TypeSourceInfo *ReturnTInfo = 0;
+          ObjCMethodDecl *M = ObjCMethodDecl::Create(
+              Context, SourceLocation(), SourceLocation(), stringWithUTF8String,
+              NSStringPointer, ReturnTInfo, NSStringDecl,
+              /*isInstance=*/false, /*isVariadic=*/false,
+              /*isPropertyAccessor=*/false,
+              /*isImplicitlyDeclared=*/true,
+              /*isDefined=*/false, ObjCMethodDecl::Required,
+              /*HasRelatedResultType=*/false);
           QualType ConstCharType = Context.CharTy.withConst();
           ParmVarDecl *value =
             ParmVarDecl::Create(Context, M,
@@ -701,17 +698,14 @@ ExprResult Sema::BuildObjCArrayLiteral(SourceRange SR, MultiExprArg Elements) {
       Sel = NSAPIObj->getNSArraySelector(NSAPI::NSArr_arrayWithObjectsCount);
     ObjCMethodDecl *Method = NSArrayDecl->lookupClassMethod(Sel);
     if (!Method && getLangOpts().DebuggerObjCLiteral) {
-      TypeSourceInfo *ResultTInfo = 0;
-      Method = ObjCMethodDecl::Create(Context,
-                           SourceLocation(), SourceLocation(), Sel,
-                           IdT,
-                           ResultTInfo,
-                           Context.getTranslationUnitDecl(),
-                           false /*Instance*/, false/*isVariadic*/,
-                           /*isPropertyAccessor=*/false,
-                           /*isImplicitlyDeclared=*/true, /*isDefined=*/false,
-                           ObjCMethodDecl::Required,
-                           false);
+      TypeSourceInfo *ReturnTInfo = 0;
+      Method = ObjCMethodDecl::Create(
+          Context, SourceLocation(), SourceLocation(), Sel, IdT, ReturnTInfo,
+          Context.getTranslationUnitDecl(), false /*Instance*/,
+          false /*isVariadic*/,
+          /*isPropertyAccessor=*/false,
+          /*isImplicitlyDeclared=*/true, /*isDefined=*/false,
+          ObjCMethodDecl::Required, false);
       SmallVector<ParmVarDecl *, 2> Params;
       ParmVarDecl *objects = ParmVarDecl::Create(Context, Method,
                                                  SourceLocation(),
@@ -1170,7 +1164,8 @@ QualType Sema::getMessageSendResultType(QualType ReceiverType,
 static const ObjCMethodDecl *
 findExplicitInstancetypeDeclarer(const ObjCMethodDecl *MD,
                                  QualType instancetype) {
-  if (MD->getResultType() == instancetype) return MD;
+  if (MD->getReturnType() == instancetype)
+    return MD;
 
   // For these purposes, a method in an @implementation overrides a
   // declaration in the @interface.
@@ -1205,7 +1200,7 @@ void Sema::EmitRelatedResultTypeNoteForReturn(QualType destType) {
   // type doesn't match the method's declared return type.
   ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(CurContext);
   if (!MD || !MD->hasRelatedResultType() ||
-      Context.hasSameUnqualifiedType(destType, MD->getResultType()))
+      Context.hasSameUnqualifiedType(destType, MD->getReturnType()))
     return;
 
   // Look for a method overridden by this method which explicitly uses
@@ -1214,7 +1209,7 @@ void Sema::EmitRelatedResultTypeNoteForReturn(QualType destType) {
         findExplicitInstancetypeDeclarer(MD, Context.getObjCInstanceType())) {
     SourceLocation loc;
     SourceRange range;
-    if (TypeSourceInfo *TSI = overridden->getResultTypeSourceInfo()) {
+    if (TypeSourceInfo *TSI = overridden->getReturnTypeSourceInfo()) {
       range = TSI->getTypeLoc().getSourceRange();
       loc = range.getBegin();
     }
@@ -1245,13 +1240,12 @@ void Sema::EmitRelatedResultTypeNote(const Expr *E) {
   
   if (!Method->hasRelatedResultType())
     return;
-  
-  if (Context.hasSameUnqualifiedType(Method->getResultType()
-                                                        .getNonReferenceType(),
-                                     MsgSend->getType()))
+
+  if (Context.hasSameUnqualifiedType(
+          Method->getReturnType().getNonReferenceType(), MsgSend->getType()))
     return;
-  
-  if (!Context.hasSameUnqualifiedType(Method->getResultType(), 
+
+  if (!Context.hasSameUnqualifiedType(Method->getReturnType(),
                                       Context.getObjCInstanceType()))
     return;
   
@@ -1338,7 +1332,7 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
 
   ReturnType = getMessageSendResultType(ReceiverType, Method, isClassMessage, 
                                         isSuperMessage);
-  VK = Expr::getValueKindForType(Method->getResultType());
+  VK = Expr::getValueKindForType(Method->getReturnType());
 
   unsigned NumNamedArgs = Sel.getNumArgs();
   // Method might have more arguments than selector indicates. This is due
@@ -1537,7 +1531,7 @@ static void DiagnoseARCUseOfWeakReceiver(Sema &S, Expr *Receiver) {
       if (PRE->isImplicitProperty()) {
         GDecl = PRE->getImplicitPropertyGetter();
         if (GDecl) {
-          T = GDecl->getResultType();
+          T = GDecl->getReturnType();
         }
       }
       else {
@@ -2212,8 +2206,8 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
                                 ReturnType, VK))
     return ExprError();
 
-  if (Method && !Method->getResultType()->isVoidType() &&
-      RequireCompleteType(LBracLoc, Method->getResultType(), 
+  if (Method && !Method->getReturnType()->isVoidType() &&
+      RequireCompleteType(LBracLoc, Method->getReturnType(),
                           diag::err_illegal_message_expr_incomplete_type))
     return ExprError();
 
@@ -2617,9 +2611,9 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
                                 ClassMessage, SuperLoc.isValid(), 
                                 LBracLoc, RBracLoc, ReturnType, VK))
     return ExprError();
-  
-  if (Method && !Method->getResultType()->isVoidType() &&
-      RequireCompleteType(LBracLoc, Method->getResultType(), 
+
+  if (Method && !Method->getReturnType()->isVoidType() &&
+      RequireCompleteType(LBracLoc, Method->getReturnType(),
                           diag::err_illegal_message_expr_incomplete_type))
     return ExprError();
 
@@ -3017,7 +3011,7 @@ namespace {
 
     ACCResult checkCallToFunction(FunctionDecl *fn) {
       // Require a CF*Ref return type.
-      if (!isCFType(fn->getResultType()))
+      if (!isCFType(fn->getReturnType()))
         return ACC_invalid;
 
       if (!isAnyRetainable(TargetClass))
@@ -3070,7 +3064,7 @@ namespace {
       // Check for message sends to functions returning CF types.  We
       // just obey the Cocoa conventions with these, even though the
       // return type is CF.
-      if (!isAnyRetainable(TargetClass) || !isCFType(method->getResultType()))
+      if (!isAnyRetainable(TargetClass) || !isCFType(method->getReturnType()))
         return ACC_invalid;
       
       // If the method is explicitly marked not-retained, it's +0.

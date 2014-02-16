@@ -88,8 +88,8 @@ bool Preprocessor::isInLegacyMode(const SourceLocation &Loc) const {
 
 /// EnterSourceFile - Add a source file to the top of the include stack and
 /// start lexing tokens from it instead of the current buffer.
-void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
-                                   SourceLocation Loc, bool IsSubmodule,
+bool Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
+                                   SourceLocation Loc,
                                    Lexer::LegacyStatus Legacy) {
   assert(!CurTokenLexer && "Cannot #include a file inside a macro!");
   ++NumEnteredSourceFiles;
@@ -99,8 +99,8 @@ void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
 
   if (PTH) {
     if (PTHLexer *PL = PTH->CreateLexer(FID)) {
-      EnterSourceFileWithPTH(PL, CurDir, IsSubmodule);
-      return;
+      EnterSourceFileWithPTH(PL, CurDir);
+      return false;
     }
   }
   
@@ -112,7 +112,7 @@ void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
     SourceLocation FileStart = SourceMgr.getLocForStartOfFile(FID);
     Diag(Loc, diag::err_pp_error_opening_file)
       << std::string(SourceMgr.getBufferName(FileStart)) << "";
-    return;
+    return true;
   }
 
   if (isCodeCompletionEnabled() &&
@@ -122,16 +122,14 @@ void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
         CodeCompletionFileLoc.getLocWithOffset(CodeCompletionOffset);
   }
 
-  EnterSourceFileWithLexer(new Lexer(FID, InputFile, *this), CurDir,
-                           IsSubmodule, Legacy);
-  return;
+  EnterSourceFileWithLexer(new Lexer(FID, InputFile, *this), CurDir, Legacy);
+  return false;
 }
 
 /// EnterSourceFileWithLexer - Add a source file to the top of the include stack
 ///  and start lexing tokens from it instead of the current buffer.
 void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
                                             const DirectoryLookup *CurDir,
-                                            bool IsSubmodule,
                                             Lexer::LegacyStatus Legacy) {
 
   // Add the current lexer to the include stack.
@@ -141,7 +139,7 @@ void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
   CurLexer.reset(TheLexer);
   CurPPLexer = TheLexer;
   CurDirLookup = CurDir;
-  CurIsSubmodule = IsSubmodule;
+  CurSubmodule = 0;
   if (CurLexerKind != CLK_LexAfterModuleImport)
     CurLexerKind = CLK_Lexer;
 
@@ -170,8 +168,7 @@ void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
 /// EnterSourceFileWithPTH - Add a source file to the top of the include stack
 /// and start getting tokens from it using the PTH cache.
 void Preprocessor::EnterSourceFileWithPTH(PTHLexer *PL,
-                                          const DirectoryLookup *CurDir,
-                                          bool IsSubmodule) {
+                                          const DirectoryLookup *CurDir) {
 
   if (CurPPLexer || CurTokenLexer)
     PushIncludeMacroStack();
@@ -179,7 +176,7 @@ void Preprocessor::EnterSourceFileWithPTH(PTHLexer *PL,
   CurDirLookup = CurDir;
   CurPTHLexer.reset(PL);
   CurPPLexer = CurPTHLexer.get();
-  CurIsSubmodule = IsSubmodule;
+  CurSubmodule = 0;
   if (CurLexerKind != CLK_LexAfterModuleImport)
     CurLexerKind = CLK_PTHLexer;
   
@@ -407,16 +404,15 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
     if (Callbacks && !isEndOfMacro && CurPPLexer)
       ExitedFID = CurPPLexer->getFileID();
 
-    // If this file corresponded to a submodule, notify the parser that we've
-    // left that submodule.
-    bool LeavingSubmodule = CurIsSubmodule && CurLexer;
+    bool LeavingSubmodule = CurSubmodule && CurLexer;
     if (LeavingSubmodule) {
+      // Notify the parser that we've left the module.
       const char *EndPos = getCurLexerEndPos();
       Result.startToken();
       CurLexer->BufferPtr = EndPos;
       CurLexer->FormTokenWithChars(Result, EndPos, tok::annot_module_end);
       Result.setAnnotationEndLoc(Result.getLocation());
-      Result.setAnnotationValue(0);
+      Result.setAnnotationValue(CurSubmodule);
     }
 
     // We're done with the #included file.

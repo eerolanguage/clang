@@ -44,6 +44,7 @@ def NonLiteralNullConversion : DiagGroup<"non-literal-null-conversion">;
 def NullConversion : DiagGroup<"null-conversion">;
 def ImplicitConversionFloatingPointToBool :
   DiagGroup<"implicit-conversion-floating-point-to-bool">;
+def ObjCLiteralConversion : DiagGroup<"objc-literal-conversion">;
 def BadArrayNewLength : DiagGroup<"bad-array-new-length">;
 def BuiltinMacroRedefined : DiagGroup<"builtin-macro-redefined">;
 def BuiltinRequiresHeader : DiagGroup<"builtin-requires-header">;
@@ -340,8 +341,10 @@ def Uninitialized  : DiagGroup<"uninitialized", [UninitializedSometimes,
 def UnknownPragmas : DiagGroup<"unknown-pragmas">;
 def UnknownWarningOption : DiagGroup<"unknown-warning-option">;
 def NSobjectAttribute : DiagGroup<"NSObject-attribute">;
-def UnknownAttributes : DiagGroup<"attributes">;
+def UnknownAttributes : DiagGroup<"unknown-attributes">;
 def IgnoredAttributes : DiagGroup<"ignored-attributes">;
+def Attributes : DiagGroup<"attributes", [UnknownAttributes,
+                                          IgnoredAttributes]>;
 def UnnamedTypeTemplateArgs : DiagGroup<"unnamed-type-template-args",
                                         [CXX98CompatUnnamedTypeTemplateArgs]>;
 def UnsupportedFriend : DiagGroup<"unsupported-friend">;
@@ -444,6 +447,7 @@ def Conversion : DiagGroup<"conversion",
                             LiteralConversion,
                             NonLiteralNullConversion, // (1-1)->pointer (etc)
                             NullConversion, // NULL->non-pointer
+                            ObjCLiteralConversion,
                             SignConversion,
                             StringConversion]>,
                  DiagCategory<"Value Conversion Issue">;

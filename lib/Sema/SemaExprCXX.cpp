@@ -209,7 +209,8 @@ ParsedType Sema::getDestructorName(SourceLocation TildeLoc,
           Context.hasSameUnqualifiedType(T, SearchType)) {
         // We found our type!
 
-        return ParsedType::make(T);
+        return CreateParsedType(T,
+                                Context.getTrivialTypeSourceInfo(T, NameLoc));
       }
 
       if (!SearchType.isNull())
@@ -245,7 +246,9 @@ ParsedType Sema::getDestructorName(SourceLocation TildeLoc,
               = dyn_cast<ClassTemplateSpecializationDecl>(Record->getDecl())) {
           if (Spec->getSpecializedTemplate()->getCanonicalDecl() ==
                 Template->getCanonicalDecl())
-            return ParsedType::make(MemberOfType);
+            return CreateParsedType(
+                MemberOfType,
+                Context.getTrivialTypeSourceInfo(MemberOfType, NameLoc));
         }
 
         continue;
@@ -264,7 +267,9 @@ ParsedType Sema::getDestructorName(SourceLocation TildeLoc,
         // specialized.
         if (TemplateDecl *SpecTemplate = SpecName.getAsTemplateDecl()) {
           if (SpecTemplate->getCanonicalDecl() == Template->getCanonicalDecl())
-            return ParsedType::make(MemberOfType);
+            return CreateParsedType(
+                MemberOfType,
+                Context.getTrivialTypeSourceInfo(MemberOfType, NameLoc));
 
           continue;
         }
@@ -275,7 +280,9 @@ ParsedType Sema::getDestructorName(SourceLocation TildeLoc,
                                     = SpecName.getAsDependentTemplateName()) {
           if (DepTemplate->isIdentifier() &&
               DepTemplate->getIdentifier() == Template->getIdentifier())
-            return ParsedType::make(MemberOfType);
+            return CreateParsedType(
+                MemberOfType,
+                Context.getTrivialTypeSourceInfo(MemberOfType, NameLoc));
 
           continue;
         }
@@ -1735,8 +1742,8 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
 
       SmallVector<QualType, 4> ArgTypes;
       ArgTypes.push_back(Context.VoidPtrTy);
-      for (unsigned I = 1, N = Proto->getNumArgs(); I < N; ++I)
-        ArgTypes.push_back(Proto->getArgType(I));
+      for (unsigned I = 1, N = Proto->getNumParams(); I < N; ++I)
+        ArgTypes.push_back(Proto->getParamType(I));
 
       FunctionProtoType::ExtProtoInfo EPI;
       EPI.Variadic = Proto->isVariadic();
@@ -3156,6 +3163,8 @@ static bool CheckUnaryTypeTraitTypeCompleteness(Sema &S, TypeTrait UTT,
   case UTT_IsPolymorphic:
   case UTT_IsAbstract:
   case UTT_IsInterfaceClass:
+  case UTT_IsDestructible:
+  case UTT_IsNothrowDestructible:
     // Fall-through
 
   // These traits require a complete type.
@@ -3219,7 +3228,7 @@ static bool HasNoThrowOperator(const RecordType *RT, OverloadedOperatorKind Op,
         const FunctionProtoType *CPT =
           Operator->getType()->getAs<FunctionProtoType>();
         CPT = Self.ResolveExceptionSpec(KeyLoc, CPT);
-        if (!CPT || !CPT->isNothrow(Self.Context))
+        if (!CPT || !CPT->isNothrow(C))
           return false;
       }
     }
@@ -3421,8 +3430,12 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
       return RD->hasTrivialCopyAssignment() &&
              !RD->hasNonTrivialCopyAssignment();
     return false;
+  case UTT_IsDestructible:
+  case UTT_IsNothrowDestructible:
+    // FIXME: Implement UTT_IsDestructible and UTT_IsNothrowDestructible.
+    // For now, let's fall through.
   case UTT_HasTrivialDestructor:
-    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html
     //   If __is_pod (type) is true or type is a reference type
     //   then the trait is true, else if type is a cv class or union
     //   type (or array thereof) with a trivial destructor
@@ -3505,9 +3518,9 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
           CPT = Self.ResolveExceptionSpec(KeyLoc, CPT);
           if (!CPT)
             return false;
-          // FIXME: check whether evaluating default arguments can throw.
+          // TODO: check whether evaluating default arguments can throw.
           // For now, we'll be conservative and assume that they can throw.
-          if (!CPT->isNothrow(Self.Context) || CPT->getNumArgs() > 1)
+          if (!CPT->isNothrow(Self.Context) || CPT->getNumParams() > 1)
             return false;
         }
       }
@@ -3516,7 +3529,7 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
     }
     return false;
   case UTT_HasNothrowConstructor:
-    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html
     //   If __has_trivial_constructor (type) is true then the trait is
     //   true, else if type is a cv class or union type (or array
     //   thereof) with a default constructor that is known not to
@@ -3528,6 +3541,7 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
           !RD->hasNonTrivialDefaultConstructor())
         return true;
 
+      bool FoundConstructor = false;
       DeclContext::lookup_const_result R = Self.LookupConstructors(RD);
       for (DeclContext::lookup_const_iterator Con = R.begin(),
            ConEnd = R.end(); Con != ConEnd; ++Con) {
@@ -3536,16 +3550,19 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
           continue;
         CXXConstructorDecl *Constructor = cast<CXXConstructorDecl>(*Con);
         if (Constructor->isDefaultConstructor()) {
+          FoundConstructor = true;
           const FunctionProtoType *CPT
               = Constructor->getType()->getAs<FunctionProtoType>();
           CPT = Self.ResolveExceptionSpec(KeyLoc, CPT);
           if (!CPT)
             return false;
-          // TODO: check whether evaluating default arguments can throw.
+          // FIXME: check whether evaluating default arguments can throw.
           // For now, we'll be conservative and assume that they can throw.
-          return CPT->isNothrow(Self.Context) && CPT->getNumArgs() == 0;
+          if (!CPT->isNothrow(Self.Context) || CPT->getNumParams() > 0)
+            return false;
         }
       }
+      return FoundConstructor;
     }
     return false;
   case UTT_HasVirtualDestructor:
@@ -3601,6 +3618,8 @@ static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
                                    Args[1]->getType(), RParenLoc);
 
   switch (Kind) {
+  case clang::TT_IsConstructible:
+  case clang::TT_IsNothrowConstructible:
   case clang::TT_IsTriviallyConstructible: {
     // C++11 [meta.unary.prop]:
     //   is_trivially_constructible is defined as:
@@ -3659,20 +3678,31 @@ static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
     InitializationSequence Init(S, To, InitKind, ArgExprs);
     if (Init.Failed())
       return false;
-    
+
     ExprResult Result = Init.Perform(S, To, InitKind, ArgExprs);
     if (Result.isInvalid() || SFINAE.hasErrorOccurred())
       return false;
 
-    // Under Objective-C ARC, if the destination has non-trivial Objective-C
-    // lifetime, this is a non-trivial construction.
-    if (S.getLangOpts().ObjCAutoRefCount &&
-        hasNontrivialObjCLifetime(Args[0]->getType().getNonReferenceType()))
-      return false;
+    if (Kind == clang::TT_IsConstructible)
+      return true;
 
-    // The initialization succeeded; now make sure there are no non-trivial
-    // calls.
-    return !Result.get()->hasNonTrivialCall(S.Context);
+    if (Kind == clang::TT_IsNothrowConstructible)
+      return S.canThrow(Result.get()) == CT_Cannot;
+
+    if (Kind == clang::TT_IsTriviallyConstructible) {
+      // Under Objective-C ARC, if the destination has non-trivial Objective-C
+      // lifetime, this is a non-trivial construction.
+      if (S.getLangOpts().ObjCAutoRefCount &&
+          hasNontrivialObjCLifetime(Args[0]->getType().getNonReferenceType()))
+        return false;
+
+      // The initialization succeeded; now make sure there are no non-trivial
+      // calls.
+      return !Result.get()->hasNonTrivialCall(S.Context);
+    }
+
+    llvm_unreachable("unhandled type trait");
+    return false;
   }
     default: llvm_unreachable("not a TT");
   }
@@ -3827,7 +3857,8 @@ static bool EvaluateBinaryTypeTrait(Sema &Self, TypeTrait BTT, QualType LhsT,
     ExprResult Result = Init.Perform(Self, To, Kind, FromPtr);
     return !Result.isInvalid() && !SFINAE.hasErrorOccurred();
   }
-      
+
+  case BTT_IsNothrowAssignable:
   case BTT_IsTriviallyAssignable: {
     // C++11 [meta.unary.prop]p3:
     //   is_trivially_assignable is defined as:
@@ -3873,13 +3904,21 @@ static bool EvaluateBinaryTypeTrait(Sema &Self, TypeTrait BTT, QualType LhsT,
     if (Result.isInvalid() || SFINAE.hasErrorOccurred())
       return false;
 
-    // Under Objective-C ARC, if the destination has non-trivial Objective-C
-    // lifetime, this is a non-trivial assignment.
-    if (Self.getLangOpts().ObjCAutoRefCount &&
-        hasNontrivialObjCLifetime(LhsT.getNonReferenceType()))
-      return false;
+    if (BTT == BTT_IsNothrowAssignable)
+      return Self.canThrow(Result.get()) == CT_Cannot;
 
-    return !Result.get()->hasNonTrivialCall(Self.Context);
+    if (BTT == BTT_IsTriviallyAssignable) {
+      // Under Objective-C ARC, if the destination has non-trivial Objective-C
+      // lifetime, this is a non-trivial assignment.
+      if (Self.getLangOpts().ObjCAutoRefCount &&
+          hasNontrivialObjCLifetime(LhsT.getNonReferenceType()))
+        return false;
+
+      return !Result.get()->hasNonTrivialCall(Self.Context);
+    }
+
+    llvm_unreachable("unhandled type trait");
+    return false;
   }
     default: llvm_unreachable("not a BTT");
   }
@@ -4360,41 +4399,20 @@ QualType Sema::CXXCheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   bool LVoid = LTy->isVoidType();
   bool RVoid = RTy->isVoidType();
   if (LVoid || RVoid) {
-    //   ... then the [l2r] conversions are performed on the second and third
-    //   operands ...
-    LHS = DefaultFunctionArrayLvalueConversion(LHS.take());
-    RHS = DefaultFunctionArrayLvalueConversion(RHS.take());
-    if (LHS.isInvalid() || RHS.isInvalid())
-      return QualType();
-
-    // Finish off the lvalue-to-rvalue conversion by copy-initializing a
-    // temporary if necessary. DefaultFunctionArrayLvalueConversion doesn't
-    // do this part for us.
-    ExprResult &NonVoid = LVoid ? RHS : LHS;
-    if (NonVoid.get()->getType()->isRecordType() &&
-        NonVoid.get()->isGLValue()) {
-      if (RequireNonAbstractType(QuestionLoc, NonVoid.get()->getType(),
-                             diag::err_allocation_of_abstract_type))
-        return QualType();
-      InitializedEntity Entity =
-          InitializedEntity::InitializeTemporary(NonVoid.get()->getType());
-      NonVoid = PerformCopyInitialization(Entity, SourceLocation(), NonVoid);
-      if (NonVoid.isInvalid())
-        return QualType();
+    //   ... one of the following shall hold:
+    //   -- The second or the third operand (but not both) is a (possibly
+    //      parenthesized) throw-expression; the result is of the type
+    //      and value category of the other.
+    bool LThrow = isa<CXXThrowExpr>(LHS.get()->IgnoreParenImpCasts());
+    bool RThrow = isa<CXXThrowExpr>(RHS.get()->IgnoreParenImpCasts());
+    if (LThrow != RThrow) {
+      Expr *NonThrow = LThrow ? RHS.get() : LHS.get();
+      VK = NonThrow->getValueKind();
+      // DR (no number yet): the result is a bit-field if the
+      // non-throw-expression operand is a bit-field.
+      OK = NonThrow->getObjectKind();
+      return NonThrow->getType();
     }
-
-    LTy = LHS.get()->getType();
-    RTy = RHS.get()->getType();
-
-    //   ... and one of the following shall hold:
-    //   -- The second or the third operand (but not both) is a throw-
-    //      expression; the result is of the type of the other and is a prvalue.
-    bool LThrow = isa<CXXThrowExpr>(LHS.get()->IgnoreParenCasts());
-    bool RThrow = isa<CXXThrowExpr>(RHS.get()->IgnoreParenCasts());
-    if (LThrow && !RThrow)
-      return RTy;
-    if (RThrow && !LThrow)
-      return LTy;
 
     //   -- Both the second and third operands have type void; the result is of
     //      type void and is a prvalue.
@@ -5636,7 +5654,7 @@ ExprResult Sema::BuildCXXMemberCallExpr(Expr *E, NamedDecl *FoundDecl,
     ME->setHadMultipleCandidates(true);
   MarkMemberReferenced(ME);
 
-  QualType ResultType = Method->getResultType();
+  QualType ResultType = Method->getReturnType();
   ExprValueKind VK = Expr::getValueKindForType(ResultType);
   ResultType = ResultType.getNonLValueExprType(Context);
 

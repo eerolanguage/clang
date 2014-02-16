@@ -712,8 +712,8 @@ void ASTDeclReader::VisitObjCMethodDecl(ObjCMethodDecl *MD) {
   MD->setDeclImplementation((ObjCMethodDecl::ImplementationControl)Record[Idx++]);
   MD->setObjCDeclQualifier((Decl::ObjCDeclQualifier)Record[Idx++]);
   MD->SetRelatedResultType(Record[Idx++]);
-  MD->setResultType(Reader.readType(F, Record, Idx));
-  MD->setResultTypeSourceInfo(GetTypeSourceInfo(Record, Idx));
+  MD->setReturnType(Reader.readType(F, Record, Idx));
+  MD->setReturnTypeSourceInfo(GetTypeSourceInfo(Record, Idx));
   MD->DeclEndLoc = ReadSourceLocation(Record, Idx);
   unsigned NumParams = Record[Idx++];
   SmallVector<ParmVarDecl *, 16> Params;
@@ -1984,7 +1984,8 @@ static bool isConsumerInterestedIn(Decl *D, bool HasBody) {
 
   if (isa<FileScopeAsmDecl>(D) || 
       isa<ObjCProtocolDecl>(D) || 
-      isa<ObjCImplDecl>(D))
+      isa<ObjCImplDecl>(D) ||
+      isa<ImportDecl>(D))
     return true;
   if (VarDecl *Var = dyn_cast<VarDecl>(D))
     return Var->isFileVarDecl() &&

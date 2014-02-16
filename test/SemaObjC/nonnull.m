@@ -74,6 +74,9 @@ void func6(dispatch_object_t _head) {
 @interface NSObject 
 - (void)doSomethingWithNonNullPointer:(void *)ptr :(int)iarg : (void*)ptr1 __attribute__((nonnull(1, 3)));
 + (void)doSomethingClassyWithNonNullPointer:(void *)ptr __attribute__((nonnull(1)));
+- (void*)returnsCNonNull __attribute__((returns_nonnull)); // no-warning
+- (id)returnsObjCNonNull __attribute__((returns_nonnull)); // no-warning
+- (int)returnsIntNonNull __attribute__((returns_nonnull)); // expected-warning {{'returns_nonnull' attribute only applies to return values that are pointers}}
 @end
 
 extern void DoSomethingNotNull(void *db) __attribute__((nonnull(1)));
@@ -82,6 +85,7 @@ extern void DoSomethingNotNull(void *db) __attribute__((nonnull(1)));
 {
   void * vp;
 }
+- (void*) testRetNull __attribute__((returns_nonnull));
 @end
 
 @implementation IMP
@@ -93,10 +97,13 @@ extern void DoSomethingNotNull(void *db) __attribute__((nonnull(1)));
   DoSomethingNotNull(NULL); // expected-warning {{null passed to a callee which requires a non-null argument}}
   [object doSomethingWithNonNullPointer:vp:1:vp];
 }
+- (void*) testRetNull {
+  return 0; // expected-warning {{null returned from method that requires a non-null return value}}
+}
 @end
 
 __attribute__((objc_root_class))
-  @interface TestNonNullParameters
+@interface TestNonNullParameters
 - (void) doNotPassNullParameterNonPointerArg:(int)__attribute__((nonnull))x; // expected-warning {{'nonnull' attribute only applies to pointer arguments}}
 - (void) doNotPassNullParameter:(id)__attribute__((nonnull))x;
 - (void) doNotPassNullParameterArgIndex:(id)__attribute__((nonnull(1)))x; // expected-warning {{'nonnull' attribute when used on parameters takes no arguments}}

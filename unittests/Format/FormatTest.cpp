@@ -17,6 +17,10 @@
 namespace clang {
 namespace format {
 
+FormatStyle getGoogleStyle() {
+  return getGoogleStyle(FormatStyle::LK_Cpp);
+}
+
 class FormatTest : public ::testing::Test {
 protected:
   std::string format(llvm::StringRef Code, unsigned Offset, unsigned Length,
@@ -1713,6 +1717,18 @@ TEST_F(FormatTest, FormatsEnumTypes) {
   verifyFormat("enum X : std::uint32_t { A, B };");
 }
 
+TEST_F(FormatTest, FormatsNSEnums) {
+  verifyGoogleFormat("typedef NS_ENUM(NSInteger, SomeName) { AAA, BBB }");
+  verifyGoogleFormat("typedef NS_ENUM(NSInteger, MyType) {\n"
+                     "  // Information about someDecentlyLongValue.\n"
+                     "  someDecentlyLongValue,\n"
+                     "  // Information about anotherDecentlyLongValue.\n"
+                     "  anotherDecentlyLongValue,\n"
+                     "  // Information about aThirdDecentlyLongValue.\n"
+                     "  aThirdDecentlyLongValue\n"
+                     "};");
+}
+
 TEST_F(FormatTest, FormatsBitfields) {
   verifyFormat("struct Bitfields {\n"
                "  unsigned sClass : 8;\n"
@@ -2425,6 +2441,11 @@ TEST_F(FormatTest, LayoutStatementsAroundPreprocessorDirectives) {
                "#if a\n"
                "#else\n"
                "#endif");
+}
+
+TEST_F(FormatTest, GraciouslyHandleIncorrectPreprocessorConditions) {
+  verifyFormat("#endif\n"
+               "#if B");
 }
 
 TEST_F(FormatTest, FormatsJoinedLinesOnSubsequentRuns) {
@@ -4248,6 +4269,11 @@ TEST_F(FormatTest, UnderstandsOverloadedOperators) {
   verifyGoogleFormat("operator ::A();");
 
   verifyFormat("using A::operator+;");
+
+  verifyFormat("Deleted &operator=(const Deleted &)& = default;");
+  verifyFormat("Deleted &operator=(const Deleted &)&& = delete;");
+  verifyGoogleFormat("Deleted& operator=(const Deleted&)& = default;");
+  verifyGoogleFormat("Deleted& operator=(const Deleted&)&& = delete;");
 }
 
 TEST_F(FormatTest, UnderstandsNewAndDelete) {
@@ -4389,6 +4415,8 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
 
 TEST_F(FormatTest, UnderstandsAttributes) {
   verifyFormat("SomeType s __attribute__((unused)) (InitValue);");
+  verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa __attribute__((unused))\n"
+               "aaaaaaaaaaaaaaaaaaaaaaa(int i);");
 }
 
 TEST_F(FormatTest, UnderstandsEllipsis) {
@@ -5112,6 +5140,7 @@ TEST_F(FormatTest, DoNotInterfereWithErrorAndWarning) {
 }
 
 TEST_F(FormatTest, FormatHashIfExpressions) {
+  verifyFormat("#if AAAA && BBBB");
   // FIXME: Come up with a better indentation for #elif.
   verifyFormat(
       "#if !defined(AAAAAAA) && (defined CCCCCC || defined DDDDDD) &&  \\\n"
@@ -5758,7 +5787,7 @@ TEST_F(FormatTest, FormatObjCMethodExpr) {
                "                  backing:NSBackingStoreBuffered\n"
                "                    defer:NO]);\n"
                "}",
-               getChromiumStyle());
+               getChromiumStyle(FormatStyle::LK_Cpp));
   verifyFormat("[contentsContainer replaceSubview:[subviews objectAtIndex:0]\n"
                "                             with:contentsNativeView];");
 
@@ -5866,6 +5895,12 @@ TEST_F(FormatTest, ObjCSnippets) {
   verifyFormat("@property(assign, nonatomic) CGFloat hoverAlpha;");
   verifyFormat("@property(assign, getter=isEditable) BOOL editable;");
   verifyGoogleFormat("@property(assign, getter=isEditable) BOOL editable;");
+  verifyFormat("@property (assign, getter=isEditable) BOOL editable;",
+               getMozillaStyle());
+  verifyFormat("@property BOOL editable;", getMozillaStyle());
+  verifyFormat("@property (assign, getter=isEditable) BOOL editable;",
+               getWebKitStyle());
+  verifyFormat("@property BOOL editable;", getWebKitStyle());
 
   verifyFormat("@import foo.bar;\n"
                "@import baz;");
@@ -6478,12 +6513,16 @@ TEST_F(FormatTest, DoNotCreateUnreasonableUnwrappedLines) {
   verifyFormat("void f() {\n"
                "  return g() {}\n"
                "  void h() {}");
-  verifyFormat("if (foo)\n"
-               "  return { forgot_closing_brace();\n"
-               "test();");
   verifyFormat("int a[] = { void forgot_closing_brace() { f();\n"
                "g();\n"
                "}");
+}
+
+TEST_F(FormatTest, DoNotPrematurelyEndUnwrappedLineForReturnStatements) {
+  verifyFormat(
+      "void f() {\n"
+      "  return C{ param1, param2 }.SomeCall(param1, param2);\n"
+      "}\n");
 }
 
 TEST_F(FormatTest, FormatsClosingBracesInEmptyNestedBlocks) {
@@ -7215,14 +7254,14 @@ TEST_F(FormatTest, GetsPredefinedStyleByName) {
   EXPECT_TRUE(getPredefinedStyle("gOOgle", FormatStyle::LK_Cpp, &Styles[2]));
   EXPECT_ALL_STYLES_EQUAL(Styles);
 
-  Styles[0] = getGoogleJSStyle();
+  Styles[0] = getGoogleStyle(FormatStyle::LK_JavaScript);
   EXPECT_TRUE(
       getPredefinedStyle("Google", FormatStyle::LK_JavaScript, &Styles[1]));
   EXPECT_TRUE(
       getPredefinedStyle("gOOgle", FormatStyle::LK_JavaScript, &Styles[2]));
   EXPECT_ALL_STYLES_EQUAL(Styles);
 
-  Styles[0] = getChromiumStyle();
+  Styles[0] = getChromiumStyle(FormatStyle::LK_Cpp);
   EXPECT_TRUE(getPredefinedStyle("Chromium", FormatStyle::LK_Cpp, &Styles[1]));
   EXPECT_TRUE(getPredefinedStyle("cHRoMiUM", FormatStyle::LK_Cpp, &Styles[2]));
   EXPECT_ALL_STYLES_EQUAL(Styles);
@@ -7255,7 +7294,7 @@ TEST_F(FormatTest, GetsCorrectBasedOnStyle) {
   EXPECT_ALL_STYLES_EQUAL(Styles);
 
   Styles.resize(5);
-  Styles[0] = getGoogleJSStyle();
+  Styles[0] = getGoogleStyle(FormatStyle::LK_JavaScript);
   Styles[1] = getLLVMStyle();
   Styles[1].Language = FormatStyle::LK_JavaScript;
   EXPECT_EQ(0, parseConfiguration("BasedOnStyle: Google", &Styles[1]).value());
@@ -7313,6 +7352,7 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(ConstructorInitializerAllOnOneLineOrOnePerLine);
   CHECK_PARSE_BOOL(DerivePointerBinding);
   CHECK_PARSE_BOOL(IndentCaseLabels);
+  CHECK_PARSE_BOOL(ObjCSpaceAfterProperty);
   CHECK_PARSE_BOOL(ObjCSpaceBeforeProtocolList);
   CHECK_PARSE_BOOL(PointerBindsToType);
   CHECK_PARSE_BOOL(Cpp11BracedListStyle);
@@ -7888,6 +7928,7 @@ TEST_F(FormatTest, FormatsLambdas) {
   verifyFormat("constexpr char hello[]{ \"hello\" };");
   verifyFormat("double &operator[](int i) { return 0; }\n"
                "int i;");
+  verifyFormat("std::unique_ptr<int[]> foo() {}");
 }
 
 TEST_F(FormatTest, FormatsBlocks) {

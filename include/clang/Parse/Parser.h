@@ -2190,8 +2190,6 @@ private:
                                        ParsedAttributes &attrs,
                                        SourceLocation *endLoc);
 
-  bool IsThreadSafetyAttribute(StringRef AttrName);
-
   void ParseTypeTagForDatatypeAttribute(IdentifierInfo &AttrName,
                                         SourceLocation AttrNameLoc,
                                         ParsedAttributes &Attrs,
@@ -2348,6 +2346,10 @@ private:
                                    Decl *TagDecl);
   ExprResult ParseCXXMemberInitializer(Decl *D, bool IsFunction,
                                        SourceLocation &EqualLoc);
+  void ParseCXXMemberDeclaratorBeforeInitializer(Declarator &DeclaratorInfo,
+                                                 VirtSpecifiers &VS,
+                                                 ExprResult &BitfieldSize,
+                                                 LateParsedAttrList &LateAttrs);
   void ParseCXXClassMemberDeclaration(AccessSpecifier AS, AttributeList *Attr,
                 const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo(),
                                  ParsingDeclRAIIObject *DiagsFromTParams = 0);

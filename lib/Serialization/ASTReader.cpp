@@ -2256,9 +2256,9 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
       break;
     }
 
-    case EXTERNAL_DEFINITIONS:
+    case EAGERLY_DESERIALIZED_DECLS:
       for (unsigned I = 0, N = Record.size(); I != N; ++I)
-        ExternalDefinitions.push_back(getGlobalDeclID(F, Record[I]));
+        EagerlyDeserializedDecls.push_back(getGlobalDeclID(F, Record[I]));
       break;
 
     case SPECIAL_TYPES:
@@ -5077,8 +5077,8 @@ void TypeLocReader::VisitFunctionTypeLoc(FunctionTypeLoc TL) {
   TL.setLParenLoc(ReadSourceLocation(Record, Idx));
   TL.setRParenLoc(ReadSourceLocation(Record, Idx));
   TL.setLocalRangeEnd(ReadSourceLocation(Record, Idx));
-  for (unsigned i = 0, e = TL.getNumArgs(); i != e; ++i) {
-    TL.setArg(i, ReadDeclAs<ParmVarDecl>(Record, Idx));
+  for (unsigned i = 0, e = TL.getNumParams(); i != e; ++i) {
+    TL.setParam(i, ReadDeclAs<ParmVarDecl>(Record, Idx));
   }
 }
 void TypeLocReader::VisitFunctionProtoTypeLoc(FunctionProtoTypeLoc TL) {
@@ -5985,12 +5985,12 @@ void ASTReader::StartTranslationUnit(ASTConsumer *Consumer) {
   if (!Consumer)
     return;
 
-  for (unsigned I = 0, N = ExternalDefinitions.size(); I != N; ++I) {
+  for (unsigned I = 0, N = EagerlyDeserializedDecls.size(); I != N; ++I) {
     // Force deserialization of this decl, which will cause it to be queued for
     // passing to the consumer.
-    GetDecl(ExternalDefinitions[I]);
+    GetDecl(EagerlyDeserializedDecls[I]);
   }
-  ExternalDefinitions.clear();
+  EagerlyDeserializedDecls.clear();
 
   PassInterestingDeclsToConsumer();
 }

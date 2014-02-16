@@ -59,8 +59,8 @@ bool Sema::CanUseDecl(NamedDecl *D) {
 
     // If the function has a deduced return type, and we can't deduce it,
     // then we can't use it either.
-    if (getLangOpts().CPlusPlus1y && FD->getResultType()->isUndeducedType() &&
-        DeduceReturnType(FD, SourceLocation(), /*Diagnose*/false))
+    if (getLangOpts().CPlusPlus1y && FD->getReturnType()->isUndeducedType() &&
+        DeduceReturnType(FD, SourceLocation(), /*Diagnose*/ false))
       return false;
   }
 
@@ -264,13 +264,18 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
       SmallVectorImpl<PartialDiagnosticAt> &Suppressed = Pos->second;
       for (unsigned I = 0, N = Suppressed.size(); I != N; ++I)
         Diag(Suppressed[I].first, Suppressed[I].second);
-      
+
       // Clear out the list of suppressed diagnostics, so that we don't emit
       // them again for this specialization. However, we don't obsolete this
       // entry from the table, because we want to avoid ever emitting these
       // diagnostics again.
       Suppressed.clear();
     }
+
+    // C++ [basic.start.main]p3:
+    //   The function 'main' shall not be used within a program.
+    if (cast<FunctionDecl>(D)->isMain())
+      Diag(Loc, diag::ext_main_used);
   }
 
   // See if this is an auto-typed variable whose initializer we are parsing.
@@ -290,7 +295,7 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
 
     // If the function has a deduced return type, and we can't deduce it,
     // then we can't use it either.
-    if (getLangOpts().CPlusPlus1y && FD->getResultType()->isUndeducedType() &&
+    if (getLangOpts().CPlusPlus1y && FD->getReturnType()->isUndeducedType() &&
         DeduceReturnType(FD, Loc))
       return true;
   }
@@ -352,7 +357,7 @@ void Sema::DiagnoseSentinelCalls(NamedDecl *D, SourceLocation Loc,
     }
 
     if (const FunctionProtoType *proto = dyn_cast<FunctionProtoType>(fn)) {
-      numFormalParams = proto->getNumArgs();
+      numFormalParams = proto->getNumParams();
     } else {
       numFormalParams = 0;
     }
@@ -2737,7 +2742,7 @@ ExprResult Sema::BuildDeclarationNameExpr(
 
       // If we're referring to a function with an __unknown_anytype
       // result type, make the entire expression __unknown_anytype.
-      if (fty->getResultType() == Context.UnknownAnyTy) {
+      if (fty->getReturnType() == Context.UnknownAnyTy) {
         type = Context.UnknownAnyTy;
         valueKind = VK_RValue;
         break;
@@ -2756,7 +2761,7 @@ ExprResult Sema::BuildDeclarationNameExpr(
       // type.
       if (!cast<FunctionDecl>(VD)->hasPrototype() &&
           isa<FunctionProtoType>(fty))
-        type = Context.getFunctionNoProtoType(fty->getResultType(),
+        type = Context.getFunctionNoProtoType(fty->getReturnType(),
                                               fty->getExtInfo());
 
       // Functions are r-values in C.
@@ -2774,7 +2779,7 @@ ExprResult Sema::BuildDeclarationNameExpr(
       // This should only be possible with a type written directly.
       if (const FunctionProtoType *proto
             = dyn_cast<FunctionProtoType>(VD->getType()))
-        if (proto->getResultType() == Context.UnknownAnyTy) {
+        if (proto->getReturnType() == Context.UnknownAnyTy) {
           type = Context.UnknownAnyTy;
           valueKind = VK_RValue;
           break;
@@ -4022,9 +4027,9 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
   // C99 6.5.2.2p7 - the arguments are implicitly converted, as if by
   // assignment, to the types of the corresponding parameter, ...
-  unsigned NumArgsInProto = Proto->getNumArgs();
+  unsigned NumParams = Proto->getNumParams();
   bool Invalid = false;
-  unsigned MinArgs = FDecl ? FDecl->getMinRequiredArguments() : NumArgsInProto;
+  unsigned MinArgs = FDecl ? FDecl->getMinRequiredArguments() : NumParams;
   unsigned FnKind = Fn->getType()->isBlockPointerType()
                        ? 1 /* block */
                        : (IsExecConfig ? 3 /* kernel function (exec config) */
@@ -4032,7 +4037,7 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
   // If too few arguments are available (and we don't have default
   // arguments for the remaining parameters), don't make the call.
-  if (Args.size() < NumArgsInProto) {
+  if (Args.size() < NumParams) {
     if (Args.size() < MinArgs) {
       MemberExpr *ME = dyn_cast<MemberExpr>(Fn);
       TypoCorrection TC;
@@ -4042,25 +4047,24 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
                                                        : Fn->getLocStart())),
                         Args))) {
         unsigned diag_id =
-            MinArgs == NumArgsInProto && !Proto->isVariadic()
+            MinArgs == NumParams && !Proto->isVariadic()
                 ? diag::err_typecheck_call_too_few_args_suggest
                 : diag::err_typecheck_call_too_few_args_at_least_suggest;
         diagnoseTypo(TC, PDiag(diag_id) << FnKind << MinArgs
                                         << static_cast<unsigned>(Args.size())
-                                        << Fn->getSourceRange());
+                                        << TC.getCorrectionRange());
       } else if (MinArgs == 1 && FDecl && FDecl->getParamDecl(0)->getDeclName())
-        Diag(RParenLoc, MinArgs == NumArgsInProto && !Proto->isVariadic()
-                          ? diag::err_typecheck_call_too_few_args_one
-                          : diag::err_typecheck_call_too_few_args_at_least_one)
-          << FnKind
-          << FDecl->getParamDecl(0) << Fn->getSourceRange();
+        Diag(RParenLoc,
+             MinArgs == NumParams && !Proto->isVariadic()
+                 ? diag::err_typecheck_call_too_few_args_one
+                 : diag::err_typecheck_call_too_few_args_at_least_one)
+            << FnKind << FDecl->getParamDecl(0) << Fn->getSourceRange();
       else
-        Diag(RParenLoc, MinArgs == NumArgsInProto && !Proto->isVariadic()
-                          ? diag::err_typecheck_call_too_few_args
-                          : diag::err_typecheck_call_too_few_args_at_least)
-          << FnKind
-          << MinArgs << static_cast<unsigned>(Args.size())
-          << Fn->getSourceRange();
+        Diag(RParenLoc, MinArgs == NumParams && !Proto->isVariadic()
+                            ? diag::err_typecheck_call_too_few_args
+                            : diag::err_typecheck_call_too_few_args_at_least)
+            << FnKind << MinArgs << static_cast<unsigned>(Args.size())
+            << Fn->getSourceRange();
 
       // Emit the location of the prototype.
       if (!TC && FDecl && !FDecl->getBuiltinID() && !IsExecConfig)
@@ -4069,46 +4073,46 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
       return true;
     }
-    Call->setNumArgs(Context, NumArgsInProto);
+    Call->setNumArgs(Context, NumParams);
   }
 
   // If too many are passed and not variadic, error on the extras and drop
   // them.
-  if (Args.size() > NumArgsInProto) {
+  if (Args.size() > NumParams) {
     if (!Proto->isVariadic()) {
+      MemberExpr *ME = dyn_cast<MemberExpr>(Fn);
       TypoCorrection TC;
       if (FDecl && (TC = TryTypoCorrectionForCall(
                         *this, DeclarationNameInfo(FDecl->getDeclName(),
-                                                   Fn->getLocStart()),
+                                                   (ME ? ME->getMemberLoc()
+                                                       : Fn->getLocStart())),
                         Args))) {
         unsigned diag_id =
-            MinArgs == NumArgsInProto && !Proto->isVariadic()
+            MinArgs == NumParams && !Proto->isVariadic()
                 ? diag::err_typecheck_call_too_many_args_suggest
                 : diag::err_typecheck_call_too_many_args_at_most_suggest;
-        diagnoseTypo(TC, PDiag(diag_id) << FnKind << NumArgsInProto
+        diagnoseTypo(TC, PDiag(diag_id) << FnKind << NumParams
                                         << static_cast<unsigned>(Args.size())
-                                        << Fn->getSourceRange());
-      } else if (NumArgsInProto == 1 && FDecl &&
+                                        << TC.getCorrectionRange());
+      } else if (NumParams == 1 && FDecl &&
                  FDecl->getParamDecl(0)->getDeclName())
-        Diag(Args[NumArgsInProto]->getLocStart(),
-             MinArgs == NumArgsInProto
-               ? diag::err_typecheck_call_too_many_args_one
-               : diag::err_typecheck_call_too_many_args_at_most_one)
-          << FnKind
-          << FDecl->getParamDecl(0) << static_cast<unsigned>(Args.size())
-          << Fn->getSourceRange()
-          << SourceRange(Args[NumArgsInProto]->getLocStart(),
-                         Args.back()->getLocEnd());
+        Diag(Args[NumParams]->getLocStart(),
+             MinArgs == NumParams
+                 ? diag::err_typecheck_call_too_many_args_one
+                 : diag::err_typecheck_call_too_many_args_at_most_one)
+            << FnKind << FDecl->getParamDecl(0)
+            << static_cast<unsigned>(Args.size()) << Fn->getSourceRange()
+            << SourceRange(Args[NumParams]->getLocStart(),
+                           Args.back()->getLocEnd());
       else
-        Diag(Args[NumArgsInProto]->getLocStart(),
-             MinArgs == NumArgsInProto
-               ? diag::err_typecheck_call_too_many_args
-               : diag::err_typecheck_call_too_many_args_at_most)
-          << FnKind
-          << NumArgsInProto << static_cast<unsigned>(Args.size())
-          << Fn->getSourceRange()
-          << SourceRange(Args[NumArgsInProto]->getLocStart(),
-                         Args.back()->getLocEnd());
+        Diag(Args[NumParams]->getLocStart(),
+             MinArgs == NumParams
+                 ? diag::err_typecheck_call_too_many_args
+                 : diag::err_typecheck_call_too_many_args_at_most)
+            << FnKind << NumParams << static_cast<unsigned>(Args.size())
+            << Fn->getSourceRange()
+            << SourceRange(Args[NumParams]->getLocStart(),
+                           Args.back()->getLocEnd());
 
       // Emit the location of the prototype.
       if (!TC && FDecl && !FDecl->getBuiltinID() && !IsExecConfig)
@@ -4116,7 +4120,7 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
           << FDecl;
       
       // This deletes the extra arguments.
-      Call->setNumArgs(Context, NumArgsInProto);
+      Call->setNumArgs(Context, NumParams);
       return true;
     }
   }
@@ -4134,25 +4138,22 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   return false;
 }
 
-bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
-                                  FunctionDecl *FDecl,
+bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
                                   const FunctionProtoType *Proto,
-                                  unsigned FirstProtoArg,
-                                  ArrayRef<Expr *> Args,
+                                  unsigned FirstParam, ArrayRef<Expr *> Args,
                                   SmallVectorImpl<Expr *> &AllArgs,
-                                  VariadicCallType CallType,
-                                  bool AllowExplicit,
+                                  VariadicCallType CallType, bool AllowExplicit,
                                   bool IsListInitialization) {
-  unsigned NumArgsInProto = Proto->getNumArgs();
+  unsigned NumParams = Proto->getNumParams();
   unsigned NumArgsToCheck = Args.size();
   bool Invalid = false;
-  if (Args.size() != NumArgsInProto)
+  if (Args.size() != NumParams)
     // Use default arguments for missing arguments
-    NumArgsToCheck = NumArgsInProto;
+    NumArgsToCheck = NumParams;
   unsigned ArgIx = 0;
   // Continue to check argument types (even if we have too few/many args).
-  for (unsigned i = FirstProtoArg; i != NumArgsToCheck; i++) {
-    QualType ProtoArgType = Proto->getArgType(i);
+  for (unsigned i = FirstParam; i != NumArgsToCheck; i++) {
+    QualType ProtoArgType = Proto->getParamType(i);
 
     Expr *Arg;
     ParmVarDecl *Param;
@@ -4180,11 +4181,12 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
                (!Param || !Param->hasAttr<CFConsumedAttr>()))
         CFAudited = true;
 
-      InitializedEntity Entity = Param ?
-          InitializedEntity::InitializeParameter(Context, Param, ProtoArgType)
-        : InitializedEntity::InitializeParameter(Context, ProtoArgType,
-                                                 Proto->isArgConsumed(i));
-      
+      InitializedEntity Entity =
+          Param ? InitializedEntity::InitializeParameter(Context, Param,
+                                                         ProtoArgType)
+                : InitializedEntity::InitializeParameter(
+                      Context, ProtoArgType, Proto->isParamConsumed(i));
+
       // Remember that parameter belongs to a CF audited API.
       if (CFAudited)
         Entity.setParameterCFAudited();
@@ -4225,8 +4227,8 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc,
   if (CallType != VariadicDoesNotApply) {
     // Assume that extern "C" functions with variadic arguments that
     // return __unknown_anytype aren't *really* variadic.
-    if (Proto->getResultType() == Context.UnknownAnyTy &&
-        FDecl && FDecl->isExternC()) {
+    if (Proto->getReturnType() == Context.UnknownAnyTy && FDecl &&
+        FDecl->isExternC()) {
       for (unsigned i = ArgIx, e = Args.size(); i != e; ++i) {
         QualType paramType; // ignored
         ExprResult arg = checkUnknownAnyArg(CallLoc, Args[i], paramType);
@@ -4629,7 +4631,7 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
             << FDecl->getName() << Fn->getSourceRange());
 
       // CUDA: Kernel function must have 'void' return type
-      if (!FuncT->getResultType()->isVoidType())
+      if (!FuncT->getReturnType()->isVoidType())
         return ExprError(Diag(LParenLoc, diag::err_kern_type_not_void_return)
             << Fn->getType() << Fn->getSourceRange());
     } else {
@@ -4641,14 +4643,13 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   }
 
   // Check for a valid return type
-  if (CheckCallReturnType(FuncT->getResultType(),
-                          Fn->getLocStart(), TheCall,
+  if (CheckCallReturnType(FuncT->getReturnType(), Fn->getLocStart(), TheCall,
                           FDecl))
     return ExprError();
 
   // We know the result type of the call, set it.
   TheCall->setType(FuncT->getCallResultType(Context));
-  TheCall->setValueKind(Expr::getValueKindForType(FuncT->getResultType()));
+  TheCall->setValueKind(Expr::getValueKindForType(FuncT->getReturnType()));
 
   const FunctionProtoType *Proto = dyn_cast<FunctionProtoType>(FuncT);
   if (Proto) {
@@ -4679,11 +4680,9 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
     for (unsigned i = 0, e = Args.size(); i != e; i++) {
       Expr *Arg = Args[i];
 
-      if (Proto && i < Proto->getNumArgs()) {
-        InitializedEntity Entity
-          = InitializedEntity::InitializeParameter(Context, 
-                                                   Proto->getArgType(i),
-                                                   Proto->isArgConsumed(i));
+      if (Proto && i < Proto->getNumParams()) {
+        InitializedEntity Entity = InitializedEntity::InitializeParameter(
+            Context, Proto->getParamType(i), Proto->isParamConsumed(i));
         ExprResult ArgE = PerformCopyInitialization(Entity,
                                                     SourceLocation(),
                                                     Owned(Arg));
@@ -7601,8 +7600,8 @@ static bool hasIsEqualMethod(Sema &S, const Expr *LHS, const Expr *RHS) {
   QualType T = Method->param_begin()[0]->getType();
   if (!T->isObjCObjectPointerType())
     return false;
-  
-  QualType R = Method->getResultType();
+
+  QualType R = Method->getReturnType();
   if (!R->isScalarType())
     return false;
 
@@ -9798,7 +9797,7 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
 
     if (resultType->isDependentType())
       break;
-    if (resultType->isScalarType()) {
+    if (resultType->isScalarType() && !isScopedEnumerationType(resultType)) {
       // C99 6.5.3.3p1: ok, fallthrough;
       if (Context.getLangOpts().CPlusPlus) {
         // C++03 [expr.unary.op]p8, C++0x [expr.unary.op]p9:
@@ -10398,7 +10397,7 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
         ExplicitSignature.getLocalRangeEnd()) {
       // This would be much cheaper if we stored TypeLocs instead of
       // TypeSourceInfos.
-      TypeLoc Result = ExplicitSignature.getResultLoc();
+      TypeLoc Result = ExplicitSignature.getReturnLoc();
       unsigned Size = Result.getFullDataSize();
       Sig = Context.CreateTypeSourceInfo(Result.getType(), Size);
       Sig->getTypeLoc().initializeFullCopy(Result, Size);
@@ -10411,7 +10410,7 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
   CurBlock->FunctionType = T;
 
   const FunctionType *Fn = T->getAs<FunctionType>();
-  QualType RetTy = Fn->getResultType();
+  QualType RetTy = Fn->getReturnType();
   bool isVariadic =
     (isa<FunctionProtoType>(Fn) && cast<FunctionProtoType>(Fn)->isVariadic());
 
@@ -10430,8 +10429,8 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
   // Push block parameters from the declarator if we had them.
   SmallVector<ParmVarDecl*, 8> Params;
   if (ExplicitSignature) {
-    for (unsigned I = 0, E = ExplicitSignature.getNumArgs(); I != E; ++I) {
-      ParmVarDecl *Param = ExplicitSignature.getArg(I);
+    for (unsigned I = 0, E = ExplicitSignature.getNumParams(); I != E; ++I) {
+      ParmVarDecl *Param = ExplicitSignature.getParam(I);
       if (Param->getIdentifier() == 0 &&
           !Param->isImplicit() &&
           !Param->isInvalidDecl() &&
@@ -10443,8 +10442,9 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
   // Fake up parameter variables if we have a typedef, like
   //   ^ fntype { ... }
   } else if (const FunctionProtoType *Fn = T->getAs<FunctionProtoType>()) {
-    for (FunctionProtoType::arg_type_iterator
-           I = Fn->arg_type_begin(), E = Fn->arg_type_end(); I != E; ++I) {
+    for (FunctionProtoType::param_type_iterator I = Fn->param_type_begin(),
+                                                E = Fn->param_type_end();
+         I != E; ++I) {
       ParmVarDecl *Param =
         BuildParmVarDeclForTypedef(CurBlock->TheDecl,
                                    ParamInfo.getLocStart(),
@@ -10547,7 +10547,7 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
 
     // Otherwise, if we don't need to change anything about the function type,
     // preserve its sugar structure.
-    } else if (FTy->getResultType() == RetTy &&
+    } else if (FTy->getReturnType() == RetTy &&
                (!NoReturn || FTy->getNoReturnAttr())) {
       BlockTy = BSI->FunctionType;
 
@@ -10557,7 +10557,7 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
       FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
       EPI.TypeQuals = 0; // FIXME: silently?
       EPI.ExtInfo = Ext;
-      BlockTy = Context.getFunctionType(RetTy, FPT->getArgTypes(), EPI);
+      BlockTy = Context.getFunctionType(RetTy, FPT->getParamTypes(), EPI);
     }
 
   // If we don't have a function type, just build one from nothing.
@@ -11753,15 +11753,6 @@ static ExprResult addAsFieldToClosureType(Sema &S,
                                   bool RefersToEnclosingLocal) {
   CXXRecordDecl *Lambda = LSI->Lambda;
 
-  // Make sure that by-copy captures are of a complete type.
-  if (!DeclRefType->isDependentType() &&
-      !DeclRefType->isReferenceType() &&
-      S.RequireCompleteType(Loc, DeclRefType,
-                            diag::err_capture_of_incomplete_type,
-                            Var->getDeclName())) {
-    return ExprError();
-  }
-
   // Build the non-static data member.
   FieldDecl *Field
     = FieldDecl::Create(S.Context, Lambda, Loc, Loc, 0, FieldType,
@@ -11937,9 +11928,18 @@ static bool captureInLambda(LambdaScopeInfo *LSI,
       return false;
     }
 
-    if (S.RequireNonAbstractType(Loc, CaptureType,
-                                 diag::err_capture_of_abstract_type))
-      return false;
+    // Make sure that by-copy captures are of a complete and non-abstract type.
+    if (BuildAndDiagnose) {
+      if (!CaptureType->isDependentType() &&
+          S.RequireCompleteType(Loc, CaptureType,
+                                diag::err_capture_of_incomplete_type,
+                                Var->getDeclName()))
+        return false;
+
+      if (S.RequireNonAbstractType(Loc, CaptureType,
+                                   diag::err_capture_of_abstract_type))
+        return false;
+    }
   }
 
   // Capture this variable in the lambda.
@@ -12984,7 +12984,7 @@ ExprResult RebuildUnknownAnyExpr::VisitCallExpr(CallExpr *E) {
     // This is a hack, but it is far superior to moving the
     // corresponding target-specific code from IR-gen to Sema/AST.
 
-    ArrayRef<QualType> ParamTypes = Proto->getArgTypes();
+    ArrayRef<QualType> ParamTypes = Proto->getParamTypes();
     SmallVector<QualType, 8> ArgTypes;
     if (ParamTypes.empty() && Proto->isVariadic()) { // the special case
       ArgTypes.reserve(E->getNumArgs());
@@ -13041,8 +13041,8 @@ ExprResult RebuildUnknownAnyExpr::VisitObjCMessageExpr(ObjCMessageExpr *E) {
 
   // Rewrite the method result type if available.
   if (ObjCMethodDecl *Method = E->getMethodDecl()) {
-    assert(Method->getResultType() == S.Context.UnknownAnyTy);
-    Method->setResultType(DestType);
+    assert(Method->getReturnType() == S.Context.UnknownAnyTy);
+    Method->setReturnType(DestType);
   }
 
   // Change the type of the message.

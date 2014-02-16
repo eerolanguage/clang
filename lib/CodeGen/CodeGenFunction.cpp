@@ -276,6 +276,14 @@ void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
 
   if (CGM.getCodeGenOpts().EmitDeclMetadata)
     EmitDeclMetadata();
+
+  for (SmallVectorImpl<std::pair<llvm::Instruction *, llvm::Value *> >::iterator
+           I = DeferredReplacements.begin(),
+           E = DeferredReplacements.end();
+       I != E; ++I) {
+    I->first->replaceAllUsesWith(I->second);
+    I->first->eraseFromParent();
+  }
 }
 
 /// ShouldInstrumentFunction - Return true if the current function should be
@@ -592,6 +600,14 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
     // Indirect aggregate return; emit returned value directly into sret slot.
     // This reduces code size, and affects correctness in C++.
     ReturnValue = CurFn->arg_begin();
+  } else if (CurFnInfo->getReturnInfo().getKind() == ABIArgInfo::InAlloca &&
+             !hasScalarEvaluationKind(CurFnInfo->getReturnType())) {
+    // Load the sret pointer from the argument struct and return into that.
+    unsigned Idx = CurFnInfo->getReturnInfo().getInAllocaFieldIndex();
+    llvm::Function::arg_iterator EI = CurFn->arg_end();
+    --EI;
+    llvm::Value *Addr = Builder.CreateStructGEP(EI, Idx);
+    ReturnValue = Builder.CreateLoad(Addr, "agg.result");
   } else {
     ReturnValue = CreateIRTemp(RetTy, "retval");
 
@@ -704,7 +720,7 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
     DebugInfo = NULL; // disable debug info indefinitely for this function
 
   FunctionArgList Args;
-  QualType ResTy = FD->getResultType();
+  QualType ResTy = FD->getReturnType();
 
   CurGD = GD;
   const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(FD);
@@ -769,7 +785,7 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
   //   If the '}' that terminates a function is reached, and the value of the
   //   function call is used by the caller, the behavior is undefined.
   if (getLangOpts().CPlusPlus && !FD->hasImplicitReturnZero() &&
-      !FD->getResultType()->isVoidType() && Builder.GetInsertBlock()) {
+      !FD->getReturnType()->isVoidType() && Builder.GetInsertBlock()) {
     if (SanOpts->Return)
       EmitCheck(Builder.getFalse(), "missing_return",
                 EmitCheckSourceLocation(FD->getLocation()),
@@ -966,7 +982,7 @@ void CodeGenFunction::EmitBranchOnBoolExpr(const Expr *Cond,
       // We have the count for entry to the RHS and for the whole expression
       // being true, so we can divy up True count between the short circuit and
       // the RHS.
-      uint64_t LHSCount = TrueCount - Cnt.getCount();
+      uint64_t LHSCount = Cnt.getParentCount() - Cnt.getCount();
       uint64_t RHSCount = TrueCount - LHSCount;
 
       ConditionalEvaluation eval(*this);
@@ -1449,7 +1465,7 @@ void CodeGenFunction::EmitVariablyModifiedType(QualType type) {
 
     case Type::FunctionProto:
     case Type::FunctionNoProto:
-      type = cast<FunctionType>(ty)->getResultType();
+      type = cast<FunctionType>(ty)->getReturnType();
       break;
 
     case Type::Paren:

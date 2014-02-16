@@ -655,7 +655,7 @@ void TranslatorVisitor::RewriteImportsAndIncludes() {
 //
 void TranslatorVisitor::RewriteFunctionDecl(FunctionDecl* Function) {
 
-  string str = Function->getResultType().getAsString(*Policy);
+  string str = Function->getReturnType().getAsString(*Policy);
   str += ' ';
   str += Function->getName();
   str += "(";
@@ -868,9 +868,9 @@ void TranslatorVisitor::RewriteMethodDeclaration(ObjCMethodDecl* Method) {
     resultStr += "+";
   }
 
-  if (!Method->getResultType().isNull()) {
+  if (!Method->getReturnType().isNull()) {
     resultStr += "(";
-    resultStr += Method->getResultType().getAsString(*Policy);
+    resultStr += Method->getReturnType().getAsString(*Policy);
     resultStr += ")";
   }
 

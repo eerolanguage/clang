@@ -831,7 +831,6 @@ Use ``__has_feature(cxx_init_capture)`` or
 ``__has_extension(cxx_init_capture)`` to determine if support for
 lambda captures with explicit initializers is enabled
 (for instance, ``[n(0)] { return ++n; }``).
-Clang does not yet support this feature.
 
 C++1y generic lambdas
 ^^^^^^^^^^^^^^^^^^^^^
@@ -840,7 +839,6 @@ Use ``__has_feature(cxx_generic_lambda)`` or
 ``__has_extension(cxx_generic_lambda)`` to determine if support for generic
 (polymorphic) lambdas is enabled
 (for instance, ``[] (auto x) { return x + 1; }``).
-Clang does not yet support this feature.
 
 C++1y relaxed constexpr
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -998,6 +996,11 @@ The following type trait primitives are supported by Clang:
   ``argtypes...`` such that no non-trivial functions are called as part of
   that initialization.  This trait is required to implement the C++11 standard
   library.
+* ``__is_destructible`` (MSVC 2013): partially implemented
+* ``__is_nothrow_destructible`` (MSVC 2013): partially implemented
+* ``__is_nothrow_assignable`` (MSVC 2013, clang)
+* ``__is_constructible`` (MSVC 2013, clang)
+* ``__is_nothrow_constructible`` (MSVC 2013, clang)
 
 Blocks
 ======
@@ -1429,7 +1432,7 @@ available in C.
 .. code-block:: c++
 
   int isdigit(int c);
-  int isdigit(int c) __attribute__((enable_if(c <= -1 && c > 255, "chosen when 'c' is out of range"))) __attribute__((unavailable("'c' must have the value of an unsigned char or EOF")));
+  int isdigit(int c) __attribute__((enable_if(c <= -1 || c > 255, "chosen when 'c' is out of range"))) __attribute__((unavailable("'c' must have the value of an unsigned char or EOF")));
   
   void foo(char c) {
     isdigit(c);
@@ -1445,12 +1448,12 @@ whether it is a redeclaration (following the rules used when determining
 whether a C++ template specialization is ODR-equivalent), but is not part of
 the type.
 
-An enable_if expression will be evaluated by substituting the values of the
-parameters from the call site into the arguments in the expression and
-determining whether the result is true. If the result is false or could not be
-determined through constant expression evaluation, then this overload will not
-be chosen and the reason supplied in the string will be given to the user if
-their code does not compile as a result.
+The enable_if expression is evaluated as if it were the body of a
+bool-returning constexpr function declared with the arguments of the function
+it is being applied to, then called with the parameters at the callsite. If the
+result is false or could not be determined through constant expression
+evaluation, then this overload will not be chosen and the provided string may
+be used in a diagnostic if the compile fails as a result.
 
 Because the enable_if expression is an unevaluated context, there are no global
 state changes, nor the ability to pass information from the enable_if

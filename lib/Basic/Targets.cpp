@@ -137,37 +137,31 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
     return;
   }
 
-  // If there's an environment specified in the triple, that means we're dealing
-  // with an embedded variant of some sort and don't want the platform
-  // version-min defines, so only add them if there's not one.
-  if (Triple.getEnvironmentName().empty()) {
-    // Set the appropriate OS version define.
-    if (Triple.isiOS()) {
-      assert(Maj < 10 && Min < 100 && Rev < 100 && "Invalid version!");
-      char Str[6];
-      Str[0] = '0' + Maj;
-      Str[1] = '0' + (Min / 10);
-      Str[2] = '0' + (Min % 10);
-      Str[3] = '0' + (Rev / 10);
-      Str[4] = '0' + (Rev % 10);
-      Str[5] = '\0';
-      Builder.defineMacro("__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__",
-                          Str);
-    } else if (Triple.isMacOSX()) {
-      // Note that the Driver allows versions which aren't representable in the
-      // define (because we only get a single digit for the minor and micro
-      // revision numbers). So, we limit them to the maximum representable
-      // version.
-      assert(Triple.getEnvironmentName().empty() && "Invalid environment!");
-      assert(Maj < 100 && Min < 100 && Rev < 100 && "Invalid version!");
-      char Str[5];
-      Str[0] = '0' + (Maj / 10);
-      Str[1] = '0' + (Maj % 10);
-      Str[2] = '0' + std::min(Min, 9U);
-      Str[3] = '0' + std::min(Rev, 9U);
-      Str[4] = '\0';
-      Builder.defineMacro("__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__", Str);
-    }
+  // Set the appropriate OS version define.
+  if (Triple.isiOS()) {
+    assert(Maj < 10 && Min < 100 && Rev < 100 && "Invalid version!");
+    char Str[6];
+    Str[0] = '0' + Maj;
+    Str[1] = '0' + (Min / 10);
+    Str[2] = '0' + (Min % 10);
+    Str[3] = '0' + (Rev / 10);
+    Str[4] = '0' + (Rev % 10);
+    Str[5] = '\0';
+    Builder.defineMacro("__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__",
+                        Str);
+  } else if (Triple.isMacOSX()) {
+    // Note that the Driver allows versions which aren't representable in the
+    // define (because we only get a single digit for the minor and micro
+    // revision numbers). So, we limit them to the maximum representable
+    // version.
+    assert(Maj < 100 && Min < 100 && Rev < 100 && "Invalid version!");
+    char Str[5];
+    Str[0] = '0' + (Maj / 10);
+    Str[1] = '0' + (Maj % 10);
+    Str[2] = '0' + std::min(Min, 9U);
+    Str[3] = '0' + std::min(Rev, 9U);
+    Str[4] = '\0';
+    Builder.defineMacro("__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__", Str);
   }
 
   // Tell users about the kernel if there is one.
@@ -3581,6 +3575,13 @@ const Builtin::Info AArch64TargetInfo::BuiltinInfo[] = {
 #define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
 #define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
                                               ALL_LANGUAGES },
+#define GET_NEON_BUILTINS
+#include "clang/Basic/arm_neon.inc"
+#undef GET_NEON_BUILTINS
+
+#define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
+#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
+                                              ALL_LANGUAGES },
 #include "clang/Basic/BuiltinsAArch64.def"
 };
 
@@ -3669,7 +3670,7 @@ class ARMTargetInfo : public TargetInfo {
     DoubleAlign = LongLongAlign = LongDoubleAlign = SuitableAlign = 64;
     const llvm::Triple &T = getTriple();
 
-    // size_t is unsigned long on Darwin and netbsd.
+    // size_t is unsigned long on Darwin and NetBSD.
     if (T.isOSDarwin() || T.getOS() == llvm::Triple::NetBSD)
       SizeType = UnsignedLong;
     else
@@ -3838,14 +3839,15 @@ public:
       Features["hwdiv"] = true;
       Features["hwdiv-arm"] = true;
       Features["crc"] = true;
-    } else if (CPU == "cortex-r5" || CPU == "cortex-m3" ||
-               CPU == "cortex-m4" ||
+    } else if (CPU == "cortex-r5" ||
                // Enable the hwdiv extension for all v8a AArch32 cores by
                // default.
                ArchName == "armv8a" || ArchName == "armv8" ||
                ArchName == "thumbv8a" || ArchName == "thumbv8") {
       Features["hwdiv"] = true;
       Features["hwdiv-arm"] = true;
+    } else if (CPU == "cortex-m3" || CPU == "cortex-m4") {
+      Features["hwdiv"] = true;
     }
   }
 
@@ -3973,12 +3975,12 @@ public:
     StringRef CPUProfile = getCPUProfile(CPU);
     if (!CPUProfile.empty())
       Builder.defineMacro("__ARM_ARCH_PROFILE", CPUProfile);
-    
+
     // Subtarget options.
 
     // FIXME: It's more complicated than this and we don't really support
     // interworking.
-    if (5 <= CPUArchVer && CPUArchVer <= 7)
+    if (5 <= CPUArchVer && CPUArchVer <= 8)
       Builder.defineMacro("__THUMB_INTERWORK__");
 
     if (ABI == "aapcs" || ABI == "aapcs-linux" || ABI == "aapcs-vfp") {
@@ -4000,7 +4002,11 @@ public:
     if (IsThumb) {
       Builder.defineMacro("__THUMBEL__");
       Builder.defineMacro("__thumb__");
-      if (CPUArch == "6T2" || CPUArchVer == 7)
+      // We check both CPUArchVer and ArchName because when only triple is
+      // specified, the default CPU is arm1136j-s.
+      StringRef ArchName = getTriple().getArchName();
+      if (CPUArch == "6T2" || CPUArchVer >= 7 || ArchName.endswith("v6t2") ||
+          ArchName.endswith("v7") || ArchName.endswith("v8"))
         Builder.defineMacro("__thumb2__");
     }
     if (((HWDiv & HWDivThumb) && IsThumb) || ((HWDiv & HWDivARM) && !IsThumb))
@@ -4018,7 +4024,7 @@ public:
       if (FPU & VFP4FPU)
         Builder.defineMacro("__ARM_VFPV4__");
     }
-    
+
     // This only gets set when Neon instructions are actually available, unlike
     // the VFP define, hence the soft float and arch check. This is subtly
     // different from gcc, we follow the intent which was that it should be set
@@ -4027,6 +4033,12 @@ public:
       Builder.defineMacro("__ARM_NEON");
       Builder.defineMacro("__ARM_NEON__");
     }
+
+    Builder.defineMacro("__ARM_SIZEOF_WCHAR_T",
+                        Opts.ShortWChar ? "2" : "4");
+
+    Builder.defineMacro("__ARM_SIZEOF_MINIMAL_ENUM",
+                        Opts.ShortEnums ? "1" : "4");
 
     if (CRC)
       Builder.defineMacro("__ARM_FEATURE_CRC32");
@@ -4208,6 +4220,13 @@ void ARMTargetInfo::getGCCRegAliases(const GCCRegAlias *&Aliases,
 }
 
 const Builtin::Info ARMTargetInfo::BuiltinInfo[] = {
+#define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
+#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
+                                              ALL_LANGUAGES },
+#define GET_NEON_BUILTINS
+#include "clang/Basic/arm_neon.inc"
+#undef GET_NEON_BUILTINS
+
 #define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
 #define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
                                               ALL_LANGUAGES },
@@ -4538,6 +4557,7 @@ public:
     LongDoubleWidth = 128;
     LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::IEEEquad;
+    MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
   }
 
   virtual void getTargetDefines(const LangOptions &Opts,
@@ -4872,8 +4892,11 @@ public:
 
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const {
-    DefineStd(Builder, "mips", Opts);
+    Builder.defineMacro("__mips__");
     Builder.defineMacro("_mips");
+    if (Opts.GNUMode)
+      Builder.defineMacro("mips");
+
     Builder.defineMacro("__REGISTER_PREFIX__", "");
 
     switch (FloatABI) {
@@ -5062,7 +5085,7 @@ const Builtin::Info MipsTargetInfoBase::BuiltinInfo[] = {
 class Mips32TargetInfoBase : public MipsTargetInfoBase {
 public:
   Mips32TargetInfoBase(const llvm::Triple &Triple)
-      : MipsTargetInfoBase(Triple, "o32", "mips32") {
+      : MipsTargetInfoBase(Triple, "o32", "mips32r2") {
     SizeType = UnsignedInt;
     PtrDiffType = SignedInt;
     MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 32;
@@ -5080,6 +5103,8 @@ public:
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const {
     MipsTargetInfoBase::getTargetDefines(Opts, Builder);
+
+    Builder.defineMacro("__mips", "32");
 
     if (ABI == "o32") {
       Builder.defineMacro("__mips_o32");
@@ -5169,7 +5194,7 @@ public:
 class Mips64TargetInfoBase : public MipsTargetInfoBase {
 public:
   Mips64TargetInfoBase(const llvm::Triple &Triple)
-      : MipsTargetInfoBase(Triple, "n64", "mips64") {
+      : MipsTargetInfoBase(Triple, "n64", "mips64r2") {
     LongWidth = LongAlign = 64;
     PointerWidth = PointerAlign = 64;
     LongDoubleWidth = LongDoubleAlign = 128;
@@ -5200,6 +5225,7 @@ public:
                                 MacroBuilder &Builder) const {
     MipsTargetInfoBase::getTargetDefines(Opts, Builder);
 
+    Builder.defineMacro("__mips", "64");
     Builder.defineMacro("__mips64");
     Builder.defineMacro("__mips64__");
 
@@ -5503,6 +5529,10 @@ public:
   virtual bool validateAsmConstraint(const char *&Name,
                                      TargetInfo::ConstraintInfo &Info) const {
     return false;
+  }
+  virtual int getEHDataRegisterNumber(unsigned RegNo) const {
+    // R0=ExceptionPointerRegister R1=ExceptionSelectorRegister
+    return (RegNo < 2)? RegNo : -1;
   }
 };
 

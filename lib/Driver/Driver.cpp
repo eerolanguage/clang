@@ -1031,7 +1031,8 @@ void Driver::BuildInputs(const ToolChain &TC, const DerivedArgList &Args,
           // Otherwise emit an error but still use a valid type to avoid
           // spurious errors (e.g., no inputs).
           if (!Args.hasArgNoClaim(options::OPT_E) && !CCCIsCPP())
-            Diag(clang::diag::err_drv_unknown_stdin_type);
+            Diag(IsCLMode() ? clang::diag::err_drv_unknown_stdin_type_clang_cl
+                            : clang::diag::err_drv_unknown_stdin_type);
           Ty = types::TY_C;
         } else {
           // Otherwise lookup by extension.
@@ -1903,13 +1904,21 @@ static llvm::Triple computeTargetTriple(StringRef DefaultTargetTriple,
       Target.getOS() == llvm::Triple::Minix)
     return Target;
 
-  // Handle pseudo-target flags '-m32' and '-m64'.
-  if (Arg *A = Args.getLastArg(options::OPT_m32, options::OPT_m64)) {
-    llvm::Triple::ArchType AT;
-    if (A->getOption().matches(options::OPT_m32))
-      AT = Target.get32BitArchVariant().getArch();
-    else
+  // Handle pseudo-target flags '-m64', '-m32' and '-m16'.
+  if (Arg *A = Args.getLastArg(options::OPT_m64, options::OPT_m32,
+                               options::OPT_m16)) {
+    llvm::Triple::ArchType AT = llvm::Triple::UnknownArch;
+
+    if (A->getOption().matches(options::OPT_m64))
       AT = Target.get64BitArchVariant().getArch();
+    else if (A->getOption().matches(options::OPT_m32))
+      AT = Target.get32BitArchVariant().getArch();
+    else if (A->getOption().matches(options::OPT_m16) &&
+             Target.get32BitArchVariant().getArch() == llvm::Triple::x86) {
+      AT = llvm::Triple::x86;
+      Target.setEnvironment(llvm::Triple::CODE16);
+    }
+
     if (AT != llvm::Triple::UnknownArch)
       Target.setArch(AT);
   }

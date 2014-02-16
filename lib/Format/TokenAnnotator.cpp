@@ -109,6 +109,8 @@ private:
     } else if (AfterCaret) {
       // This is the parameter list of an ObjC block.
       Contexts.back().IsExpression = false;
+    } else if (Left->Previous && Left->Previous->is(tok::kw___attribute)) {
+      Left->Type = TT_AttributeParen;
     }
 
     if (StartsObjCMethodExpr) {
@@ -158,6 +160,9 @@ private:
                 Contexts.back().LongestObjCSelectorName;
           }
         }
+
+        if (Left->Type == TT_AttributeParen)
+          CurrentToken->Type = TT_AttributeParen;
 
         if (!HasMultipleLines)
           Left->PackingKind = PPK_Inconclusive;
@@ -248,6 +253,7 @@ private:
       if (CurrentToken->is(tok::colon))
         ColonFound = true;
       if (CurrentToken->is(tok::comma) &&
+          Style.Language != FormatStyle::LK_Proto &&
           (Left->Type == TT_ArraySubscriptLSquare ||
            (Left->Type == TT_ObjCMethodExpr && !ColonFound)))
         Left->Type = TT_ArrayInitializerLSquare;
@@ -274,7 +280,8 @@ private:
         if (CurrentToken->isOneOf(tok::r_paren, tok::r_square))
           return false;
         updateParameterCount(Left, CurrentToken);
-        if (CurrentToken->is(tok::colon))
+        if (CurrentToken->is(tok::colon) &&
+            Style.Language != FormatStyle::LK_Proto)
           Left->Type = TT_DictLiteral;
         if (!consumeToken())
           return false;
@@ -516,6 +523,7 @@ private:
       break;
     case tok::pp_if:
     case tok::pp_elif:
+      Contexts.back().IsExpression = true;
       parseLine();
       break;
     default:
@@ -531,7 +539,7 @@ public:
       parsePreprocessorDirective();
       return LT_PreprocessorDirective;
     }
-  
+
     // Directly allow to 'import <string-literal>' to support protocol buffer
     // definitions (code.google.com/p/protobuf) or missing "#" (either way we
     // should not break the line).
@@ -1183,7 +1191,8 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 150;
   if (Left.Type == TT_CastRParen)
     return 100;
-  if (Left.is(tok::coloncolon))
+  if (Left.is(tok::coloncolon) ||
+      (Right.is(tok::period) && Style.Language == FormatStyle::LK_Proto))
     return 500;
   if (Left.isOneOf(tok::kw_class, tok::kw_struct))
     return 5000;
@@ -1254,9 +1263,13 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
                                           const FormatToken &Left,
                                           const FormatToken &Right) {
   if (Style.Language == FormatStyle::LK_Proto) {
-    if (Right.is(tok::l_paren) && Left.TokenText == "returns")
+    if (Right.is(tok::l_paren) &&
+        (Left.TokenText == "returns" || Left.TokenText == "option"))
       return true;
   }
+  if (Style.ObjCSpaceAfterProperty && Line.Type == LT_ObjCProperty &&
+      Left.Tok.getObjCKeywordID() == tok::objc_property)
+    return true;
   if (Right.is(tok::hashhash))
     return Left.is(tok::hash);
   if (Left.isOneOf(tok::hashhash, tok::hash))
@@ -1325,9 +1338,7 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
   if (Left.is(tok::colon))
     return Left.Type != TT_ObjCMethodExpr;
   if (Right.is(tok::l_paren)) {
-    if (Left.is(tok::r_paren) && Left.MatchingParen &&
-        Left.MatchingParen->Previous &&
-        Left.MatchingParen->Previous->is(tok::kw___attribute))
+    if (Left.is(tok::r_paren) && Left.Type == TT_AttributeParen)
       return true;
     return Line.Type == LT_ObjCDecl ||
            Left.isOneOf(tok::kw_return, tok::kw_new, tok::kw_delete,
@@ -1400,7 +1411,7 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
            (Tok.Type != TT_DictLiteral || Style.SpacesInContainerLiterals);
   if (Tok.Previous->Type == TT_UnaryOperator ||
       Tok.Previous->Type == TT_CastRParen)
-    return false;
+    return Tok.Type == TT_BinaryOperator;
   if (Tok.Previous->is(tok::greater) && Tok.is(tok::greater)) {
     return Tok.Type == TT_TemplateCloser &&
            Tok.Previous->Type == TT_TemplateCloser &&
@@ -1459,7 +1470,7 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
     // deliberate choice and might have aligned the contents of the string
     // literal accordingly. Thus, we try keep existing line breaks.
     return Right.NewlinesBefore > 0;
-  } else if (Right.Previous->is(tok::l_brace) &&
+  } else if (Right.Previous->is(tok::l_brace) && Right.NestingLevel == 1 &&
              Style.Language == FormatStyle::LK_Proto) {
     // Don't enums onto single lines in protocol buffers.
     return true;
@@ -1512,14 +1523,12 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
     return false;
   if (Left.is(tok::equal) && Line.Type == LT_VirtualFunctionDecl)
     return false;
-  if (Left.Previous) {
-    if (Left.is(tok::l_paren) && Right.is(tok::l_paren) &&
-        Left.Previous->is(tok::kw___attribute))
-      return false;
-    if (Left.is(tok::l_paren) && (Left.Previous->Type == TT_BinaryOperator ||
-                                  Left.Previous->Type == TT_CastRParen))
-      return false;
-  }
+  if (Left.is(tok::l_paren) && Left.Type == TT_AttributeParen)
+    return false;
+  if (Left.is(tok::l_paren) && Left.Previous &&
+      (Left.Previous->Type == TT_BinaryOperator ||
+       Left.Previous->Type == TT_CastRParen))
+    return false;
   if (Right.Type == TT_ImplicitStringLiteral)
     return false;
 
@@ -1563,7 +1572,7 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
          Right.isOneOf(tok::lessless, tok::arrow, tok::period, tok::colon,
                        tok::l_square, tok::at) ||
          (Left.is(tok::r_paren) &&
-          Right.isOneOf(tok::identifier, tok::kw_const, tok::kw___attribute)) ||
+          Right.isOneOf(tok::identifier, tok::kw_const)) ||
          (Left.is(tok::l_paren) && !Right.is(tok::r_paren));
 }
 

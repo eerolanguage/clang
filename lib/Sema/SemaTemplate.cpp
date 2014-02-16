@@ -3892,19 +3892,19 @@ bool UnnamedLocalNoLinkageFinder::VisitExtVectorType(const ExtVectorType* T) {
 
 bool UnnamedLocalNoLinkageFinder::VisitFunctionProtoType(
                                                   const FunctionProtoType* T) {
-  for (FunctionProtoType::arg_type_iterator A = T->arg_type_begin(),
-                                         AEnd = T->arg_type_end();
+  for (FunctionProtoType::param_type_iterator A = T->param_type_begin(),
+                                              AEnd = T->param_type_end();
        A != AEnd; ++A) {
     if (Visit(*A))
       return true;
   }
 
-  return Visit(T->getResultType());
+  return Visit(T->getReturnType());
 }
 
 bool UnnamedLocalNoLinkageFinder::VisitFunctionNoProtoType(
                                                const FunctionNoProtoType* T) {
-  return Visit(T->getResultType());
+  return Visit(T->getReturnType());
 }
 
 bool UnnamedLocalNoLinkageFinder::VisitUnresolvedUsingType(
@@ -5453,18 +5453,19 @@ Sema::CheckTemplateDeclScope(Scope *S, TemplateParameterList *TemplateParams) {
          (S->getFlags() & Scope::TemplateParamScope) != 0)
     S = S->getParent();
 
-  // C++ [temp]p2:
-  //   A template-declaration can appear only as a namespace scope or
-  //   class scope declaration.
+  // C++ [temp]p4:
+  //   A template [...] shall not have C linkage.
   DeclContext *Ctx = S->getEntity();
-  if (Ctx && isa<LinkageSpecDecl>(Ctx) &&
-      cast<LinkageSpecDecl>(Ctx)->getLanguage() != LinkageSpecDecl::lang_cxx)
+  if (Ctx && Ctx->isExternCContext())
     return Diag(TemplateParams->getTemplateLoc(), diag::err_template_linkage)
              << TemplateParams->getSourceRange();
 
   while (Ctx && isa<LinkageSpecDecl>(Ctx))
     Ctx = Ctx->getParent();
 
+  // C++ [temp]p2:
+  //   A template-declaration can appear only as a namespace scope or
+  //   class scope declaration.
   if (Ctx) {
     if (Ctx->isFileContext())
       return false;
@@ -6514,8 +6515,8 @@ bool Sema::CheckFunctionTemplateSpecialization(
           const FunctionProtoType *FPT = FT->castAs<FunctionProtoType>();
           FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
           EPI.TypeQuals |= Qualifiers::Const;
-          FT = Context.getFunctionType(FPT->getResultType(), FPT->getArgTypes(),
-                                       EPI);
+          FT = Context.getFunctionType(FPT->getReturnType(),
+                                       FPT->getParamTypes(), EPI);
         }
       }
 

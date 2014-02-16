@@ -463,6 +463,18 @@ Sema::HandlePropertyInClassExtension(Scope *S,
     DeclContext *DC = cast<DeclContext>(CCPrimary);
     if (!ObjCPropertyDecl::findPropertyDecl(DC,
                                  PIDecl->getDeclName().getAsIdentifierInfo())) {
+      // In mrr mode, 'readwrite' property must have an explicit
+      // memory attribute. If none specified, select the default (assign).
+      if (!getLangOpts().ObjCAutoRefCount) {
+        if (!(PIkind & (ObjCDeclSpec::DQ_PR_assign |
+                        ObjCDeclSpec::DQ_PR_retain |
+                        ObjCDeclSpec::DQ_PR_strong |
+                        ObjCDeclSpec::DQ_PR_copy |
+                        ObjCDeclSpec::DQ_PR_unsafe_unretained |
+                        ObjCDeclSpec::DQ_PR_weak)))
+          PIkind |= ObjCPropertyDecl::OBJC_PR_assign;
+      }
+      
       // Protocol is not in the primary class. Must build one for it.
       ObjCDeclSpec ProtocolPropertyODS;
       // FIXME. Assuming that ObjCDeclSpec::ObjCPropertyAttributeKind
@@ -1163,13 +1175,11 @@ Decl *Sema::ActOnPropertyImplDecl(Scope *S,
         new (Context) ObjCIvarRefExpr(Ivar, Ivar->getType(), PropertyDiagLoc,
                                       Ivar->getLocation(),
                                       LoadSelfExpr, true, true);
-      ExprResult Res = 
-        PerformCopyInitialization(InitializedEntity::InitializeResult(
-                                    PropertyDiagLoc,
-                                    getterMethod->getResultType(),
-                                    /*NRVO=*/false),
-                                  PropertyDiagLoc,
-                                  Owned(IvarRefExpr));
+      ExprResult Res = PerformCopyInitialization(
+          InitializedEntity::InitializeResult(PropertyDiagLoc,
+                                              getterMethod->getReturnType(),
+                                              /*NRVO=*/false),
+          PropertyDiagLoc, Owned(IvarRefExpr));
       if (!Res.isInvalid()) {
         Expr *ResExpr = Res.takeAs<Expr>();
         if (ResExpr)
@@ -1391,7 +1401,7 @@ bool Sema::DiagnosePropertyAccessorMismatch(ObjCPropertyDecl *property,
                                             SourceLocation Loc) {
   if (!GetterMethod)
     return false;
-  QualType GetterType = GetterMethod->getResultType().getNonReferenceType();
+  QualType GetterType = GetterMethod->getReturnType().getNonReferenceType();
   QualType PropertyIvarType = property->getType().getNonReferenceType();
   bool compat = Context.hasSameType(PropertyIvarType, GetterType);
   if (!compat) {
@@ -1889,8 +1899,8 @@ void Sema::ProcessPropertyDecl(ObjCPropertyDecl *property,
     ObjCPropertyDecl::PropertyAttributeKind CAttr =
       property->getPropertyAttributes();
     if ((!(CAttr & ObjCPropertyDecl::OBJC_PR_readonly)) &&
-        Context.getCanonicalType(SetterMethod->getResultType()) !=
-          Context.VoidTy)
+        Context.getCanonicalType(SetterMethod->getReturnType()) !=
+            Context.VoidTy)
       Diag(SetterMethod->getLocation(), diag::err_setter_type_void);
     if (SetterMethod->param_size() != 1 ||
         !Context.hasSameUnqualifiedType(

@@ -1217,8 +1217,8 @@ static QualType adjustFunctionTypeForInstantiation(ASTContext &Context,
 
   FunctionProtoType::ExtProtoInfo NewEPI = NewFunc->getExtProtoInfo();
   NewEPI.ExtInfo = OrigFunc->getExtInfo();
-  return Context.getFunctionType(NewFunc->getResultType(),
-                                 NewFunc->getArgTypes(), NewEPI);
+  return Context.getFunctionType(NewFunc->getReturnType(),
+                                 NewFunc->getParamTypes(), NewEPI);
 }
 
 /// Normal class members are of more specific types and therefore
@@ -2933,9 +2933,9 @@ TemplateDeclInstantiator::SubstFunctionType(FunctionDecl *D,
       TypeLoc NewTL = NewTInfo->getTypeLoc().IgnoreParens();
       FunctionProtoTypeLoc NewProtoLoc = NewTL.castAs<FunctionProtoTypeLoc>();
       unsigned NewIdx = 0;
-      for (unsigned OldIdx = 0, NumOldParams = OldProtoLoc.getNumArgs();
+      for (unsigned OldIdx = 0, NumOldParams = OldProtoLoc.getNumParams();
            OldIdx != NumOldParams; ++OldIdx) {
-        ParmVarDecl *OldParam = OldProtoLoc.getArg(OldIdx);
+        ParmVarDecl *OldParam = OldProtoLoc.getParam(OldIdx);
         LocalInstantiationScope *Scope = SemaRef.CurrentInstantiationScope;
 
         Optional<unsigned> NumArgumentsInExpansion;
@@ -2946,14 +2946,14 @@ TemplateDeclInstantiator::SubstFunctionType(FunctionDecl *D,
         if (!NumArgumentsInExpansion) {
           // Simple case: normal parameter, or a parameter pack that's
           // instantiated to a (still-dependent) parameter pack.
-          ParmVarDecl *NewParam = NewProtoLoc.getArg(NewIdx++);
+          ParmVarDecl *NewParam = NewProtoLoc.getParam(NewIdx++);
           Params.push_back(NewParam);
           Scope->InstantiatedLocal(OldParam, NewParam);
         } else {
           // Parameter pack expansion: make the instantiation an argument pack.
           Scope->MakeInstantiatedLocalArgPack(OldParam);
           for (unsigned I = 0; I != *NumArgumentsInExpansion; ++I) {
-            ParmVarDecl *NewParam = NewProtoLoc.getArg(NewIdx++);
+            ParmVarDecl *NewParam = NewProtoLoc.getParam(NewIdx++);
             Params.push_back(NewParam);
             Scope->InstantiatedLocalPackArg(OldParam, NewParam);
           }
@@ -2965,11 +2965,12 @@ TemplateDeclInstantiator::SubstFunctionType(FunctionDecl *D,
       // the function parameters themselves.
       const FunctionProtoType *OldProto =
           cast<FunctionProtoType>(OldProtoLoc.getType());
-      for (unsigned i = 0, i_end = OldProtoLoc.getNumArgs(); i != i_end; ++i) {
-        ParmVarDecl *OldParam = OldProtoLoc.getArg(i);
+      for (unsigned i = 0, i_end = OldProtoLoc.getNumParams(); i != i_end;
+           ++i) {
+        ParmVarDecl *OldParam = OldProtoLoc.getParam(i);
         if (!OldParam) {
           Params.push_back(SemaRef.BuildParmVarDeclForTypedef(
-              D, D->getLocation(), OldProto->getArgType(i)));
+              D, D->getLocation(), OldProto->getParamType(i)));
           continue;
         }
 
@@ -3159,8 +3160,8 @@ static void InstantiateExceptionSpec(Sema &SemaRef, FunctionDecl *New,
   EPI.Exceptions = Exceptions.data();
   EPI.NoexceptExpr = NoexceptExpr;
 
-  New->setType(SemaRef.Context.getFunctionType(NewProto->getResultType(),
-                                               NewProto->getArgTypes(), EPI));
+  New->setType(SemaRef.Context.getFunctionType(NewProto->getReturnType(),
+                                               NewProto->getParamTypes(), EPI));
 }
 
 void Sema::InstantiateExceptionSpec(SourceLocation PointOfInstantiation,
@@ -3176,8 +3177,8 @@ void Sema::InstantiateExceptionSpec(SourceLocation PointOfInstantiation,
     // so that our callers don't have to cope with EST_Uninstantiated.
     FunctionProtoType::ExtProtoInfo EPI = Proto->getExtProtoInfo();
     EPI.ExceptionSpecType = EST_None;
-    Decl->setType(Context.getFunctionType(Proto->getResultType(),
-                                          Proto->getArgTypes(), EPI));
+    Decl->setType(Context.getFunctionType(Proto->getReturnType(),
+                                          Proto->getParamTypes(), EPI));
     return;
   }
 
@@ -3261,7 +3262,7 @@ TemplateDeclInstantiator::InitFunctionInstantiation(FunctionDecl *New,
       EPI.ExceptionSpecDecl = New;
       EPI.ExceptionSpecTemplate = ExceptionSpecTemplate;
       New->setType(SemaRef.Context.getFunctionType(
-          NewProto->getResultType(), NewProto->getArgTypes(), EPI));
+          NewProto->getReturnType(), NewProto->getParamTypes(), EPI));
     } else {
       ::InstantiateExceptionSpec(SemaRef, New, Proto, TemplateArgs);
     }
@@ -3389,10 +3390,10 @@ void Sema::InstantiateFunctionDefinition(SourceLocation PointOfInstantiation,
   //   initializer or return value, and class template specializations, other
   //   explicit instantiation declarations have the effect of suppressing the
   //   implicit instantiation of the entity to which they refer.
-  if (Function->getTemplateSpecializationKind()
-        == TSK_ExplicitInstantiationDeclaration &&
+  if (Function->getTemplateSpecializationKind() ==
+          TSK_ExplicitInstantiationDeclaration &&
       !PatternDecl->isInlined() &&
-      !PatternDecl->getResultType()->getContainedAutoType())
+      !PatternDecl->getReturnType()->getContainedAutoType())
     return;
 
   if (PatternDecl->isInlined())

@@ -433,6 +433,7 @@ def ext_noreturn_main : ExtWarn<
 def note_main_remove_noreturn : Note<"remove '_Noreturn'">;
 def err_constexpr_main : Error<
   "'main' is not allowed to be declared constexpr">;
+def err_deleted_main : Error<"'main' is not allowed to be deleted">;
 def err_mainlike_template_decl : Error<"%0 cannot be a template">;
 def err_main_returns_nonint : Error<"'main' must return 'int'">;
 def ext_main_returns_nonint : ExtWarn<"return type of 'main' is not 'int'">,
@@ -445,6 +446,8 @@ def warn_main_one_arg : Warning<"only one parameter on 'main' declaration">,
 def err_main_arg_wrong : Error<"%select{first|second|third|fourth}0 "
     "parameter of 'main' (%select{argument count|argument array|environment|"
     "platform-specific data}0) must be of type %1">;
+def ext_main_used : Extension<
+  "ISO C++ does not allow 'main' to be used by a program">, InGroup<Main>;
 
 /// parser diagnostics
 def ext_no_declarators : ExtWarn<"declaration does not declare anything">,
@@ -452,6 +455,10 @@ def ext_no_declarators : ExtWarn<"declaration does not declare anything">,
 def ext_typedef_without_a_name : ExtWarn<"typedef requires a name">,
   InGroup<MissingDeclarations>;
 def err_typedef_not_identifier : Error<"typedef name must be an identifier">;
+def err_typedef_changes_linkage : Error<"unsupported: typedef changes linkage"
+  " of anonymous type, but linkage was already computed">;
+def note_typedef_changes_linkage : Note<"use a tag name here to establish "
+  "linkage prior to definition">;
 def err_statically_allocated_object : Error<
   "interface type cannot be statically allocated">;
 def err_object_cannot_be_passed_returned_by_value : Error<
@@ -1855,6 +1862,9 @@ def warn_attribute_pointers_only : Warning<
   "%0 attribute only applies to pointer arguments">,
   InGroup<IgnoredAttributes>;
 def err_attribute_pointers_only : Error<warn_attribute_pointers_only.Text>;
+def warn_attribute_return_pointers_only : Warning<
+  "%0 attribute only applies to return values that are pointers">,
+  InGroup<IgnoredAttributes>;
 def err_attribute_no_member_pointers : Error<
   "%0 attribute cannot be used with pointers to members">;
 def err_attribute_invalid_implicit_this_argument : Error<
@@ -2298,6 +2308,10 @@ def note_function_to_bool_silence : Note<
     "prefix with the address-of operator to silence this warning">;
 def note_function_to_bool_call : Note<
     "suffix with parentheses to turn this into a function call">;
+def warn_impcast_objective_c_literal_to_bool : Warning<
+    "implicit boolean conversion of Objective-C object literal always "
+    "evaluates to true">,
+    InGroup<ObjCLiteralConversion>;
 
 def warn_cast_align : Warning<
   "cast from %0 to %1 increases required alignment from %2 to %3">,
@@ -2349,6 +2363,13 @@ def warn_attribute_protected_visibility :
   InGroup<DiagGroup<"unsupported-visibility">>;
 def err_mismatched_visibility: Error<"visibility does not match previous declaration">;
 def note_previous_attribute : Note<"previous attribute is here">;
+def err_mismatched_ms_inheritance : Error<
+  "inheritance model does not match %select{definition|previous declaration}0">;
+def warn_ignored_ms_inheritance : Warning<
+  "inheritance model ignored on %select{primary template|partial specialization}0">,
+  InGroup<IgnoredAttributes>;
+def note_previous_ms_inheritance : Note<
+  "previous inheritance model specified here">;
 def err_machine_mode : Error<"%select{unknown|unsupported}0 machine mode %1">;
 def err_mode_not_primitive : Error<
   "mode attribute only supported for integer and floating-point types">;
@@ -6231,6 +6252,9 @@ def note_printf_c_str: Note<"did you mean to call the %0 method?">;
 def warn_null_arg : Warning<
   "null passed to a callee which requires a non-null argument">,
   InGroup<NonNull>;
+def warn_null_ret : Warning<
+  "null returned from %select{function|method}0 that requires a non-null return value">,
+  InGroup<NonNull>;
 
 // CHECK: returning address/reference of stack memory
 def warn_ret_stack_addr : Warning<
@@ -6344,6 +6368,12 @@ def err_continue_not_in_loop : Error<
   "'continue' statement not in loop statement">;
 def err_break_not_in_loop_or_switch : Error<
   "'break' statement not in loop or switch statement">;
+def warn_loop_ctrl_binds_to_inner : Warning<
+  "'%0' is bound to current loop, GCC binds it to the enclosing loop">,
+  InGroup<GccCompat>;
+def warn_break_binds_to_switch : Warning<
+  "'break' is bound to loop, GCC binds it to switch">,
+  InGroup<GccCompat>;
 def err_default_not_in_switch : Error<
   "'default' statement not in switch statement">;
 def err_case_not_in_switch : Error<"'case' statement not in switch statement">;
