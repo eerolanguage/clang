@@ -1127,17 +1127,33 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
       }
     }
 
-    // C++ [dcl.ref]p1:
+    // C++11 [dcl.ref]p1:
     //   Cv-qualified references are ill-formed except when the
-    //   cv-qualifiers are introduced through the use of a typedef
-    //   (7.1.3) or of a template type argument (14.3), in which
-    //   case the cv-qualifiers are ignored.
-    // FIXME: Shouldn't we be checking SCS_typedef here?
+    //   cv-qualifiers are introduced through the use of a typedef-name
+    //   or decltype-specifier, in which case the cv-qualifiers are ignored.
+    //
+    // There don't appear to be any other contexts in which a cv-qualified
+    // reference type could be formed, so the 'ill-formed' clause here appears
+    // to never happen.
     if (DS.getTypeSpecType() == DeclSpec::TST_typename &&
         TypeQuals && Result->isReferenceType()) {
-      TypeQuals &= ~DeclSpec::TQ_const;
-      TypeQuals &= ~DeclSpec::TQ_volatile;
-      TypeQuals &= ~DeclSpec::TQ_atomic;
+      // If this occurs outside a template instantiation, warn the user about
+      // it; they probably didn't mean to specify a redundant qualifier.
+      typedef std::pair<DeclSpec::TQ, SourceLocation> QualLoc;
+      QualLoc Quals[] = {
+        QualLoc(DeclSpec::TQ_const, DS.getConstSpecLoc()),
+        QualLoc(DeclSpec::TQ_volatile, DS.getVolatileSpecLoc()),
+        QualLoc(DeclSpec::TQ_atomic, DS.getAtomicSpecLoc())
+      };
+      for (unsigned I = 0, N = llvm::array_lengthof(Quals); I != N; ++I) {
+        if (S.ActiveTemplateInstantiations.empty()) {
+          if (TypeQuals & Quals[I].first)
+            S.Diag(Quals[I].second, diag::warn_typecheck_reference_qualifiers)
+              << DeclSpec::getSpecifierName(Quals[I].first) << Result
+              << FixItHint::CreateRemoval(Quals[I].second);
+        }
+        TypeQuals &= ~Quals[I].first;
+      }
     }
 
     // C90 6.5.3 constraints: "The same type qualifier shall not appear more
@@ -1600,6 +1616,7 @@ QualType Sema::BuildArrayType(QualType T, ArrayType::ArraySizeModifier ASM,
       // Prohibit the use of non-POD types in VLAs.
       QualType BaseT = Context.getBaseElementType(T);
       if (!T->isDependentType() &&
+          !RequireCompleteType(Loc, BaseT, 0) &&
           !BaseT.isPODType(Context) &&
           !BaseT->isObjCLifetimeType()) {
         Diag(Loc, diag::err_vla_non_pod)
@@ -2687,11 +2704,13 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
       if (!D.isInvalidType()) {
         // trailing-return-type is only required if we're declaring a function,
         // and not, for instance, a pointer to a function.
-        if (D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_auto &&
+        if (D.getDeclSpec().containsPlaceholderType() &&
             !FTI.hasTrailingReturnType() && chunkIndex == 0 &&
             !S.getLangOpts().CPlusPlus1y) {
           S.Diag(D.getDeclSpec().getTypeSpecTypeLoc(),
-               diag::err_auto_missing_trailing_return);
+                 D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_auto
+                     ? diag::err_auto_missing_trailing_return
+                     : diag::err_deduced_return_type);
           T = Context.IntTy;
           D.setInvalidType(true);
         } else if (FTI.hasTrailingReturnType()) {
@@ -5091,7 +5110,35 @@ bool Sema::RequireCompleteTypeImpl(SourceLocation Loc, QualType T,
         if (!MPTy->getClass()->isDependentType()) {
           RequireCompleteType(Loc, QualType(MPTy->getClass(), 0), 0);
 
-          MPTy->getMostRecentCXXRecordDecl()->setMSInheritanceModel();
+          CXXRecordDecl *RD = MPTy->getMostRecentCXXRecordDecl();
+          if (!RD->hasAttr<MSInheritanceAttr>()) {
+            MSInheritanceAttr::Spelling InheritanceModel;
+
+            switch (MSPointerToMemberRepresentationMethod) {
+            case LangOptions::PPTMK_BestCase:
+              InheritanceModel = RD->calculateInheritanceModel();
+              break;
+            case LangOptions::PPTMK_FullGeneralitySingleInheritance:
+              InheritanceModel = MSInheritanceAttr::Keyword_single_inheritance;
+              break;
+            case LangOptions::PPTMK_FullGeneralityMultipleInheritance:
+              InheritanceModel =
+                  MSInheritanceAttr::Keyword_multiple_inheritance;
+              break;
+            case LangOptions::PPTMK_FullGeneralityVirtualInheritance:
+              InheritanceModel =
+                  MSInheritanceAttr::Keyword_unspecified_inheritance;
+              break;
+            }
+
+            RD->addAttr(MSInheritanceAttr::CreateImplicit(
+                getASTContext(), InheritanceModel,
+                /*BestCase=*/MSPointerToMemberRepresentationMethod ==
+                    LangOptions::PPTMK_BestCase,
+                ImplicitMSInheritanceAttrLoc.isValid()
+                    ? ImplicitMSInheritanceAttrLoc
+                    : RD->getSourceRange()));
+          }
         }
       }
     }

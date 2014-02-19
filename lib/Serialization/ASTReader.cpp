@@ -49,6 +49,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/system_error.h"
 #include <algorithm>
 #include <cstdio>
@@ -1827,20 +1828,37 @@ ASTReader::ReadControlBlock(ModuleFile &F,
     case llvm::BitstreamEntry::Error:
       Error("malformed block record in AST file");
       return Failure;
-    case llvm::BitstreamEntry::EndBlock:
-      // Validate all of the non-system input files.
-      if (!DisableValidation) {
+    case llvm::BitstreamEntry::EndBlock: {
+      // Validate input files.
+      const HeaderSearchOptions &HSOpts =
+          PP.getHeaderSearchInfo().getHeaderSearchOpts();
+      if (!DisableValidation &&
+          (!HSOpts.ModulesValidateOncePerBuildSession ||
+           F.InputFilesValidationTimestamp <= HSOpts.BuildSessionTimestamp)) {
         bool Complain = (ClientLoadCapabilities & ARR_OutOfDate) == 0;
-        // All user input files reside at the index range [0, Record[1]).
+        // All user input files reside at the index range [0, Record[1]), and
+        // system input files reside at [Record[1], Record[0]).
         // Record is the one from INPUT_FILE_OFFSETS.
-        for (unsigned I = 0, N = Record[1]; I < N; ++I) {
+        //
+        // If we are reading a module, we will create a verification timestamp,
+        // so we verify all input files.  Otherwise, verify only user input
+        // files.
+        unsigned NumInputs = Record[0];
+        unsigned NumUserInputs = Record[1];
+        unsigned N = ValidateSystemInputs ||
+                             (HSOpts.ModulesValidateOncePerBuildSession &&
+                              F.Kind == MK_Module)
+                         ? NumInputs
+                         : NumUserInputs;
+        for (unsigned I = 0; I < N; ++I) {
           InputFile IF = getInputFile(F, I+1, Complain);
           if (!IF.getFile() || IF.isOutOfDate())
             return OutOfDate;
         }
       }
       return Success;
-      
+    }
+
     case llvm::BitstreamEntry::SubBlock:
       switch (Entry.ID) {
       case INPUT_FILES_BLOCK_ID:
@@ -1873,8 +1891,8 @@ ASTReader::ReadControlBlock(ModuleFile &F,
     case METADATA: {
       if (Record[0] != VERSION_MAJOR && !DisableValidation) {
         if ((ClientLoadCapabilities & ARR_VersionMismatch) == 0)
-          Diag(Record[0] < VERSION_MAJOR? diag::warn_pch_version_too_old
-                                        : diag::warn_pch_version_too_new);
+          Diag(Record[0] < VERSION_MAJOR? diag::err_pch_version_too_old
+                                        : diag::err_pch_version_too_new);
         return VersionMismatch;
       }
 
@@ -1890,7 +1908,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       StringRef ASTBranch = Blob;
       if (StringRef(CurBranch) != ASTBranch && !DisableValidation) {
         if ((ClientLoadCapabilities & ARR_VersionMismatch) == 0)
-          Diag(diag::warn_pch_different_branch) << ASTBranch << CurBranch;
+          Diag(diag::err_pch_different_branch) << ASTBranch << CurBranch;
         return VersionMismatch;
       }
       break;
@@ -1935,7 +1953,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch) == 0;
       if (Listener && &F == *ModuleMgr.begin() &&
           ParseLanguageOptions(Record, Complain, *Listener) &&
-          !DisableValidation)
+          !DisableValidation && !AllowConfigurationMismatch)
         return ConfigurationMismatch;
       break;
     }
@@ -1944,7 +1962,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
       if (Listener && &F == *ModuleMgr.begin() &&
           ParseTargetOptions(Record, Complain, *Listener) &&
-          !DisableValidation)
+          !DisableValidation && !AllowConfigurationMismatch)
         return ConfigurationMismatch;
       break;
     }
@@ -1953,7 +1971,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
       if (Listener && &F == *ModuleMgr.begin() &&
           ParseDiagnosticOptions(Record, Complain, *Listener) &&
-          !DisableValidation)
+          !DisableValidation && !AllowConfigurationMismatch)
         return ConfigurationMismatch;
       break;
     }
@@ -1962,7 +1980,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
       if (Listener && &F == *ModuleMgr.begin() &&
           ParseFileSystemOptions(Record, Complain, *Listener) &&
-          !DisableValidation)
+          !DisableValidation && !AllowConfigurationMismatch)
         return ConfigurationMismatch;
       break;
     }
@@ -1971,7 +1989,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       bool Complain = (ClientLoadCapabilities & ARR_ConfigurationMismatch)==0;
       if (Listener && &F == *ModuleMgr.begin() &&
           ParseHeaderSearchOptions(Record, Complain, *Listener) &&
-          !DisableValidation)
+          !DisableValidation && !AllowConfigurationMismatch)
         return ConfigurationMismatch;
       break;
     }
@@ -1981,7 +1999,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       if (Listener && &F == *ModuleMgr.begin() &&
           ParsePreprocessorOptions(Record, Complain, *Listener,
                                    SuggestedPredefines) &&
-          !DisableValidation)
+          !DisableValidation && !AllowConfigurationMismatch)
         return ConfigurationMismatch;
       break;
     }
@@ -2918,6 +2936,16 @@ bool ASTReader::isGlobalIndexUnavailable() const {
          !hasGlobalIndex() && TriedLoadingGlobalIndex;
 }
 
+static void updateModuleTimestamp(ModuleFile &MF) {
+  // Overwrite the timestamp file contents so that file's mtime changes.
+  std::string TimestampFilename = MF.getTimestampFilename();
+  std::string ErrorInfo;
+  llvm::raw_fd_ostream OS(TimestampFilename.c_str(), ErrorInfo);
+  if (!ErrorInfo.empty())
+    return;
+  OS << "Timestamp file\n";
+}
+
 ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
                                             ModuleKind Type,
                                             SourceLocation ImportLoc,
@@ -3076,6 +3104,21 @@ ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
                        PreviousGeneration);
   }
 
+  if (PP.getHeaderSearchInfo()
+          .getHeaderSearchOpts()
+          .ModulesValidateOncePerBuildSession) {
+    // Now we are certain that the module and all modules it depends on are
+    // up to date.  Create or update timestamp files for modules that are
+    // located in the module cache (not for PCH files that could be anywhere
+    // in the filesystem).
+    for (unsigned I = 0, N = Loaded.size(); I != N; ++I) {
+      ImportedModule &M = Loaded[I];
+      if (M.Mod->Kind == MK_Module) {
+        updateModuleTimestamp(*M.Mod);
+      }
+    }
+  }
+
   return Success;
 }
 
@@ -3196,7 +3239,7 @@ ASTReader::ReadASTCore(StringRef FileName,
     case AST_BLOCK_ID:
       if (!HaveReadControlBlock) {
         if ((ClientLoadCapabilities & ARR_VersionMismatch) == 0)
-          Diag(diag::warn_pch_version_too_old);
+          Diag(diag::err_pch_version_too_old);
         return VersionMismatch;
       }
 
@@ -7618,13 +7661,18 @@ void ASTReader::pushExternalDeclIntoScope(NamedDecl *D, DeclarationName Name) {
 
 ASTReader::ASTReader(Preprocessor &PP, ASTContext &Context,
                      StringRef isysroot, bool DisableValidation,
-                     bool AllowASTWithCompilerErrors, bool UseGlobalIndex)
+                     bool AllowASTWithCompilerErrors,
+                     bool AllowConfigurationMismatch,
+                     bool ValidateSystemInputs,
+                     bool UseGlobalIndex)
   : Listener(new PCHValidator(PP, *this)), DeserializationListener(0),
     SourceMgr(PP.getSourceManager()), FileMgr(PP.getFileManager()),
     Diags(PP.getDiagnostics()), SemaObj(0), PP(PP), Context(Context),
     Consumer(0), ModuleMgr(PP.getFileManager()),
     isysroot(isysroot), DisableValidation(DisableValidation),
     AllowASTWithCompilerErrors(AllowASTWithCompilerErrors),
+    AllowConfigurationMismatch(AllowConfigurationMismatch),
+    ValidateSystemInputs(ValidateSystemInputs),
     UseGlobalIndex(UseGlobalIndex), TriedLoadingGlobalIndex(false),
     CurrentGeneration(0), CurrSwitchCaseStmts(&SwitchCaseStmts),
     NumSLocEntriesRead(0), TotalNumSLocEntries(0), 

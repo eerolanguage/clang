@@ -326,9 +326,9 @@ Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
 }
 
 // Get the valid immediate range for the specified NEON type code.
-static unsigned RFT(unsigned t, bool shift = false) {
+static unsigned RFT(unsigned t, bool shift = false, bool ForceQuad = false) {
   NeonTypeFlags Type(t);
-  int IsQuad = Type.isQuad();
+  int IsQuad = ForceQuad ? true : Type.isQuad();
   switch (Type.getEltType()) {
   case NeonTypeFlags::Int8:
   case NeonTypeFlags::Poly8:
@@ -2188,27 +2188,6 @@ checkFormatStringExpr(Sema &S, const Expr *E, ArrayRef<const Expr *> Args,
 
     return SLCT_NotALiteral;
   }
-      
-  case Stmt::ObjCMessageExprClass: {
-    const ObjCMessageExpr *ME = cast<ObjCMessageExpr>(E);
-    if (const ObjCMethodDecl *MDecl = ME->getMethodDecl()) {
-      if (const NamedDecl *ND = dyn_cast<NamedDecl>(MDecl)) {
-        if (const FormatArgAttr *FA = ND->getAttr<FormatArgAttr>()) {
-          unsigned ArgIndex = FA->getFormatIdx();
-          if (ArgIndex <= ME->getNumArgs()) {
-            const Expr *Arg = ME->getArg(ArgIndex-1);
-            return checkFormatStringExpr(S, Arg, Args,
-                                         HasVAListArg, format_idx,
-                                         firstDataArg, Type, CallType,
-                                         InFunctionCall, CheckedVarArgs);
-          }
-        }
-      }
-    }
-
-    return SLCT_NotALiteral;
-  }
-      
   case Stmt::ObjCStringLiteralClass:
   case Stmt::StringLiteralClass: {
     const StringLiteral *StrE = NULL;

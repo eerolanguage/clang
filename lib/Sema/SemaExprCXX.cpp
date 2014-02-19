@@ -1797,7 +1797,7 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
       else
         Matches.erase(Matches.begin() + 1);
       assert(Matches[0].second->getNumParams() == 2 &&
-             "found an unexpected uusal deallocation function");
+             "found an unexpected usual deallocation function");
     }
   }
 
@@ -2076,18 +2076,16 @@ void Sema::DeclareGlobalAllocationFunction(DeclarationName Name,
     }
   }
 
+  FunctionProtoType::ExtProtoInfo EPI;
+
   QualType BadAllocType;
   bool HasBadAllocExceptionSpec
     = (Name.getCXXOverloadedOperator() == OO_New ||
        Name.getCXXOverloadedOperator() == OO_Array_New);
-  if (HasBadAllocExceptionSpec && !getLangOpts().CPlusPlus11) {
-    assert(StdBadAlloc && "Must have std::bad_alloc declared");
-    BadAllocType = Context.getTypeDeclType(getStdBadAlloc());
-  }
-
-  FunctionProtoType::ExtProtoInfo EPI;
   if (HasBadAllocExceptionSpec) {
     if (!getLangOpts().CPlusPlus11) {
+      BadAllocType = Context.getTypeDeclType(getStdBadAlloc());
+      assert(StdBadAlloc && "Must have std::bad_alloc declared");
       EPI.ExceptionSpecType = EST_Dynamic;
       EPI.NumExceptions = 1;
       EPI.Exceptions = &BadAllocType;
@@ -2111,11 +2109,13 @@ void Sema::DeclareGlobalAllocationFunction(DeclarationName Name,
     Alloc->addAttr(MallocAttr::CreateImplicit(Context));
 
   ParmVarDecl *ParamDecls[2];
-  for (unsigned I = 0; I != NumParams; ++I)
+  for (unsigned I = 0; I != NumParams; ++I) {
     ParamDecls[I] = ParmVarDecl::Create(Context, Alloc, SourceLocation(),
                                         SourceLocation(), 0,
                                         Params[I], /*TInfo=*/0,
                                         SC_None, 0);
+    ParamDecls[I]->setImplicit();
+  }
   Alloc->setParams(ArrayRef<ParmVarDecl*>(ParamDecls, NumParams));
 
   // FIXME: Also add this declaration to the IdentifierResolver, but
@@ -2158,7 +2158,7 @@ FunctionDecl *Sema::FindUsualDeallocationFunction(SourceLocation StartLoc,
     else
       Matches.erase(Matches.begin() + 1);
     assert(Matches[0]->getNumParams() == NumArgs &&
-           "found an unexpected uusal deallocation function");
+           "found an unexpected usual deallocation function");
   }
 
   assert(Matches.size() == 1 &&
@@ -5082,8 +5082,11 @@ ExprResult Sema::ActOnDecltypeExpression(Expr *E) {
   }
 
   CXXBindTemporaryExpr *TopBind = dyn_cast<CXXBindTemporaryExpr>(E);
-  if (TopBind)
-    E = TopBind->getSubExpr();
+  CallExpr *TopCall = TopBind ? dyn_cast<CallExpr>(TopBind->getSubExpr()) : 0;
+  if (TopCall)
+    E = TopCall;
+  else
+    TopBind = 0;
 
   // Disable the special decltype handling now.
   ExprEvalContexts.back().IsDecltype = false;
@@ -5094,7 +5097,6 @@ ExprResult Sema::ActOnDecltypeExpression(Expr *E) {
     return Owned(E);
 
   // Perform the semantic checks we delayed until this point.
-  CallExpr *TopCall = dyn_cast<CallExpr>(E);
   for (unsigned I = 0, N = ExprEvalContexts.back().DelayedDecltypeCalls.size();
        I != N; ++I) {
     CallExpr *Call = ExprEvalContexts.back().DelayedDecltypeCalls[I];
@@ -5813,17 +5815,16 @@ static inline bool VariableCanNeverBeAConstantExpression(VarDecl *Var,
   assert(DefVD);
   if (DefVD->isWeak()) return false;
   EvaluatedStmt *Eval = DefVD->ensureEvaluatedStmt();
-  
+
   Expr *Init = cast<Expr>(Eval->Value);
 
   if (Var->getType()->isDependentType() || Init->isValueDependent()) {
-    if (!Init->isValueDependent())
-      return !DefVD->checkInitIsICE();
-    // FIXME: We might still be able to do some analysis of Init here
-    // to conclude that even in a dependent setting, Init can never
-    // be a constexpr - but for now admit agnosticity.
+    // FIXME: Teach the constant evaluator to deal with the non-dependent parts
+    // of value-dependent expressions, and use it here to determine whether the
+    // initializer is a potential constant expression.
     return false;
-  } 
+  }
+
   return !IsVariableAConstantExpression(Var, Context); 
 }
 

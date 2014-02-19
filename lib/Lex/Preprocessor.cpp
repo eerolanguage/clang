@@ -505,48 +505,6 @@ void Preprocessor::EndSourceFile() {
 // Lexer Event Handling.
 //===----------------------------------------------------------------------===//
 
-static void appendCodePoint(unsigned Codepoint,
-                            llvm::SmallVectorImpl<char> &Str) {
-  char ResultBuf[4];
-  char *ResultPtr = ResultBuf;
-  bool Res = llvm::ConvertCodePointToUTF8(Codepoint, ResultPtr);
-  (void)Res;
-  assert(Res && "Unexpected conversion failure");
-  Str.append(ResultBuf, ResultPtr);
-}
-
-static void expandUCNs(SmallVectorImpl<char> &Buf, StringRef Input) {
-  for (StringRef::iterator I = Input.begin(), E = Input.end(); I != E; ++I) {
-    if (*I != '\\') {
-      Buf.push_back(*I);
-      continue;
-    }
-
-    ++I;
-    assert(*I == 'u' || *I == 'U');
-
-    unsigned NumHexDigits;
-    if (*I == 'u')
-      NumHexDigits = 4;
-    else
-      NumHexDigits = 8;
-
-    assert(I + NumHexDigits <= E);
-
-    uint32_t CodePoint = 0;
-    for (++I; NumHexDigits != 0; ++I, --NumHexDigits) {
-      unsigned Value = llvm::hexDigitValue(*I);
-      assert(Value != -1U);
-
-      CodePoint <<= 4;
-      CodePoint += Value;
-    }
-
-    appendCodePoint(CodePoint, Buf);
-    --I;
-  }
-}
-
 /// LookUpIdentifierInfo - Given a tok::raw_identifier token, look up the
 /// identifier information for the token and install it into the token,
 /// updating the token kind accordingly.
@@ -823,6 +781,24 @@ bool Preprocessor::FinishLexStringLiteral(Token &Result, std::string &String,
   }
 
   String = Literal.GetString();
+  return true;
+}
+
+bool Preprocessor::parseSimpleIntegerLiteral(Token &Tok, uint64_t &Value) {
+  assert(Tok.is(tok::numeric_constant));
+  SmallString<8> IntegerBuffer;
+  bool NumberInvalid = false;
+  StringRef Spelling = getSpelling(Tok, IntegerBuffer, &NumberInvalid);
+  if (NumberInvalid)
+    return false;
+  NumericLiteralParser Literal(Spelling, Tok.getLocation(), *this);
+  if (Literal.hadError || !Literal.isIntegerLiteral() || Literal.hasUDSuffix())
+    return false;
+  llvm::APInt APVal(64, 0);
+  if (Literal.GetIntegerValue(APVal))
+    return false;
+  Lex(Tok);
+  Value = APVal.getLimitedValue();
   return true;
 }
 

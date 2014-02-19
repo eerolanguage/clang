@@ -1476,10 +1476,9 @@ llvm::DIType CGDebugInfo::CreateType(const RecordType *Ty) {
         // If the class is dynamic, only emit a declaration. A definition will be
         // emitted whenever the vtable is emitted.
         (CXXDecl && CXXDecl->hasDefinition() && CXXDecl->isDynamicClass())))) {
-    llvm::DIDescriptor FDContext =
-      getContextDescriptor(cast<Decl>(RD->getDeclContext()));
     if (!T)
-      T = getOrCreateRecordFwdDecl(Ty, FDContext);
+      T = getOrCreateRecordFwdDecl(
+          Ty, getContextDescriptor(cast<Decl>(RD->getDeclContext())));
     return T;
   }
 
@@ -2251,9 +2250,10 @@ llvm::DICompositeType CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
   if (T && (!T.isForwardDecl() || !RD->getDefinition()))
       return T;
 
-  // If this is just a forward declaration, construct an appropriately
-  // marked node and just return it.
-  if (!RD->getDefinition())
+  // If this is just a forward or incomplete declaration, construct an
+  // appropriately marked node and just return it.
+  const RecordDecl *D = RD->getDefinition();
+  if (!D || !D->isCompleteDefinition())
     return getOrCreateRecordFwdDecl(Ty, RDContext);
 
   uint64_t Size = CGM.getContext().getTypeSize(Ty);

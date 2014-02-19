@@ -108,6 +108,10 @@ Parser::Parser(Preprocessor &pp, Sema &actions, bool skipFunctionBodies)
     PP.AddPragmaHandler(MSCommentHandler.get());
     MSDetectMismatchHandler.reset(new PragmaDetectMismatchHandler(actions));
     PP.AddPragmaHandler(MSDetectMismatchHandler.get());
+    MSPointersToMembers.reset(new PragmaMSPointersToMembers());
+    PP.AddPragmaHandler(MSPointersToMembers.get());
+    MSVtorDisp.reset(new PragmaMSVtorDisp());
+    PP.AddPragmaHandler(MSVtorDisp.get());
   }
 
   CommentSemaHandler.reset(new ActionCommentHandler(actions));
@@ -521,6 +525,10 @@ Parser::~Parser() {
     MSCommentHandler.reset();
     PP.RemovePragmaHandler(MSDetectMismatchHandler.get());
     MSDetectMismatchHandler.reset();
+    PP.RemovePragmaHandler(MSPointersToMembers.get());
+    MSPointersToMembers.reset();
+    PP.RemovePragmaHandler(MSVtorDisp.get());
+    MSVtorDisp.reset();
   }
 
   PP.RemovePragmaHandler("STDC", FPContractHandler.get());
@@ -742,6 +750,12 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
   case tok::annot_pragma_openmp:
     ParseOpenMPDeclarativeDirective();
     return DeclGroupPtrTy();
+  case tok::annot_pragma_ms_pointers_to_members:
+    HandlePragmaMSPointersToMembers();
+    return DeclGroupPtrTy();
+  case tok::annot_pragma_ms_vtordisp:
+    HandlePragmaMSVtorDisp();
+    return DeclGroupPtrTy();
   case tok::semi:
     // Either a C++11 empty-declaration or attribute-declaration.
     SingleDecl = Actions.ActOnEmptyDeclaration(getCurScope(),
@@ -884,7 +898,6 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
                   ParseExplicitInstantiation(Declarator::FileContext,
                                              ExternLoc, TemplateLoc, DeclEnd));
     }
-    // FIXME: Detect C++ linkage specifications here?
     goto dont_know;
 
   case tok::kw___if_exists:
@@ -1046,7 +1059,7 @@ Parser::ParseDeclOrFunctionDefInternal(ParsedAttributesWithRange &attrs,
   // If the declspec consisted only of 'extern' and we have a string
   // literal following it, this must be a C++ linkage specifier like
   // 'extern "C"'.
-  if (Tok.is(tok::string_literal) && getLangOpts().CPlusPlus &&
+  if (getLangOpts().CPlusPlus && isTokenStringLiteral() &&
       DS.getStorageClassSpec() == DeclSpec::SCS_extern &&
       DS.getParsedSpecifiers() == DeclSpec::PQ_StorageClassSpecifier) {
     Decl *TheDecl = ParseLinkage(DS, Declarator::FileContext);

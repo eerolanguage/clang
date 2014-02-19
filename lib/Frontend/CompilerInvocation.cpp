@@ -381,7 +381,6 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.DisableFree = Args.hasArg(OPT_disable_free);
   Opts.DisableTailCalls = Args.hasArg(OPT_mdisable_tail_calls);
   Opts.FloatABI = Args.getLastArgValue(OPT_mfloat_abi);
-  Opts.HiddenWeakVTables = Args.hasArg(OPT_fhidden_weak_vtables);
   Opts.LessPreciseFPMAD = Args.hasArg(OPT_cl_mad_enable);
   Opts.LimitFloatPrecision = Args.getLastArgValue(OPT_mlimit_float_precision);
   Opts.NoInfsFPMath = (Args.hasArg(OPT_menable_no_infinities) ||
@@ -700,6 +699,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       Opts.ProgramAction = frontend::ParseSyntaxOnly; break;
     case OPT_module_file_info:
       Opts.ProgramAction = frontend::ModuleFileInfo; break;
+    case OPT_verify_pch:
+      Opts.ProgramAction = frontend::VerifyPCH; break;
     case OPT_print_decl_contexts:
       Opts.ProgramAction = frontend::PrintDeclContext; break;
     case OPT_print_preamble:
@@ -927,6 +928,10 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
       getLastArgIntValue(Args, OPT_fmodules_prune_interval, 7 * 24 * 60 * 60);
   Opts.ModuleCachePruneAfter =
       getLastArgIntValue(Args, OPT_fmodules_prune_after, 31 * 24 * 60 * 60);
+  Opts.ModulesValidateOncePerBuildSession =
+      Args.hasArg(OPT_fmodules_validate_once_per_build_session);
+  Opts.BuildSessionTimestamp =
+      getLastArgUInt64Value(Args, OPT_fbuild_session_timestamp, 0);
   for (arg_iterator it = Args.filtered_begin(OPT_fmodules_ignore_macro),
                     ie = Args.filtered_end();
        it != ie; ++it) {
@@ -1321,6 +1326,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.MicrosoftExt = Opts.MSVCCompat || Args.hasArg(OPT_fms_extensions);
   Opts.AsmBlocks = Args.hasArg(OPT_fasm_blocks) || Opts.MicrosoftExt;
   Opts.MSCVersion = getLastArgIntValue(Args, OPT_fmsc_version, 0, Diags);
+  Opts.VtorDispMode = getLastArgIntValue(Args, OPT_vtordisp_mode_EQ, 1, Diags);
   Opts.Borland = Args.hasArg(OPT_fborland_extensions);
   Opts.WritableStrings = Args.hasArg(OPT_fwritable_strings);
   Opts.ConstStrings = Args.hasFlag(OPT_fconst_strings, OPT_fno_const_strings,
@@ -1417,6 +1423,24 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     }
   }
 
+  if (Arg *A = Args.getLastArg(OPT_fms_memptr_rep_EQ)) {
+    LangOptions::PragmaMSPointersToMembersKind InheritanceModel =
+        llvm::StringSwitch<LangOptions::PragmaMSPointersToMembersKind>(
+            A->getValue())
+            .Case("single",
+                  LangOptions::PPTMK_FullGeneralitySingleInheritance)
+            .Case("multiple",
+                  LangOptions::PPTMK_FullGeneralityMultipleInheritance)
+            .Case("virtual",
+                  LangOptions::PPTMK_FullGeneralityVirtualInheritance)
+            .Default(LangOptions::PPTMK_BestCase);
+    if (InheritanceModel == LangOptions::PPTMK_BestCase)
+      Diags.Report(diag::err_drv_invalid_value)
+          << "-fms-memptr-rep=" << A->getValue();
+
+    Opts.setMSPointerToMemberRepresentationMethod(InheritanceModel);
+  }
+
   // Check if -fopenmp is specified.
   Opts.OpenMP = Args.hasArg(OPT_fopenmp);
 
@@ -1450,7 +1474,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     break;
   case 0: Opts.setStackProtector(LangOptions::SSPOff); break;
   case 1: Opts.setStackProtector(LangOptions::SSPOn);  break;
-  case 2: Opts.setStackProtector(LangOptions::SSPReq); break;
+  case 2: Opts.setStackProtector(LangOptions::SSPStrong); break;
+  case 3: Opts.setStackProtector(LangOptions::SSPReq); break;
   }
 
   // Parse -fsanitize= arguments.
@@ -1601,6 +1626,7 @@ static void ParsePreprocessorOutputArgs(PreprocessorOutputOptions &Opts,
   case frontend::GeneratePTH:
   case frontend::ParseSyntaxOnly:
   case frontend::ModuleFileInfo:
+  case frontend::VerifyPCH:
   case frontend::PluginAction:
   case frontend::PrintDeclContext:
   case frontend::RewriteObjC:
@@ -1834,10 +1860,11 @@ std::string CompilerInvocation::getModuleHash() const {
 
 namespace clang {
 
-// Declared in clang/Frontend/Utils.h.
-int getLastArgIntValue(const ArgList &Args, OptSpecifier Id, int Default,
-                       DiagnosticsEngine *Diags) {
-  int Res = Default;
+template<typename IntTy>
+static IntTy getLastArgIntValueImpl(const ArgList &Args, OptSpecifier Id,
+                                    IntTy Default,
+                                    DiagnosticsEngine *Diags) {
+  IntTy Res = Default;
   if (Arg *A = Args.getLastArg(Id)) {
     if (StringRef(A->getValue()).getAsInteger(10, Res)) {
       if (Diags)
@@ -1846,6 +1873,19 @@ int getLastArgIntValue(const ArgList &Args, OptSpecifier Id, int Default,
     }
   }
   return Res;
+}
+
+
+// Declared in clang/Frontend/Utils.h.
+int getLastArgIntValue(const ArgList &Args, OptSpecifier Id, int Default,
+                       DiagnosticsEngine *Diags) {
+  return getLastArgIntValueImpl<int>(Args, Id, Default, Diags);
+}
+
+uint64_t getLastArgUInt64Value(const ArgList &Args, OptSpecifier Id,
+                               uint64_t Default,
+                               DiagnosticsEngine *Diags) {
+  return getLastArgIntValueImpl<uint64_t>(Args, Id, Default, Diags);
 }
 
 void BuryPointer(const void *Ptr) {

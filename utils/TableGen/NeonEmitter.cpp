@@ -2272,28 +2272,39 @@ static std::string GenOpString(const std::string &name, OpKind op,
     std::string typeCode = "";
     InstructionTypeCode(typestr, ClassS, quad, typeCode);
     s += TypeString(proto[1], typestr) + " __a1 = __a; \\\n  ";
-    if (quad) {
-     s += "int16x8_t __a2 = vreinterpretq_s16_f16(__a1);\\\n";
-     s += "  vgetq_lane_s16(__a2, __b);";
-    } else {
-     s += "int16x4_t __a2 = vreinterpret_s16_f16(__a1);\\\n";
-     s += "  vget_lane_s16(__a2, __b);";
-    }
+
+    std::string intType = quad ? "int16x8_t" : "int16x4_t";
+    std::string intName = quad ? "vgetq" : "vget";
+
+    // reinterpret float16 vector as int16 vector
+    s += intType + " __a2 = *(" + intType + " *)(&__a1);\\\n";
+
+    s += "  int16_t __a3 = " + intName + "_lane_s16(__a2, __b);\\\n";
+
+    // reinterpret int16 vector as float16 vector
+    s += "  float16_t __a4 = *(float16_t *)(&__a3);\\\n";
+    s += "  __a4;";
     break;
   }
   case OpScalarSetLane:{
     std::string typeCode = "";
     InstructionTypeCode(typestr, ClassS, quad, typeCode);
-    s += TypeString(proto[1], typestr) + " __a1 = __a; \\\n  ";
-    if (quad) {
-     s += "  int16x8_t __b2 = vreinterpretq_s16_f16(b);\\\n";
-     s += "  int16x8_t __b3 = vsetq_lane_s16(__a1, __b2, __c);\\\n";
-     s += "  vreinterpretq_f16_s16(__b3);";
-    } else {
-     s += "  int16x4_t __b2 = vreinterpret_s16_f16(b);\\\n";
-     s += "  int16x4_t __b3 = vset_lane_s16(__a1, __b2, __c);\\\n";
-     s += "  vreinterpret_f16_s16(__b3);";
-    }
+    s += TypeString(proto[1], typestr) + " __a1 = __a;\\\n  ";
+
+    std::string origType = quad ? "float16x8_t" : "float16x4_t";
+    std::string intType = quad ? "int16x8_t" : "int16x4_t";
+    std::string intName = quad ? "vsetq" : "vset";
+
+    // reinterpret float16_t as int16_t
+    s += "int16_t __a2 = *(int16_t *)(&__a1);\\\n";
+    // reinterpret float16 vector as int16 vector
+    s += "  " + intType + " __b2 = *(" + intType + " *)(&__b);\\\n";
+
+    s += "  " + intType + " __b3 = " + intName + "_lane_s16(__a2, __b2, __c);\\\n";
+
+    // reinterpret int16 vector as float16 vector
+    s += "  " + origType + " __b4 = *(" + origType + " *)(&__b3);\\\n";
+    s += "__b4;";
     break;
   }
 
@@ -2441,7 +2452,7 @@ static std::string GenBuiltin(const std::string &name, const std::string &proto,
     } else if (proto[i] >= 'B' && proto[i] <= 'D') {
       NumOfVec = proto[i] - 'A' + 1;
     }
-    
+
     if (NumOfVec > 0) {
       // Check if an explicit cast is needed.
       if (argType != 'c' || argPoly || argUsgn)
@@ -2571,7 +2582,7 @@ static std::string GenIntrinsic(const std::string &name,
 /// run - Read the records in arm_neon.td and output arm_neon.h.  arm_neon.h
 /// is comprised of type definitions and function declarations.
 void NeonEmitter::run(raw_ostream &OS) {
-  OS << 
+  OS <<
     "/*===---- arm_neon.h - ARM Neon intrinsics ------------------------------"
     "---===\n"
     " *\n"
@@ -2776,20 +2787,21 @@ void NeonEmitter::run(raw_ostream &OS) {
     emitIntrinsic(OS, R, EmittedMap);
   }
 
+  OS << "#endif\n\n";
+
+  // Now emit all the crypto intrinsics together
   OS << "#ifdef __ARM_FEATURE_CRYPTO\n";
 
   for (unsigned i = 0, e = RV.size(); i != e; ++i) {
     Record *R = RV[i];
 
-    // Skip crypto temporarily, and will emit them all together at the end.
     bool isCrypto = R->getValueAsBit("isCrypto");
     if (!isCrypto)
       continue;
 
     emitIntrinsic(OS, R, EmittedMap);
   }
-  
-  OS << "#endif\n\n";
+
 
   OS << "#endif\n\n";
 
@@ -2995,6 +3007,14 @@ NeonEmitter::genIntrinsicRangeCheckCode(raw_ostream &OS,
           rangestr = "l = 1; ";
 
         rangestr += "u = RFT(TV" + shiftstr + ")";
+      } else if (ck == ClassB) {
+        // ClassB intrinsics have a type (and hence lane number) that is only
+        // known at runtime.
+        assert(immPos > 0 && "unexpected immediate operand");
+        if (R->getValueAsBit("isLaneQ"))
+          rangestr = "u = RFT(TV, false, true)";
+        else
+          rangestr = "u = RFT(TV, false, false)";
       } else {
         // The immediate generally refers to a lane in the preceding argument.
         assert(immPos > 0 && "unexpected immediate operand");
@@ -3071,7 +3091,7 @@ NeonEmitter::genOverloadTypeCheckCode(raw_ostream &OS,
     std::string Types = R->getValueAsString("Types");
     std::string name = R->getValueAsString("Name");
     std::string Rename = name + "@" + Proto;
-    
+
     // Functions with 'a' (the splat code) in the type prototype should not get
     // their own builtin as they use the non-splat variant.
     if (Proto.find('a') != std::string::npos)
@@ -3292,9 +3312,9 @@ static std::string GenTest(const std::string &name,
   // for aarch64 instructions yet
   std::vector<std::string> FileCheckPatterns;
   if (!isA64) {
-	GenerateChecksForIntrinsic(name, proto, outTypeStr, inTypeStr, ck, InstName,
-							   isHiddenLOp, FileCheckPatterns);
-	s+= "// CHECK_ARM: test_" + mangledName + "\n";
+    GenerateChecksForIntrinsic(name, proto, outTypeStr, inTypeStr, ck, InstName,
+                               isHiddenLOp, FileCheckPatterns);
+    s+= "// CHECK_ARM: test_" + mangledName + "\n";
   }
   s += "// CHECK_AARCH64: test_" + mangledName + "\n";
 
@@ -3355,7 +3375,7 @@ static std::string GenTest(const std::string &name,
 void NeonEmitter::genTargetTest(raw_ostream &OS, StringMap<OpKind> &EmittedMap,
                                 bool isA64GenTest) {
   if (isA64GenTest)
-	OS << "#ifdef __aarch64__\n";
+    OS << "#ifdef __aarch64__\n";
 
   std::vector<Record *> RV = Records.getAllDerivedDefinitions("Inst");
   for (unsigned i = 0, e = RV.size(); i != e; ++i) {
@@ -3391,17 +3411,17 @@ void NeonEmitter::genTargetTest(raw_ostream &OS, StringMap<OpKind> &EmittedMap,
           (void)ClassifyType(TypeVec[srcti], inQuad, dummy, dummy);
           if (srcti == ti || inQuad != outQuad)
             continue;
-		  std::string testFuncProto;
+          std::string testFuncProto;
           std::string s = GenTest(name, Proto, TypeVec[ti], TypeVec[srcti],
                                   isShift, isHiddenLOp, ck, InstName, isA64,
-								  testFuncProto);
+                                  testFuncProto);
           if (EmittedMap.count(testFuncProto))
             continue;
           EmittedMap[testFuncProto] = kind;
           OS << s << "\n";
         }
       } else {
-		std::string testFuncProto;
+        std::string testFuncProto;
         std::string s = GenTest(name, Proto, TypeVec[ti], TypeVec[ti], isShift,
                                 isHiddenLOp, ck, InstName, isA64, testFuncProto);
         if (EmittedMap.count(testFuncProto))
@@ -3413,7 +3433,7 @@ void NeonEmitter::genTargetTest(raw_ostream &OS, StringMap<OpKind> &EmittedMap,
   }
 
   if (isA64GenTest)
-	OS << "#endif\n";
+    OS << "#endif\n";
 }
 /// runTests - Write out a complete set of tests for all of the Neon
 /// intrinsics.
@@ -3422,10 +3442,10 @@ void NeonEmitter::runTests(raw_ostream &OS) {
         "apcs-gnu\\\n"
         "// RUN:  -target-cpu swift -ffreestanding -Os -S -o - %s\\\n"
         "// RUN:  | FileCheck %s -check-prefix=CHECK_ARM\n"
-		"\n"
-	    "// RUN: %clang_cc1 -triple aarch64-none-linux-gnu \\\n"
-	    "// RUN -target-feature +neon  -ffreestanding -S -o - %s \\\n"
-	    "// RUN:  | FileCheck %s -check-prefix=CHECK_AARCH64\n"
+        "\n"
+        "// RUN: %clang_cc1 -triple aarch64-none-linux-gnu \\\n"
+        "// RUN -target-feature +neon  -ffreestanding -S -o - %s \\\n"
+        "// RUN:  | FileCheck %s -check-prefix=CHECK_AARCH64\n"
         "\n"
         "// REQUIRES: long_tests\n"
         "\n"

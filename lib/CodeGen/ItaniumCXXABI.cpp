@@ -961,7 +961,7 @@ void ItaniumCXXABI::emitVTableDefinitions(CodeGenVTables &CGVT,
   VTable->setLinkage(Linkage);
 
   // Set the right visibility.
-  CGM.setTypeVisibility(VTable, RD, CodeGenModule::TVK_ForVTable);
+  CGM.setGlobalVisibility(VTable, RD);
 
   // If this is the magic class __cxxabiv1::__fundamental_type_info,
   // we will emit the typeinfo for the fundamental types. This is the
@@ -1542,8 +1542,6 @@ void ItaniumCXXABI::registerGlobalDtor(CodeGenFunction &CGF,
 /// the wrapper emits a copy, and we want the linker to merge them.
 static llvm::GlobalValue::LinkageTypes getThreadLocalWrapperLinkage(
     llvm::GlobalValue::LinkageTypes VarLinkage) {
-  if (llvm::GlobalValue::isLinkerPrivateLinkage(VarLinkage))
-    return llvm::GlobalValue::LinkerPrivateWeakLinkage;
   // For internal linkage variables, we don't need an external or weak wrapper.
   if (llvm::GlobalValue::isLocalLinkage(VarLinkage))
     return VarLinkage;

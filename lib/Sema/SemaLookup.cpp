@@ -289,29 +289,27 @@ void LookupResult::configure() {
   IDNS = getIDNS(LookupKind, SemaRef.getLangOpts().CPlusPlus,
                  isForRedeclaration());
 
-  if (!isForRedeclaration()) {
-    // If we're looking for one of the allocation or deallocation
-    // operators, make sure that the implicitly-declared new and delete
-    // operators can be found.
-    switch (NameInfo.getName().getCXXOverloadedOperator()) {
-    case OO_New:
-    case OO_Delete:
-    case OO_Array_New:
-    case OO_Array_Delete:
-      SemaRef.DeclareGlobalNewDelete();
-      break;
+  // If we're looking for one of the allocation or deallocation
+  // operators, make sure that the implicitly-declared new and delete
+  // operators can be found.
+  switch (NameInfo.getName().getCXXOverloadedOperator()) {
+  case OO_New:
+  case OO_Delete:
+  case OO_Array_New:
+  case OO_Array_Delete:
+    SemaRef.DeclareGlobalNewDelete();
+    break;
 
-    default:
-      break;
-    }
+  default:
+    break;
+  }
 
-    // Compiler builtins are always visible, regardless of where they end
-    // up being declared.
-    if (IdentifierInfo *Id = NameInfo.getName().getAsIdentifierInfo()) {
-      if (unsigned BuiltinID = Id->getBuiltinID()) {
-        if (!SemaRef.Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID))
-          AllowHidden = true;
-      }
+  // Compiler builtins are always visible, regardless of where they end
+  // up being declared.
+  if (IdentifierInfo *Id = NameInfo.getName().getAsIdentifierInfo()) {
+    if (unsigned BuiltinID = Id->getBuiltinID()) {
+      if (!SemaRef.Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID))
+        AllowHidden = true;
     }
   }
 }
@@ -4250,13 +4248,20 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
          KNI != KNIEnd; ++KNI)
       Namespaces.AddNameSpecifier(KNI->first);
 
+    bool SSIsTemplate = false;
+    if (NestedNameSpecifier *NNS =
+            (SS && SS->isValid()) ? SS->getScopeRep() : 0) {
+      if (const Type *T = NNS->getAsType())
+        SSIsTemplate = T->getTypeClass() == Type::TemplateSpecialization;
+    }
     for (ASTContext::type_iterator TI = Context.types_begin(),
                                    TIEnd = Context.types_end();
          TI != TIEnd; ++TI) {
       if (CXXRecordDecl *CD = (*TI)->getAsCXXRecordDecl()) {
         CD = CD->getCanonicalDecl();
         if (!CD->isDependentType() && !CD->isAnonymousStructOrUnion() &&
-            !CD->isUnion() &&
+            !CD->isUnion() && CD->getIdentifier() &&
+            (SSIsTemplate || !isa<ClassTemplateSpecializationDecl>(CD)) &&
             (CD->isBeingDefined() || CD->isCompleteDefinition()))
           Namespaces.AddNameSpecifier(CD);
       }

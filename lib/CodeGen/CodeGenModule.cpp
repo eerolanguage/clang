@@ -187,10 +187,14 @@ void CodeGenModule::applyReplacements() {
     llvm::Function *OldF = cast<llvm::Function>(Entry);
     llvm::Function *NewF = dyn_cast<llvm::Function>(Replacement);
     if (!NewF) {
-      llvm::ConstantExpr *CE = cast<llvm::ConstantExpr>(Replacement);
-      assert(CE->getOpcode() == llvm::Instruction::BitCast ||
-             CE->getOpcode() == llvm::Instruction::GetElementPtr);
-      NewF = dyn_cast<llvm::Function>(CE->getOperand(0));
+      if (llvm::GlobalAlias *Alias = dyn_cast<llvm::GlobalAlias>(Replacement)) {
+        NewF = dyn_cast<llvm::Function>(Alias->getAliasedGlobal());
+      } else {
+        llvm::ConstantExpr *CE = cast<llvm::ConstantExpr>(Replacement);
+        assert(CE->getOpcode() == llvm::Instruction::BitCast ||
+               CE->getOpcode() == llvm::Instruction::GetElementPtr);
+        NewF = dyn_cast<llvm::Function>(CE->getOperand(0));
+      }
     }
 
     // Replace old with new, but keep the old order.
@@ -417,73 +421,6 @@ void CodeGenModule::setTLSMode(llvm::GlobalVariable *GV,
   }
 
   GV->setThreadLocalMode(TLM);
-}
-
-/// Set the symbol visibility of type information (vtable and RTTI)
-/// associated with the given type.
-void CodeGenModule::setTypeVisibility(llvm::GlobalValue *GV,
-                                      const CXXRecordDecl *RD,
-                                      TypeVisibilityKind TVK) const {
-  setGlobalVisibility(GV, RD);
-
-  if (!CodeGenOpts.HiddenWeakVTables)
-    return;
-
-  // We never want to drop the visibility for RTTI names.
-  if (TVK == TVK_ForRTTIName)
-    return;
-
-  // We want to drop the visibility to hidden for weak type symbols.
-  // This isn't possible if there might be unresolved references
-  // elsewhere that rely on this symbol being visible.
-
-  // This should be kept roughly in sync with setThunkVisibility
-  // in CGVTables.cpp.
-
-  // Preconditions.
-  if (GV->getLinkage() != llvm::GlobalVariable::LinkOnceODRLinkage ||
-      GV->getVisibility() != llvm::GlobalVariable::DefaultVisibility)
-    return;
-
-  // Don't override an explicit visibility attribute.
-  if (RD->getExplicitVisibility(NamedDecl::VisibilityForType))
-    return;
-
-  switch (RD->getTemplateSpecializationKind()) {
-  // We have to disable the optimization if this is an EI definition
-  // because there might be EI declarations in other shared objects.
-  case TSK_ExplicitInstantiationDefinition:
-  case TSK_ExplicitInstantiationDeclaration:
-    return;
-
-  // Every use of a non-template class's type information has to emit it.
-  case TSK_Undeclared:
-    break;
-
-  // In theory, implicit instantiations can ignore the possibility of
-  // an explicit instantiation declaration because there necessarily
-  // must be an EI definition somewhere with default visibility.  In
-  // practice, it's possible to have an explicit instantiation for
-  // an arbitrary template class, and linkers aren't necessarily able
-  // to deal with mixed-visibility symbols.
-  case TSK_ExplicitSpecialization:
-  case TSK_ImplicitInstantiation:
-    return;
-  }
-
-  // If there's a key function, there may be translation units
-  // that don't have the key function's definition.  But ignore
-  // this if we're emitting RTTI under -fno-rtti.
-  if (!(TVK != TVK_ForRTTI) || LangOpts.RTTI) {
-    // FIXME: what should we do if we "lose" the key function during
-    // the emission of the file?
-    if (Context.getCurrentKeyFunction(RD))
-      return;
-  }
-
-  // Otherwise, drop the visibility to hidden.
-  GV->setVisibility(llvm::GlobalValue::HiddenVisibility);
-  GV->setUnnamedAddr(true);
 }
 
 StringRef CodeGenModule::getMangledName(GlobalDecl GD) {
@@ -714,6 +651,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
 
   if (LangOpts.getStackProtector() == LangOptions::SSPOn)
     B.addAttribute(llvm::Attribute::StackProtect);
+  else if (LangOpts.getStackProtector() == LangOptions::SSPStrong)
+    B.addAttribute(llvm::Attribute::StackProtectStrong);
   else if (LangOpts.getStackProtector() == LangOptions::SSPReq)
     B.addAttribute(llvm::Attribute::StackProtectReq);
 
@@ -1638,6 +1577,12 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
 
   if (AddrSpace != Ty->getAddressSpace())
     return llvm::ConstantExpr::getAddrSpaceCast(GV, Ty);
+
+  if (getTarget().getTriple().getArch() == llvm::Triple::xcore &&
+      D->getLanguageLinkage() == CLanguageLinkage &&
+      D->getType().isConstant(Context) &&
+      isExternallyVisible(D->getLinkageAndVisibility().getLinkage()))
+    GV->setSection(".cp.rodata");
 
   return GV;
 }
@@ -2944,7 +2889,6 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     break;
     // No code generation needed.
   case Decl::UsingShadow:
-  case Decl::Using:
   case Decl::ClassTemplate:
   case Decl::VarTemplate:
   case Decl::VarTemplatePartialSpecialization:
@@ -2953,6 +2897,10 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
   case Decl::Block:
   case Decl::Empty:
     break;
+  case Decl::Using:          // using X; [C++]
+    if (CGDebugInfo *DI = getModuleDebugInfo())
+        DI->EmitUsingDecl(cast<UsingDecl>(*D));
+    return;
   case Decl::NamespaceAlias:
     if (CGDebugInfo *DI = getModuleDebugInfo())
         DI->EmitNamespaceAlias(cast<NamespaceAliasDecl>(*D));

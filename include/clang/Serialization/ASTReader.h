@@ -733,6 +733,13 @@ private:
   /// \brief Whether to accept an AST file with compiler errors.
   bool AllowASTWithCompilerErrors;
 
+  /// \brief Whether to accept an AST file that has a different configuration
+  /// from the current compiler instance.
+  bool AllowConfigurationMismatch;
+
+  /// \brief Whether validate system input files.
+  bool ValidateSystemInputs;
+
   /// \brief Whether we are allowed to use the global module index.
   bool UseGlobalIndex;
 
@@ -1174,11 +1181,20 @@ public:
   /// AST file the was created out of an AST with compiler errors,
   /// otherwise it will reject it.
   ///
+  /// \param AllowConfigurationMismatch If true, the AST reader will not check
+  /// for configuration differences between the AST file and the invocation.
+  ///
+  /// \param ValidateSystemInputs If true, the AST reader will validate
+  /// system input files in addition to user input files. This is only
+  /// meaningful if \p DisableValidation is false.
+  ///
   /// \param UseGlobalIndex If true, the AST reader will try to load and use
   /// the global module index.
   ASTReader(Preprocessor &PP, ASTContext &Context, StringRef isysroot = "",
             bool DisableValidation = false,
             bool AllowASTWithCompilerErrors = false,
+            bool AllowConfigurationMismatch = false,
+            bool ValidateSystemInputs = false,
             bool UseGlobalIndex = true);
 
   ~ASTReader();

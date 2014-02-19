@@ -236,10 +236,6 @@ if (LLVM_COMPILER_IS_GCC_COMPATIBLE)
   endif()
 endif ()
 
-if (APPLE)
-  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
-endif ()
-
 configure_file(
   ${CLANG_SOURCE_DIR}/include/clang/Config/config.h.cmake
   ${CLANG_BINARY_DIR}/include/clang/Config/config.h)
@@ -276,8 +272,12 @@ function(clang_tablegen)
 endfunction(clang_tablegen)
 
 macro(add_clang_library name)
-  cmake_parse_arguments(ARG "MODULE;SHARED;STATIC" "" "" ${ARGN})
-  llvm_process_sources(srcs ${ARG_UNPARSED_ARGUMENTS})
+  cmake_parse_arguments(ARG
+    ""
+    ""
+    "ADDITIONAL_HEADERS"
+    ${ARGN})
+  set(srcs)
   if(MSVC_IDE OR XCODE)
     # Add public headers
     file(RELATIVE_PATH lib_path
@@ -297,41 +297,32 @@ macro(add_clang_library name)
       source_group("TableGen descriptions" FILES ${tds})
       set_source_files_properties(${tds}} PROPERTIES HEADER_FILE_ONLY ON)
 
-      set(srcs ${srcs} ${headers} ${tds})
+      if(headers OR tds)
+	set(srcs ${headers} ${tds})
+      endif()
     endif()
   endif(MSVC_IDE OR XCODE)
-  if (ARG_MODULE)
-    set(libkind MODULE)
-  elseif (ARG_SHARED)
-    set(libkind SHARED)
+  if(srcs OR ARG_ADDITIONAL_HEADERS)
+    set(srcs
+      ADDITIONAL_HEADERS
+      ${srcs}
+      ${ARG_ADDITIONAL_HEADERS} # It may contain unparsed unknown args.
+      )
+  endif()
+  llvm_add_library(${name} ${ARG_UNPARSED_ARGUMENTS} ${srcs})
+
+  if(TARGET ${name})
+    target_link_libraries( ${name} ${LLVM_COMMON_LIBS} )
+
+    if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "libclang")
+      install(TARGETS ${name}
+        LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+        ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+        RUNTIME DESTINATION bin)
+    endif()
   else()
-    set(libkind)
-  endif()
-  add_library( ${name} ${libkind} ${srcs} )
-  llvm_update_compile_flags(${name} ${ALL_FILES})
-  add_dead_strip( ${name} )
-  set_output_directory(${name} ${LLVM_RUNTIME_OUTPUT_INTDIR} ${LLVM_LIBRARY_OUTPUT_INTDIR})
-  if( LLVM_COMMON_DEPENDS )
-    add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
-  endif( LLVM_COMMON_DEPENDS )
-
-  llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
-  target_link_libraries( ${name} ${LLVM_COMMON_LIBS} )
-  link_system_libs( ${name} )
-  
-  if ((ARG_SHARED OR ARG_MODULE) AND LLVM_EXPORTED_SYMBOL_FILE)
-    add_llvm_symbol_exports( ${name} ${LLVM_EXPORTED_SYMBOL_FILE} )
-  endif()
-
-  if (MODULE)
-    set_property(TARGET ${name} PROPERTY SUFFIX ${LLVM_PLUGIN_EXT})
-  endif ()
-
-  if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "libclang")
-    install(TARGETS ${name}
-      LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-      ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-      RUNTIME DESTINATION bin)
+    # Add empty "phony" target
+    add_custom_target(${name})
   endif()
 
   set_target_properties(${name} PROPERTIES FOLDER "Clang libraries")
@@ -350,7 +341,7 @@ include_directories(BEFORE
   )
 
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
-  install(DIRECTORY include/
+  install(DIRECTORY include/clang include/clang-c
     DESTINATION include
     FILES_MATCHING
     PATTERN "*.def"
@@ -359,7 +350,7 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     PATTERN ".svn" EXCLUDE
     )
 
-  install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
+  install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/clang
     DESTINATION include
     FILES_MATCHING
     PATTERN "CMakeFiles" EXCLUDE

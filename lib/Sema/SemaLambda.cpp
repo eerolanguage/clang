@@ -256,7 +256,7 @@ CXXRecordDecl *Sema::createLambdaClosureType(SourceRange IntroducerRange,
                                                      IsGenericLambda, 
                                                      CaptureDefault);
   DC->addDecl(Class);
-  
+
   return Class;
 }
 
@@ -901,7 +901,6 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
     if (FTI.NumArgs == 1 && !FTI.isVariadic && FTI.ArgInfo[0].Ident == 0 &&
         cast<ParmVarDecl>(FTI.ArgInfo[0].Param)->getType()->isVoidType()) {
       // Empty arg list, don't push any params.
-      checkVoidParamDecl(cast<ParmVarDecl>(FTI.ArgInfo[0].Param));
     } else {
       Params.reserve(FTI.NumArgs);
       for (unsigned i = 0, e = FTI.NumArgs; i != e; ++i)
@@ -934,6 +933,23 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
                        ExplicitParams,
                        ExplicitResultType,
                        !Method->isConst());
+
+  // C++11 [expr.prim.lambda]p9:
+  //   A lambda-expression whose smallest enclosing scope is a block scope is a
+  //   local lambda expression; any other lambda expression shall not have a
+  //   capture-default or simple-capture in its lambda-introducer.
+  //
+  // For simple-captures, this is covered by the check below that any named
+  // entity is a variable that can be captured.
+  //
+  // For DR1632, we also allow a capture-default in any context where we can
+  // odr-use 'this' (in particular, in a default initializer for a non-static
+  // data member).
+  if (Intro.Default != LCD_None && !Class->getParent()->isFunctionOrMethod() &&
+      (getCurrentThisType().isNull() ||
+       CheckCXXThisCapture(SourceLocation(), /*Explicit*/true,
+                           /*BuildAndDiagnose*/false)))
+    Diag(Intro.DefaultLoc, diag::err_capture_default_non_local);
 
   // Distinct capture names, for diagnostics.
   llvm::SmallSet<IdentifierInfo*, 8> CaptureNames;

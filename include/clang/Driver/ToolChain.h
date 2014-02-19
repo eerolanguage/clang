@@ -11,6 +11,7 @@
 #define CLANG_DRIVER_TOOLCHAIN_H_
 
 #include "clang/Driver/Action.h"
+#include "clang/Driver/Multilib.h"
 #include "clang/Driver/Types.h"
 #include "clang/Driver/Util.h"
 #include "llvm/ADT/OwningPtr.h"
@@ -76,6 +77,8 @@ private:
   mutable OwningPtr<SanitizerArgs> SanitizerArguments;
 
 protected:
+  MultilibSet Multilibs;
+
   ToolChain(const Driver &D, const llvm::Triple &T,
             const llvm::opt::ArgList &Args);
 
@@ -129,6 +132,8 @@ public:
 
   path_list &getProgramPaths() { return ProgramPaths; }
   const path_list &getProgramPaths() const { return ProgramPaths; }
+
+  const MultilibSet &getMultilibs() const { return Multilibs; }
 
   const SanitizerArgs& getSanitizerArgs() const;
 
@@ -196,7 +201,7 @@ public:
   virtual bool UseObjCMixedDispatch() const { return false; }
 
   /// GetDefaultStackProtectorLevel - Get the default stack protector level for
-  /// this tool chain (0=off, 1=on, 2=all).
+  /// this tool chain (0=off, 1=on, 2=strong, 3=all).
   virtual unsigned GetDefaultStackProtectorLevel(bool KernelOrKext) const {
     return 0;
   }

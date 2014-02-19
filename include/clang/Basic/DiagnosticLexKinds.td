@@ -437,7 +437,8 @@ def err_pragma_message_malformed : Error<
 def err_pragma_push_pop_macro_malformed : Error<
    "pragma %0 requires a parenthesized string">;
 def warn_pragma_pop_macro_no_push : Warning<
-   "pragma pop_macro could not pop '%0', no matching push_macro">;
+   "pragma pop_macro could not pop '%0', no matching push_macro">,
+  InGroup<IgnoredPragmas>;
 def warn_pragma_message : Warning<"%0">,
    InGroup<PoundPragmaMessage>, DefaultWarnNoWerror;
 def err_pragma_message : Error<"%0">;
@@ -472,7 +473,7 @@ def warn_pragma_diagnostic_unknown_warning :
    InGroup<UnknownPragmas>;
 // - #pragma __debug
 def warn_pragma_debug_unexpected_command : Warning<
-  "unexpected debug command '%0'">;
+  "unexpected debug command '%0'">, InGroup<IgnoredPragmas>;
 
 def err_defined_macro_name : Error<"'defined' cannot be used as a macro name">;
 def err_paste_at_start : Error<
@@ -493,7 +494,7 @@ def err_too_few_args_in_macro_invoc : Error<
   "too few arguments provided to function-like macro invocation">;
 def err_pp_bad_paste : Error<
   "pasting formed '%0', an invalid preprocessing token">;
-def err_pp_bad_paste_ms : Warning<
+def ext_pp_bad_paste_ms : ExtWarn<
   "pasting formed '%0', an invalid preprocessing token">, DefaultError,
   InGroup<DiagGroup<"invalid-token-paste">>;
 def err_pp_operator_used_as_macro_name : Error<

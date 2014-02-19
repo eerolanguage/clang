@@ -195,10 +195,15 @@ CompilerInstance::createDiagnostics(DiagnosticOptions *Opts,
   return Diags;
 }
 
+void CompilerInstance::createVirtualFileSystem() {
+  VirtualFileSystem = vfs::getRealFileSystem();
+}
+
 // File Manager
 
 void CompilerInstance::createFileManager() {
-  FileMgr = new FileManager(getFileSystemOpts());
+  assert(hasVirtualFileSystem() && "expected virtual file system");
+  FileMgr = new FileManager(getFileSystemOpts(), VirtualFileSystem);
 }
 
 // Source Manager
@@ -322,6 +327,8 @@ CompilerInstance::createPCHExternalASTSource(StringRef Path,
                              Sysroot.empty() ? "" : Sysroot.c_str(),
                              DisablePCHValidation,
                              AllowPCHWithCompilerErrors,
+                             /*AllowConfigurationMismatch*/false,
+                             /*ValidateSystemInputs*/false,
                              UseGlobalModuleIndex));
 
   Reader->setDeserializationListener(
@@ -918,6 +925,8 @@ static void compileModule(CompilerInstance &ImportingInstance,
                                    ImportingInstance.getDiagnosticClient()),
                              /*ShouldOwnClient=*/true);
 
+  Instance.setVirtualFileSystem(&ImportingInstance.getVirtualFileSystem());
+
   // Note that this module is part of the module build stack, so that we
   // can detect cycles in the module graph.
   Instance.createFileManager(); // FIXME: Adopt file manager from importer?
@@ -1108,41 +1117,38 @@ static void pruneModuleCache(const HeaderSearchOptions &HSOpts) {
       continue;
 
     // Walk all of the files within this directory.
-    bool RemovedAllFiles = true;
     for (llvm::sys::fs::directory_iterator File(Dir->path(), EC), FileEnd;
          File != FileEnd && !EC; File.increment(EC)) {
       // We only care about module and global module index files.
-      if (llvm::sys::path::extension(File->path()) != ".pcm" &&
-          llvm::sys::path::filename(File->path()) != "modules.idx") {
-        RemovedAllFiles = false;
+      StringRef Extension = llvm::sys::path::extension(File->path());
+      if (Extension != ".pcm" && Extension != ".timestamp" &&
+          llvm::sys::path::filename(File->path()) != "modules.idx")
         continue;
-      }
 
       // Look at this file. If we can't stat it, there's nothing interesting
       // there.
-      if (::stat(File->path().c_str(), &StatBuf)) {
-        RemovedAllFiles = false;
+      if (::stat(File->path().c_str(), &StatBuf))
         continue;
-      }
 
       // If the file has been used recently enough, leave it there.
       time_t FileAccessTime = StatBuf.st_atime;
       if (CurrentTime - FileAccessTime <=
               time_t(HSOpts.ModuleCachePruneAfter)) {
-        RemovedAllFiles = false;
         continue;
       }
 
       // Remove the file.
-      bool Existed;
-      if (llvm::sys::fs::remove(File->path(), Existed) || !Existed) {
-        RemovedAllFiles = false;
-      }
+      llvm::sys::fs::remove(File->path());
+
+      // Remove the timestamp file.
+      std::string TimpestampFilename = File->path() + ".timestamp";
+      llvm::sys::fs::remove(TimpestampFilename);
     }
 
     // If we removed all of the files in the directory, remove the directory
     // itself.
-    if (RemovedAllFiles)
+    if (llvm::sys::fs::directory_iterator(Dir->path(), EC) ==
+            llvm::sys::fs::directory_iterator() && !EC)
       llvm::sys::fs::remove(Dir->path());
   }
 }
@@ -1211,6 +1217,8 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
                                     Sysroot.empty() ? "" : Sysroot.c_str(),
                                     PPOpts.DisablePCHValidation,
                                     /*AllowASTWithCompilerErrors=*/false,
+                                    /*AllowConfigurationMismatch=*/false,
+                                    /*ValidateSystemInputs=*/false,
                                     getFrontendOpts().UseGlobalModuleIndex);
       if (hasASTConsumer()) {
         ModuleManager->setDeserializationListener(
