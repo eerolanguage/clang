@@ -472,6 +472,11 @@ static bool isError(const Record &Diag) {
   return ClsName == "CLASS_ERROR";
 }
 
+static bool isRemark(const Record &Diag) {
+  const std::string &ClsName = Diag.getValueAsDef("Class")->getName();
+  return ClsName == "CLASS_REMARK";
+}
+
 /// ClangDiagsDefsEmitter - The top-level class emits .def files containing
 /// declarations of Clang diagnostics.
 namespace clang {
@@ -515,6 +520,14 @@ void EmitClangDiagsDefs(RecordKeeper &Records, raw_ostream &OS,
         const std::string &GroupName = GroupRec->getValueAsString("GroupName");
         PrintFatalError(R.getLoc(), "Error " + R.getName() +
                       " cannot be in a warning group [" + GroupName + "]");
+      }
+    }
+
+    // Check that all remarks have an associated diagnostic group.
+    if (isRemark(R)) {
+      if (!isa<DefInit>(R.getValueInit("Group"))) {
+        PrintFatalError(R.getLoc(), "Error " + R.getName() +
+                                        " not in any diagnostic group");
       }
     }
 
@@ -748,17 +761,6 @@ struct RecordIndexElement
 
   std::string Name;
 };
-
-struct RecordIndexElementSorter :
-  public std::binary_function<RecordIndexElement, RecordIndexElement, bool> {
-
-  bool operator()(RecordIndexElement const &Lhs,
-                  RecordIndexElement const &Rhs) const {
-    return Lhs.Name < Rhs.Name;
-  }
-
-};
-
 } // end anonymous namespace.
 
 namespace clang {
@@ -773,7 +775,9 @@ void EmitClangDiagsIndexName(RecordKeeper &Records, raw_ostream &OS) {
     Index.push_back(RecordIndexElement(R));
   }
 
-  std::sort(Index.begin(), Index.end(), RecordIndexElementSorter());
+  std::sort(Index.begin(), Index.end(),
+            [](const RecordIndexElement &Lhs,
+               const RecordIndexElement &Rhs) { return Lhs.Name < Rhs.Name; });
 
   for (unsigned i = 0, e = Index.size(); i != e; ++i) {
     const RecordIndexElement &R = Index[i];

@@ -2648,44 +2648,32 @@ void EmitClangAttrParserStringSwitches(RecordKeeper &Records,
 
 class DocumentationData {
 public:
-  enum DocCategory {
-    Function,
-    Variable,
-    Type,
-    Undocumented
-  };
-
-  DocCategory Category;
   const Record *Documentation;
   const Record *Attribute;
 
-  DocumentationData(DocCategory Category, const Record &Documentation,
-                    const Record &Attribute)
-      : Category(Category), Documentation(&Documentation),
-        Attribute(&Attribute) {}
+  DocumentationData(const Record &Documentation, const Record &Attribute)
+      : Documentation(&Documentation), Attribute(&Attribute) {}
 };
 
-static void WriteCategoryHeader(DocumentationData::DocCategory Category,
+static void WriteCategoryHeader(const Record *DocCategory,
                                 raw_ostream &OS) {
-  OS << "\n";
-  switch (Category) {
-    case DocumentationData::Undocumented:
-      assert(false && "Undocumented attributes are not documented!");
-      break;
-    case DocumentationData::Function:
-      OS << "Function Attributes\n";
-      OS << "===================\n";
-      break;
-    case DocumentationData::Variable:
-      OS << "Variable Attributes\n";
-      OS << "===================\n";
-      break;
-    case DocumentationData::Type:
-      OS << "Type Attributes\n";
-      OS << "===============\n";
-      break;
+  const std::string &Name = DocCategory->getValueAsString("Name");
+  OS << Name << "\n" << std::string(Name.length(), '=') << "\n";
+
+  // If there is content, print that as well.
+  std::string ContentStr = DocCategory->getValueAsString("Content");
+  if (!ContentStr.empty()) {
+    // Trim leading and trailing newlines and spaces.
+    StringRef Content(ContentStr);
+    while (Content.startswith("\r") || Content.startswith("\n") ||
+           Content.startswith(" ") || Content.startswith("\t"))
+           Content = Content.substr(1);
+    while (Content.endswith("\r") || Content.endswith("\n") ||
+           Content.endswith(" ") || Content.endswith("\t"))
+           Content = Content.substr(0, Content.size() - 1);
+    OS << Content;
   }
-  OS << "\n";
+  OS << "\n\n";
 }
 
 enum SpellingKind {
@@ -2705,6 +2693,7 @@ static void WriteDocumentation(const DocumentationData &Doc,
 
   // Determine the heading to be used for this attribute.
   std::string Heading = Doc.Documentation->getValueAsString("Heading");
+  bool CustomHeading = !Heading.empty();
   if (Heading.empty()) {
     // If there's only one spelling, we can simply use that.
     if (Spellings.size() == 1)
@@ -2757,7 +2746,7 @@ static void WriteDocumentation(const DocumentationData &Doc,
 
   // Print out the heading for the attribute. If there are alternate spellings,
   // then display those after the heading.
-  if (!Names.empty()) {
+  if (!CustomHeading && !Names.empty()) {
     Heading += " (";
     for (std::vector<std::string>::const_iterator I = Names.begin(),
          E = Names.end(); I != E; ++I) {
@@ -2823,9 +2812,9 @@ void EmitClangAttrDocs(RecordKeeper &Records, raw_ostream &OS) {
     return;
   }
 
-  OS << Documentation->getValueAsString("Intro");
+  OS << Documentation->getValueAsString("Intro") << "\n";
 
-  typedef std::map<DocumentationData::DocCategory,
+  typedef std::map<const Record *,
                    std::vector<DocumentationData> > CategoryMap;
   CategoryMap SplitDocs;
 
@@ -2839,25 +2828,19 @@ void EmitClangAttrDocs(RecordKeeper &Records, raw_ostream &OS) {
     for (std::vector<Record *>::const_iterator DI = Docs.begin(),
          DE = Docs.end(); DI != DE; ++DI) {
       const Record &Doc = **DI;
-      DocumentationData::DocCategory Cat =
-          StringSwitch<DocumentationData::DocCategory>(
-              Doc.getValueAsDef("Category")->getValueAsString("Name"))
-              .Case("Functions", DocumentationData::Function)
-              .Case("Variables", DocumentationData::Variable)
-              .Case("Types", DocumentationData::Type)
-              .Case("Undocumented", DocumentationData::Undocumented);
-
+      const Record *Category = Doc.getValueAsDef("Category");
       // If the category is "undocumented", then there cannot be any other
       // documentation categories (otherwise, the attribute would become
       // documented).
-      bool Undocumented = DocumentationData::Undocumented == Cat;
+      std::string Cat = Category->getValueAsString("Name");
+      bool Undocumented = Cat == "Undocumented";
       if (Undocumented && Docs.size() > 1)
         PrintFatalError(Doc.getLoc(),
                         "Attribute is \"Undocumented\", but has multiple "
                         "documentation categories");      
 
       if (!Undocumented)
-        SplitDocs[Cat].push_back(DocumentationData(Cat, Doc, Attr));
+        SplitDocs[Category].push_back(DocumentationData(Doc, Attr));
     }
   }
 

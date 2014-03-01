@@ -30,6 +30,21 @@ def warn_duplicate_enum_values : Warning<
   "been assigned">, InGroup<DiagGroup<"duplicate-enum">>, DefaultIgnore;
 def note_duplicate_element : Note<"element %0 also has value %1">;
 
+// Absolute value functions
+def warn_unsigned_abs : Warning<
+  "taking the absolute value of unsigned type %0 has no effect">,
+  InGroup<AbsoluteValue>;
+def note_remove_abs : Note<
+  "remove the call to %0 since unsigned values cannot be negative">;
+def warn_abs_too_small : Warning<
+  "absolute value function %0 given an argument of type %1 but has parameter "
+  "of type %2 which may cause truncation of value">, InGroup<AbsoluteValue>;
+def warn_wrong_absolute_value_type : Warning<
+  "using %select{integer|floating point|complex}1 absolute value function %0 "
+  "when argument is of %select{integer|floating point|complex}2 type">,
+  InGroup<AbsoluteValue>;
+def note_replace_abs_function : Note<"use function '%0' instead">;
+
 def warn_infinite_recursive_function : Warning<
   "all paths through this function will call itself">,
   InGroup<InfiniteRecursion>, DefaultIgnore;
@@ -493,8 +508,10 @@ def warn_pragma_pack_pop_identifer_and_alignment : Warning<
   "specifying both a name and alignment to 'pop' is undefined">;
 def warn_pragma_pop_failed : Warning<"#pragma %0(pop, ...) failed: %1">,
   InGroup<IgnoredPragmas>;
-def warn_pragma_ms_struct_failed : Warning<"#pramga ms_struct can not be used with dynamic classes or structures">,
-  InGroup<IgnoredPragmas>;
+def warn_cxx_ms_struct :
+  Warning<"ms_struct may not produce MSVC-compatible layouts for classes "
+          "with base classes or virtual functions">,
+  DefaultError, InGroup<IncompatibleMSStruct>;
 
 def warn_pragma_unused_undeclared_var : Warning<
   "undeclared variable %0 used as an argument for '#pragma unused'">,
@@ -2048,6 +2065,8 @@ def err_attribute_selectany_non_extern_data : Error<
 def warn_attribute_invalid_on_definition : Warning<
   "'%0' attribute cannot be specified on a definition">,
   InGroup<IgnoredAttributes>;
+def err_attribute_dllimport_data_definition : Error<
+  "definition of dllimport data">;
 def err_attribute_weakref_not_static : Error<
   "weakref declaration must have internal linkage">;
 def err_attribute_weakref_not_global_context : Error<
@@ -2315,12 +2334,19 @@ def warn_impcast_null_pointer_to_integer : Warning<
 def warn_impcast_floating_point_to_bool : Warning<
     "implicit conversion turns floating-point number into bool: %0 to %1">,
     InGroup<ImplicitConversionFloatingPointToBool>;
-def warn_impcast_function_to_bool : Warning<
-    "address of function %q0 will always evaluate to 'true'">,
+
+def warn_impcast_pointer_to_bool : Warning<
+    "address of%select{| function| array}0 '%1' will always evaluate to "
+    "'true'">,
     InGroup<BoolConversion>;
-def note_function_to_bool_silence : Note<
+def warn_null_pointer_compare : Warning<
+    "comparison of %select{address of|function|array}0 '%1' %select{not |}2"
+    "equal to a null pointer is always %select{true|false}2">,
+    InGroup<TautologicalPointerCompare>;
+
+def note_function_warning_silence : Note<
     "prefix with the address-of operator to silence this warning">;
-def note_function_to_bool_call : Note<
+def note_function_to_function_call : Note<
     "suffix with parentheses to turn this into a function call">;
 def warn_impcast_objective_c_literal_to_bool : Warning<
     "implicit boolean conversion of Objective-C object literal always "
@@ -2507,7 +2533,10 @@ def err_objc_bridged_related_invalid_class_name : Error<
 def err_objc_bridged_related_known_method : Error<
  "%0 must be explicitly converted to %1; use %select{%objcclass2|%objcinstance2}3 "
  "method for this conversion">;
-  
+
+def err_objc_attr_protocol_requires_definition : Error<
+  "attribute %0 can only be applied to @protocol definitions, not forward declarations">;
+
 // Function Parameter Semantic Analysis.
 def err_param_with_void_type : Error<"argument may not have 'void' type">;
 def err_void_only_param : Error<
@@ -5708,6 +5737,11 @@ def warn_cxx98_compat_pass_non_pod_arg_to_vararg : Warning<
   "passing object of trivial but non-POD type %0 through variadic"
   " %select{function|block|method|constructor}1 is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
+def warn_pass_class_arg_to_vararg : Warning<
+  "passing object of class type %0 through variadic "
+  "%select{function|block|method|constructor}1"
+  "%select{|; did you mean to call '%3'?}2">,
+  InGroup<ClassVarargs>, DefaultIgnore;
 def err_cannot_pass_to_vararg : Error<
   "cannot pass %select{expression of type %1|initializer list}0 to variadic "
   "%select{function|block|method|constructor}2">;
@@ -5855,6 +5889,12 @@ def err_invalid_conversion_between_vectors : Error<
 def err_invalid_conversion_between_vector_and_integer : Error<
   "invalid conversion between vector type %0 and integer type %1 "
   "of different size">;
+
+def err_opencl_function_pointer_variable : Error<
+  "pointers to functions are not allowed">;
+
+def err_opencl_taking_function_address : Error<
+  "taking address of function is not allowed">;
 
 def err_invalid_conversion_between_vector_and_scalar : Error<
   "invalid conversion between vector type %0 and scalar type %1">;
@@ -6229,6 +6269,8 @@ def warn_format_string_is_wide_literal : Warning<
   "format string should not be a wide string">, InGroup<Format>;
 def warn_printf_format_string_contains_null_char : Warning<
   "format string contains '\\0' within the string body">, InGroup<Format>;
+def warn_printf_format_string_not_null_terminated : Warning<
+  "format string is not null-terminated">, InGroup<Format>;
 def warn_printf_asterisk_missing_arg : Warning<
   "'%select{*|.*}0' specified field %select{width|precision}0 is missing a matching 'int' argument">,
   InGroup<Format>;
@@ -6817,24 +6859,26 @@ def err_omp_private_incomplete_type : Error<
   "a private variable with incomplete type %0">;
 def err_omp_firstprivate_incomplete_type : Error<
   "a firstprivate variable with incomplete type %0">;
-def err_omp_unexpected_clause_value : Error <
+def err_omp_unexpected_clause_value : Error<
   "expected %0 in OpenMP clause '%1'">;
-def err_omp_expected_var_name : Error <
+def err_omp_expected_var_name : Error<
   "expected variable name">;
-def err_omp_required_method : Error <
+def err_omp_required_method : Error<
   "%0 variable must have an accessible, unambiguous %select{default constructor|copy constructor|copy assignment operator|'%2'|destructor}1">;
 def err_omp_clause_ref_type_arg : Error<
   "arguments of OpenMP clause '%0' cannot be of reference type %1">;
 def err_omp_threadprivate_incomplete_type : Error<
   "threadprivate variable with incomplete type %0">;
-def err_omp_no_dsa_for_variable : Error <
+def err_omp_no_dsa_for_variable : Error<
   "variable %0 must have explicitly specified data sharing attributes">;
 def err_omp_wrong_dsa : Error<
   "%0 variable cannot be %1">;
-def note_omp_explicit_dsa : Note <
+def note_omp_explicit_dsa : Note<
   "defined as %0">;
-def note_omp_predetermined_dsa : Note <
+def note_omp_predetermined_dsa : Note<
   "predetermined as %0">;
+def err_omp_not_for : Error<
+  "statement after '#pragma omp %0' must be a for loop">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {

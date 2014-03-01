@@ -354,8 +354,8 @@ TEST(DeclPrinter, TestFunctionDecl7) {
   ASSERT_TRUE(PrintedDeclCXX11Matches(
     "constexpr int A(int a);",
     "A",
-    "int A(int a)"));
-    // WRONG; Should be: "constexpr int A(int a);"
+    "constexpr int A(int a)"));
+    // Should be: with semicolon
 }
 
 TEST(DeclPrinter, TestFunctionDecl8) {
@@ -480,8 +480,7 @@ TEST(DeclPrinter, TestCXXConstructorDecl7) {
     "  constexpr A();"
     "};",
     constructorDecl(ofClass(hasName("A"))).bind("id"),
-    "A()"));
-    // WRONG; Should be: "constexpr A();"
+    "constexpr A()"));
 }
 
 TEST(DeclPrinter, TestCXXConstructorDecl8) {
@@ -519,7 +518,7 @@ TEST(DeclPrinter, TestCXXConstructorDecl11) {
     "  A(T&&... ts) : T(ts)... {}"
     "};",
     constructorDecl(ofClass(hasName("A"))).bind("id"),
-    "A<T...>(T &&ts...) : T(ts)"));
+    "A<T...>(T &&ts...) : T(ts)..."));
     // WRONG; Should be: "A(T&&... ts) : T(ts)..."
 }
 
@@ -529,8 +528,7 @@ TEST(DeclPrinter, TestCXXDestructorDecl1) {
     "  ~A();"
     "};",
     destructorDecl(ofClass(hasName("A"))).bind("id"),
-    "void ~A()"));
-    // WRONG; Should be: "~A();"
+    "~A()"));
 }
 
 TEST(DeclPrinter, TestCXXDestructorDecl2) {
@@ -539,8 +537,7 @@ TEST(DeclPrinter, TestCXXDestructorDecl2) {
     "  virtual ~A();"
     "};",
     destructorDecl(ofClass(hasName("A"))).bind("id"),
-    "virtual void ~A()"));
-    // WRONG; Should be: "virtual ~A();"
+    "virtual ~A()"));
 }
 
 TEST(DeclPrinter, TestCXXConversionDecl1) {
@@ -549,8 +546,7 @@ TEST(DeclPrinter, TestCXXConversionDecl1) {
     "  operator int();"
     "};",
     methodDecl(ofClass(hasName("A"))).bind("id"),
-    "int operator int()"));
-    // WRONG; Should be: "operator int();"
+    "operator int()"));
 }
 
 TEST(DeclPrinter, TestCXXConversionDecl2) {
@@ -559,8 +555,7 @@ TEST(DeclPrinter, TestCXXConversionDecl2) {
     "  operator bool();"
     "};",
     methodDecl(ofClass(hasName("A"))).bind("id"),
-    "bool operator _Bool()"));
-    // WRONG; Should be: "operator bool();"
+    "operator bool()"));
 }
 
 TEST(DeclPrinter, TestCXXConversionDecl3) {
@@ -570,8 +565,7 @@ TEST(DeclPrinter, TestCXXConversionDecl3) {
     "  operator Z();"
     "};",
     methodDecl(ofClass(hasName("A"))).bind("id"),
-    "Z operator Z()"));
-    // WRONG; Should be: "operator Z();"
+    "operator Z()"));
 }
 
 TEST(DeclPrinter, TestCXXMethodDecl_AllocationFunction1) {
@@ -768,8 +762,8 @@ TEST(DeclPrinter, TestCXXMethodDecl_RefQualifier1) {
     "  void A(int a) &;"
     "};",
     "A",
-    "void A(int a)"));
-    // WRONG; Should be: "void A(int a) &;"
+    "void A(int a) &"));
+    // Should be: with semicolon
 }
 
 TEST(DeclPrinter, TestCXXMethodDecl_RefQualifier2) {
@@ -778,8 +772,8 @@ TEST(DeclPrinter, TestCXXMethodDecl_RefQualifier2) {
     "  void A(int a) &&;"
     "};",
     "A",
-    "void A(int a)"));
-    // WRONG; Should be: "void A(int a) &&;"
+    "void A(int a) &&"));
+    // Should be: with semicolon
 }
 
 TEST(DeclPrinter, TestFunctionDecl_ExceptionSpecification1) {

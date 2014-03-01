@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Parse/Parser.h"
-#include "ParsePragma.h"
 #include "RAIIObjectsForParser.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
@@ -64,55 +63,7 @@ Parser::Parser(Preprocessor &pp, Sema &actions, bool skipFunctionBodies)
 
   // Add #pragma handlers. These are removed and destroyed in the
   // destructor.
-  AlignHandler.reset(new PragmaAlignHandler());
-  PP.AddPragmaHandler(AlignHandler.get());
-
-  GCCVisibilityHandler.reset(new PragmaGCCVisibilityHandler());
-  PP.AddPragmaHandler("GCC", GCCVisibilityHandler.get());
-
-  OptionsHandler.reset(new PragmaOptionsHandler());
-  PP.AddPragmaHandler(OptionsHandler.get());
-
-  PackHandler.reset(new PragmaPackHandler());
-  PP.AddPragmaHandler(PackHandler.get());
-    
-  MSStructHandler.reset(new PragmaMSStructHandler());
-  PP.AddPragmaHandler(MSStructHandler.get());
-
-  UnusedHandler.reset(new PragmaUnusedHandler());
-  PP.AddPragmaHandler(UnusedHandler.get());
-
-  WeakHandler.reset(new PragmaWeakHandler());
-  PP.AddPragmaHandler(WeakHandler.get());
-
-  RedefineExtnameHandler.reset(new PragmaRedefineExtnameHandler());
-  PP.AddPragmaHandler(RedefineExtnameHandler.get());
-
-  FPContractHandler.reset(new PragmaFPContractHandler());
-  PP.AddPragmaHandler("STDC", FPContractHandler.get());
-
-  if (getLangOpts().OpenCL) {
-    OpenCLExtensionHandler.reset(new PragmaOpenCLExtensionHandler());
-    PP.AddPragmaHandler("OPENCL", OpenCLExtensionHandler.get());
-
-    PP.AddPragmaHandler("OPENCL", FPContractHandler.get());
-  }
-  if (getLangOpts().OpenMP)
-    OpenMPHandler.reset(new PragmaOpenMPHandler());
-  else
-    OpenMPHandler.reset(new PragmaNoOpenMPHandler());
-  PP.AddPragmaHandler(OpenMPHandler.get());
-
-  if (getLangOpts().MicrosoftExt) {
-    MSCommentHandler.reset(new PragmaCommentHandler(actions));
-    PP.AddPragmaHandler(MSCommentHandler.get());
-    MSDetectMismatchHandler.reset(new PragmaDetectMismatchHandler(actions));
-    PP.AddPragmaHandler(MSDetectMismatchHandler.get());
-    MSPointersToMembers.reset(new PragmaMSPointersToMembers());
-    PP.AddPragmaHandler(MSPointersToMembers.get());
-    MSVtorDisp.reset(new PragmaMSVtorDisp());
-    PP.AddPragmaHandler(MSVtorDisp.get());
-  }
+  initializePragmaHandlers();
 
   CommentSemaHandler.reset(new ActionCommentHandler(actions));
   PP.addCommentHandler(CommentSemaHandler.get());
@@ -178,18 +129,20 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
   // Detect common single-character typos and resume.
   if (IsCommonTypo(ExpectedTok, Tok)) {
     SourceLocation Loc = Tok.getLocation();
-    DiagnosticBuilder DB = Diag(Loc, DiagID);
-    DB << FixItHint::CreateReplacement(SourceRange(Loc),
-                                       getPunctuatorSpelling(ExpectedTok));
-    if (DiagID == diag::err_expected)
-      DB << ExpectedTok;
-    else if (DiagID == diag::err_expected_after)
-      DB << Msg << ExpectedTok;
-    else
-      DB << Msg;
-    ConsumeAnyToken();
+    {
+      DiagnosticBuilder DB = Diag(Loc, DiagID);
+      DB << FixItHint::CreateReplacement(
+                SourceRange(Loc), tok::getPunctuatorSpelling(ExpectedTok));
+      if (DiagID == diag::err_expected)
+        DB << ExpectedTok;
+      else if (DiagID == diag::err_expected_after)
+        DB << Msg << ExpectedTok;
+      else
+        DB << Msg;
+    }
 
     // Pretend there wasn't a problem.
+    ConsumeAnyToken();
     return false;
   }
 
@@ -494,45 +447,7 @@ Parser::~Parser() {
   for (unsigned i = 0, e = NumCachedScopes; i != e; ++i)
     delete ScopeCache[i];
 
-  // Remove the pragma handlers we installed.
-  PP.RemovePragmaHandler(AlignHandler.get());
-  AlignHandler.reset();
-  PP.RemovePragmaHandler("GCC", GCCVisibilityHandler.get());
-  GCCVisibilityHandler.reset();
-  PP.RemovePragmaHandler(OptionsHandler.get());
-  OptionsHandler.reset();
-  PP.RemovePragmaHandler(PackHandler.get());
-  PackHandler.reset();
-  PP.RemovePragmaHandler(MSStructHandler.get());
-  MSStructHandler.reset();
-  PP.RemovePragmaHandler(UnusedHandler.get());
-  UnusedHandler.reset();
-  PP.RemovePragmaHandler(WeakHandler.get());
-  WeakHandler.reset();
-  PP.RemovePragmaHandler(RedefineExtnameHandler.get());
-  RedefineExtnameHandler.reset();
-
-  if (getLangOpts().OpenCL) {
-    PP.RemovePragmaHandler("OPENCL", OpenCLExtensionHandler.get());
-    OpenCLExtensionHandler.reset();
-    PP.RemovePragmaHandler("OPENCL", FPContractHandler.get());
-  }
-  PP.RemovePragmaHandler(OpenMPHandler.get());
-  OpenMPHandler.reset();
-
-  if (getLangOpts().MicrosoftExt) {
-    PP.RemovePragmaHandler(MSCommentHandler.get());
-    MSCommentHandler.reset();
-    PP.RemovePragmaHandler(MSDetectMismatchHandler.get());
-    MSDetectMismatchHandler.reset();
-    PP.RemovePragmaHandler(MSPointersToMembers.get());
-    MSPointersToMembers.reset();
-    PP.RemovePragmaHandler(MSVtorDisp.get());
-    MSVtorDisp.reset();
-  }
-
-  PP.RemovePragmaHandler("STDC", FPContractHandler.get());
-  FPContractHandler.reset();
+  resetPragmaHandlers();
 
   PP.removeCommentHandler(CommentSemaHandler.get());
 
@@ -1372,20 +1287,20 @@ void Parser::ParseKNRParamDeclarations(Declarator &D) {
         for (unsigned i = 0; ; ++i) {
           // C99 6.9.1p6: those declarators shall declare only identifiers from
           // the identifier list.
-          if (i == FTI.NumArgs) {
+          if (i == FTI.NumParams) {
             Diag(ParmDeclarator.getIdentifierLoc(), diag::err_no_matching_param)
               << ParmDeclarator.getIdentifier();
             break;
           }
 
-          if (FTI.ArgInfo[i].Ident == ParmDeclarator.getIdentifier()) {
+          if (FTI.Params[i].Ident == ParmDeclarator.getIdentifier()) {
             // Reject redefinitions of parameters.
-            if (FTI.ArgInfo[i].Param) {
+            if (FTI.Params[i].Param) {
               Diag(ParmDeclarator.getIdentifierLoc(),
                    diag::err_param_redefinition)
                  << ParmDeclarator.getIdentifier();
             } else {
-              FTI.ArgInfo[i].Param = Param;
+              FTI.Params[i].Param = Param;
             }
             break;
           }

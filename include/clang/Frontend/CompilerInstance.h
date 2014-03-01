@@ -102,8 +102,8 @@ class CompilerInstance : public ModuleLoader {
   /// \brief The frontend timer
   OwningPtr<llvm::Timer> FrontendTimer;
 
-  /// \brief Non-owning reference to the ASTReader, if one exists.
-  ASTReader *ModuleManager;
+  /// \brief The ASTReader, if one exists.
+  IntrusiveRefCntPtr<ASTReader> ModuleManager;
 
   /// \brief The set of top-level modules that has already been loaded,
   /// along with the module map
@@ -329,6 +329,9 @@ public:
   }
 
   /// \brief Replace the current virtual file system.
+  ///
+  /// \note Most clients should use setFileManager, which will implicitly reset
+  /// the virtual file system to the one contained in the file manager.
   void setVirtualFileSystem(IntrusiveRefCntPtr<vfs::FileSystem> FS) {
     VirtualFileSystem = FS;
   }
@@ -350,7 +353,7 @@ public:
     FileMgr.resetWithoutRelease();
   }
 
-  /// setFileManager - Replace the current file manager.
+  /// \brief Replace the current file manager and virtual file system.
   void setFileManager(FileManager *Value);
 
   /// }
@@ -451,8 +454,8 @@ public:
   /// @name Module Management
   /// {
 
-  ASTReader *getModuleManager() const { return ModuleManager; }
-  void setModuleManager(ASTReader *Reader) { ModuleManager = Reader; }
+  IntrusiveRefCntPtr<ASTReader> getModuleManager() const;
+  void setModuleManager(IntrusiveRefCntPtr<ASTReader> Reader);
 
   /// }
   /// @name Code Completion
@@ -546,10 +549,6 @@ public:
                     DiagnosticConsumer *Client = 0,
                     bool ShouldOwnClient = true,
                     const CodeGenOptions *CodeGenOpts = 0);
-
-  /// Create a virtual file system and replace any existing one with it.
-  /// The default is to use the real file system.
-  void createVirtualFileSystem();
 
   /// Create the file manager and replace any existing one with it.
   void createFileManager();

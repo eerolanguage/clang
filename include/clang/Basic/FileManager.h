@@ -27,6 +27,7 @@
 #include "llvm/Support/Allocator.h"
 // FIXME: Enhance libsystem to support inode and other fields in stat.
 #include <sys/types.h>
+#include <map>
 
 #ifdef _MSC_VER
 typedef unsigned short mode_t;
@@ -58,7 +59,7 @@ public:
 /// If the 'File' member is valid, then this FileEntry has an open file
 /// descriptor for the file.
 class FileEntry {
-  const char *Name;           // Name of the file.
+  std::string Name;           // Name of the file.
   off_t Size;                 // File size in bytes.
   time_t ModTime;             // Modification time of file.
   const DirectoryEntry *Dir;  // Directory file lives in.
@@ -66,6 +67,7 @@ class FileEntry {
   llvm::sys::fs::UniqueID UniqueID;
   bool IsNamedPipe;
   bool InPCH;
+  bool IsValid;               // Is this \c FileEntry initialized and valid?
 
   /// \brief The open file, if it is owned by the \p FileEntry.
   mutable OwningPtr<vfs::File> File;
@@ -75,26 +77,24 @@ class FileEntry {
     File.reset(0); // rely on destructor to close File
   }
 
+  void operator=(const FileEntry &) LLVM_DELETED_FUNCTION;
+
 public:
-  FileEntry(llvm::sys::fs::UniqueID UniqueID, bool IsNamedPipe, bool InPCH)
-      : Name(0), UniqueID(UniqueID), IsNamedPipe(IsNamedPipe), InPCH(InPCH)
-  {}
-  // Add a default constructor for use with llvm::StringMap
   FileEntry()
-      : Name(0), UniqueID(0, 0), IsNamedPipe(false), InPCH(false)
+      : UniqueID(0, 0), IsNamedPipe(false), InPCH(false), IsValid(false)
   {}
 
-  FileEntry(const FileEntry &FE) {
-    memcpy(this, &FE, sizeof(FE));
-    assert(!File && "Cannot copy a file-owning FileEntry");
+  // FIXME: this is here to allow putting FileEntry in std::map.  Once we have
+  // emplace, we shouldn't need a copy constructor anymore.
+  /// Intentionally does not copy fields that are not set in an uninitialized
+  /// \c FileEntry.
+  FileEntry(const FileEntry &FE) : UniqueID(FE.UniqueID),
+      IsNamedPipe(FE.IsNamedPipe), InPCH(FE.InPCH), IsValid(FE.IsValid) {
+    assert(!isValid() && "Cannot copy an initialized FileEntry");
   }
 
-  void operator=(const FileEntry &FE) {
-    memcpy(this, &FE, sizeof(FE));
-    assert(!File && "Cannot assign a file-owning FileEntry");
-  }
-
-  const char *getName() const { return Name; }
+  const char *getName() const { return Name.c_str(); }
+  bool isValid() const { return IsValid; }
   off_t getSize() const { return Size; }
   unsigned getUID() const { return UID; }
   const llvm::sys::fs::UniqueID &getUniqueID() const { return UniqueID; }
@@ -124,14 +124,11 @@ class FileManager : public RefCountedBase<FileManager> {
   IntrusiveRefCntPtr<vfs::FileSystem> FS;
   FileSystemOptions FileSystemOpts;
 
-  class UniqueDirContainer;
-  class UniqueFileContainer;
-
   /// \brief Cache for existing real directories.
-  UniqueDirContainer &UniqueRealDirs;
+  std::map<llvm::sys::fs::UniqueID, DirectoryEntry> UniqueRealDirs;
 
   /// \brief Cache for existing real files.
-  UniqueFileContainer &UniqueRealFiles;
+  std::map<llvm::sys::fs::UniqueID, FileEntry> UniqueRealFiles;
 
   /// \brief The virtual directories that we have allocated.
   ///
@@ -183,7 +180,7 @@ class FileManager : public RefCountedBase<FileManager> {
 
 public:
   FileManager(const FileSystemOptions &FileSystemOpts,
-              llvm::IntrusiveRefCntPtr<vfs::FileSystem> FS = 0);
+              IntrusiveRefCntPtr<vfs::FileSystem> FS = 0);
   ~FileManager();
 
   /// \brief Installs the provided FileSystemStatCache object within
@@ -229,6 +226,10 @@ public:
 
   /// \brief Returns the current file system options
   const FileSystemOptions &getFileSystemOptions() { return FileSystemOpts; }
+
+  IntrusiveRefCntPtr<vfs::FileSystem> getVirtualFileSystem() const {
+    return FS;
+  }
 
   /// \brief Retrieve a file entry for a "virtual" file that acts as
   /// if there were a file with the given name on disk.

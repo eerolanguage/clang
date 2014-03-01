@@ -951,19 +951,6 @@ static void addRangedDeclsInContainer(DeclIt *DI_current, DeclIt DE_current,
   }
 }
 
-namespace {
-  struct ContainerDeclsSort {
-    SourceManager &SM;
-    ContainerDeclsSort(SourceManager &sm) : SM(sm) {}
-    bool operator()(Decl *A, Decl *B) {
-      SourceLocation L_A = A->getLocStart();
-      SourceLocation L_B = B->getLocStart();
-      assert(L_A.isValid() && L_B.isValid());
-      return SM.isBeforeInTranslationUnit(L_A, L_B);
-    }
-  };
-}
-
 bool CursorVisitor::VisitObjCContainerDecl(ObjCContainerDecl *D) {
   // FIXME: Eventually convert back to just 'VisitDeclContext()'.  Essentially
   // an @implementation can lexically contain Decls that are not properly
@@ -1006,7 +993,12 @@ bool CursorVisitor::VisitObjCContainerDecl(ObjCContainerDecl *D) {
 
   // Now sort the Decls so that they appear in lexical order.
   std::sort(DeclsInContainer.begin(), DeclsInContainer.end(),
-            ContainerDeclsSort(SM));
+            [&SM](Decl *A, Decl *B) {
+    SourceLocation L_A = A->getLocStart();
+    SourceLocation L_B = B->getLocStart();
+    assert(L_A.isValid() && L_B.isValid());
+    return SM.isBeforeInTranslationUnit(L_A, L_B);
+  });
 
   // Now visit the decls.
   for (SmallVectorImpl<Decl*>::iterator I = DeclsInContainer.begin(),
@@ -1867,6 +1859,7 @@ public:
   void VisitLambdaExpr(const LambdaExpr *E);
   void VisitOMPExecutableDirective(const OMPExecutableDirective *D);
   void VisitOMPParallelDirective(const OMPParallelDirective *D);
+  void VisitOMPSimdDirective(const OMPSimdDirective *D);
 
 private:
   void AddDeclarationNameInfo(const Stmt *S);
@@ -2257,6 +2250,10 @@ void EnqueueVisitor::VisitOMPParallelDirective(const OMPParallelDirective *D) {
   VisitOMPExecutableDirective(D);
 }
 
+void EnqueueVisitor::VisitOMPSimdDirective(const OMPSimdDirective *D) {
+  VisitOMPExecutableDirective(D);
+}
+
 void CursorVisitor::EnqueueWorkList(VisitorWorkList &WL, const Stmt *S) {
   EnqueueVisitor(WL, MakeCXCursor(S, StmtParent, TU,RegionOfInterest)).Visit(S);
 }
@@ -2612,7 +2609,7 @@ void clang_toggleCrashRecovery(unsigned isEnabled) {
 
 CXTranslationUnit clang_createTranslationUnit(CXIndex CIdx,
                                               const char *ast_filename) {
-  CXTranslationUnit TU = NULL;
+  CXTranslationUnit TU;
   enum CXErrorCode Result =
       clang_createTranslationUnit2(CIdx, ast_filename, &TU);
   (void)Result;
@@ -2624,6 +2621,9 @@ CXTranslationUnit clang_createTranslationUnit(CXIndex CIdx,
 enum CXErrorCode clang_createTranslationUnit2(CXIndex CIdx,
                                               const char *ast_filename,
                                               CXTranslationUnit *out_TU) {
+  if (out_TU)
+    *out_TU = NULL;
+
   if (!CIdx || !ast_filename || !out_TU)
     return CXError_InvalidArguments;
 
@@ -3908,7 +3908,9 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
   case CXCursor_ModuleImportDecl:
     return cxstring::createRef("ModuleImport");
   case CXCursor_OMPParallelDirective:
-      return cxstring::createRef("OMPParallelDirective");
+    return cxstring::createRef("OMPParallelDirective");
+  case CXCursor_OMPSimdDirective:
+    return cxstring::createRef("OMPSimdDirective");
   }
 
   llvm_unreachable("Unhandled CXCursorKind");
