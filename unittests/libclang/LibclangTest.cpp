@@ -51,10 +51,12 @@ struct TestVFO {
   ~TestVFO() {
     if (!Contents)
       return;
-    CXString Buf;
-    clang_VirtualFileOverlay_writeToBuffer(VFO, 0, &Buf);
-    EXPECT_STREQ(Contents, clang_getCString(Buf));
-    clang_disposeString(Buf);
+    char *BufPtr;
+    unsigned BufSize;
+    clang_VirtualFileOverlay_writeToBuffer(VFO, 0, &BufPtr, &BufSize);
+    std::string BufStr(BufPtr, BufSize);
+    EXPECT_STREQ(Contents, BufStr.c_str());
+    free(BufPtr);
     clang_VirtualFileOverlay_dispose(VFO);
   }
 };
@@ -138,4 +140,27 @@ TEST(libclang, VirtualFileOverlay) {
     T.map("/path/virtual/dir/foo3.h", "/real/foo3.h");
     T.map("/path/virtual/dir/in/subdir/foo4.h", "/real/foo4.h");
   }
+}
+
+TEST(libclang, ModuleMapDescriptor) {
+  const char *Contents =
+    "framework module TestFrame {\n"
+    "  umbrella header \"TestFrame.h\"\n"
+    "\n"
+    "  export *\n"
+    "  module * { export * }\n"
+    "}\n";
+
+  CXModuleMapDescriptor MMD = clang_ModuleMapDescriptor_create(0);
+
+  clang_ModuleMapDescriptor_setFrameworkModuleName(MMD, "TestFrame");
+  clang_ModuleMapDescriptor_setUmbrellaHeader(MMD, "TestFrame.h");
+
+  char *BufPtr;
+  unsigned BufSize;
+  clang_ModuleMapDescriptor_writeToBuffer(MMD, 0, &BufPtr, &BufSize);
+  std::string BufStr(BufPtr, BufSize);
+  EXPECT_STREQ(Contents, BufStr.c_str());
+  free(BufPtr);
+  clang_ModuleMapDescriptor_dispose(MMD);
 }

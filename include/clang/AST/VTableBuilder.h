@@ -20,6 +20,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/Basic/ABI.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SetVector.h"
 #include <utility>
 
@@ -470,11 +471,8 @@ public:
         assert(VBase != other.VBase);
         return VBTableIndex < other.VBTableIndex;
       }
-      if (VFPtrOffset != other.VFPtrOffset)
-        return VFPtrOffset < other.VFPtrOffset;
-      if (Index != other.Index)
-        return Index < other.Index;
-      return false;
+      return std::tie(VFPtrOffset, Index) <
+             std::tie(other.VFPtrOffset, other.Index);
     }
   };
 

@@ -14,6 +14,7 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Frontend/Utils.h"
+#include "llvm/ADT/OwningPtr.h"
 #include "llvm/Bitcode/BitcodeWriterPass.h"
 #include "llvm/CodeGen/RegAllocRegistry.h"
 #include "llvm/CodeGen/SchedulerRegistry.h"
@@ -165,6 +166,11 @@ static void addSampleProfileLoaderPass(const PassManagerBuilder &Builder,
   PM.add(createSampleProfileLoaderPass(CGOpts.SampleProfileFile));
 }
 
+static void addAddDiscriminatorsPass(const PassManagerBuilder &Builder,
+                                     PassManagerBase &PM) {
+  PM.add(createAddDiscriminatorsPass());
+}
+
 static void addBoundsCheckingPass(const PassManagerBuilder &Builder,
                                     PassManagerBase &PM) {
   PM.add(createBoundsCheckingPass());
@@ -244,6 +250,9 @@ void EmitAssemblyHelper::CreatePasses() {
   PMBuilder.DisableUnitAtATime = !CodeGenOpts.UnitAtATime;
   PMBuilder.DisableUnrollLoops = !CodeGenOpts.UnrollLoops;
   PMBuilder.RerollLoops = CodeGenOpts.RerollLoops;
+
+  PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
+                         addAddDiscriminatorsPass);
 
   if (!CodeGenOpts.SampleProfileFile.empty())
     PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
