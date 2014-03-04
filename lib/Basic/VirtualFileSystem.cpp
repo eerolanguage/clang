@@ -14,10 +14,10 @@
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Support/Atomic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/YAMLParser.h"
+#include <atomic>
 
 using namespace clang;
 using namespace clang::vfs;
@@ -92,12 +92,12 @@ class RealFile : public File {
 
 public:
   ~RealFile();
-  ErrorOr<Status> status() LLVM_OVERRIDE;
+  ErrorOr<Status> status() override;
   error_code getBuffer(const Twine &Name, OwningPtr<MemoryBuffer> &Result,
                        int64_t FileSize = -1,
-                       bool RequiresNullTerminator = true) LLVM_OVERRIDE;
-  error_code close() LLVM_OVERRIDE;
-  void setName(StringRef Name) LLVM_OVERRIDE;
+                       bool RequiresNullTerminator = true) override;
+  error_code close() override;
+  void setName(StringRef Name) override;
 };
 } // end anonymous namespace
 RealFile::~RealFile() { close(); }
@@ -110,7 +110,7 @@ ErrorOr<Status> RealFile::status() {
       return EC;
     Status NewS(RealStatus);
     NewS.setName(S.getName());
-    S = llvm_move(NewS);
+    S = std::move(NewS);
   }
   return S;
 }
@@ -148,9 +148,9 @@ namespace {
 /// \brief The file system according to your operating system.
 class RealFileSystem : public FileSystem {
 public:
-  ErrorOr<Status> status(const Twine &Path) LLVM_OVERRIDE;
+  ErrorOr<Status> status(const Twine &Path) override;
   error_code openFileForRead(const Twine &Path,
-                             OwningPtr<File> &Result) LLVM_OVERRIDE;
+                             OwningPtr<File> &Result) override;
 };
 } // end anonymous namespace
 
@@ -387,9 +387,9 @@ public:
                              void *DiagContext,
                              IntrusiveRefCntPtr<FileSystem> ExternalFS);
 
-  ErrorOr<Status> status(const Twine &Path) LLVM_OVERRIDE;
+  ErrorOr<Status> status(const Twine &Path) override;
   error_code openFileForRead(const Twine &Path,
-                             OwningPtr<File> &Result) LLVM_OVERRIDE;
+                             OwningPtr<File> &Result) override;
 };
 
 /// \brief A helper class to hold the common YAML parsing state.
@@ -592,11 +592,11 @@ class VFSFromYAMLParser {
     Entry *Result = 0;
     switch (Kind) {
     case EK_File:
-      Result = new FileEntry(LastComponent, llvm_move(ExternalContentsPath),
+      Result = new FileEntry(LastComponent, std::move(ExternalContentsPath),
                              UseExternalName);
       break;
     case EK_Directory:
-      Result = new DirectoryEntry(LastComponent, llvm_move(EntryArrayContents),
+      Result = new DirectoryEntry(LastComponent, std::move(EntryArrayContents),
           Status("", "", getNextVirtualUniqueID(), sys::TimeValue::now(), 0, 0,
                  0, file_type::directory_file, sys::fs::all_all));
       break;
@@ -828,8 +828,8 @@ vfs::getVFSFromYAML(MemoryBuffer *Buffer, SourceMgr::DiagHandlerTy DiagHandler,
 }
 
 UniqueID vfs::getNextVirtualUniqueID() {
-  static volatile sys::cas_flag UID = 0;
-  sys::cas_flag ID = llvm::sys::AtomicIncrement(&UID);
+  static std::atomic<unsigned> UID;
+  unsigned ID = ++UID;
   // The following assumes that uint64_t max will never collide with a real
   // dev_t value from the OS.
   return UniqueID(std::numeric_limits<uint64_t>::max(), ID);

@@ -1626,7 +1626,7 @@ RegionStoreManager::getBindingForFieldOrElementCommon(RegionBindingsConstRef B,
   // Lazy binding?
   Store lazyBindingStore = NULL;
   const SubRegion *lazyBindingRegion = NULL;
-  llvm::tie(lazyBindingStore, lazyBindingRegion) = findLazyBinding(B, R, R);
+  std::tie(lazyBindingStore, lazyBindingRegion) = findLazyBinding(B, R, R);
   if (lazyBindingRegion)
     return getLazyBinding(lazyBindingRegion,
                           getRegionBindings(lazyBindingStore));
@@ -1787,7 +1787,7 @@ RegionStoreManager::getInterestingValues(nonloc::LazyCompoundVal LCV) {
   // values to return.
   const ClusterBindings *Cluster = B.lookup(LazyR->getBaseRegion());
   if (!Cluster)
-    return (LazyBindingsMap[LCV.getCVData()] = llvm_move(List));
+    return (LazyBindingsMap[LCV.getCVData()] = std::move(List));
 
   SmallVector<BindingPair, 32> Bindings;
   collectSubRegionBindings(Bindings, svalBuilder, *Cluster, LazyR,
@@ -1809,7 +1809,7 @@ RegionStoreManager::getInterestingValues(nonloc::LazyCompoundVal LCV) {
     List.push_back(V);
   }
 
-  return (LazyBindingsMap[LCV.getCVData()] = llvm_move(List));
+  return (LazyBindingsMap[LCV.getCVData()] = std::move(List));
 }
 
 NonLoc RegionStoreManager::createLazyBinding(RegionBindingsConstRef B,

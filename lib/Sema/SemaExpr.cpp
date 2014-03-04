@@ -6039,8 +6039,10 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
   // get the "pointed to" type (ignoring qualifiers at the top level)
   const Type *lhptee, *rhptee;
   Qualifiers lhq, rhq;
-  llvm::tie(lhptee, lhq) = cast<PointerType>(LHSType)->getPointeeType().split();
-  llvm::tie(rhptee, rhq) = cast<PointerType>(RHSType)->getPointeeType().split();
+  std::tie(lhptee, lhq) =
+      cast<PointerType>(LHSType)->getPointeeType().split().asPair();
+  std::tie(rhptee, rhq) =
+      cast<PointerType>(RHSType)->getPointeeType().split().asPair();
 
   Sema::AssignConvertType ConvTy = Sema::Compatible;
 

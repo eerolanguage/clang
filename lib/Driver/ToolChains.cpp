@@ -475,7 +475,7 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
       if (const Arg *A = Args.getLastArg(options::OPT_isysroot)) {
         StringRef first, second;
         StringRef isysroot = A->getValue();
-        llvm::tie(first, second) = isysroot.split(StringRef("SDKs/iPhoneOS"));
+        std::tie(first, second) = isysroot.split(StringRef("SDKs/iPhoneOS"));
         if (second != "")
           iOSTarget = second.substr(0,3);
       }
@@ -1526,7 +1526,7 @@ class FilterNonExistent : public MultilibSet::FilterCallback {
   std::string Base;
 public:
   FilterNonExistent(std::string Base) : Base(Base) {}
-  bool operator()(const Multilib &M) const LLVM_OVERRIDE {
+  bool operator()(const Multilib &M) const override {
     return !llvm::sys::fs::exists(Base + M.gccSuffix() + "/crtbegin.o");
   }
 };
