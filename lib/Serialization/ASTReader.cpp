@@ -1679,14 +1679,17 @@ void ASTReader::removeOverriddenMacros(IdentifierInfo *II,
     HiddenNames &Hidden = HiddenNamesMap[Owner];
     HiddenMacrosMap::iterator HI = Hidden.HiddenMacros.find(II);
     if (HI != Hidden.HiddenMacros.end()) {
-      removeOverriddenMacros(II, Ambig, HI->second->getOverriddenSubmodules());
+      auto SubOverrides = HI->second->getOverriddenSubmodules();
       Hidden.HiddenMacros.erase(HI);
+      removeOverriddenMacros(II, Ambig, SubOverrides);
     }
 
     // If this macro is already in our list of conflicts, remove it from there.
-    for (unsigned AI = 0, AN = Ambig.size(); AI != AN; ++AI)
-      if (Ambig[AI]->getInfo()->getOwningModuleID() == OwnerID)
-        Ambig.erase(Ambig.begin() + AI);
+    Ambig.erase(
+        std::remove_if(Ambig.begin(), Ambig.end(), [&](DefMacroDirective *MD) {
+          return MD->getInfo()->getOwningModuleID() == OwnerID;
+        }),
+        Ambig.end());
   }
 }
 

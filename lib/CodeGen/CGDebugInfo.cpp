@@ -1435,6 +1435,9 @@ void CGDebugInfo::completeType(const RecordDecl *RD) {
 }
 
 void CGDebugInfo::completeRequiredType(const RecordDecl *RD) {
+  if (DebugKind <= CodeGenOptions::DebugLineTablesOnly)
+    return;
+
   if (const CXXRecordDecl *CXXDecl = dyn_cast<CXXRecordDecl>(RD))
     if (CXXDecl->isDynamicClass())
       return;
@@ -2042,6 +2045,9 @@ llvm::DIType CGDebugInfo::getCompletedTypeOrNull(QualType Ty) {
 
 void CGDebugInfo::completeTemplateDefinition(
     const ClassTemplateSpecializationDecl &SD) {
+  if (DebugKind <= CodeGenOptions::DebugLineTablesOnly)
+    return;
+
   completeClassData(&SD);
   // In case this type has no member function definitions being emitted, ensure
   // it is retained

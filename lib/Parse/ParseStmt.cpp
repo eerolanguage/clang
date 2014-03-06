@@ -1243,8 +1243,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
   //    would have to notify ParseStatement not to create a new scope. It's
   //    simpler to let it create a new scope.
   //
-  ParseScope InnerScope(this, Scope::DeclScope,
-                        C99orCXX && Tok.isNot(tok::l_brace));
+  ParseScope InnerScope(this, Scope::DeclScope, C99orCXX, Tok.is(tok::l_brace));
 
   // Read the 'then' stmt.
   SourceLocation ThenStmtLoc = Tok.getLocation();
@@ -1291,8 +1290,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
     // The substatement in a selection-statement (each substatement, in the else
     // form of the if statement) implicitly defines a local scope.
     //
-    ParseScope InnerScope(this, Scope::DeclScope,
-                          C99orCXX && Tok.isNot(tok::l_brace));
+    ParseScope InnerScope(this, Scope::DeclScope, C99orCXX, Tok.is(tok::l_brace));
 
     if (getLangOpts().OffSideRule && !PP.isInLegacyMode(IfLoc)) {
       if (Tok.isAtStartOfLine()) { // line break after "else"
@@ -1407,8 +1405,7 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc) {
   // condition and a new scope for substatement in C++.
   //
   getCurScope()->AddFlags(Scope::BreakScope);
-  ParseScope InnerScope(this, Scope::DeclScope,
-                        C99orCXX && Tok.isNot(tok::l_brace));
+  ParseScope InnerScope(this, Scope::DeclScope, C99orCXX, Tok.is(tok::l_brace));
 
   // Read the body statement.
   StmtResult Body;
@@ -1491,8 +1488,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc) {
   // See comments in ParseIfStatement for why we create a scope for the
   // condition and a new scope for substatement in C++.
   //
-  ParseScope InnerScope(this, Scope::DeclScope,
-                        C99orCXX && Tok.isNot(tok::l_brace));
+  ParseScope InnerScope(this, Scope::DeclScope, C99orCXX, Tok.is(tok::l_brace));
 
   // Read the body statement.
   StmtResult Body;
@@ -1537,9 +1533,8 @@ StmtResult Parser::ParseDoStatement() {
   // The substatement in an iteration-statement implicitly defines a local scope
   // which is entered and exited each time through the loop.
   //
-  ParseScope InnerScope(this, Scope::DeclScope,
-                        (getLangOpts().C99 || getLangOpts().CPlusPlus) &&
-                        Tok.isNot(tok::l_brace));
+  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
+  ParseScope InnerScope(this, Scope::DeclScope, C99orCXX, Tok.is(tok::l_brace));
 
   // Read the body statement.
   StmtResult Body;
@@ -1930,8 +1925,15 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   // See comments in ParseIfStatement for why we create a scope for
   // for-init-statement/condition and a new scope for substatement in C++.
   //
-  ParseScope InnerScope(this, Scope::DeclScope,
-                        C99orCXXorObjC && Tok.isNot(tok::l_brace));
+  ParseScope InnerScope(this, Scope::DeclScope, C99orCXXorObjC,
+                        Tok.is(tok::l_brace));
+
+  // The body of the for loop has the same local mangling number as the
+  // for-init-statement.
+  // It will only be incremented if the body contains other things that would
+  // normally increment the mangling number (like a compound statement).
+  if (C99orCXXorObjC)
+    getCurScope()->decrementMSLocalManglingNumber();
 
   // Read the body statement.
   StmtResult Body;
@@ -2508,7 +2510,7 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   SmallVector<StringRef, 4> ClobberRefs;
 
   // We need an actual supported target.
-  llvm::Triple TheTriple = Actions.Context.getTargetInfo().getTriple();
+  const llvm::Triple &TheTriple = Actions.Context.getTargetInfo().getTriple();
   llvm::Triple::ArchType ArchTy = TheTriple.getArch();
   const std::string &TT = TheTriple.getTriple();
   const llvm::Target *TheTarget = 0;

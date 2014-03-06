@@ -33,11 +33,16 @@ namespace {
 /// literals within a particular context.
 class ItaniumNumberingContext : public MangleNumberingContext {
   llvm::DenseMap<IdentifierInfo*, unsigned> VarManglingNumbers;
+  llvm::DenseMap<IdentifierInfo*, unsigned> TagManglingNumbers;
 
 public:
   /// Variable decls are numbered by identifier.
-  virtual unsigned getManglingNumber(const VarDecl *VD) {
+  virtual unsigned getManglingNumber(const VarDecl *VD, unsigned) {
     return ++VarManglingNumbers[VD->getIdentifier()];
+  }
+
+  virtual unsigned getManglingNumber(const TagDecl *TD, unsigned) {
+    return ++TagManglingNumbers[TD->getIdentifier()];
   }
 };
 

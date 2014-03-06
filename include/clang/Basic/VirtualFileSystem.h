@@ -15,8 +15,8 @@
 
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
 
 namespace llvm {
@@ -95,7 +95,7 @@ public:
 };
 
 /// \brief The virtual file system interface.
-class FileSystem : public RefCountedBase<FileSystem> {
+class FileSystem : public llvm::ThreadSafeRefCountedBase<FileSystem> {
 public:
   virtual ~FileSystem();
 

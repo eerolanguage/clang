@@ -2161,6 +2161,9 @@ def note_overridden_method : Note<
   "overridden method is here">;
 
 // Thread Safety Attributes
+def warn_invalid_capability_name : Warning<
+  "invalid capability name '%0'; capability name must be 'mutex' or 'role'">,
+  InGroup<ThreadSafetyAttributes>, DefaultIgnore;
 def warn_thread_attribute_ignored : Warning<
   "ignoring %0 attribute because its argument is invalid">,
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
@@ -3779,10 +3782,11 @@ def warn_ivars_in_interface : Warning<
 def ext_enum_value_not_int : Extension<
   "ISO C restricts enumerator values to range of 'int' (%0 is too "
   "%select{small|large}1)">;
-def warn_enum_too_large : Warning<
-  "enumeration values exceed range of largest integer">;
-def warn_enumerator_too_large : Warning<
-  "enumerator value %0 is not representable in the largest integer type">;
+def ext_enum_too_large : ExtWarn<
+  "enumeration values exceed range of largest integer">, InGroup<EnumTooLarge>;
+def ext_enumerator_increment_too_large : ExtWarn<
+  "incremented enumerator value %0 is not representable in the "
+  "largest integer type">, InGroup<EnumTooLarge>;
   
 def warn_illegal_constant_array_size : Extension<
   "size of static array must be an integer constant expression">;

@@ -582,9 +582,11 @@ class VFSFromYAMLParser {
       return NULL;
     }
 
-    // Remove trailing slash(es)
+    // Remove trailing slash(es), being careful not to remove the root path
     StringRef Trimmed(Name);
-    while (Trimmed.size() > 1 && sys::path::is_separator(Trimmed.back()))
+    size_t RootPathLen = sys::path::root_path(Trimmed).size();
+    while (Trimmed.size() > RootPathLen &&
+           sys::path::is_separator(Trimmed.back()))
       Trimmed = Trimmed.slice(0, Trimmed.size()-1);
     // Get the last component
     StringRef LastComponent = sys::path::filename(Trimmed);
@@ -733,8 +735,12 @@ VFSFromYAML *VFSFromYAML::create(MemoryBuffer *Buffer,
 }
 
 ErrorOr<Entry *> VFSFromYAML::lookupPath(const Twine &Path_) {
-  SmallVector<char, 256> Storage;
-  StringRef Path = Path_.toNullTerminatedStringRef(Storage);
+  SmallString<256> Path;
+  Path_.toVector(Path);
+
+  // Handle relative paths
+  if (error_code EC = sys::fs::make_absolute(Path))
+    return EC;
 
   if (Path.empty())
     return error_code(errc::invalid_argument, system_category());
@@ -753,7 +759,10 @@ ErrorOr<Entry *> VFSFromYAML::lookupPath(const Twine &Path_) {
 ErrorOr<Entry *> VFSFromYAML::lookupPath(sys::path::const_iterator Start,
                                          sys::path::const_iterator End,
                                          Entry *From) {
-  // FIXME: handle . and ..
+  if (Start->equals("."))
+    ++Start;
+
+  // FIXME: handle ..
   if (CaseSensitive ? !Start->equals(From->getName())
                     : !Start->equals_lower(From->getName()))
     // failure to match

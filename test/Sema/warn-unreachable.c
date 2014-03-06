@@ -136,7 +136,7 @@ void PR9774(int *s) {
 
 // Test case for <rdar://problem/11005770>.  We should treat code guarded
 // by 'x & 0' and 'x * 0' as unreachable.
-void calledFun();
+int calledFun();
 void test_mul_and_zero(int x) {
   if (x & 0) calledFun(); // expected-warning {{will never be executed}}
   if (0 & x) calledFun(); // expected-warning {{will never be executed}}
@@ -161,6 +161,7 @@ int test_break_preceded_by_noreturn(int i) {
       break; // expected-warning {{will never be executed}}
     default:
       break;
+      break; // expected-warning {{will never be executed}}
   }
   return i;
 }
@@ -201,5 +202,98 @@ int trivial_dead_return() {
 MyEnum trival_dead_return_enum() {
   raze();
   return Value1; // no-warning
+}
+
+MyEnum trivial_dead_return_enum_2(int x) {
+  switch (x) {
+    case 1: return 1;
+    case 2: return 2;
+    case 3: return 3;
+    default: return 4;
+  }
+
+  return 2; // expected-warning {{will never be executed}}
+}
+
+MyEnum nontrivial_dead_return_enum_2(int x) {
+  switch (x) {
+    case 1: return 1;
+    case 2: return 2;
+    case 3: return 3;
+    default: return 4;
+  }
+
+  return calledFun(); // expected-warning {{will never be executed}}
+}
+
+// Test unreachable code depending on configuration values
+#define CONFIG_CONSTANT 1
+int test_config_constant(int x) {
+  if (!CONFIG_CONSTANT) {
+    calledFun(); // no-warning
+    return 1;
+  }
+  if (!1) {
+    calledFun(); // expected-warning {{will never be executed}}
+    return 1;
+  }
+  if (sizeof(int) > sizeof(char)) {
+    calledFun(); // no-warning
+    return 1;
+  }
+  if (x > 10)
+    return CONFIG_CONSTANT ? calledFun() : calledFun(); // no-warning
+  else
+    return 1 ?
+      calledFun() :
+      calledFun(); // expected-warning {{will never be executed}}
+}
+
+int sizeof_int() {
+  if (sizeof(long) == sizeof(int))
+    return 1; // no-warning
+  if (sizeof(long) != sizeof(int))
+    return 0; // no-warning
+  return 2; // no-warning
+}
+
+enum MyEnum2 {
+  ME_A = CONFIG_CONSTANT,
+  ME_B = 1
+};
+
+int test_MyEnum() {
+  if (!ME_A)
+    return 1; // no-warning
+  if (ME_A)
+    return 2; // no-warning
+  if (ME_B)
+    return 3;
+  if (!ME_B) // expected-warning {{will never be executed}}
+    return 4; // expected-warning {{will never be executed}}
+  return 5;
+}
+
+// Test for idiomatic do..while.
+int test_do_while(int x) {
+  do {
+    if (x == calledFun())
+      break;
+    ++x;
+    break;
+  }
+  while (0); // no-warning
+  return x;
+}
+
+int test_do_while_nontrivial_cond(int x) {
+  do {
+    if (x == calledFun())
+      break;
+    ++x;
+    break;
+  }
+  while (calledFun()); // expected-warning {{will never be executed}}
+  return x;
 }
 
