@@ -77,7 +77,7 @@ bool FileSystemStatCache::get(const char *Path, FileData &Data, bool isFile,
     //
     // Because of this, check to see if the file exists with 'open'.  If the
     // open succeeds, use fstat to get the stat info.
-    llvm::OwningPtr<vfs::File> OwnedFile;
+    std::unique_ptr<vfs::File> OwnedFile;
     llvm::error_code EC = FS.openFileForRead(Path, OwnedFile);
 
     if (EC) {
@@ -91,7 +91,7 @@ bool FileSystemStatCache::get(const char *Path, FileData &Data, bool isFile,
       if (Status) {
         R = CacheExists;
         copyStatusToFileData(*Status, Data);
-        *F = OwnedFile.take();
+        *F = OwnedFile.release();
       } else {
         // fstat rarely fails.  If it does, claim the initial open didn't
         // succeed.

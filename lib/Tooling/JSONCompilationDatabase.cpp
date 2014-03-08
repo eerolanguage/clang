@@ -122,11 +122,11 @@ class JSONCompilationDatabasePlugin : public CompilationDatabasePlugin {
       StringRef Directory, std::string &ErrorMessage) {
     SmallString<1024> JSONDatabasePath(Directory);
     llvm::sys::path::append(JSONDatabasePath, "compile_commands.json");
-    OwningPtr<CompilationDatabase> Database(
+    std::unique_ptr<CompilationDatabase> Database(
         JSONCompilationDatabase::loadFromFile(JSONDatabasePath, ErrorMessage));
     if (!Database)
       return NULL;
-    return Database.take();
+    return Database.release();
   }
 };
 
@@ -144,30 +144,30 @@ volatile int JSONAnchorSource = 0;
 JSONCompilationDatabase *
 JSONCompilationDatabase::loadFromFile(StringRef FilePath,
                                       std::string &ErrorMessage) {
-  OwningPtr<llvm::MemoryBuffer> DatabaseBuffer;
+  std::unique_ptr<llvm::MemoryBuffer> DatabaseBuffer;
   llvm::error_code Result =
     llvm::MemoryBuffer::getFile(FilePath, DatabaseBuffer);
   if (Result != 0) {
     ErrorMessage = "Error while opening JSON database: " + Result.message();
     return NULL;
   }
-  OwningPtr<JSONCompilationDatabase> Database(
-    new JSONCompilationDatabase(DatabaseBuffer.take()));
+  std::unique_ptr<JSONCompilationDatabase> Database(
+      new JSONCompilationDatabase(DatabaseBuffer.release()));
   if (!Database->parse(ErrorMessage))
     return NULL;
-  return Database.take();
+  return Database.release();
 }
 
 JSONCompilationDatabase *
 JSONCompilationDatabase::loadFromBuffer(StringRef DatabaseString,
                                         std::string &ErrorMessage) {
-  OwningPtr<llvm::MemoryBuffer> DatabaseBuffer(
+  std::unique_ptr<llvm::MemoryBuffer> DatabaseBuffer(
       llvm::MemoryBuffer::getMemBuffer(DatabaseString));
-  OwningPtr<JSONCompilationDatabase> Database(
-      new JSONCompilationDatabase(DatabaseBuffer.take()));
+  std::unique_ptr<JSONCompilationDatabase> Database(
+      new JSONCompilationDatabase(DatabaseBuffer.release()));
   if (!Database->parse(ErrorMessage))
     return NULL;
-  return Database.take();
+  return Database.release();
 }
 
 std::vector<CompileCommand>

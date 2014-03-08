@@ -119,10 +119,10 @@ public:
     delete PerModulePasses;
     delete PerFunctionPasses;
     if (CodeGenOpts.DisableFree)
-      BuryPointer(TM.take());
+      BuryPointer(TM.release());
   }
 
-  llvm::OwningPtr<TargetMachine> TM;
+  std::unique_ptr<TargetMachine> TM;
 
   void EmitAssembly(BackendAction Action, raw_ostream *OS);
 };

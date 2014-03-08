@@ -464,14 +464,14 @@ public:
     }
   }
 
-  bool ok() { return FileStream.isValid(); }
+  bool ok() { return (bool)FileStream; }
   raw_ostream &getStream() { return *FileStream; }
 
 private:
   DiagnosticsEngine &Diagnostics;
   StringRef Filename;
   SmallString<128> TempFilename;
-  OwningPtr<llvm::raw_fd_ostream> FileStream;
+  std::unique_ptr<llvm::raw_fd_ostream> FileStream;
   bool &AllWritten;
 };
 } // end anonymous namespace

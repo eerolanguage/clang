@@ -476,9 +476,8 @@ void CodeGenFunction::StartObjCMethod(const ObjCMethodDecl *OMD,
   args.push_back(OMD->getSelfDecl());
   args.push_back(OMD->getCmdDecl());
 
-  for (ObjCMethodDecl::param_const_iterator PI = OMD->param_begin(),
-         E = OMD->param_end(); PI != E; ++PI)
-    args.push_back(*PI);
+  for (const auto *PI : OMD->params())
+    args.push_back(PI);
 
   CurGD = OMD;
 
@@ -502,9 +501,14 @@ static llvm::Value *emitARCRetainLoadOfScalar(CodeGenFunction &CGF,
 /// its pointer, name, and types registered in the class struture.
 void CodeGenFunction::GenerateObjCMethod(const ObjCMethodDecl *OMD) {
   StartObjCMethod(OMD, OMD->getClassInterface(), OMD->getLocStart());
+  PGO.assignRegionCounters(OMD, CurFn);
   assert(isa<CompoundStmt>(OMD->getBody()));
+  RegionCounter Cnt = getPGORegionCounter(OMD->getBody());
+  Cnt.beginRegion(Builder);
   EmitCompoundStmtWithoutScope(*cast<CompoundStmt>(OMD->getBody()));
   FinishFunction(OMD->getBodyRBrace());
+  PGO.emitWriteoutFunction();
+  PGO.destroyRegionCounters();
 }
 
 /// emitStructGetterCall - Call the runtime function to load a property

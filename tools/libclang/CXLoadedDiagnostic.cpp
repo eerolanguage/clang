@@ -259,7 +259,7 @@ CXDiagnosticSet DiagLoader::load(const char *file) {
   FileSystemOptions FO;
   FileManager FileMgr(FO);
 
-  OwningPtr<llvm::MemoryBuffer> Buffer;
+  std::unique_ptr<llvm::MemoryBuffer> Buffer;
   Buffer.reset(FileMgr.getBufferForFile(file));
 
   if (!Buffer) {
@@ -284,7 +284,8 @@ CXDiagnosticSet DiagLoader::load(const char *file) {
     return 0;
   }
 
-  OwningPtr<CXLoadedDiagnosticSetImpl> Diags(new CXLoadedDiagnosticSetImpl());
+  std::unique_ptr<CXLoadedDiagnosticSetImpl> Diags(
+      new CXLoadedDiagnosticSetImpl());
 
   while (true) {
     unsigned BlockID = 0;
@@ -292,7 +293,7 @@ CXDiagnosticSet DiagLoader::load(const char *file) {
                                                BlockID, true);
     switch (Res) {
       case Read_EndOfStream:
-        return (CXDiagnosticSet) Diags.take();
+        return (CXDiagnosticSet)Diags.release();
       case Read_Failure:
         return 0;
       case Read_Record:
@@ -539,8 +540,8 @@ LoadResult DiagLoader::readDiagnosticBlock(llvm::BitstreamCursor &Stream,
     reportInvalidFile("malformed diagnostic block");
     return Failure;
   }
-  
-  OwningPtr<CXLoadedDiagnostic> D(new CXLoadedDiagnostic());
+
+  std::unique_ptr<CXLoadedDiagnostic> D(new CXLoadedDiagnostic());
   RecordData Record;
   
   while (true) {
@@ -567,7 +568,7 @@ LoadResult DiagLoader::readDiagnosticBlock(llvm::BitstreamCursor &Stream,
         continue;
       }
       case Read_BlockEnd:
-        Diags.appendDiagnostic(D.take());        
+        Diags.appendDiagnostic(D.release());
         return Success;
       case Read_Record:
         break;

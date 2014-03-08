@@ -2319,11 +2319,10 @@ namespace {
     llvm::SmallPtrSet<ValueDecl*, 4> UninitializedFields;
 
     // At the beginning, all fields are uninitialized.
-    for (DeclContext::decl_iterator I = RD->decls_begin(), E = RD->decls_end();
-         I != E; ++I) {
-      if (FieldDecl *FD = dyn_cast<FieldDecl>(*I)) {
+    for (auto *I : RD->decls()) {
+      if (auto *FD = dyn_cast<FieldDecl>(I)) {
         UninitializedFields.insert(FD);
-      } else if (IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(*I)) {
+      } else if (auto *IFD = dyn_cast<IndirectFieldDecl>(I)) {
         UninitializedFields.insert(IFD->getAnonField());
       }
     }
@@ -3413,10 +3412,8 @@ struct BaseAndFieldInfo {
     if (!Indirect)
       return isInactiveUnionMember(Field);
 
-    for (IndirectFieldDecl::chain_iterator C = Indirect->chain_begin(),
-                                           CEnd = Indirect->chain_end();
-         C != CEnd; ++C) {
-      FieldDecl *Field = dyn_cast<FieldDecl>(*C);
+    for (auto *C : Indirect->chain()) {
+      FieldDecl *Field = dyn_cast<FieldDecl>(C);
       if (Field && isInactiveUnionMember(Field))
         return true;
     }
@@ -3564,10 +3561,8 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
       Info.AllBaseFields[Member->getAnyMember()] = Member;
 
       if (IndirectFieldDecl *F = Member->getIndirectMember()) {
-        for (IndirectFieldDecl::chain_iterator C = F->chain_begin(),
-                                            CEnd = F->chain_end();
-             C != CEnd; ++C) {
-          FieldDecl *FD = dyn_cast<FieldDecl>(*C);
+        for (auto *C : F->chain()) {
+          FieldDecl *FD = dyn_cast<FieldDecl>(C);
           if (FD && FD->getParent()->isUnion())
             Info.ActiveUnionMember.insert(std::make_pair(
                 FD->getParent()->getCanonicalDecl(), FD->getCanonicalDecl()));
@@ -3649,10 +3644,8 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
   }
 
   // Fields.
-  for (DeclContext::decl_iterator Mem = ClassDecl->decls_begin(),
-                               MemEnd = ClassDecl->decls_end();
-       Mem != MemEnd; ++Mem) {
-    if (FieldDecl *F = dyn_cast<FieldDecl>(*Mem)) {
+  for (auto *Mem : ClassDecl->decls()) {
+    if (auto *F = dyn_cast<FieldDecl>(Mem)) {
       // C++ [class.bit]p2:
       //   A declaration for a bit-field that omits the identifier declares an
       //   unnamed bit-field. Unnamed bit-fields are not members and cannot be
@@ -3675,7 +3668,7 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
     if (Info.isImplicitCopyOrMove())
       continue;
     
-    if (IndirectFieldDecl *F = dyn_cast<IndirectFieldDecl>(*Mem)) {
+    if (auto *F = dyn_cast<IndirectFieldDecl>(Mem)) {
       if (F->getType()->isIncompleteArrayType()) {
         assert(ClassDecl->hasFlexibleArrayMember() &&
                "Incomplete array type is not valid");
@@ -4341,9 +4334,7 @@ static void CheckAbstractClassUsage(AbstractUsageInfo &Info,
 /// Check for invalid uses of an abstract type within a class definition.
 static void CheckAbstractClassUsage(AbstractUsageInfo &Info,
                                     CXXRecordDecl *RD) {
-  for (CXXRecordDecl::decl_iterator
-         I = RD->decls_begin(), E = RD->decls_end(); I != E; ++I) {
-    Decl *D = *I;
+  for (auto *D : RD->decls()) {
     if (D->isImplicit()) continue;
 
     // Methods and method templates.
@@ -6575,9 +6566,8 @@ static void DiagnoseNamespaceInlineMismatch(Sema &S, SourceLocation KeywordLoc,
       NS->setInline(*IsInline);
     // Patch up the lookup table for the containing namespace. This isn't really
     // correct, but it's good enough for this particular case.
-    for (DeclContext::decl_iterator I = PrevNS->decls_begin(),
-                                    E = PrevNS->decls_end(); I != E; ++I)
-      if (NamedDecl *ND = dyn_cast<NamedDecl>(*I))
+    for (auto *I : PrevNS->decls())
+      if (auto *ND = dyn_cast<NamedDecl>(I))
         PrevNS->getParent()->makeDeclVisibleInContext(ND);
     return;
   }
@@ -10810,10 +10800,8 @@ bool Sema::CheckOverloadedOperatorDeclaration(FunctionDecl *FnDecl) {
                   diag::err_operator_overload_static) << FnDecl->getDeclName();
   } else {
     bool ClassOrEnumParam = false;
-    for (FunctionDecl::param_iterator Param = FnDecl->param_begin(),
-                                   ParamEnd = FnDecl->param_end();
-         Param != ParamEnd; ++Param) {
-      QualType ParamType = (*Param)->getType().getNonReferenceType();
+    for (auto Param : FnDecl->params()) {
+      QualType ParamType = Param->getType().getNonReferenceType();
       if (ParamType->isDependentType() || ParamType->isRecordType() ||
           ParamType->isEnumeralType()) {
         ClassOrEnumParam = true;
@@ -10834,12 +10822,11 @@ bool Sema::CheckOverloadedOperatorDeclaration(FunctionDecl *FnDecl) {
   // Only the function-call operator allows default arguments
   // (C++ [over.call]p1).
   if (Op != OO_Call) {
-    for (FunctionDecl::param_iterator Param = FnDecl->param_begin();
-         Param != FnDecl->param_end(); ++Param) {
-      if ((*Param)->hasDefaultArg())
-        return Diag((*Param)->getLocation(),
+    for (auto Param : FnDecl->params()) {
+      if (Param->hasDefaultArg())
+        return Diag(Param->getLocation(),
                     diag::err_operator_overload_default_arg)
-          << FnDecl->getDeclName() << (*Param)->getDefaultArgRange();
+          << FnDecl->getDeclName() << Param->getDefaultArgRange();
     }
   }
 
@@ -11042,13 +11029,11 @@ FinishedParams:
 
   // A parameter-declaration-clause containing a default argument is not
   // equivalent to any of the permitted forms.
-  for (FunctionDecl::param_iterator Param = FnDecl->param_begin(),
-                                    ParamEnd = FnDecl->param_end();
-       Param != ParamEnd; ++Param) {
-    if ((*Param)->hasDefaultArg()) {
-      Diag((*Param)->getDefaultArgRange().getBegin(),
+  for (auto Param : FnDecl->params()) {
+    if (Param->hasDefaultArg()) {
+      Diag(Param->getDefaultArgRange().getBegin(),
            diag::err_literal_operator_default_argument)
-        << (*Param)->getDefaultArgRange();
+        << Param->getDefaultArgRange();
       break;
     }
   }
@@ -12405,11 +12390,9 @@ bool Sema::DefineUsedVTables() {
       bool IsExplicitInstantiationDeclaration
         = Class->getTemplateSpecializationKind()
                                       == TSK_ExplicitInstantiationDeclaration;
-      for (TagDecl::redecl_iterator R = Class->redecls_begin(),
-                                 REnd = Class->redecls_end();
-           R != REnd; ++R) {
+      for (auto R : Class->redecls()) {
         TemplateSpecializationKind TSK
-          = cast<CXXRecordDecl>(*R)->getTemplateSpecializationKind();
+          = cast<CXXRecordDecl>(R)->getTemplateSpecializationKind();
         if (TSK == TSK_ExplicitInstantiationDeclaration)
           IsExplicitInstantiationDeclaration = true;
         else if (TSK == TSK_ExplicitInstantiationDefinition) {

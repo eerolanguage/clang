@@ -104,8 +104,8 @@ CheckerManager *ento::createCheckerManager(AnalyzerOptions &opts,
                                            const LangOptions &langOpts,
                                            ArrayRef<std::string> plugins,
                                            DiagnosticsEngine &diags) {
-  OwningPtr<CheckerManager> checkerMgr(new CheckerManager(langOpts,
-                                                          &opts));
+  std::unique_ptr<CheckerManager> checkerMgr(
+      new CheckerManager(langOpts, &opts));
 
   SmallVector<CheckerOptInfo, 8> checkerOpts;
   for (unsigned i = 0, e = opts.CheckersControlList.size(); i != e; ++i) {
@@ -123,7 +123,7 @@ CheckerManager *ento::createCheckerManager(AnalyzerOptions &opts,
           << checkerOpts[i].getName();
   }
 
-  return checkerMgr.take();
+  return checkerMgr.release();
 }
 
 void ento::printCheckerHelp(raw_ostream &out, ArrayRef<std::string> plugins) {

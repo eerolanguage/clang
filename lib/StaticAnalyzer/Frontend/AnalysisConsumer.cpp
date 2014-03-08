@@ -103,14 +103,6 @@ public:
     IncludePath = true;
   }
 
-  const DiagnosticBuilder &addRanges(const DiagnosticBuilder &DB,
-                                     ArrayRef<SourceRange> Ranges) {
-    for (ArrayRef<SourceRange>::iterator I = Ranges.begin(), E = Ranges.end();
-         I != E; ++I)
-      DB << *I;
-    return DB;
-  }
-
   void FlushDiagnosticsImpl(std::vector<const PathDiagnostic *> &Diags,
                             FilesMade *filesMade) {
     unsigned WarnID = Diag.getCustomDiagID(DiagnosticsEngine::Warning, "%0");
@@ -120,8 +112,8 @@ public:
          E = Diags.end(); I != E; ++I) {
       const PathDiagnostic *PD = *I;
       SourceLocation WarnLoc = PD->getLocation().asLocation();
-      addRanges(Diag.Report(WarnLoc, WarnID) << PD->getShortDescription(),
-                PD->path.back()->getRanges());
+      Diag.Report(WarnLoc, WarnID) << PD->getShortDescription()
+                                   << PD->path.back()->getRanges();
 
       if (!IncludePath)
         continue;
@@ -131,8 +123,8 @@ public:
                                       PE = FlatPath.end();
            PI != PE; ++PI) {
         SourceLocation NoteLoc = (*PI)->getLocation().asLocation();
-        addRanges(Diag.Report(NoteLoc, NoteID) << (*PI)->getString(),
-                  (*PI)->getRanges());
+        Diag.Report(NoteLoc, NoteID) << (*PI)->getString()
+                                     << (*PI)->getRanges();
       }
     }
   }
@@ -179,8 +171,8 @@ public:
   StoreManagerCreator CreateStoreMgr;
   ConstraintManagerCreator CreateConstraintMgr;
 
-  OwningPtr<CheckerManager> checkerMgr;
-  OwningPtr<AnalysisManager> Mgr;
+  std::unique_ptr<CheckerManager> checkerMgr;
+  std::unique_ptr<AnalysisManager> Mgr;
 
   /// Time the analyzes time of each translation unit.
   static llvm::Timer* TUTotalTimer;
@@ -649,7 +641,7 @@ void AnalysisConsumer::ActionExprEngine(Decl *D, bool ObjCGCEnabled,
   ExprEngine Eng(*Mgr, ObjCGCEnabled, VisitedCallees, &FunctionSummaries,IMode);
 
   // Set the graph auditor.
-  OwningPtr<ExplodedNode::Auditor> Auditor;
+  std::unique_ptr<ExplodedNode::Auditor> Auditor;
   if (Mgr->options.visualizeExplodedGraphWithUbiGraph) {
     Auditor.reset(CreateUbiViz());
     ExplodedNode::SetAuditor(Auditor.get());
@@ -712,7 +704,7 @@ ento::CreateAnalysisConsumer(const Preprocessor &pp, const std::string &outDir,
 namespace {
 
 class UbigraphViz : public ExplodedNode::Auditor {
-  OwningPtr<raw_ostream> Out;
+  std::unique_ptr<raw_ostream> Out;
   std::string Filename;
   unsigned Cntr;
 
@@ -735,10 +727,10 @@ static ExplodedNode::Auditor* CreateUbiViz() {
   llvm::sys::fs::createTemporaryFile("llvm_ubi", "", FD, P);
   llvm::errs() << "Writing '" << P.str() << "'.\n";
 
-  OwningPtr<llvm::raw_fd_ostream> Stream;
+  std::unique_ptr<llvm::raw_fd_ostream> Stream;
   Stream.reset(new llvm::raw_fd_ostream(FD, true));
 
-  return new UbigraphViz(Stream.take(), P);
+  return new UbigraphViz(Stream.release(), P);
 }
 
 void UbigraphViz::AddEdge(ExplodedNode *Src, ExplodedNode *Dst) {

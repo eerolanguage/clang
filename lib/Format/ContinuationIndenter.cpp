@@ -174,7 +174,8 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
   }
 
   // Same as above, but for the first "<<" operator.
-  if (Current.is(tok::lessless) && State.Stack.back().BreakBeforeParameter &&
+  if (Current.is(tok::lessless) && Current.Type != TT_OverloadedOperator &&
+      State.Stack.back().BreakBeforeParameter &&
       State.Stack.back().FirstLessLess == 0)
     return true;
 
@@ -515,7 +516,8 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
 
   if (Current.Type == TT_InheritanceColon)
     State.Stack.back().AvoidBinPacking = true;
-  if (Current.is(tok::lessless) && State.Stack.back().FirstLessLess == 0)
+  if (Current.is(tok::lessless) && Current.Type != TT_OverloadedOperator &&
+      State.Stack.back().FirstLessLess == 0)
     State.Stack.back().FirstLessLess = State.Column;
   if (Current.Type == TT_ArraySubscriptLSquare &&
       State.Stack.back().StartOfArraySubscripts == 0)
@@ -789,7 +791,7 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
   if (!Current.isStringLiteral() && !Current.is(tok::comment))
     return 0;
 
-  llvm::OwningPtr<BreakableToken> Token;
+  std::unique_ptr<BreakableToken> Token;
   unsigned StartColumn = State.Column - Current.ColumnWidth;
   unsigned ColumnLimit = getColumnLimit(State);
 

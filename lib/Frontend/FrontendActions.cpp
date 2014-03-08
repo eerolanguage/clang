@@ -132,7 +132,7 @@ static void addHeaderInclude(StringRef HeaderName,
                              SmallVectorImpl<char> &Includes,
                              const LangOptions &LangOpts,
                              bool IsExternC) {
-  if (IsExternC)
+  if (IsExternC && LangOpts.CPlusPlus)
     Includes += "extern \"C\" {\n";
   if (LangOpts.ObjC1)
     Includes += "#import \"";
@@ -140,7 +140,7 @@ static void addHeaderInclude(StringRef HeaderName,
     Includes += "#include \"";
   Includes += HeaderName;
   Includes += "\"\n";
-  if (IsExternC)
+  if (IsExternC && LangOpts.CPlusPlus)
     Includes += "}\n";
 }
 
@@ -344,13 +344,13 @@ void VerifyPCHAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   bool Preamble = CI.getPreprocessorOpts().PrecompiledPreambleBytes.first != 0;
   const std::string &Sysroot = CI.getHeaderSearchOpts().Sysroot;
-  OwningPtr<ASTReader> Reader(new ASTReader(
-    CI.getPreprocessor(), CI.getASTContext(),
-    Sysroot.empty() ? "" : Sysroot.c_str(),
-    /*DisableValidation*/false,
-    /*AllowPCHWithCompilerErrors*/false,
-    /*AllowConfigurationMismatch*/true,
-    /*ValidateSystemInputs*/true));
+  std::unique_ptr<ASTReader> Reader(
+      new ASTReader(CI.getPreprocessor(), CI.getASTContext(),
+                    Sysroot.empty() ? "" : Sysroot.c_str(),
+                    /*DisableValidation*/ false,
+                    /*AllowPCHWithCompilerErrors*/ false,
+                    /*AllowConfigurationMismatch*/ true,
+                    /*ValidateSystemInputs*/ true));
 
   Reader->ReadAST(getCurrentFile(),
                   Preamble ? serialization::MK_Preamble
@@ -461,7 +461,7 @@ namespace {
 
 void DumpModuleInfoAction::ExecuteAction() {
   // Set up the output file.
-  llvm::OwningPtr<llvm::raw_fd_ostream> OutFile;
+  std::unique_ptr<llvm::raw_fd_ostream> OutFile;
   StringRef OutputFileName = getCompilerInstance().getFrontendOpts().OutputFile;
   if (!OutputFileName.empty() && OutputFileName != "-") {
     std::string ErrorInfo;

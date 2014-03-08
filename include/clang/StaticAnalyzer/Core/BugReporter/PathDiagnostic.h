@@ -499,7 +499,7 @@ class PathDiagnosticEventPiece : public PathDiagnosticSpotPiece {
   /// supply a message that will be used to construct an extra hint on the
   /// returns from all the calls on the stack from this event to the final
   /// diagnostic.
-  OwningPtr<StackHintGenerator> CallStackHint;
+  std::unique_ptr<StackHintGenerator> CallStackHint;
 
 public:
   PathDiagnosticEventPiece(const PathDiagnosticLocation &pos,
@@ -523,10 +523,8 @@ public:
   bool isPrunable() const {
     return IsPrunable.hasValue() ? IsPrunable.getValue() : false;
   }
-  
-  bool hasCallStackHint() {
-    return CallStackHint.isValid();
-  }
+
+  bool hasCallStackHint() { return (bool)CallStackHint; }
 
   /// Produce the hint for the given node. The node contains 
   /// information about the call for which the diagnostic can be generated.

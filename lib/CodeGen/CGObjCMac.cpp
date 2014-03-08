@@ -1911,9 +1911,7 @@ CGObjCCommonMac::EmitMessageSend(CodeGen::CodeGenFunction &CGF,
   
   bool requiresnullCheck = false;
   if (CGM.getLangOpts().ObjCAutoRefCount && Method)
-    for (ObjCMethodDecl::param_const_iterator i = Method->param_begin(),
-         e = Method->param_end(); i != e; ++i) {
-      const ParmVarDecl *ParamDecl = (*i);
+    for (const auto *ParamDecl : Method->params()) {
       if (ParamDecl->hasAttr<NSConsumedAttr>()) {
         if (!nullReturn.NullBB)
           nullReturn.init(CGF, Arg0);
@@ -2676,7 +2674,7 @@ llvm::Constant *CGObjCMac::GetOrEmitProtocol(const ObjCProtocolDecl *PD) {
     Protocols[PD->getIdentifier()] = Entry;
   }
   assertPrivateName(Entry);
-  CGM.AddUsedGlobal(Entry);
+  CGM.addCompilerUsedGlobal(Entry);
 
   return Entry;
 }
@@ -3156,7 +3154,7 @@ void CGObjCMac::GenerateClass(const ObjCImplementationDecl *ID) {
     GV->setInitializer(Init);
     GV->setSection(Section);
     GV->setAlignment(4);
-    CGM.AddUsedGlobal(GV);
+    CGM.addCompilerUsedGlobal(GV);
   } else
     GV = CreateMetadataVar(Name, Init, Section, 4, true);
   assertPrivateName(GV);
@@ -3229,7 +3227,7 @@ llvm::Constant *CGObjCMac::EmitMetaClass(const ObjCImplementationDecl *ID,
   assertPrivateName(GV);
   GV->setSection("__OBJC,__meta_class,regular,no_dead_strip");
   GV->setAlignment(4);
-  CGM.AddUsedGlobal(GV);
+  CGM.addCompilerUsedGlobal(GV);
 
   return GV;
 }
@@ -3446,7 +3444,7 @@ CGObjCCommonMac::CreateMetadataVar(Twine Name,
   if (Align)
     GV->setAlignment(Align);
   if (AddToUsed)
-    CGM.AddUsedGlobal(GV);
+    CGM.addCompilerUsedGlobal(GV);
   return GV;
 }
 
@@ -5006,7 +5004,7 @@ void CGObjCMac::FinishModule() {
     assertPrivateName(I->second);
     I->second->setInitializer(llvm::ConstantStruct::get(ObjCTypes.ProtocolTy,
                                                         Values));
-    CGM.AddUsedGlobal(I->second);
+    CGM.addCompilerUsedGlobal(I->second);
   }
 
   // Add assembler directives to add lazy undefined symbol references
@@ -5534,7 +5532,7 @@ AddModuleClassList(ArrayRef<llvm::GlobalValue*> Container,
   assertPrivateName(GV);
   GV->setAlignment(CGM.getDataLayout().getABITypeAlignment(Init->getType()));
   GV->setSection(SectionName);
-  CGM.AddUsedGlobal(GV);
+  CGM.addCompilerUsedGlobal(GV);
 }
 
 void CGObjCNonFragileABIMac::FinishNonFragileABIModule() {
@@ -5955,12 +5953,12 @@ llvm::Value *CGObjCNonFragileABIMac::GenerateProtocolRef(CodeGenFunction &CGF,
   PTGV = new llvm::GlobalVariable(
     CGM.getModule(),
     Init->getType(), false,
-    llvm::GlobalValue::PrivateLinkage,
+    llvm::GlobalValue::WeakAnyLinkage,
     Init,
     ProtocolName);
-  assertPrivateName(PTGV);
   PTGV->setSection("__DATA, __objc_protorefs, coalesced, no_dead_strip");
-  CGM.AddUsedGlobal(PTGV);
+  PTGV->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  CGM.addCompilerUsedGlobal(PTGV);
   return CGF.Builder.CreateLoad(PTGV);
 }
 
@@ -6048,7 +6046,7 @@ void CGObjCNonFragileABIMac::GenerateCategory(const ObjCCategoryImplDecl *OCD) {
   GCATV->setAlignment(
     CGM.getDataLayout().getABITypeAlignment(ObjCTypes.CategorynfABITy));
   GCATV->setSection("__DATA, __objc_const");
-  CGM.AddUsedGlobal(GCATV);
+  CGM.addCompilerUsedGlobal(GCATV);
   DefinedCategories.push_back(GCATV);
 
   // Determine if this category is also "non-lazy".
@@ -6108,7 +6106,7 @@ CGObjCNonFragileABIMac::EmitMethodList(Twine Name,
   assertPrivateName(GV);
   GV->setAlignment(CGM.getDataLayout().getABITypeAlignment(Init->getType()));
   GV->setSection(Section);
-  CGM.AddUsedGlobal(GV);
+  CGM.addCompilerUsedGlobal(GV);
   return llvm::ConstantExpr::getBitCast(GV, ObjCTypes.MethodListnfABIPtrTy);
 }
 
@@ -6229,7 +6227,7 @@ llvm::Constant *CGObjCNonFragileABIMac::EmitIvarList(
     CGM.getDataLayout().getABITypeAlignment(Init->getType()));
   GV->setSection("__DATA, __objc_const");
 
-  CGM.AddUsedGlobal(GV);
+  CGM.addCompilerUsedGlobal(GV);
   return llvm::ConstantExpr::getBitCast(GV, ObjCTypes.IvarListnfABIPtrTy);
 }
 
@@ -6243,11 +6241,10 @@ llvm::Constant *CGObjCNonFragileABIMac::GetOrEmitProtocolRef(
     // contents for protocols which were referenced but never defined.
     Entry =
         new llvm::GlobalVariable(CGM.getModule(), ObjCTypes.ProtocolnfABITy,
-                                 false, llvm::GlobalValue::PrivateLinkage, 0,
+                                 false, llvm::GlobalValue::WeakAnyLinkage, 0,
                                  "\01l_OBJC_PROTOCOL_$_" + PD->getName());
     Entry->setSection("__DATA,__datacoal_nt,coalesced");
   }
-  assertPrivateName(Entry);
 
   return Entry;
 }
@@ -6359,11 +6356,12 @@ llvm::Constant *CGObjCNonFragileABIMac::GetOrEmitProtocol(
 
   if (Entry) {
     // Already created, update the initializer.
+    assert(Entry->getLinkage() == llvm::GlobalValue::WeakAnyLinkage);
     Entry->setInitializer(Init);
   } else {
     Entry =
       new llvm::GlobalVariable(CGM.getModule(), ObjCTypes.ProtocolnfABITy,
-                               false, llvm::GlobalValue::PrivateLinkage, Init,
+                               false, llvm::GlobalValue::WeakAnyLinkage, Init,
                                "\01l_OBJC_PROTOCOL_$_" + PD->getName());
     Entry->setAlignment(
       CGM.getDataLayout().getABITypeAlignment(ObjCTypes.ProtocolnfABITy));
@@ -6371,20 +6369,20 @@ llvm::Constant *CGObjCNonFragileABIMac::GetOrEmitProtocol(
 
     Protocols[PD->getIdentifier()] = Entry;
   }
-  assertPrivateName(Entry);
-  CGM.AddUsedGlobal(Entry);
+  Entry->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  CGM.addCompilerUsedGlobal(Entry);
 
   // Use this protocol meta-data to build protocol list table in section
   // __DATA, __objc_protolist
   llvm::GlobalVariable *PTGV =
     new llvm::GlobalVariable(CGM.getModule(), ObjCTypes.ProtocolnfABIPtrTy,
-                             false, llvm::GlobalValue::PrivateLinkage, Entry,
+                             false, llvm::GlobalValue::WeakAnyLinkage, Entry,
                              "\01l_OBJC_LABEL_PROTOCOL_$_" + PD->getName());
-  assertPrivateName(PTGV);
   PTGV->setAlignment(
     CGM.getDataLayout().getABITypeAlignment(ObjCTypes.ProtocolnfABIPtrTy));
   PTGV->setSection("__DATA, __objc_protolist, coalesced, no_dead_strip");
-  CGM.AddUsedGlobal(PTGV);
+  PTGV->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  CGM.addCompilerUsedGlobal(PTGV);
   return Entry;
 }
 
@@ -6437,7 +6435,7 @@ CGObjCNonFragileABIMac::EmitProtocolList(Twine Name,
   GV->setSection("__DATA, __objc_const");
   GV->setAlignment(
     CGM.getDataLayout().getABITypeAlignment(Init->getType()));
-  CGM.AddUsedGlobal(GV);
+  CGM.addCompilerUsedGlobal(GV);
   return llvm::ConstantExpr::getBitCast(GV,
                                         ObjCTypes.ProtocolListnfABIPtrTy);
 }
@@ -6592,19 +6590,17 @@ CGObjCNonFragileABIMac::EmitVTableMessageSend(CodeGenFunction &CGF,
     messageRef = new llvm::GlobalVariable(CGM.getModule(),
                                           init->getType(),
                                           /*constant*/ false,
-                                          llvm::GlobalValue::PrivateLinkage,
+                                          llvm::GlobalValue::WeakAnyLinkage,
                                           init,
                                           messageRefName);
+    messageRef->setVisibility(llvm::GlobalValue::HiddenVisibility);
     messageRef->setAlignment(16);
     messageRef->setSection("__DATA, __objc_msgrefs, coalesced");
   }
-  assertPrivateName(messageRef);
-
+  
   bool requiresnullCheck = false;
   if (CGM.getLangOpts().ObjCAutoRefCount && method)
-    for (ObjCMethodDecl::param_const_iterator i = method->param_begin(),
-         e = method->param_end(); i != e; ++i) {
-      const ParmVarDecl *ParamDecl = (*i);
+    for (const auto *ParamDecl : method->params()) {
       if (ParamDecl->hasAttr<NSConsumedAttr>()) {
         if (!nullReturn.NullBB)
           nullReturn.init(CGF, arg0);
@@ -6683,7 +6679,7 @@ llvm::Value *CGObjCNonFragileABIMac::EmitClassRefFromId(CodeGenFunction &CGF,
                         CGM.getDataLayout().getABITypeAlignment(
                                                                 ObjCTypes.ClassnfABIPtrTy));
     Entry->setSection("__DATA, __objc_classrefs, regular, no_dead_strip");
-    CGM.AddUsedGlobal(Entry);
+    CGM.addCompilerUsedGlobal(Entry);
   }
   assertPrivateName(Entry);
   return CGF.Builder.CreateLoad(Entry);
@@ -6717,7 +6713,7 @@ CGObjCNonFragileABIMac::EmitSuperClassRef(CodeGenFunction &CGF,
       CGM.getDataLayout().getABITypeAlignment(
         ObjCTypes.ClassnfABIPtrTy));
     Entry->setSection("__DATA, __objc_superrefs, regular, no_dead_strip");
-    CGM.AddUsedGlobal(Entry);
+    CGM.addCompilerUsedGlobal(Entry);
   }
   assertPrivateName(Entry);
   return CGF.Builder.CreateLoad(Entry);
@@ -6742,7 +6738,7 @@ llvm::Value *CGObjCNonFragileABIMac::EmitMetaClassRef(CodeGenFunction &CGF,
         CGM.getDataLayout().getABITypeAlignment(ObjCTypes.ClassnfABIPtrTy));
 
     Entry->setSection("__DATA, __objc_superrefs, regular, no_dead_strip");
-    CGM.AddUsedGlobal(Entry);
+    CGM.addCompilerUsedGlobal(Entry);
   }
 
   assertPrivateName(Entry);
@@ -6827,7 +6823,7 @@ llvm::Value *CGObjCNonFragileABIMac::EmitSelector(CodeGenFunction &CGF,
                                Casted, "\01L_OBJC_SELECTOR_REFERENCES_");
     Entry->setExternallyInitialized(true);
     Entry->setSection("__DATA, __objc_selrefs, literal_pointers, no_dead_strip");
-    CGM.AddUsedGlobal(Entry);
+    CGM.addCompilerUsedGlobal(Entry);
   }
   assertPrivateName(Entry);
 

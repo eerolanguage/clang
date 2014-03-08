@@ -88,8 +88,8 @@ public:
   FileID FileId;
   const TypedefDecl *NSIntegerTypedefed;
   const TypedefDecl *NSUIntegerTypedefed;
-  OwningPtr<NSAPI> NSAPIObj;
-  OwningPtr<edit::EditedSource> Editor;
+  std::unique_ptr<NSAPI> NSAPIObj;
+  std::unique_ptr<edit::EditedSource> Editor;
   FileRemapper &Remapper;
   FileManager &FileMgr;
   const PPConditionalDirectiveRecord *PPRec;
@@ -253,7 +253,7 @@ public:
 
 class BodyMigrator : public RecursiveASTVisitor<BodyMigrator> {
   ObjCMigrateASTConsumer &Consumer;
-  OwningPtr<ParentMap> PMap;
+  std::unique_ptr<ParentMap> PMap;
 
 public:
   BodyMigrator(ObjCMigrateASTConsumer &consumer) : Consumer(consumer) { }
@@ -1988,12 +1988,12 @@ public:
   bool parse(StringRef File, SmallVectorImpl<EditEntry> &Entries) {
     using namespace llvm::yaml;
 
-    OwningPtr<llvm::MemoryBuffer> FileBuf;
+    std::unique_ptr<llvm::MemoryBuffer> FileBuf;
     if (llvm::MemoryBuffer::getFile(File, FileBuf))
       return true;
 
     llvm::SourceMgr SM;
-    Stream YAMLStream(FileBuf.take(), SM);
+    Stream YAMLStream(FileBuf.release(), SM);
     document_iterator I = YAMLStream.begin();
     if (I == YAMLStream.end())
       return true;

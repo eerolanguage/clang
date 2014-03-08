@@ -174,12 +174,48 @@ public:
   /// \brief Returns true if this \c ASTReaderListener wants to receive the
   /// input files of the AST file via \c visitInputFile, false otherwise.
   virtual bool needsInputFileVisitation() { return false; }
-
-  /// \brief if \c needsInputFileVisitation returns true, this is called for each
-  /// input file of the AST file.
+  /// \brief Returns true if this \c ASTReaderListener wants to receive the
+  /// system input files of the AST file via \c visitInputFile, false otherwise.
+  virtual bool needsSystemInputFileVisitation() { return false; }
+  /// \brief if \c needsInputFileVisitation returns true, this is called for
+  /// each non-system input file of the AST File. If
+  /// \c needsSystemInputFileVisitation is true, then it is called for all
+  /// system input files as well.
   ///
   /// \returns true to continue receiving the next input file, false to stop.
   virtual bool visitInputFile(StringRef Filename, bool isSystem) { return true;}
+};
+
+/// \brief Simple wrapper class for chaining listeners.
+class ChainedASTReaderListener : public ASTReaderListener {
+  OwningPtr<ASTReaderListener> First;
+  OwningPtr<ASTReaderListener> Second;
+public:
+  /// Takes ownership of \p First and \p Second.
+  ChainedASTReaderListener(ASTReaderListener *First, ASTReaderListener *Second)
+      : First(First), Second(Second) { }
+
+  virtual bool ReadFullVersionInformation(StringRef FullVersion);
+  virtual bool ReadLanguageOptions(const LangOptions &LangOpts,
+                                   bool Complain);
+  virtual bool ReadTargetOptions(const TargetOptions &TargetOpts,
+                                 bool Complain);
+  virtual bool ReadDiagnosticOptions(const DiagnosticOptions &DiagOpts,
+                                     bool Complain);
+  virtual bool ReadFileSystemOptions(const FileSystemOptions &FSOpts,
+                                     bool Complain);
+
+  virtual bool ReadHeaderSearchOptions(const HeaderSearchOptions &HSOpts,
+                                       bool Complain);
+  virtual bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
+                                       bool Complain,
+                                       std::string &SuggestedPredefines);
+
+  virtual void ReadCounter(const serialization::ModuleFile &M,
+                           unsigned Value);
+  virtual bool needsInputFileVisitation();
+  virtual bool needsSystemInputFileVisitation();
+  virtual bool visitInputFile(StringRef Filename, bool isSystem);
 };
 
 /// \brief ASTReaderListener implementation to validate the information of
@@ -286,7 +322,7 @@ public:
 
 private:
   /// \brief The receiver of some callbacks invoked by ASTReader.
-  OwningPtr<ASTReaderListener> Listener;
+  std::unique_ptr<ASTReaderListener> Listener;
 
   /// \brief The receiver of deserialization events.
   ASTDeserializationListener *DeserializationListener;
@@ -316,7 +352,7 @@ private:
   SourceLocation CurrentImportLoc;
 
   /// \brief The global module index, if loaded.
-  llvm::OwningPtr<GlobalModuleIndex> GlobalIndex;
+  std::unique_ptr<GlobalModuleIndex> GlobalIndex;
 
   /// \brief A map of global bit offsets to the module that stores entities
   /// at those bit offsets.
@@ -509,7 +545,7 @@ private:
       assert(getKind() == Macro && "Hidden name is not a macro!");
       return std::make_pair(Id, MMI);
     }
-};
+  };
 
   typedef llvm::SmallDenseMap<IdentifierInfo*,
                               ModuleMacroInfo*> HiddenMacrosMap;
@@ -988,6 +1024,13 @@ private:
   /// \brief Reads a statement from the specified cursor.
   Stmt *ReadStmtFromStream(ModuleFile &F);
 
+  /// \brief Reads the stored information about an input file.
+  void readInputFileInfo(ModuleFile &F, unsigned ID, std::string &Filename,
+                         off_t &StoredSize, time_t &StoredTime,
+                         bool &Overridden);
+  /// \brief A convenience method to read the filename from an input file.
+  std::string getInputFileName(ModuleFile &F, unsigned ID);
+
   /// \brief Retrieve the file entry and 'overridden' bit for an input
   /// file in the given module file.
   serialization::InputFile getInputFile(ModuleFile &F, unsigned ID,
@@ -1277,11 +1320,20 @@ public:
     Listener.reset(listener);
   }
 
+  /// \brief Add an AST callbak listener.
+  ///
+  /// Takes ownership of \p L.
+  void addListener(ASTReaderListener *L) {
+    if (Listener)
+      L = new ChainedASTReaderListener(L, Listener.release());
+    Listener.reset(L);
+  }
+
   /// \brief Set the AST deserialization listener.
   void setDeserializationListener(ASTDeserializationListener *Listener);
 
   /// \brief Determine whether this AST reader has a global index.
-  bool hasGlobalIndex() const { return GlobalIndex.isValid(); }
+  bool hasGlobalIndex() const { return (bool)GlobalIndex; }
 
   /// \brief Attempts to load the global index.
   ///

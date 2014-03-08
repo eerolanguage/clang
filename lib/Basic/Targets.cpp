@@ -5911,7 +5911,7 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
     }
 
   case llvm::Triple::x86_64:
-    if (Triple.isOSDarwin() || Triple.getEnvironment() == llvm::Triple::MachO)
+    if (Triple.isOSDarwin() || Triple.getObjectFormat() == llvm::Triple::MachO)
       return new DarwinX86_64TargetInfo(Triple);
 
     switch (os) {
@@ -5965,7 +5965,7 @@ TargetInfo *TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
   llvm::Triple Triple(Opts->Triple);
 
   // Construct the target
-  OwningPtr<TargetInfo> Target(AllocateTarget(Triple));
+  std::unique_ptr<TargetInfo> Target(AllocateTarget(Triple));
   if (!Target) {
     Diags.Report(diag::err_target_unknown_triple) << Triple.str();
     return 0;
@@ -6015,5 +6015,5 @@ TargetInfo *TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
   if (!Target->handleTargetFeatures(Opts->Features, Diags))
     return 0;
 
-  return Target.take();
+  return Target.release();
 }

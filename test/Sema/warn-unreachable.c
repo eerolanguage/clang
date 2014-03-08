@@ -199,6 +199,11 @@ int trivial_dead_return() {
   return ((0)); // no-warning
 }
 
+void trivial_dead_return_void() {
+  raze();
+  return; // no-warning
+}
+
 MyEnum trival_dead_return_enum() {
   raze();
   return Value1; // no-warning
@@ -215,6 +220,16 @@ MyEnum trivial_dead_return_enum_2(int x) {
   return 2; // expected-warning {{will never be executed}}
 }
 
+const char *trivial_dead_return_cstr() {
+  raze();
+  return ""; // no-warning
+}
+
+char trivial_dead_return_char() {
+  raze();
+  return ' '; // no-warning
+}
+
 MyEnum nontrivial_dead_return_enum_2(int x) {
   switch (x) {
     case 1: return 1;
@@ -224,6 +239,17 @@ MyEnum nontrivial_dead_return_enum_2(int x) {
   }
 
   return calledFun(); // expected-warning {{will never be executed}}
+}
+
+enum X { A, B, C };
+
+int covered_switch(enum X x) {
+  switch (x) {
+  case A: return 1;
+  case B: return 2;
+  case C: return 3;
+  }
+  return 4; // no-warning
 }
 
 // Test unreachable code depending on configuration values
@@ -249,10 +275,12 @@ int test_config_constant(int x) {
       calledFun(); // expected-warning {{will never be executed}}
 }
 
-int sizeof_int() {
+int sizeof_int(int x, int y) {
   if (sizeof(long) == sizeof(int))
     return 1; // no-warning
   if (sizeof(long) != sizeof(int))
+    return 0; // no-warning
+  if (x && y && sizeof(long) < sizeof(char))
     return 0; // no-warning
   return 2; // no-warning
 }

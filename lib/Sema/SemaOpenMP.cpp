@@ -525,8 +525,7 @@ ExprResult Sema::ActOnOpenMPIdExpression(Scope *CurScope,
   }
 
   QualType ExprType = VD->getType().getNonReferenceType();
-  ExprResult DE = BuildDeclRefExpr(VD, ExprType, VK_RValue, Id.getLoc());
-  DSAStack->addDSA(VD, cast<DeclRefExpr>(DE.get()), OMPC_threadprivate);
+  ExprResult DE = BuildDeclRefExpr(VD, ExprType, VK_LValue, Id.getLoc());
   return DE;
 }
 
@@ -582,6 +581,7 @@ OMPThreadPrivateDecl *Sema::CheckOMPThreadPrivateDecl(
     }
 
     Vars.push_back(*I);
+    DSAStack->addDSA(VD, DE, OMPC_threadprivate);
   }
   OMPThreadPrivateDecl *D = 0;
   if (!Vars.empty()) {
@@ -758,6 +758,9 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
   case OMPC_if:
     Res = ActOnOpenMPIfClause(Expr, StartLoc, LParenLoc, EndLoc);
     break;
+  case OMPC_num_threads:
+    Res = ActOnOpenMPNumThreadsClause(Expr, StartLoc, LParenLoc, EndLoc);
+    break;
   case OMPC_default:
   case OMPC_private:
   case OMPC_firstprivate:
@@ -790,6 +793,81 @@ OMPClause *Sema::ActOnOpenMPIfClause(Expr *Condition,
   return new (Context) OMPIfClause(ValExpr, StartLoc, LParenLoc, EndLoc);
 }
 
+ExprResult Sema::PerformImplicitIntegerConversion(SourceLocation Loc,
+                                                  Expr *Op) {
+  if (!Op)
+    return ExprError();
+
+  class IntConvertDiagnoser : public ICEConvertDiagnoser {
+  public:
+    IntConvertDiagnoser()
+        : ICEConvertDiagnoser(/*AllowScopedEnumerations*/false,
+                              false, true) {}
+    virtual SemaDiagnosticBuilder diagnoseNotInt(Sema &S, SourceLocation Loc,
+                                                 QualType T) {
+      return S.Diag(Loc, diag::err_omp_not_integral) << T;
+    }
+    virtual SemaDiagnosticBuilder diagnoseIncomplete(
+        Sema &S, SourceLocation Loc, QualType T) {
+      return S.Diag(Loc, diag::err_omp_incomplete_type) << T;
+    }
+    virtual SemaDiagnosticBuilder diagnoseExplicitConv(
+        Sema &S, SourceLocation Loc, QualType T, QualType ConvTy) {
+      return S.Diag(Loc, diag::err_omp_explicit_conversion) << T << ConvTy;
+    }
+    virtual SemaDiagnosticBuilder noteExplicitConv(
+        Sema &S, CXXConversionDecl *Conv, QualType ConvTy) {
+      return S.Diag(Conv->getLocation(), diag::note_omp_conversion_here)
+               << ConvTy->isEnumeralType() << ConvTy;
+    }
+    virtual SemaDiagnosticBuilder diagnoseAmbiguous(
+        Sema &S, SourceLocation Loc, QualType T) {
+      return S.Diag(Loc, diag::err_omp_ambiguous_conversion) << T;
+    }
+    virtual SemaDiagnosticBuilder noteAmbiguous(
+        Sema &S, CXXConversionDecl *Conv, QualType ConvTy) {
+      return S.Diag(Conv->getLocation(), diag::note_omp_conversion_here)
+               << ConvTy->isEnumeralType() << ConvTy;
+    }
+    virtual SemaDiagnosticBuilder diagnoseConversion(
+        Sema &S, SourceLocation Loc, QualType T, QualType ConvTy) {
+      llvm_unreachable("conversion functions are permitted");
+    }
+  } ConvertDiagnoser;
+  return PerformContextualImplicitConversion(Loc, Op, ConvertDiagnoser);
+}
+
+OMPClause *Sema::ActOnOpenMPNumThreadsClause(Expr *NumThreads,
+                                             SourceLocation StartLoc,
+                                             SourceLocation LParenLoc,
+                                             SourceLocation EndLoc) {
+  Expr *ValExpr = NumThreads;
+  if (!NumThreads->isValueDependent() && !NumThreads->isTypeDependent() &&
+      !NumThreads->isInstantiationDependent() &&
+      !NumThreads->containsUnexpandedParameterPack()) {
+    SourceLocation NumThreadsLoc = NumThreads->getLocStart();
+    ExprResult Val =
+        PerformImplicitIntegerConversion(NumThreadsLoc, NumThreads);
+    if (Val.isInvalid())
+      return 0;
+
+    ValExpr = Val.take();
+
+    // OpenMP [2.5, Restrictions]
+    //  The num_threads expression must evaluate to a positive integer value.
+    llvm::APSInt Result;
+    if (ValExpr->isIntegerConstantExpr(Result, Context) &&
+        Result.isSigned() && !Result.isStrictlyPositive()) {
+      Diag(NumThreadsLoc, diag::err_omp_negative_expression_in_clause)
+          << "num_threads" << NumThreads->getSourceRange();
+      return 0;
+    }
+  }
+
+  return new (Context) OMPNumThreadsClause(ValExpr, StartLoc, LParenLoc,
+                                           EndLoc);
+}
+
 OMPClause *Sema::ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
                                          unsigned Argument,
                                          SourceLocation ArgumentLoc,
@@ -804,6 +882,7 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
                                ArgumentLoc, StartLoc, LParenLoc, EndLoc);
     break;
   case OMPC_if:
+  case OMPC_num_threads:
   case OMPC_private:
   case OMPC_firstprivate:
   case OMPC_shared:
@@ -876,6 +955,7 @@ OMPClause *Sema::ActOnOpenMPVarListClause(OpenMPClauseKind Kind,
     Res = ActOnOpenMPSharedClause(VarList, StartLoc, LParenLoc, EndLoc);
     break;
   case OMPC_if:
+  case OMPC_num_threads:
   case OMPC_default:
   case OMPC_threadprivate:
   case OMPC_unknown:
@@ -1206,9 +1286,10 @@ OMPClause *Sema::ActOnOpenMPSharedClause(ArrayRef<Expr *> VarList,
     SourceLocation ELoc = (*I)->getExprLoc();
     // OpenMP [2.1, C/C++]
     //  A list item is a variable name.
-    // OpenMP  [2.9.3.4, Restrictions, p.1]
-    //  A variable that is part of another variable (as an array or
-    //  structure element) cannot appear in a private clause.
+    // OpenMP  [2.14.3.2, Restrictions, p.1]
+    //  A variable that is part of another variable (as an array or structure
+    //  element) cannot appear in a shared unless it is a static data member
+    //  of a C++ class.
     DeclRefExpr *DE = dyn_cast<DeclRefExpr>(*I);
     if (!DE || !isa<VarDecl>(DE->getDecl())) {
       Diag(ELoc, diag::err_omp_expected_var_name)

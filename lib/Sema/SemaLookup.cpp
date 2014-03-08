@@ -154,9 +154,7 @@ namespace {
     void addUsingDirectives(DeclContext *DC, DeclContext *EffectiveDC) {
       SmallVector<DeclContext*,4> queue;
       while (true) {
-        DeclContext::udir_iterator I, End;
-        for (std::tie(I, End) = DC->getUsingDirectives(); I != End; ++I) {
-          UsingDirectiveDecl *UD = *I;
+        for (auto UD : DC->getUsingDirectives()) {
           DeclContext *NS = UD->getNominatedNamespace();
           if (visited.insert(NS)) {
             addUsingDirective(UD, EffectiveDC);
@@ -1270,9 +1268,8 @@ bool LookupResult::isVisibleSlow(Sema &SemaRef, NamedDecl *D) {
 static NamedDecl *findAcceptableDecl(Sema &SemaRef, NamedDecl *D) {
   assert(!LookupResult::isVisible(SemaRef, D) && "not in slow case");
 
-  for (Decl::redecl_iterator RD = D->redecls_begin(), RDEnd = D->redecls_end();
-       RD != RDEnd; ++RD) {
-    if (NamedDecl *ND = dyn_cast<NamedDecl>(*RD)) {
+  for (auto RD : D->redecls()) {
+    if (auto ND = dyn_cast<NamedDecl>(RD)) {
       if (LookupResult::isVisible(SemaRef, ND))
         return ND;
     }
@@ -1554,8 +1551,8 @@ static bool LookupQualifiedNameInUsingDirectives(Sema &S, LookupResult &R,
       continue;
     }
 
-    for (std::tie(I, E) = ND->getUsingDirectives(); I != E; ++I) {
-      NamespaceDecl *Nom = (*I)->getNominatedNamespace();
+    for (auto I : ND->getUsingDirectives()) {
+      NamespaceDecl *Nom = I->getNominatedNamespace();
       if (Visited.insert(Nom))
         Queue.push_back(Nom);
     }
@@ -3124,9 +3121,8 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
   // Traverse using directives for qualified name lookup.
   if (QualifiedNameLookup) {
     ShadowContextRAII Shadow(Visited);
-    DeclContext::udir_iterator I, E;
-    for (std::tie(I, E) = Ctx->getUsingDirectives(); I != E; ++I) {
-      LookupVisibleDecls((*I)->getNominatedNamespace(), Result,
+    for (auto I : Ctx->getUsingDirectives()) {
+      LookupVisibleDecls(I->getNominatedNamespace(), Result,
                          QualifiedNameLookup, InBaseClass, Consumer, Visited);
     }
   }
@@ -4205,7 +4201,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
     // FIXME: Re-add the ability to skip very unlikely potential corrections.
     if (IdentifierInfoLookup *External
                             = Context.Idents.getExternalIdentifierLookup()) {
-      OwningPtr<IdentifierIterator> Iter(External->getIdentifiers());
+      std::unique_ptr<IdentifierIterator> Iter(External->getIdentifiers());
       do {
         StringRef Name = Iter->Next();
         if (Name.empty())

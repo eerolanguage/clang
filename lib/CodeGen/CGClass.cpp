@@ -549,10 +549,8 @@ static void EmitMemberInitializer(CodeGenFunction &CGF,
     // If we are initializing an anonymous union field, drill down to
     // the field.
     IndirectFieldDecl *IndirectField = MemberInit->getIndirectMember();
-    IndirectFieldDecl::chain_iterator I = IndirectField->chain_begin(),
-      IEnd = IndirectField->chain_end();
-    for ( ; I != IEnd; ++I)
-      LHS = CGF.EmitLValueForFieldInitialization(LHS, cast<FieldDecl>(*I));
+    for (const auto *I : IndirectField->chain())
+      LHS = CGF.EmitLValueForFieldInitialization(LHS, cast<FieldDecl>(I));
     FieldType = MemberInit->getIndirectMember()->getAnonField()->getType();
   } else {
     LHS = CGF.EmitLValueForFieldInitialization(LHS, Field);
@@ -2163,11 +2161,9 @@ void CodeGenFunction::EmitLambdaBlockInvokeBody() {
   CallArgs.add(RValue::get(ThisPtr), ThisType);
 
   // Add the rest of the parameters.
-  for (BlockDecl::param_const_iterator I = BD->param_begin(),
-       E = BD->param_end(); I != E; ++I) {
-    ParmVarDecl *param = *I;
+  for (auto param : BD->params())
     EmitDelegateCallArg(CallArgs, param, param->getLocStart());
-  }
+
   assert(!Lambda->isGenericLambda() && 
             "generic lambda interconversion to block not implemented");
   EmitForwardingCallToLambda(Lambda->getLambdaCallOperator(), CallArgs);
@@ -2195,11 +2191,9 @@ void CodeGenFunction::EmitLambdaDelegatingInvokeBody(const CXXMethodDecl *MD) {
   CallArgs.add(RValue::get(ThisPtr), ThisType);
 
   // Add the rest of the parameters.
-  for (FunctionDecl::param_const_iterator I = MD->param_begin(),
-       E = MD->param_end(); I != E; ++I) {
-    ParmVarDecl *param = *I;
-    EmitDelegateCallArg(CallArgs, param, param->getLocStart());
-  }
+  for (auto Param : MD->params())
+    EmitDelegateCallArg(CallArgs, Param, Param->getLocStart());
+
   const CXXMethodDecl *CallOp = Lambda->getLambdaCallOperator();
   // For a generic lambda, find the corresponding call operator specialization
   // to which the call to the static-invoker shall be forwarded.

@@ -414,9 +414,8 @@ void ASTDeclWriter::VisitFunctionDecl(FunctionDecl *D) {
   }
 
   Record.push_back(D->param_size());
-  for (FunctionDecl::param_iterator P = D->param_begin(), PEnd = D->param_end();
-       P != PEnd; ++P)
-    Writer.AddDeclRef(*P, Record);
+  for (auto P : D->params())
+    Writer.AddDeclRef(P, Record);
   Code = serialization::DECL_FUNCTION;
 }
 
@@ -455,9 +454,8 @@ void ASTDeclWriter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
   Writer.AddTypeSourceInfo(D->getReturnTypeSourceInfo(), Record);
   Writer.AddSourceLocation(D->getLocEnd(), Record);
   Record.push_back(D->param_size());
-  for (ObjCMethodDecl::param_iterator P = D->param_begin(),
-                                   PEnd = D->param_end(); P != PEnd; ++P)
-    Writer.AddDeclRef(*P, Record);
+  for (const auto *P : D->params())
+    Writer.AddDeclRef(P, Record);
 
   Record.push_back(D->SelLocsKind);
   unsigned NumStoredSelLocs = D->getNumStoredSelLocs();
@@ -688,10 +686,8 @@ void ASTDeclWriter::VisitIndirectFieldDecl(IndirectFieldDecl *D) {
   VisitValueDecl(D);
   Record.push_back(D->getChainingSize());
 
-  for (IndirectFieldDecl::chain_iterator
-       P = D->chain_begin(),
-       PEnd = D->chain_end(); P != PEnd; ++P)
-    Writer.AddDeclRef(*P, Record);
+  for (const auto *P : D->chain())
+    Writer.AddDeclRef(P, Record);
   Code = serialization::DECL_INDIRECTFIELD;
 }
 

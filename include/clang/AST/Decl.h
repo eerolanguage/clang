@@ -371,9 +371,11 @@ public:
 
   static NamespaceDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
+  typedef redeclarable_base::redecl_range redecl_range;
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   using redeclarable_base::redecls_begin;
   using redeclarable_base::redecls_end;
+  using redeclarable_base::redecls;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
   using redeclarable_base::isFirstDecl;
@@ -779,9 +781,11 @@ protected:
   }
 
 public:
+  typedef redeclarable_base::redecl_range redecl_range;
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   using redeclarable_base::redecls_begin;
   using redeclarable_base::redecls_end;
+  using redeclarable_base::redecls;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
   using redeclarable_base::isFirstDecl;
@@ -1569,9 +1573,11 @@ protected:
   }
 
 public:
+  typedef redeclarable_base::redecl_range redecl_range;
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   using redeclarable_base::redecls_begin;
   using redeclarable_base::redecls_end;
+  using redeclarable_base::redecls;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
   using redeclarable_base::isFirstDecl;
@@ -1837,12 +1843,26 @@ public:
   unsigned param_size() const { return getNumParams(); }
   typedef ParmVarDecl **param_iterator;
   typedef ParmVarDecl * const *param_const_iterator;
+  typedef llvm::iterator_range<param_iterator> param_range;
+  typedef llvm::iterator_range<param_const_iterator> param_const_range;
 
-  param_iterator param_begin() { return ParamInfo; }
-  param_iterator param_end()   { return ParamInfo+param_size(); }
+  param_iterator param_begin() { return param_iterator(ParamInfo); }
+  param_iterator param_end() {
+    return param_iterator(ParamInfo + param_size());
+  }
+  param_range params() {
+    return param_range(ParamInfo, ParamInfo + param_size());
+  }
 
-  param_const_iterator param_begin() const { return ParamInfo; }
-  param_const_iterator param_end() const   { return ParamInfo+param_size(); }
+  param_const_iterator param_begin() const {
+    return param_const_iterator(ParamInfo);
+  }
+  param_const_iterator param_end() const {
+    return param_const_iterator(ParamInfo + param_size());
+  }
+  param_const_range params() const {
+    return param_const_range(ParamInfo, ParamInfo + param_size());
+  }
 
   /// getNumParams - Return the number of parameters this function must have
   /// based on its FunctionType.  This is the length of the ParamInfo array
@@ -2317,8 +2337,13 @@ public:
   static IndirectFieldDecl *CreateDeserialized(ASTContext &C, unsigned ID);
   
   typedef NamedDecl * const *chain_iterator;
-  chain_iterator chain_begin() const { return Chaining; }
-  chain_iterator chain_end() const  { return Chaining+ChainingSize; }
+  typedef llvm::iterator_range<chain_iterator> chain_range;
+
+  chain_range chain() const {
+    return chain_range(Chaining, Chaining + ChainingSize);
+  }
+  chain_iterator chain_begin() const { return chain().begin(); }
+  chain_iterator chain_end() const  { return chain().end(); }
 
   unsigned getChainingSize() const { return ChainingSize; }
 
@@ -2408,9 +2433,11 @@ protected:
   }
 
 public:
+  typedef redeclarable_base::redecl_range redecl_range;
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   using redeclarable_base::redecls_begin;
   using redeclarable_base::redecls_end;
+  using redeclarable_base::redecls;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
   using redeclarable_base::isFirstDecl;
@@ -2593,9 +2620,11 @@ protected:
   void completeDefinition();
 
 public:
+  typedef redeclarable_base::redecl_range redecl_range;
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   using redeclarable_base::redecls_begin;
   using redeclarable_base::redecls_end;
+  using redeclarable_base::redecls;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
   using redeclarable_base::isFirstDecl;
@@ -3273,6 +3302,8 @@ public:
   unsigned param_size() const { return getNumParams(); }
   typedef ParmVarDecl **param_iterator;
   typedef ParmVarDecl * const *param_const_iterator;
+  typedef llvm::iterator_range<param_iterator> param_range;
+  typedef llvm::iterator_range<param_const_iterator> param_const_range;
 
   // ArrayRef access to formal parameters.
   // FIXME: Should eventual replace iterator access.
@@ -3281,11 +3312,17 @@ public:
   }
 
   bool param_empty() const { return NumParams == 0; }
-  param_iterator param_begin()  { return ParamInfo; }
-  param_iterator param_end()   { return ParamInfo+param_size(); }
+  param_range params() {
+    return param_range(ParamInfo, ParamInfo + param_size());
+  }
+  param_iterator param_begin() { return params().begin(); }
+  param_iterator param_end() { return params().end(); }
 
-  param_const_iterator param_begin() const { return ParamInfo; }
-  param_const_iterator param_end() const   { return ParamInfo+param_size(); }
+  param_const_range params() const {
+    return param_const_range(ParamInfo, ParamInfo + param_size());
+  }
+  param_const_iterator param_begin() const { return params().begin(); }
+  param_const_iterator param_end() const { return params().end(); }
 
   unsigned getNumParams() const { return NumParams; }
   const ParmVarDecl *getParamDecl(unsigned i) const {
@@ -3394,10 +3431,17 @@ public:
   void setContextParam(ImplicitParamDecl *P) { setParam(0, P); }
 
   typedef ImplicitParamDecl **param_iterator;
+  typedef llvm::iterator_range<param_iterator> param_range;
+
   /// \brief Retrieve an iterator pointing to the first parameter decl.
   param_iterator param_begin() const { return getParams(); }
   /// \brief Retrieve an iterator one past the last parameter decl.
   param_iterator param_end() const { return getParams() + NumParams; }
+
+  /// \brief Retrieve an iterator range for the parameter declarations.
+  param_range params() const {
+    return param_range(getParams(), getParams() + NumParams);
+  }
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }

@@ -291,7 +291,7 @@ class CFGBuilder {
   typedef BlockScopePosPair JumpSource;
 
   ASTContext *Context;
-  OwningPtr<CFG> cfg;
+  std::unique_ptr<CFG> cfg;
 
   CFGBlock *Block;
   CFGBlock *Succ;
@@ -724,7 +724,7 @@ CFG* CFGBuilder::buildCFG(const Decl *D, Stmt *Statement) {
   // Create an empty entry block that has no predecessors.
   cfg->setEntry(createBlock());
 
-  return cfg.take();
+  return cfg.release();
 }
 
 /// createBlock - Used to lazily create blocks that are connected
@@ -1326,8 +1326,8 @@ CFGBuilder::VisitLogicalOperator(BinaryOperator *B,
     else {
       RHSBlock->setTerminator(Term);
       TryResult KnownVal = tryEvaluateBool(RHS);
-      addSuccessor(RHSBlock, KnownVal.isFalse() ? NULL : TrueBlock);
-      addSuccessor(RHSBlock, KnownVal.isTrue() ? NULL : FalseBlock);
+      addSuccessor(RHSBlock, TrueBlock, !KnownVal.isFalse());
+      addSuccessor(RHSBlock, FalseBlock, !KnownVal.isTrue());
     }
 
     Block = RHSBlock;
@@ -1370,12 +1370,12 @@ CFGBuilder::VisitLogicalOperator(BinaryOperator *B,
 
   // Now link the LHSBlock with RHSBlock.
   if (B->getOpcode() == BO_LOr) {
-    addSuccessor(LHSBlock, KnownVal.isFalse() ? NULL : TrueBlock);
-    addSuccessor(LHSBlock, KnownVal.isTrue() ? NULL : RHSBlock);
+    addSuccessor(LHSBlock, TrueBlock, !KnownVal.isFalse());
+    addSuccessor(LHSBlock, RHSBlock, !KnownVal.isTrue());
   } else {
     assert(B->getOpcode() == BO_LAnd);
-    addSuccessor(LHSBlock, KnownVal.isFalse() ? NULL : RHSBlock);
-    addSuccessor(LHSBlock, KnownVal.isTrue() ? NULL : FalseBlock);
+    addSuccessor(LHSBlock, RHSBlock, !KnownVal.isFalse());
+    addSuccessor(LHSBlock, FalseBlock, !KnownVal.isTrue());
   }
 
   return std::make_pair(EntryLHSBlock, ExitBlock);
@@ -3351,10 +3351,12 @@ CFGBlock *CFGBuilder::VisitCXXBindTemporaryExprForTemporaryDtors(
     // a new block for the destructor which does not have as a successor
     // anything built thus far. Control won't flow out of this block.
     const CXXDestructorDecl *Dtor = E->getTemporary()->getDestructor();
-    if (Dtor->isNoReturn())
+    if (Dtor->isNoReturn()) {
+      Succ = B;
       Block = createNoReturnBlock();
-    else
+    } else {
       autoCreateBlock();
+    }
 
     appendTemporaryDtor(Block, E);
     B = Block;
@@ -3403,6 +3405,7 @@ CFGBlock *CFGBuilder::VisitConditionalOperatorForTemporaryDtors(
 
   Block = createBlock(false);
   Block->setTerminator(CFGTerminator(E, true));
+  assert(Block->getTerminator().isTemporaryDtorsBranch());
 
   // See if this is a known constant.
   const TryResult &KnownVal = tryEvaluateBool(E->getCond());
@@ -3764,6 +3767,13 @@ public:
   void VisitExpr(Expr *E) {
     E->printPretty(OS, Helper, Policy);
   }
+
+public:
+  void print(CFGTerminator T) {
+    if (T.isTemporaryDtorsBranch())
+      OS << "(Temp Dtor) ";
+    Visit(T.getStmt());
+  }
 };
 } // end anonymous namespace
 
@@ -3967,7 +3977,7 @@ static void print_block(raw_ostream &OS, const CFG* cfg,
 
     PrintingPolicy PP(Helper.getLangOpts());
     CFGBlockTerminatorPrint TPrinter(OS, &Helper, PP);
-    TPrinter.Visit(const_cast<Stmt*>(B.getTerminator().getStmt()));
+    TPrinter.print(B.getTerminator());
     OS << '\n';
     
     if (ShowColors)
@@ -4105,7 +4115,7 @@ void CFGBlock::print(raw_ostream &OS, const CFG* cfg,
 void CFGBlock::printTerminator(raw_ostream &OS,
                                const LangOptions &LO) const {
   CFGBlockTerminatorPrint TPrinter(OS, NULL, PrintingPolicy(LO));
-  TPrinter.Visit(const_cast<Stmt*>(getTerminator().getStmt()));
+  TPrinter.print(getTerminator());
 }
 
 Stmt *CFGBlock::getTerminatorCondition() {

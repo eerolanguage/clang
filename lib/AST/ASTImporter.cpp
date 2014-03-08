@@ -930,10 +930,8 @@ static Optional<unsigned> findAnonymousStructOrUnionIndex(RecordDecl *Anon) {
     return None;
 
   unsigned Index = 0;
-  for (DeclContext::decl_iterator D = Owner->noload_decls_begin(),
-                               DEnd = Owner->noload_decls_end();
-       D != DEnd; ++D) {
-    FieldDecl *F = dyn_cast<FieldDecl>(*D);
+  for (const auto *D : Owner->noload_decls()) {
+    const auto *F = dyn_cast<FieldDecl>(D);
     if (!F || !F->isAnonymousStructOrUnion())
       continue;
 
@@ -1908,11 +1906,8 @@ void ASTNodeImporter::ImportDeclContext(DeclContext *FromDC, bool ForceImport) {
     return;
   }
   
-  for (DeclContext::decl_iterator From = FromDC->decls_begin(),
-                               FromEnd = FromDC->decls_end();
-       From != FromEnd;
-       ++From)
-    Importer.Import(*From);
+  for (auto *From : FromDC->decls())
+    Importer.Import(From);
 }
 
 bool ASTNodeImporter::ImportDefinition(RecordDecl *From, RecordDecl *To, 
@@ -2743,9 +2738,8 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   
   // Import the function parameters.
   SmallVector<ParmVarDecl *, 8> Parameters;
-  for (FunctionDecl::param_iterator P = D->param_begin(), PEnd = D->param_end();
-       P != PEnd; ++P) {
-    ParmVarDecl *ToP = cast_or_null<ParmVarDecl>(Importer.Import(*P));
+  for (auto P : D->params()) {
+    ParmVarDecl *ToP = cast_or_null<ParmVarDecl>(Importer.Import(P));
     if (!ToP)
       return 0;
     
@@ -2853,10 +2847,8 @@ static unsigned getFieldIndex(Decl *F) {
     return 0;
 
   unsigned Index = 1;
-  for (DeclContext::decl_iterator D = Owner->noload_decls_begin(),
-                               DEnd = Owner->noload_decls_end();
-       D != DEnd; ++D) {
-    if (*D == F)
+  for (const auto *D : Owner->noload_decls()) {
+    if (D == F)
       return Index;
 
     if (isa<FieldDecl>(*D) || isa<IndirectFieldDecl>(*D))
@@ -2968,9 +2960,8 @@ Decl *ASTNodeImporter::VisitIndirectFieldDecl(IndirectFieldDecl *D) {
     new (Importer.getToContext())NamedDecl*[D->getChainingSize()];
 
   unsigned i = 0;
-  for (IndirectFieldDecl::chain_iterator PI = D->chain_begin(),
-       PE = D->chain_end(); PI != PE; ++PI) {
-    Decl* D = Importer.Import(*PI);
+  for (auto *PI : D->chain()) {
+    Decl *D = Importer.Import(PI);
     if (!D)
       return 0;
     NamedChain[i++] = cast<NamedDecl>(D);
@@ -3301,11 +3292,8 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
 
   // Import the parameters
   SmallVector<ParmVarDecl *, 5> ToParams;
-  for (ObjCMethodDecl::param_iterator FromP = D->param_begin(),
-                                   FromPEnd = D->param_end();
-       FromP != FromPEnd; 
-       ++FromP) {
-    ParmVarDecl *ToP = cast_or_null<ParmVarDecl>(Importer.Import(*FromP));
+  for (auto *FromP : D->params()) {
+    ParmVarDecl *ToP = cast_or_null<ParmVarDecl>(Importer.Import(FromP));
     if (!ToP)
       return 0;
     

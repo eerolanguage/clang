@@ -1,4 +1,8 @@
-foreach 2
+instr-profile.m:__13+[A foreach:]_block_invoke 2
+2
+1
+
+instr-profile.m:+[A foreach:] 2
 1
 2
 

@@ -167,7 +167,7 @@ static bool HasARCRuntime(CompilerInvocation &origCI) {
 
 static CompilerInvocation *
 createInvocationForMigration(CompilerInvocation &origCI) {
-  OwningPtr<CompilerInvocation> CInvok;
+  std::unique_ptr<CompilerInvocation> CInvok;
   CInvok.reset(new CompilerInvocation(origCI));
   PreprocessorOptions &PPOpts = CInvok->getPreprocessorOpts();
   if (!PPOpts.ImplicitPCHInclude.empty()) {
@@ -208,7 +208,7 @@ createInvocationForMigration(CompilerInvocation &origCI) {
 
   CInvok->getLangOpts()->ObjCARCWeak = HasARCRuntime(origCI);
 
-  return CInvok.take();
+  return CInvok.release();
 }
 
 static void emitPremigrationErrors(const CapturedDiagList &arcDiags,
@@ -246,7 +246,7 @@ bool arcmt::checkForManualIssues(CompilerInvocation &origCI,
                                                                      NoFinalizeRemoval);
   assert(!transforms.empty());
 
-  OwningPtr<CompilerInvocation> CInvok;
+  std::unique_ptr<CompilerInvocation> CInvok;
   CInvok.reset(createInvocationForMigration(origCI));
   CInvok->getFrontendOpts().Inputs.clear();
   CInvok->getFrontendOpts().Inputs.push_back(Input);
@@ -263,8 +263,8 @@ bool arcmt::checkForManualIssues(CompilerInvocation &origCI,
   CaptureDiagnosticConsumer errRec(*Diags, *DiagClient, capturedDiags);
   Diags->setClient(&errRec, /*ShouldOwnClient=*/false);
 
-  OwningPtr<ASTUnit> Unit(
-      ASTUnit::LoadFromCompilerInvocationAction(CInvok.take(), Diags));
+  std::unique_ptr<ASTUnit> Unit(
+      ASTUnit::LoadFromCompilerInvocationAction(CInvok.release(), Diags));
   if (!Unit) {
     errRec.FinishCapture();
     return true;
@@ -515,7 +515,7 @@ MigrationProcess::MigrationProcess(const CompilerInvocation &CI,
 
 bool MigrationProcess::applyTransform(TransformFn trans,
                                       RewriteListener *listener) {
-  OwningPtr<CompilerInvocation> CInvok;
+  std::unique_ptr<CompilerInvocation> CInvok;
   CInvok.reset(createInvocationForMigration(OrigCI));
   CInvok->getDiagnosticOpts().IgnoreWarnings = true;
 
@@ -534,12 +534,11 @@ bool MigrationProcess::applyTransform(TransformFn trans,
   CaptureDiagnosticConsumer errRec(*Diags, *DiagClient, capturedDiags);
   Diags->setClient(&errRec, /*ShouldOwnClient=*/false);
 
-  OwningPtr<ARCMTMacroTrackerAction> ASTAction;
+  std::unique_ptr<ARCMTMacroTrackerAction> ASTAction;
   ASTAction.reset(new ARCMTMacroTrackerAction(ARCMTMacroLocs));
 
-  OwningPtr<ASTUnit> Unit(
-      ASTUnit::LoadFromCompilerInvocationAction(CInvok.take(), Diags,
-                                                ASTAction.get()));
+  OwningPtr<ASTUnit> Unit(ASTUnit::LoadFromCompilerInvocationAction(
+      CInvok.release(), Diags, ASTAction.get()));
   if (!Unit) {
     errRec.FinishCapture();
     return true;

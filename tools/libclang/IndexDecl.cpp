@@ -41,10 +41,8 @@ public:
       if (const ParmVarDecl *Parm = dyn_cast<ParmVarDecl>(D)) {
         IndexCtx.handleVar(Parm);
       } else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
-        for (FunctionDecl::param_const_iterator PI = FD->param_begin(),
-                                                PE = FD->param_end();
-             PI != PE; ++PI) {
-          IndexCtx.handleVar(*PI);
+        for (auto PI : FD->params()) {
+          IndexCtx.handleVar(PI);
         }
       }
     }
@@ -56,10 +54,8 @@ public:
       return;
 
     IndexCtx.indexTypeSourceInfo(D->getReturnTypeSourceInfo(), D);
-    for (ObjCMethodDecl::param_const_iterator I = D->param_begin(),
-                                              E = D->param_end();
-         I != E; ++I)
-      handleDeclarator(*I, D);
+    for (const auto *I : D->params())
+      handleDeclarator(I, D);
 
     if (D->isThisDeclarationADefinition()) {
       const Stmt *Body = D->getBody();
@@ -177,10 +173,9 @@ public:
            IvarE = D->ivar_end(); IvarI != IvarE; ++IvarI) {
       IndexCtx.indexDecl(*IvarI);
     }
-    for (DeclContext::decl_iterator
-           I = D->decls_begin(), E = D->decls_end(); I != E; ++I) {
-      if (!isa<ObjCIvarDecl>(*I))
-        IndexCtx.indexDecl(*I);
+    for (const auto *I : D->decls()) {
+      if (!isa<ObjCIvarDecl>(I))
+        IndexCtx.indexDecl(I);
     }
 
     return true;
@@ -341,10 +336,8 @@ void IndexingContext::indexDecl(const Decl *D) {
 }
 
 void IndexingContext::indexDeclContext(const DeclContext *DC) {
-  for (DeclContext::decl_iterator
-         I = DC->decls_begin(), E = DC->decls_end(); I != E; ++I) {
-    indexDecl(*I);
-  }
+  for (const auto *I : DC->decls())
+    indexDecl(I);
 }
 
 void IndexingContext::indexTopLevelDecl(const Decl *D) {

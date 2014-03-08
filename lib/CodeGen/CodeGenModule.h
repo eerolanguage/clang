@@ -235,7 +235,7 @@ class CodeGenModule : public CodeGenTypeCache {
   DiagnosticsEngine &Diags;
   const llvm::DataLayout &TheDataLayout;
   const TargetInfo &Target;
-  llvm::OwningPtr<CGCXXABI> ABI;
+  std::unique_ptr<CGCXXABI> ABI;
   llvm::LLVMContext &VMContext;
 
   CodeGenTBAA *TBAA;
@@ -298,6 +298,7 @@ class CodeGenModule : public CodeGenTypeCache {
   /// forcing visibility of symbols which may otherwise be optimized
   /// out.
   std::vector<llvm::WeakVH> LLVMUsed;
+  std::vector<llvm::WeakVH> LLVMCompilerUsed;
 
   /// GlobalCtors - Store the list of global constructors and their respective
   /// priorities to be emitted when the translation unit is complete.
@@ -429,7 +430,7 @@ class CodeGenModule : public CodeGenTypeCache {
 
   GlobalDecl initializedGlobalDecl;
 
-  llvm::OwningPtr<llvm::SpecialCaseList> SanitizerBlacklist;
+  std::unique_ptr<llvm::SpecialCaseList> SanitizerBlacklist;
 
   const SanitizerOptions &SanOpts;
 
@@ -799,10 +800,11 @@ public:
   template<typename SomeDecl>
   void MaybeHandleStaticInExternC(const SomeDecl *D, llvm::GlobalValue *GV);
 
-  /// AddUsedGlobal - Add a global which should be forced to be
-  /// present in the object file; these are emitted to the llvm.used
-  /// metadata global.
-  void AddUsedGlobal(llvm::GlobalValue *GV);
+  /// Add a global to a list to be added to the llvm.used metadata.
+  void addUsedGlobal(llvm::GlobalValue *GV);
+
+  /// Add a global to a list to be added to the llvm.compiler.used metadata.
+  void addCompilerUsedGlobal(llvm::GlobalValue *GV);
 
   /// AddCXXDtorEntry - Add a destructor and object to add to the C++ global
   /// destructor function.
@@ -1104,9 +1106,8 @@ private:
   /// still have a use for.
   void EmitDeferredVTables();
 
-  /// EmitLLVMUsed - Emit the llvm.used metadata used to force
-  /// references to global which may otherwise be optimized out.
-  void EmitLLVMUsed();
+  /// Emit the llvm.used and llvm.compiler.used metadata.
+  void emitLLVMUsed();
 
   /// \brief Emit the link options introduced by imported modules.
   void EmitModuleLinkOptions();

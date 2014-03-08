@@ -612,6 +612,12 @@ void OMPClausePrinter::VisitOMPIfClause(OMPIfClause *Node) {
   OS << ")";
 }
 
+void OMPClausePrinter::VisitOMPNumThreadsClause(OMPNumThreadsClause *Node) {
+  OS << "num_threads(";
+  Node->getNumThreads()->printPretty(OS, 0, Policy, 0);
+  OS << ")";
+}
+
 void OMPClausePrinter::VisitOMPDefaultClause(OMPDefaultClause *Node) {
   OS << "default("
      << getOpenMPSimpleClauseTypeName(OMPC_default, Node->getDefaultKind())
@@ -1523,16 +1529,14 @@ void StmtPrinter::VisitLambdaExpr(LambdaExpr *Node) {
     OS << " (";
     CXXMethodDecl *Method = Node->getCallOperator();
     NeedComma = false;
-    for (CXXMethodDecl::param_iterator P = Method->param_begin(),
-                                    PEnd = Method->param_end();
-         P != PEnd; ++P) {
+    for (auto P : Method->params()) {
       if (NeedComma) {
         OS << ", ";
       } else {
         NeedComma = true;
       }
-      std::string ParamStr = (*P)->getNameAsString();
-      (*P)->getOriginalType().print(OS, Policy, ParamStr);
+      std::string ParamStr = P->getNameAsString();
+      P->getOriginalType().print(OS, Policy, ParamStr);
     }
     if (Method->isVariadic()) {
       if (NeedComma)

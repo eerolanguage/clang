@@ -1300,33 +1300,6 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
       SortedFiles.push_front(Entry);
   }
 
-  // If we have an isysroot for a Darwin SDK, include its SDKSettings.plist in
-  // the set of (non-system) input files. This is simple heuristic for
-  // detecting whether the system headers may have changed, because it is too
-  // expensive to stat() all of the system headers.
-  FileManager &FileMgr = SourceMgr.getFileManager();
-  if (!HSOpts.Sysroot.empty() && !Chain) {
-    llvm::SmallString<128> SDKSettingsFileName(HSOpts.Sysroot);
-    llvm::sys::path::append(SDKSettingsFileName, "SDKSettings.plist");
-    if (const FileEntry *SDKSettingsFile = FileMgr.getFile(SDKSettingsFileName)) {
-      InputFileEntry Entry = { SDKSettingsFile, false, false };
-      SortedFiles.push_front(Entry);
-    }
-  }
-
-  // Add the compiler's own module.map in the set of (non-system) input files.
-  // This is a simple heuristic for detecting whether the compiler's headers
-  // have changed, because we don't want to stat() all of them.
-  if (Modules && !Chain) {
-    SmallString<128> P = StringRef(HSOpts.ResourceDir);
-    llvm::sys::path::append(P, "include");
-    llvm::sys::path::append(P, "module.map");
-    if (const FileEntry *ModuleMapFile = FileMgr.getFile(P)) {
-      InputFileEntry Entry = { ModuleMapFile, false, false };
-      SortedFiles.push_front(Entry);
-    }
-  }
-
   unsigned UserFilesNum = 0;
   // Write out all of the input files.
   std::vector<uint32_t> InputFileOffsets;
@@ -1363,7 +1336,7 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
     
     // Ask the file manager to fixup the relative path for us. This will 
     // honor the working directory.
-    FileMgr.FixupRelativePath(FilePath);
+    SourceMgr.getFileManager().FixupRelativePath(FilePath);
     
     // FIXME: This call to make_absolute shouldn't be necessary, the
     // call to FixupRelativePath should always return an absolute path.
@@ -2252,7 +2225,8 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Parent
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // IsFramework
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // IsExplicit
-  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // IsSystem  
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // IsSystem
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // IsExternC
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // InferSubmodules...
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // InferExplicit...
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // InferExportWild...
@@ -2340,6 +2314,7 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
     Record.push_back(Mod->IsFramework);
     Record.push_back(Mod->IsExplicit);
     Record.push_back(Mod->IsSystem);
+    Record.push_back(Mod->IsExternC);
     Record.push_back(Mod->InferSubmodules);
     Record.push_back(Mod->InferExplicitSubmodules);
     Record.push_back(Mod->InferExportWildcard);
@@ -2622,9 +2597,8 @@ uint64_t ASTWriter::WriteDeclContextLexicalBlock(ASTContext &Context,
   RecordData Record;
   Record.push_back(DECL_CONTEXT_LEXICAL);
   SmallVector<KindDeclIDPair, 64> Decls;
-  for (DeclContext::decl_iterator D = DC->decls_begin(), DEnd = DC->decls_end();
-         D != DEnd; ++D)
-    Decls.push_back(std::make_pair((*D)->getKind(), GetDeclRef(*D)));
+  for (const auto *D : DC->decls())
+    Decls.push_back(std::make_pair(D->getKind(), GetDeclRef(D)));
 
   ++NumLexicalDeclContexts;
   Stream.EmitRecordWithBlob(DeclContextLexicalAbbrev, Record, data(Decls));
@@ -4077,11 +4051,9 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   // translation unit that do not come from other AST files.
   const TranslationUnitDecl *TU = Context.getTranslationUnitDecl();
   SmallVector<KindDeclIDPair, 64> NewGlobalDecls;
-  for (DeclContext::decl_iterator I = TU->noload_decls_begin(),
-                                  E = TU->noload_decls_end();
-       I != E; ++I) {
-    if (!(*I)->isFromASTFile())
-      NewGlobalDecls.push_back(std::make_pair((*I)->getKind(), GetDeclRef(*I)));
+  for (const auto *I : TU->noload_decls()) {
+    if (!I->isFromASTFile())
+      NewGlobalDecls.push_back(std::make_pair(I->getKind(), GetDeclRef(I)));
   }
   
   llvm::BitCodeAbbrev *Abv = new llvm::BitCodeAbbrev();

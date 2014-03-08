@@ -197,8 +197,8 @@ PathDiagnosticConsumer::~PathDiagnosticConsumer() {
 }
 
 void PathDiagnosticConsumer::HandlePathDiagnostic(PathDiagnostic *D) {
-  OwningPtr<PathDiagnostic> OwningD(D);
-  
+  std::unique_ptr<PathDiagnostic> OwningD(D);
+
   if (!D || D->path.empty())
     return;
   
@@ -275,8 +275,8 @@ void PathDiagnosticConsumer::HandlePathDiagnostic(PathDiagnostic *D) {
     Diags.RemoveNode(orig);
     delete orig;
   }
-  
-  Diags.InsertNode(OwningD.take());
+
+  Diags.InsertNode(OwningD.release());
 }
 
 static Optional<bool> comparePath(const PathPieces &X, const PathPieces &Y);

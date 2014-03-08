@@ -61,9 +61,8 @@ void NSErrorMethodChecker::checkASTDecl(const ObjCMethodDecl *D,
     II = &D->getASTContext().Idents.get("NSError"); 
 
   bool hasNSError = false;
-  for (ObjCMethodDecl::param_const_iterator
-         I = D->param_begin(), E = D->param_end(); I != E; ++I)  {
-    if (IsNSError((*I)->getType(), II)) {
+  for (const auto *I : D->params())  {
+    if (IsNSError(I->getType(), II)) {
       hasNSError = true;
       break;
     }
@@ -109,9 +108,8 @@ void CFErrorFunctionChecker::checkASTDecl(const FunctionDecl *D,
     II = &D->getASTContext().Idents.get("CFErrorRef"); 
 
   bool hasCFError = false;
-  for (FunctionDecl::param_const_iterator
-         I = D->param_begin(), E = D->param_end(); I != E; ++I)  {
-    if (IsCFError((*I)->getType(), II)) {
+  for (auto I : D->params())  {
+    if (IsCFError(I->getType(), II)) {
       hasCFError = true;
       break;
     }

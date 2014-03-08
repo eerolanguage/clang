@@ -60,12 +60,12 @@ private:
   SubEngine& SubEng;
 
   /// G - The simulation graph.  Each node is a (location,state) pair.
-  OwningPtr<ExplodedGraph> G;
+  std::unique_ptr<ExplodedGraph> G;
 
   /// WList - A set of queued nodes that need to be processed by the
   ///  worklist algorithm.  It is up to the implementation of WList to decide
   ///  the order that nodes are processed.
-  OwningPtr<WorkList> WList;
+  std::unique_ptr<WorkList> WList;
 
   /// BCounterFactory - A factory object for created BlockCounter objects.
   ///   These are used to record for key nodes in the ExplodedGraph the
@@ -120,7 +120,7 @@ public:
 
   /// takeGraph - Returns the exploded graph.  Ownership of the graph is
   ///  transferred to the caller.
-  ExplodedGraph* takeGraph() { return G.take(); }
+  ExplodedGraph *takeGraph() { return G.release(); }
 
   /// ExecuteWorkList - Run the worklist algorithm for a maximum number of
   ///  steps.  Returns true if there is still simulation state on the worklist.

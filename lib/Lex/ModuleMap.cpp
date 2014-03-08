@@ -1996,6 +1996,7 @@ void ModuleMapParser::parseInferredModuleDecl(bool Framework, bool Explicit) {
     // We'll be inferring framework modules for this directory.
     Map.InferredDirectories[Directory].InferModules = true;
     Map.InferredDirectories[Directory].InferSystemModules = Attrs.IsSystem;
+    // FIXME: Handle the 'framework' keyword.
   }
 
   // Parse the opening brace.
@@ -2212,7 +2213,8 @@ bool ModuleMap::parseModuleMapFile(const FileEntry *File, bool IsSystem) {
     return Known->second;
 
   assert(Target != 0 && "Missing target information");
-  FileID ID = SourceMgr.createFileID(File, SourceLocation(), SrcMgr::C_User);
+  auto FileCharacter = IsSystem ? SrcMgr::C_System : SrcMgr::C_User;
+  FileID ID = SourceMgr.createFileID(File, SourceLocation(), FileCharacter);
   const llvm::MemoryBuffer *Buffer = SourceMgr.getBuffer(ID);
   if (!Buffer)
     return ParsedModuleMap[File] = true;

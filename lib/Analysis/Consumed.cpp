@@ -1286,8 +1286,9 @@ void ConsumedAnalyzer::determineExpectedReturnState(AnalysisDeclContext &AC,
 
 bool ConsumedAnalyzer::splitState(const CFGBlock *CurrBlock,
                                   const ConsumedStmtVisitor &Visitor) {
-  
-  OwningPtr<ConsumedStateMap> FalseStates(new ConsumedStateMap(*CurrStates));
+
+  std::unique_ptr<ConsumedStateMap> FalseStates(
+      new ConsumedStateMap(*CurrStates));
   PropagationInfo PInfo;
   
   if (const IfStmt *IfNode =
@@ -1362,8 +1363,8 @@ bool ConsumedAnalyzer::splitState(const CFGBlock *CurrBlock,
     delete CurrStates;
     
   if (*++SI)
-    BlockInfo.addInfo(*SI, FalseStates.take());
-  
+    BlockInfo.addInfo(*SI, FalseStates.release());
+
   CurrStates = NULL;
   return true;
 }
@@ -1388,9 +1389,8 @@ void ConsumedAnalyzer::run(AnalysisDeclContext &AC) {
   ConsumedStmtVisitor Visitor(AC, *this, CurrStates);
   
   // Add all trackable parameters to the state map.
-  for (FunctionDecl::param_const_iterator PI = D->param_begin(),
-       PE = D->param_end(); PI != PE; ++PI) {
-    Visitor.VisitParmVarDecl(*PI);
+  for (auto PI : D->params()) {
+    Visitor.VisitParmVarDecl(PI);
   }
   
   // Visit all of the function's basic blocks.

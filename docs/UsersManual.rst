@@ -762,7 +762,7 @@ on-disk cache that contains the vital information necessary to reduce
 some of the work needed to process a corresponding header file. While
 details of precompiled headers vary between compilers, precompiled
 headers have been shown to be highly effective at speeding up program
-compilation on systems with very large system headers (e.g., Mac OS/X).
+compilation on systems with very large system headers (e.g., Mac OS X).
 
 Generating a PCH File
 ^^^^^^^^^^^^^^^^^^^^^
@@ -1095,17 +1095,42 @@ below. If multiple flags are present, the last one is used.
   Generate complete debug info.
 
 Comment Parsing Options
---------------------------
+-----------------------
 
 Clang parses Doxygen and non-Doxygen style documentation comments and attaches
 them to the appropriate declaration nodes.  By default, it only parses
 Doxygen-style comments and ignores ordinary comments starting with ``//`` and
 ``/*``.
 
+.. option:: -Wdocumentation
+
+  Emit warnings about use of documentation comments.  This warning group is off
+  by default.
+
+  This includes checking that ``\param`` commands name parameters that actually
+  present in the function signature, checking that ``\returns`` is used only on
+  functions that actually return a value etc.
+
+.. option:: -Wno-documentation-unknown-command
+
+  Don't warn when encountering an unknown Doxygen command.
+
 .. option:: -fparse-all-comments
 
   Parse all comments as documentation comments (including ordinary comments
   starting with ``//`` and ``/*``).
+
+.. option:: -fcomment-block-commands=[commands]
+
+  Define custom documentation commands as block commands.  This allows Clang to
+  construct the correct AST for these custom commands, and silences warnings
+  about unknown commands.  Several commands must be separated by a comma
+  *without trailing space*; e.g. ``-fcomment-block-commands=foo,bar`` defines
+  custom commands ``\foo`` and ``\bar``.
+
+  It is also possible to use ``-fcomment-block-commands`` several times; e.g.
+  ``-fcomment-block-commands=foo -fcomment-block-commands=bar`` does the same
+  as above.
 
 .. _c:
 
@@ -1333,7 +1358,7 @@ X86
 ^^^
 
 The support for X86 (both 32-bit and 64-bit) is considered stable on
-Darwin (Mac OS/X), Linux, FreeBSD, and Dragonfly BSD: it has been tested
+Darwin (Mac OS X), Linux, FreeBSD, and Dragonfly BSD: it has been tested
 to correctly compile many large C, C++, Objective-C, and Objective-C++
 codebases.
 
@@ -1388,10 +1413,10 @@ backend.
 Operating System Features and Limitations
 -----------------------------------------
 
-Darwin (Mac OS/X)
+Darwin (Mac OS X)
 ^^^^^^^^^^^^^^^^^
 
-None
+Thread Sanitizer is not supported.
 
 Windows
 ^^^^^^^

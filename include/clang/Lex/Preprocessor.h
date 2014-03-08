@@ -102,7 +102,7 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
 
   /// An optional PTHManager object used for getting tokens from
   /// a token cache rather than lexing the original source file.
-  OwningPtr<PTHManager> PTH;
+  std::unique_ptr<PTHManager> PTH;
 
   /// A BumpPtrAllocator object used to quickly allocate and release
   /// objects internal to the Preprocessor.
@@ -200,6 +200,9 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// avoid tearing the Lexer and etc. down).
   bool IncrementalProcessing;
 
+  /// The kind of translation unit we are processing.
+  TranslationUnitKind TUKind;
+
   /// \brief The code-completion handler.
   CodeCompletionHandler *CodeComplete;
 
@@ -251,13 +254,13 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// not expanding a macro and we are lexing directly from source code.
   ///
   /// Only one of CurLexer, CurPTHLexer, or CurTokenLexer will be non-null.
-  OwningPtr<Lexer> CurLexer;
+  std::unique_ptr<Lexer> CurLexer;
 
   /// \brief The current top of stack that we're lexing from if
   /// not expanding from a macro and we are lexing from a PTH cache.
   ///
   /// Only one of CurLexer, CurPTHLexer, or CurTokenLexer will be non-null.
-  OwningPtr<PTHLexer> CurPTHLexer;
+  std::unique_ptr<PTHLexer> CurPTHLexer;
 
   /// \brief The current top of the stack what we're lexing from
   /// if not expanding a macro.
@@ -275,7 +278,7 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// \brief The current macro we are expanding, if we are expanding a macro.
   ///
   /// One of CurLexer and CurTokenLexer must be null.
-  OwningPtr<TokenLexer> CurTokenLexer;
+  std::unique_ptr<TokenLexer> CurTokenLexer;
 
   /// \brief The kind of lexer we're currently working with.
   enum CurLexerKind {
@@ -445,7 +448,8 @@ public:
                IdentifierInfoLookup *IILookup = 0,
                bool OwnsHeaderSearch = false,
                bool DelayInitialization = false,
-               bool IncrProcessing = false);
+               bool IncrProcessing = false,
+               TranslationUnitKind TUKind = TU_Complete);
 
   ~Preprocessor();
 
@@ -1338,13 +1342,9 @@ public:
 private:
 
   void PushIncludeMacroStack() {
-    IncludeMacroStack.push_back(IncludeStackInfo(CurLexerKind,
-                                                 CurSubmodule,
-                                                 CurLexer.take(),
-                                                 CurPTHLexer.take(),
-                                                 CurPPLexer,
-                                                 CurTokenLexer.take(),
-                                                 CurDirLookup));
+    IncludeMacroStack.push_back(IncludeStackInfo(
+        CurLexerKind, CurSubmodule, CurLexer.release(), CurPTHLexer.release(),
+        CurPPLexer, CurTokenLexer.release(), CurDirLookup));
     CurPPLexer = 0;
   }
 

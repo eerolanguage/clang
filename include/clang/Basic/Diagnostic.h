@@ -21,7 +21,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/Support/type_traits.h"
 #include <list>
 #include <vector>
 
@@ -1015,7 +1014,8 @@ inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB, int I) {
   return DB;
 }
 
-inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,bool I) {
+inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
+                                           bool I) {
   DB.AddTaggedVal(I, DiagnosticsEngine::ak_sint);
   return DB;
 }
@@ -1045,17 +1045,24 @@ inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
 // match.
 template<typename T>
 inline
-typename llvm::enable_if<llvm::is_same<T, DeclContext>, 
-                         const DiagnosticBuilder &>::type
+typename std::enable_if<std::is_same<T, DeclContext>::value,
+                        const DiagnosticBuilder &>::type
 operator<<(const DiagnosticBuilder &DB, T *DC) {
   DB.AddTaggedVal(reinterpret_cast<intptr_t>(DC),
                   DiagnosticsEngine::ak_declcontext);
   return DB;
 }
-  
+
 inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
                                            const SourceRange &R) {
   DB.AddSourceRange(CharSourceRange::getTokenRange(R));
+  return DB;
+}
+
+inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
+                                           ArrayRef<SourceRange> Ranges) {
+  for (const SourceRange &R: Ranges)
+    DB.AddSourceRange(CharSourceRange::getTokenRange(R));
   return DB;
 }
 
@@ -1064,7 +1071,7 @@ inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
   DB.AddSourceRange(R);
   return DB;
 }
-  
+
 inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
                                            const FixItHint &Hint) {
   if (!Hint.isNull())
@@ -1073,7 +1080,7 @@ inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
 }
 
 inline DiagnosticBuilder DiagnosticsEngine::Report(SourceLocation Loc,
-                                            unsigned DiagID){
+                                                   unsigned DiagID) {
   assert(CurDiagID == ~0U && "Multiple diagnostics in flight at once!");
   CurDiagLoc = Loc;
   CurDiagID = DiagID;

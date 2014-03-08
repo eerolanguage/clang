@@ -168,9 +168,7 @@ void Sema::NoteDeletedFunction(FunctionDecl *Decl) {
 /// \brief Determine whether a FunctionDecl was ever declared with an
 /// explicit storage class.
 static bool hasAnyExplicitStorageClass(const FunctionDecl *D) {
-  for (FunctionDecl::redecl_iterator I = D->redecls_begin(),
-                                     E = D->redecls_end();
-       I != E; ++I) {
+  for (auto I : D->redecls()) {
     if (I->getStorageClass() != SC_None)
       return true;
   }
@@ -5054,12 +5052,55 @@ CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
   llvm_unreachable("Unhandled scalar cast");
 }
 
+static bool breakDownVectorType(QualType type, uint64_t &len,
+                                QualType &eltType) {
+  // Vectors are simple.
+  if (const VectorType *vecType = type->getAs<VectorType>()) {
+    len = vecType->getNumElements();
+    eltType = vecType->getElementType();
+    assert(eltType->isScalarType());
+    return true;
+  }
+  
+  // We allow lax conversion to and from non-vector types, but only if
+  // they're real types (i.e. non-complex, non-pointer scalar types).
+  if (!type->isRealType()) return false;
+  
+  len = 1;
+  eltType = type;
+  return true;
+}
+
+static bool VectorTypesMatch(Sema &S, QualType srcTy, QualType destTy) {
+  uint64_t srcLen, destLen;
+  QualType srcElt, destElt;
+  if (!breakDownVectorType(srcTy, srcLen, srcElt)) return false;
+  if (!breakDownVectorType(destTy, destLen, destElt)) return false;
+  
+  // ASTContext::getTypeSize will return the size rounded up to a
+  // power of 2, so instead of using that, we need to use the raw
+  // element size multiplied by the element count.
+  uint64_t srcEltSize = S.Context.getTypeSize(srcElt);
+  uint64_t destEltSize = S.Context.getTypeSize(destElt);
+  
+  return (srcLen * srcEltSize == destLen * destEltSize);
+}
+
+/// Is this a legal conversion between two known vector types?
+bool Sema::isLaxVectorConversion(QualType srcTy, QualType destTy) {
+  assert(destTy->isVectorType() || srcTy->isVectorType());
+  
+  if (!Context.getLangOpts().LaxVectorConversions)
+    return false;
+  return VectorTypesMatch(*this, srcTy, destTy);
+}
+
 bool Sema::CheckVectorCast(SourceRange R, QualType VectorTy, QualType Ty,
                            CastKind &Kind) {
   assert(VectorTy->isVectorType() && "Not a vector type!");
 
   if (Ty->isVectorType() || Ty->isIntegerType()) {
-    if (Context.getTypeSize(VectorTy) != Context.getTypeSize(Ty))
+    if (!VectorTypesMatch(*this, Ty, VectorTy))
       return Diag(R.getBegin(),
                   Ty->isVectorType() ?
                   diag::err_invalid_conversion_between_vectors :
@@ -5085,7 +5126,7 @@ ExprResult Sema::CheckExtVectorCast(SourceRange R, QualType DestTy,
   // In OpenCL, casts between vectors of different types are not allowed.
   // (See OpenCL 6.2).
   if (SrcTy->isVectorType()) {
-    if (Context.getTypeSize(DestTy) != Context.getTypeSize(SrcTy)
+    if (!VectorTypesMatch(*this, SrcTy, DestTy)
         || (getLangOpts().OpenCL &&
             (DestTy.getCanonicalType() != SrcTy.getCanonicalType()))) {
       Diag(R.getBegin(),diag::err_invalid_conversion_between_ext_vectors)
@@ -6691,46 +6732,6 @@ QualType Sema::InvalidOperands(SourceLocation Loc, ExprResult &LHS,
     << LHS.get()->getType() << RHS.get()->getType()
     << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
   return QualType();
-}
-
-static bool breakDownVectorType(QualType type, uint64_t &len,
-                                QualType &eltType) {
-  // Vectors are simple.
-  if (const VectorType *vecType = type->getAs<VectorType>()) {
-    len = vecType->getNumElements();
-    eltType = vecType->getElementType();
-    assert(eltType->isScalarType());
-    return true;
-  }
-
-  // We allow lax conversion to and from non-vector types, but only if
-  // they're real types (i.e. non-complex, non-pointer scalar types).
-  if (!type->isRealType()) return false;
-
-  len = 1;
-  eltType = type;
-  return true;
-}
-
-/// Is this a legal conversion between two known vector types?
-bool Sema::isLaxVectorConversion(QualType srcTy, QualType destTy) {
-  assert(destTy->isVectorType() || srcTy->isVectorType());
-
-  if (!Context.getLangOpts().LaxVectorConversions)
-    return false;
-
-  uint64_t srcLen, destLen;
-  QualType srcElt, destElt;
-  if (!breakDownVectorType(srcTy, srcLen, srcElt)) return false;
-  if (!breakDownVectorType(destTy, destLen, destElt)) return false;
-
-  // ASTContext::getTypeSize will return the size rounded up to a
-  // power of 2, so instead of using that, we need to use the raw
-  // element size multiplied by the element count.
-  uint64_t srcEltSize = Context.getTypeSize(srcElt);
-  uint64_t destEltSize = Context.getTypeSize(destElt);
-
-  return (srcLen * srcEltSize == destLen * destEltSize);
 }
 
 /// Try to convert a value of non-vector type to a vector type by
@@ -10315,12 +10316,10 @@ ExprResult Sema::BuildBuiltinOffsetOf(SourceLocation BuiltinLoc,
     }
 
     if (IndirectMemberDecl) {
-      for (IndirectFieldDecl::chain_iterator FI =
-           IndirectMemberDecl->chain_begin(),
-           FEnd = IndirectMemberDecl->chain_end(); FI != FEnd; FI++) {
-        assert(isa<FieldDecl>(*FI));
+      for (auto *FI : IndirectMemberDecl->chain()) {
+        assert(isa<FieldDecl>(FI));
         Comps.push_back(OffsetOfNode(OC.LocStart,
-                                     cast<FieldDecl>(*FI), OC.LocEnd));
+                                     cast<FieldDecl>(FI), OC.LocEnd));
       }
     } else
       Comps.push_back(OffsetOfNode(OC.LocStart, MemberDecl, OC.LocEnd));
@@ -10532,15 +10531,14 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
   ProcessDeclAttributes(CurScope, CurBlock->TheDecl, ParamInfo);
 
   // Put the parameter variables in scope.
-  for (BlockDecl::param_iterator AI = CurBlock->TheDecl->param_begin(),
-         E = CurBlock->TheDecl->param_end(); AI != E; ++AI) {
-    (*AI)->setOwningFunction(CurBlock->TheDecl);
+  for (auto AI : CurBlock->TheDecl->params()) {
+    AI->setOwningFunction(CurBlock->TheDecl);
 
     // If this has an identifier, add it to the scope stack.
-    if ((*AI)->getIdentifier()) {
-      CheckShadow(CurBlock->TheScope, *AI);
+    if (AI->getIdentifier()) {
+      CheckShadow(CurBlock->TheScope, AI);
 
-      PushOnScopeChains(*AI, CurBlock->TheScope);
+      PushOnScopeChains(AI, CurBlock->TheScope);
     }
   }
 }
@@ -11493,10 +11491,9 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
     }
   } else {
     // Walk redefinitions, as some of them may be instantiable.
-    for (FunctionDecl::redecl_iterator i(Func->redecls_begin()),
-         e(Func->redecls_end()); i != e; ++i) {
+    for (auto i : Func->redecls()) {
       if (!i->isUsed(false) && i->isImplicitlyInstantiable())
-        MarkFunctionReferenced(Loc, *i);
+        MarkFunctionReferenced(Loc, i);
     }
   }
 

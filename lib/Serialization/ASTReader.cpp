@@ -60,6 +60,70 @@ using namespace clang::serialization;
 using namespace clang::serialization::reader;
 using llvm::BitstreamCursor;
 
+
+//===----------------------------------------------------------------------===//
+// ChainedASTReaderListener implementation
+//===----------------------------------------------------------------------===//
+
+bool
+ChainedASTReaderListener::ReadFullVersionInformation(StringRef FullVersion) {
+  return First->ReadFullVersionInformation(FullVersion) ||
+         Second->ReadFullVersionInformation(FullVersion);
+}
+bool ChainedASTReaderListener::ReadLanguageOptions(const LangOptions &LangOpts,
+                                                   bool Complain) {
+  return First->ReadLanguageOptions(LangOpts, Complain) ||
+         Second->ReadLanguageOptions(LangOpts, Complain);
+}
+bool
+ChainedASTReaderListener::ReadTargetOptions(const TargetOptions &TargetOpts,
+                                            bool Complain) {
+  return First->ReadTargetOptions(TargetOpts, Complain) ||
+         Second->ReadTargetOptions(TargetOpts, Complain);
+}
+bool ChainedASTReaderListener::ReadDiagnosticOptions(
+    const DiagnosticOptions &DiagOpts, bool Complain) {
+  return First->ReadDiagnosticOptions(DiagOpts, Complain) ||
+         Second->ReadDiagnosticOptions(DiagOpts, Complain);
+}
+bool
+ChainedASTReaderListener::ReadFileSystemOptions(const FileSystemOptions &FSOpts,
+                                                bool Complain) {
+  return First->ReadFileSystemOptions(FSOpts, Complain) ||
+         Second->ReadFileSystemOptions(FSOpts, Complain);
+}
+
+bool ChainedASTReaderListener::ReadHeaderSearchOptions(
+    const HeaderSearchOptions &HSOpts, bool Complain) {
+  return First->ReadHeaderSearchOptions(HSOpts, Complain) ||
+         Second->ReadHeaderSearchOptions(HSOpts, Complain);
+}
+bool ChainedASTReaderListener::ReadPreprocessorOptions(
+    const PreprocessorOptions &PPOpts, bool Complain,
+    std::string &SuggestedPredefines) {
+  return First->ReadPreprocessorOptions(PPOpts, Complain,
+                                        SuggestedPredefines) ||
+         Second->ReadPreprocessorOptions(PPOpts, Complain, SuggestedPredefines);
+}
+void ChainedASTReaderListener::ReadCounter(const serialization::ModuleFile &M,
+                                           unsigned Value) {
+  First->ReadCounter(M, Value);
+  Second->ReadCounter(M, Value);
+}
+bool ChainedASTReaderListener::needsInputFileVisitation() {
+  return First->needsInputFileVisitation() ||
+         Second->needsInputFileVisitation();
+}
+bool ChainedASTReaderListener::needsSystemInputFileVisitation() {
+  return First->needsSystemInputFileVisitation() ||
+  Second->needsSystemInputFileVisitation();
+}
+bool ChainedASTReaderListener::visitInputFile(StringRef Filename,
+                                              bool isSystem) {
+  return First->visitInputFile(Filename, isSystem) ||
+         Second->visitInputFile(Filename, isSystem);
+}
+
 //===----------------------------------------------------------------------===//
 // PCH validator implementation
 //===----------------------------------------------------------------------===//
@@ -1806,6 +1870,40 @@ void ASTReader::installImportedMacro(IdentifierInfo *II, ModuleMacroInfo *MMI,
   PP.appendMacroDirective(II, MD);
 }
 
+void ASTReader::readInputFileInfo(ModuleFile &F, unsigned ID,
+                                 std::string &Filename, off_t &StoredSize,
+                                 time_t &StoredTime, bool &Overridden) {
+  // Go find this input file.
+  BitstreamCursor &Cursor = F.InputFilesCursor;
+  SavedStreamPosition SavedPosition(Cursor);
+  Cursor.JumpToBit(F.InputFileOffsets[ID-1]);
+
+  unsigned Code = Cursor.ReadCode();
+  RecordData Record;
+  StringRef Blob;
+
+  unsigned Result = Cursor.readRecord(Code, Record, &Blob);
+  assert(static_cast<InputFileRecordTypes>(Result) == INPUT_FILE &&
+         "invalid record type for input file");
+  (void)Result;
+
+  assert(Record[0] == ID && "Bogus stored ID or offset");
+  StoredSize = static_cast<off_t>(Record[1]);
+  StoredTime = static_cast<time_t>(Record[2]);
+  Overridden = static_cast<bool>(Record[3]);
+  Filename = Blob;
+  MaybeAddSystemRootToFilename(F, Filename);
+}
+
+std::string ASTReader::getInputFileName(ModuleFile &F, unsigned int ID) {
+  off_t StoredSize;
+  time_t StoredTime;
+  bool Overridden;
+  std::string Filename;
+  readInputFileInfo(F, ID, Filename, StoredSize, StoredTime, Overridden);
+  return Filename;
+}
+
 InputFile ASTReader::getInputFile(ModuleFile &F, unsigned ID, bool Complain) {
   // If this ID is bogus, just return an empty input file.
   if (ID == 0 || ID > F.InputFilesLoaded.size())
@@ -1823,119 +1921,105 @@ InputFile ASTReader::getInputFile(ModuleFile &F, unsigned ID, bool Complain) {
   SavedStreamPosition SavedPosition(Cursor);
   Cursor.JumpToBit(F.InputFileOffsets[ID-1]);
   
-  unsigned Code = Cursor.ReadCode();
-  RecordData Record;
-  StringRef Blob;
-  switch ((InputFileRecordTypes)Cursor.readRecord(Code, Record, &Blob)) {
-  case INPUT_FILE: {
-    unsigned StoredID = Record[0];
-    assert(ID == StoredID && "Bogus stored ID or offset");
-    (void)StoredID;
-    off_t StoredSize = (off_t)Record[1];
-    time_t StoredTime = (time_t)Record[2];
-    bool Overridden = (bool)Record[3];
-    
-    // Get the file entry for this input file.
-    StringRef OrigFilename = Blob;
-    std::string Filename = OrigFilename;
-    MaybeAddSystemRootToFilename(F, Filename);
-    const FileEntry *File 
-      = Overridden? FileMgr.getVirtualFile(Filename, StoredSize, StoredTime)
-                  : FileMgr.getFile(Filename, /*OpenFile=*/false);
-    
-    // If we didn't find the file, resolve it relative to the
-    // original directory from which this AST file was created.
-    if (File == 0 && !F.OriginalDir.empty() && !CurrentDir.empty() &&
-        F.OriginalDir != CurrentDir) {
-      std::string Resolved = resolveFileRelativeToOriginalDir(Filename,
-                                                              F.OriginalDir,
-                                                              CurrentDir);
-      if (!Resolved.empty())
-        File = FileMgr.getFile(Resolved);
-    }
-    
-    // For an overridden file, create a virtual file with the stored
-    // size/timestamp.
-    if (Overridden && File == 0) {
-      File = FileMgr.getVirtualFile(Filename, StoredSize, StoredTime);
-    }
-    
-    if (File == 0) {
-      if (Complain) {
-        std::string ErrorStr = "could not find file '";
-        ErrorStr += Filename;
-        ErrorStr += "' referenced by AST file";
-        Error(ErrorStr.c_str());
-      }
-      // Record that we didn't find the file.
-      F.InputFilesLoaded[ID-1] = InputFile::getNotFound();
-      return InputFile();
-    }
+  off_t StoredSize;
+  time_t StoredTime;
+  bool Overridden;
+  std::string Filename;
+  readInputFileInfo(F, ID, Filename, StoredSize, StoredTime, Overridden);
 
-    // Check if there was a request to override the contents of the file
-    // that was part of the precompiled header. Overridding such a file
-    // can lead to problems when lexing using the source locations from the
-    // PCH.
-    SourceManager &SM = getSourceManager();
-    if (!Overridden && SM.isFileOverridden(File)) {
-      if (Complain)
-        Error(diag::err_fe_pch_file_overridden, Filename);
-      // After emitting the diagnostic, recover by disabling the override so
-      // that the original file will be used.
-      SM.disableFileContentsOverride(File);
-      // The FileEntry is a virtual file entry with the size of the contents
-      // that would override the original contents. Set it to the original's
-      // size/time.
-      FileMgr.modifyFileEntry(const_cast<FileEntry*>(File),
-                              StoredSize, StoredTime);
+  const FileEntry *File
+    = Overridden? FileMgr.getVirtualFile(Filename, StoredSize, StoredTime)
+                : FileMgr.getFile(Filename, /*OpenFile=*/false);
+
+  // If we didn't find the file, resolve it relative to the
+  // original directory from which this AST file was created.
+  if (File == 0 && !F.OriginalDir.empty() && !CurrentDir.empty() &&
+      F.OriginalDir != CurrentDir) {
+    std::string Resolved = resolveFileRelativeToOriginalDir(Filename,
+                                                            F.OriginalDir,
+                                                            CurrentDir);
+    if (!Resolved.empty())
+      File = FileMgr.getFile(Resolved);
+  }
+
+  // For an overridden file, create a virtual file with the stored
+  // size/timestamp.
+  if (Overridden && File == 0) {
+    File = FileMgr.getVirtualFile(Filename, StoredSize, StoredTime);
+  }
+
+  if (File == 0) {
+    if (Complain) {
+      std::string ErrorStr = "could not find file '";
+      ErrorStr += Filename;
+      ErrorStr += "' referenced by AST file";
+      Error(ErrorStr.c_str());
     }
+    // Record that we didn't find the file.
+    F.InputFilesLoaded[ID-1] = InputFile::getNotFound();
+    return InputFile();
+  }
 
-    bool IsOutOfDate = false;
+  // Check if there was a request to override the contents of the file
+  // that was part of the precompiled header. Overridding such a file
+  // can lead to problems when lexing using the source locations from the
+  // PCH.
+  SourceManager &SM = getSourceManager();
+  if (!Overridden && SM.isFileOverridden(File)) {
+    if (Complain)
+      Error(diag::err_fe_pch_file_overridden, Filename);
+    // After emitting the diagnostic, recover by disabling the override so
+    // that the original file will be used.
+    SM.disableFileContentsOverride(File);
+    // The FileEntry is a virtual file entry with the size of the contents
+    // that would override the original contents. Set it to the original's
+    // size/time.
+    FileMgr.modifyFileEntry(const_cast<FileEntry*>(File),
+                            StoredSize, StoredTime);
+  }
 
-    // For an overridden file, there is nothing to validate.
-    if (!Overridden && (StoredSize != File->getSize()
+  bool IsOutOfDate = false;
+
+  // For an overridden file, there is nothing to validate.
+  if (!Overridden && (StoredSize != File->getSize()
 #if !defined(LLVM_ON_WIN32)
-         // In our regression testing, the Windows file system seems to
-         // have inconsistent modification times that sometimes
-         // erroneously trigger this error-handling path.
-         || StoredTime != File->getModificationTime()
+       // In our regression testing, the Windows file system seems to
+       // have inconsistent modification times that sometimes
+       // erroneously trigger this error-handling path.
+       || StoredTime != File->getModificationTime()
 #endif
-         )) {
-      if (Complain) {
-        // Build a list of the PCH imports that got us here (in reverse).
-        SmallVector<ModuleFile *, 4> ImportStack(1, &F);
-        while (ImportStack.back()->ImportedBy.size() > 0)
-          ImportStack.push_back(ImportStack.back()->ImportedBy[0]);
+       )) {
+    if (Complain) {
+      // Build a list of the PCH imports that got us here (in reverse).
+      SmallVector<ModuleFile *, 4> ImportStack(1, &F);
+      while (ImportStack.back()->ImportedBy.size() > 0)
+        ImportStack.push_back(ImportStack.back()->ImportedBy[0]);
 
-        // The top-level PCH is stale.
-        StringRef TopLevelPCHName(ImportStack.back()->FileName);
-        Error(diag::err_fe_pch_file_modified, Filename, TopLevelPCHName);
+      // The top-level PCH is stale.
+      StringRef TopLevelPCHName(ImportStack.back()->FileName);
+      Error(diag::err_fe_pch_file_modified, Filename, TopLevelPCHName);
 
-        // Print the import stack.
-        if (ImportStack.size() > 1 && !Diags.isDiagnosticInFlight()) {
+      // Print the import stack.
+      if (ImportStack.size() > 1 && !Diags.isDiagnosticInFlight()) {
+        Diag(diag::note_pch_required_by)
+          << Filename << ImportStack[0]->FileName;
+        for (unsigned I = 1; I < ImportStack.size(); ++I)
           Diag(diag::note_pch_required_by)
-            << Filename << ImportStack[0]->FileName;
-          for (unsigned I = 1; I < ImportStack.size(); ++I)
-            Diag(diag::note_pch_required_by)
-              << ImportStack[I-1]->FileName << ImportStack[I]->FileName;
-        }
-
-        if (!Diags.isDiagnosticInFlight())
-          Diag(diag::note_pch_rebuild_required) << TopLevelPCHName;
+            << ImportStack[I-1]->FileName << ImportStack[I]->FileName;
       }
 
-      IsOutOfDate = true;
+      if (!Diags.isDiagnosticInFlight())
+        Diag(diag::note_pch_rebuild_required) << TopLevelPCHName;
     }
 
-    InputFile IF = InputFile(File, Overridden, IsOutOfDate);
-
-    // Note that we've loaded this input file.
-    F.InputFilesLoaded[ID-1] = IF;
-    return IF;
-  }
+    IsOutOfDate = true;
   }
 
-  return InputFile();
+  InputFile IF = InputFile(File, Overridden, IsOutOfDate);
+
+  // Note that we've loaded this input file.
+  F.InputFilesLoaded[ID-1] = IF;
+  return IF;
 }
 
 const FileEntry *ASTReader::getFileEntry(StringRef filenameStrRef) {
@@ -2004,30 +2088,41 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       // Validate input files.
       const HeaderSearchOptions &HSOpts =
           PP.getHeaderSearchInfo().getHeaderSearchOpts();
+
+      // All user input files reside at the index range [0, Record[1]), and
+      // system input files reside at [Record[1], Record[0]).
+      // Record is the one from INPUT_FILE_OFFSETS.
+      unsigned NumInputs = Record[0];
+      unsigned NumUserInputs = Record[1];
+
       if (!DisableValidation &&
           (!HSOpts.ModulesValidateOncePerBuildSession ||
            F.InputFilesValidationTimestamp <= HSOpts.BuildSessionTimestamp)) {
         bool Complain = (ClientLoadCapabilities & ARR_OutOfDate) == 0;
-        // All user input files reside at the index range [0, Record[1]), and
-        // system input files reside at [Record[1], Record[0]).
-        // Record is the one from INPUT_FILE_OFFSETS.
-        //
+
         // If we are reading a module, we will create a verification timestamp,
         // so we verify all input files.  Otherwise, verify only user input
         // files.
-        unsigned NumInputs = Record[0];
-        unsigned NumUserInputs = Record[1];
-        unsigned N = ValidateSystemInputs ||
-                             (HSOpts.ModulesValidateOncePerBuildSession &&
-                              F.Kind == MK_Module)
-                         ? NumInputs
-                         : NumUserInputs;
+
+        unsigned N = NumUserInputs;
+        if (ValidateSystemInputs ||
+            (HSOpts.ModulesValidateOncePerBuildSession && F.Kind == MK_Module))
+          N = NumInputs;
+
         for (unsigned I = 0; I < N; ++I) {
           InputFile IF = getInputFile(F, I+1, Complain);
           if (!IF.getFile() || IF.isOutOfDate())
             return OutOfDate;
         }
       }
+
+      if (Listener && Listener->needsInputFileVisitation()) {
+        unsigned N = Listener->needsSystemInputFileVisitation() ? NumInputs
+                                                                : NumUserInputs;
+        for (unsigned I = 0; I < N; ++I)
+          Listener->visitInputFile(getInputFileName(F, I+1), I >= NumUserInputs);
+      }
+
       return Success;
     }
 
@@ -3614,7 +3709,7 @@ std::string ASTReader::getOriginalSourceFile(const std::string &ASTFileName,
                                              DiagnosticsEngine &Diags) {
   // Open the AST file.
   std::string ErrStr;
-  OwningPtr<llvm::MemoryBuffer> Buffer;
+  std::unique_ptr<llvm::MemoryBuffer> Buffer;
   Buffer.reset(FileMgr.getBufferForFile(ASTFileName, &ErrStr));
   if (!Buffer) {
     Diags.Report(diag::err_fe_unable_to_read_pch_file) << ASTFileName << ErrStr;
@@ -3703,7 +3798,7 @@ bool ASTReader::readASTFileControlBlock(StringRef Filename,
                                         ASTReaderListener &Listener) {
   // Open the AST file.
   std::string ErrStr;
-  OwningPtr<llvm::MemoryBuffer> Buffer;
+  std::unique_ptr<llvm::MemoryBuffer> Buffer;
   Buffer.reset(FileMgr.getBufferForFile(Filename, &ErrStr));
   if (!Buffer) {
     return true;
@@ -3729,6 +3824,7 @@ bool ASTReader::readASTFileControlBlock(StringRef Filename,
     return true;
 
   bool NeedsInputFiles = Listener.needsInputFileVisitation();
+  bool NeedsSystemInputFiles = Listener.needsSystemInputFileVisitation();
   BitstreamCursor InputFilesCursor;
   if (NeedsInputFiles) {
     InputFilesCursor = Stream;
@@ -3815,6 +3911,10 @@ bool ASTReader::readASTFileControlBlock(StringRef Filename,
       for (unsigned I = 0; I != NumInputFiles; ++I) {
         // Go find this input file.
         bool isSystemFile = I >= NumUserFiles;
+
+        if (isSystemFile && !NeedsSystemInputFiles)
+          break; // the rest are system input files
+
         BitstreamCursor &Cursor = InputFilesCursor;
         SavedStreamPosition SavedPosition(Cursor);
         Cursor.JumpToBit(InputFileOffs[I]);
@@ -3896,15 +3996,17 @@ bool ASTReader::ReadSubmoduleBlock(ModuleFile &F) {
       }
       
       StringRef Name = Blob;
-      SubmoduleID GlobalID = getGlobalSubmoduleID(F, Record[0]);
-      SubmoduleID Parent = getGlobalSubmoduleID(F, Record[1]);
-      bool IsFramework = Record[2];
-      bool IsExplicit = Record[3];
-      bool IsSystem = Record[4];
-      bool InferSubmodules = Record[5];
-      bool InferExplicitSubmodules = Record[6];
-      bool InferExportWildcard = Record[7];
-      bool ConfigMacrosExhaustive = Record[8];
+      unsigned Idx = 0;
+      SubmoduleID GlobalID = getGlobalSubmoduleID(F, Record[Idx++]);
+      SubmoduleID Parent = getGlobalSubmoduleID(F, Record[Idx++]);
+      bool IsFramework = Record[Idx++];
+      bool IsExplicit = Record[Idx++];
+      bool IsSystem = Record[Idx++];
+      bool IsExternC = Record[Idx++];
+      bool InferSubmodules = Record[Idx++];
+      bool InferExplicitSubmodules = Record[Idx++];
+      bool InferExportWildcard = Record[Idx++];
+      bool ConfigMacrosExhaustive = Record[Idx++];
 
       Module *ParentModule = 0;
       if (Parent)
@@ -3940,6 +4042,7 @@ bool ASTReader::ReadSubmoduleBlock(ModuleFile &F) {
       
       CurrentModule->IsFromModuleFile = true;
       CurrentModule->IsSystem = IsSystem || CurrentModule->IsSystem;
+      CurrentModule->IsExternC = IsExternC;
       CurrentModule->InferSubmodules = InferSubmodules;
       CurrentModule->InferExplicitSubmodules = InferExplicitSubmodules;
       CurrentModule->InferExportWildcard = InferExportWildcard;
@@ -7676,16 +7779,14 @@ void ASTReader::finishPendingActions() {
       llvm::SmallVector<const NamedDecl*, 4> Candidates;
       for (DeclContext::lookup_iterator I = R.begin(), E = R.end();
            !Found && I != E; ++I) {
-        for (Decl::redecl_iterator RI = (*I)->redecls_begin(),
-                                   RE = (*I)->redecls_end();
-             RI != RE; ++RI) {
-          if ((*RI)->getLexicalDeclContext() == CanonDef) {
+        for (auto RI : (*I)->redecls()) {
+          if (RI->getLexicalDeclContext() == CanonDef) {
             // This declaration is present in the canonical definition. If it's
             // in the same redecl chain, it's the one we're looking for.
-            if ((*RI)->getCanonicalDecl() == DCanon)
+            if (RI->getCanonicalDecl() == DCanon)
               Found = true;
             else
-              Candidates.push_back(cast<NamedDecl>(*RI));
+              Candidates.push_back(cast<NamedDecl>(RI));
             break;
           }
         }
@@ -7726,44 +7827,35 @@ void ASTReader::finishPendingActions() {
         const_cast<TagType*>(TagT)->decl = TD;
       }
       
-      if (CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(*D)) {
-        for (CXXRecordDecl::redecl_iterator R = RD->redecls_begin(),
-                                         REnd = RD->redecls_end();
-             R != REnd; ++R)
-          cast<CXXRecordDecl>(*R)->DefinitionData = RD->DefinitionData;
+      if (auto RD = dyn_cast<CXXRecordDecl>(*D)) {
+        for (auto R : RD->redecls())
+          cast<CXXRecordDecl>(R)->DefinitionData = RD->DefinitionData;
         
       }
 
       continue;
     }
     
-    if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(*D)) {
+    if (auto ID = dyn_cast<ObjCInterfaceDecl>(*D)) {
       // Make sure that the ObjCInterfaceType points at the definition.
       const_cast<ObjCInterfaceType *>(cast<ObjCInterfaceType>(ID->TypeForDecl))
         ->Decl = ID;
       
-      for (ObjCInterfaceDecl::redecl_iterator R = ID->redecls_begin(),
-                                           REnd = ID->redecls_end();
-           R != REnd; ++R)
+      for (auto R : ID->redecls())
         R->Data = ID->Data;
       
       continue;
     }
     
-    if (ObjCProtocolDecl *PD = dyn_cast<ObjCProtocolDecl>(*D)) {
-      for (ObjCProtocolDecl::redecl_iterator R = PD->redecls_begin(),
-                                          REnd = PD->redecls_end();
-           R != REnd; ++R)
+    if (auto PD = dyn_cast<ObjCProtocolDecl>(*D)) {
+      for (auto R : PD->redecls())
         R->Data = PD->Data;
       
       continue;
     }
     
-    RedeclarableTemplateDecl *RTD
-      = cast<RedeclarableTemplateDecl>(*D)->getCanonicalDecl();
-    for (RedeclarableTemplateDecl::redecl_iterator R = RTD->redecls_begin(),
-                                                REnd = RTD->redecls_end();
-         R != REnd; ++R)
+    auto RTD = cast<RedeclarableTemplateDecl>(*D)->getCanonicalDecl();
+    for (auto R : RTD->redecls())
       R->Common = RTD->Common;
   }
   PendingDefinitions.clear();

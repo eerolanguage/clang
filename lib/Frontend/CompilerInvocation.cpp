@@ -1447,8 +1447,12 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     Opts.setMSPointerToMemberRepresentationMethod(InheritanceModel);
   }
 
-  // Check if -fopenmp is specified.
-  Opts.OpenMP = Args.hasArg(OPT_fopenmp);
+  // Check if -fopenmp= is specified.
+  if (const Arg *A = Args.getLastArg(options::OPT_fopenmp_EQ)) {
+    Opts.OpenMP = llvm::StringSwitch<bool>(A->getValue())
+        .Case("libiomp5", true)
+        .Default(false);
+  }
 
   // Record whether the __DEPRECATED define was requested.
   Opts.Deprecated = Args.hasFlag(OPT_fdeprecated_macro,
@@ -1682,12 +1686,12 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   bool Success = true;
 
   // Parse the arguments.
-  OwningPtr<OptTable> Opts(createDriverOptTable());
+  std::unique_ptr<OptTable> Opts(createDriverOptTable());
   const unsigned IncludedFlagsBitmask = options::CC1Option;
   unsigned MissingArgIndex, MissingArgCount;
-  OwningPtr<InputArgList> Args(
-    Opts->ParseArgs(ArgBegin, ArgEnd, MissingArgIndex, MissingArgCount,
-                    IncludedFlagsBitmask));
+  std::unique_ptr<InputArgList> Args(
+      Opts->ParseArgs(ArgBegin, ArgEnd, MissingArgIndex, MissingArgCount,
+                      IncludedFlagsBitmask));
 
   // Check for missing argument error.
   if (MissingArgCount) {
@@ -1848,7 +1852,7 @@ std::string CompilerInvocation::getModuleHash() const {
   //   $sysroot/System/Library/CoreServices/SystemVersion.plist
   // as part of the module hash.
   if (!hsOpts.Sysroot.empty()) {
-    llvm::OwningPtr<llvm::MemoryBuffer> buffer;
+    std::unique_ptr<llvm::MemoryBuffer> buffer;
     SmallString<128> systemVersionFile;
     systemVersionFile += hsOpts.Sysroot;
     llvm::sys::path::append(systemVersionFile, "System");

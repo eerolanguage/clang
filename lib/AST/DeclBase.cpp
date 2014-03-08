@@ -313,7 +313,7 @@ bool Decl::isReferenced() const {
     return true;
 
   // Check redeclarations.
-  for (redecl_iterator I = redecls_begin(), E = redecls_end(); I != E; ++I)
+  for (auto I : redecls())
     if (I->Referenced)
       return true;
 
@@ -1076,14 +1076,23 @@ ExternalASTSource::SetExternalVisibleDeclsForName(const DeclContext *DC,
   return List.getLookupResult();
 }
 
+DeclContext::decl_range DeclContext::noload_decls() const {
+  return decl_range(decl_iterator(FirstDecl), decl_iterator());
+}
+
 DeclContext::decl_iterator DeclContext::noload_decls_begin() const {
   return decl_iterator(FirstDecl);
+}
+
+DeclContext::decl_range DeclContext::decls() const {
+  if (hasExternalLexicalStorage())
+    LoadLexicalDeclsFromExternalStorage();
+  return decl_range(decl_iterator(FirstDecl), decl_iterator());
 }
 
 DeclContext::decl_iterator DeclContext::decls_begin() const {
   if (hasExternalLexicalStorage())
     LoadLexicalDeclsFromExternalStorage();
-
   return decl_iterator(FirstDecl);
 }
 
@@ -1528,12 +1537,12 @@ void DeclContext::makeDeclVisibleInContextImpl(NamedDecl *D, bool Internal) {
 
 /// Returns iterator range [First, Last) of UsingDirectiveDecls stored within
 /// this context.
-DeclContext::udir_iterator_range
+DeclContext::udir_range
 DeclContext::getUsingDirectives() const {
   // FIXME: Use something more efficient than normal lookup for using
   // directives. In C++, using directives are looked up more than anything else.
   lookup_const_result Result = lookup(UsingDirectiveDecl::getName());
-  return udir_iterator_range(reinterpret_cast<udir_iterator>(Result.begin()),
+  return udir_range(reinterpret_cast<udir_iterator>(Result.begin()),
                              reinterpret_cast<udir_iterator>(Result.end()));
 }
 

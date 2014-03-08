@@ -1222,13 +1222,11 @@ bool DataRecursiveASTVisitor<Derived>::TraverseDeclContextHelper(DeclContext *DC
   if (!DC)
     return true;
 
-  for (DeclContext::decl_iterator Child = DC->decls_begin(),
-           ChildEnd = DC->decls_end();
-       Child != ChildEnd; ++Child) {
+  for (auto *Child : DC->decls()) {
     // BlockDecls and CapturedDecls are traversed through BlockExprs and
     // CapturedStmts respectively.
-    if (!isa<BlockDecl>(*Child) && !isa<CapturedDecl>(*Child))
-      TRY_TO(TraverseDecl(*Child));
+    if (!isa<BlockDecl>(Child) && !isa<CapturedDecl>(Child))
+      TRY_TO(TraverseDecl(Child));
   }
 
   return true;
@@ -2367,6 +2365,13 @@ bool DataRecursiveASTVisitor<Derived>::TraverseOMPClause(OMPClause *C) {
 template<typename Derived>
 bool DataRecursiveASTVisitor<Derived>::VisitOMPIfClause(OMPIfClause *C) {
   TraverseStmt(C->getCondition());
+  return true;
+}
+
+template<typename Derived>
+bool DataRecursiveASTVisitor<Derived>::VisitOMPNumThreadsClause(
+                                                    OMPNumThreadsClause *C) {
+  TraverseStmt(C->getNumThreads());
   return true;
 }
 

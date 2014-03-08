@@ -333,7 +333,7 @@ public:
   ExtVectorDeclsType ExtVectorDecls;
 
   /// FieldCollector - Collects CXXFieldDecls during parsing of C++ classes.
-  OwningPtr<CXXFieldCollector> FieldCollector;
+  std::unique_ptr<CXXFieldCollector> FieldCollector;
 
   typedef llvm::SmallSetVector<const NamedDecl*, 16> NamedDeclSetType;
 
@@ -345,7 +345,7 @@ public:
   /// PureVirtualClassDiagSet - a set of class declarations which we have
   /// emitted a list of pure virtual functions. Used to prevent emitting the
   /// same list more than once.
-  OwningPtr<RecordDeclSetTy> PureVirtualClassDiagSet;
+  std::unique_ptr<RecordDeclSetTy> PureVirtualClassDiagSet;
 
   /// ParsingInitForAutoVars - a set of declarations with auto types for which
   /// we are currently parsing the initializer.
@@ -597,7 +597,7 @@ public:
   RecordDecl *MSVCGuidDecl;
 
   /// \brief Caches identifiers/selectors for NSFoundation APIs.
-  OwningPtr<NSAPI> NSAPIObj;
+  std::unique_ptr<NSAPI> NSAPIObj;
 
   /// \brief The declaration of the Objective-C NSNumber class.
   ObjCInterfaceDecl *NSNumberDecl;
@@ -7150,6 +7150,7 @@ private:
   /// \brief Initialization of data-sharing attributes stack.
   void InitDataSharingAttributesStack();
   void DestroyDataSharingAttributesStack();
+  ExprResult PerformImplicitIntegerConversion(SourceLocation OpLoc, Expr *Op);
 public:
   /// \brief Called on start of new data sharing attribute block.
   void StartOpenMPDSABlock(OpenMPDirectiveKind K,
@@ -7200,6 +7201,11 @@ public:
   OMPClause *ActOnOpenMPIfClause(Expr *Condition, SourceLocation StartLoc,
                                  SourceLocation LParenLoc,
                                  SourceLocation EndLoc);
+  /// \brief Called on well-formed 'num_threads' clause.
+  OMPClause *ActOnOpenMPNumThreadsClause(Expr *NumThreads,
+                                         SourceLocation StartLoc,
+                                         SourceLocation LParenLoc,
+                                         SourceLocation EndLoc);
 
   OMPClause *ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
                                      unsigned Argument,
@@ -8094,7 +8100,7 @@ public:
 
 private:
   /// \brief A map from magic value to type information.
-  OwningPtr<llvm::DenseMap<TypeTagMagicValue, TypeTagData> >
+  std::unique_ptr<llvm::DenseMap<TypeTagMagicValue, TypeTagData>>
       TypeTagForDatatypeMagicValues;
 
   /// \brief Peform checks on a call of a function with argument_with_type_tag
