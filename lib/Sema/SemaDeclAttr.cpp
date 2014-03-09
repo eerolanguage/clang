@@ -4389,6 +4389,29 @@ static void handleNSBridgedAttr(Sema &S, Scope *Sc, Decl *D,
                            Attr.getAttributeSpellingListIndex()));
 }
 
+static void handleObjCBridgeAttr(Sema &S, Scope *Sc, Decl *D,
+                                const AttributeList &Attr) {
+  if (!isa<RecordDecl>(D)) {
+    S.Diag(D->getLocStart(), diag::err_objc_bridge_attribute)
+      << S.getLangOpts().CPlusPlus;
+    return;
+  }
+  
+  if (Attr.getNumArgs() != 1) {
+    S.Diag(D->getLocStart(), diag::err_objc_bridge_not_id);
+    return;
+  }
+  IdentifierLoc *Parm = Attr.isArgIdent(0) ? Attr.getArgAsIdent(0) : 0;
+  if (!Parm) {
+    S.Diag(D->getLocStart(), diag::err_objc_bridge_not_id);
+    return;
+  }
+  
+  D->addAttr(::new (S.Context)
+             ObjCBridgeAttr(Attr.getRange(), S.Context, Parm ? Parm->Ident : 0,
+                           Attr.getAttributeSpellingListIndex()));
+}
+
 static void handleObjCOwnershipAttr(Sema &S, Decl *D,
                                     const AttributeList &Attr) {
   if (hasDeclarator(D)) return;
@@ -4675,6 +4698,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
       
   case AttributeList::AT_NSBridged:
     handleNSBridgedAttr(S, scope, D, Attr); break;
+      
+  case AttributeList::AT_ObjCBridge:
+    handleObjCBridgeAttr(S, scope, D, Attr); break;
 
   case AttributeList::AT_CFAuditedTransfer:
   case AttributeList::AT_CFUnknownTransfer:

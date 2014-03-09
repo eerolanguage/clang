@@ -3276,6 +3276,108 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
     << castRange << castExpr->getSourceRange();
 }
 
+static inline ObjCBridgeAttr *getObjCBridgeAttr(const TypedefType *TD) {
+  TypedefNameDecl *TDNDecl = TD->getDecl();
+  QualType QT = TDNDecl->getUnderlyingType();
+  if (QT->isPointerType()) {
+    QT = QT->getPointeeType();
+    if (const RecordType *RT = QT->getAs<RecordType>())
+      if (RecordDecl *RD = RT->getDecl())
+        if (RD->hasAttr<ObjCBridgeAttr>())
+          return RD->getAttr<ObjCBridgeAttr>();
+  }
+  return 0;
+}
+
+static bool CheckObjCBridgeNSCast(Sema &S, QualType castType, Expr *castExpr) {
+  QualType T = castExpr->getType();
+  while (const TypedefType *TD = dyn_cast<TypedefType>(T.getTypePtr())) {
+    TypedefNameDecl *TDNDecl = TD->getDecl();
+    if (ObjCBridgeAttr *ObjCBAttr = getObjCBridgeAttr(TD)) {
+      if (IdentifierInfo *Parm = ObjCBAttr->getBridgedType()) {
+        NamedDecl *Target = 0;
+        // Check for an existing type with this name.
+        LookupResult R(S, DeclarationName(Parm), SourceLocation(),
+                       Sema::LookupOrdinaryName);
+        if (S.LookupName(R, S.TUScope)) {
+          Target = R.getFoundDecl();
+          if (Target && isa<ObjCInterfaceDecl>(Target)) {
+            ObjCInterfaceDecl *ExprClass = cast<ObjCInterfaceDecl>(Target);
+            if (const ObjCObjectPointerType *InterfacePointerType =
+                  castType->getAsObjCInterfacePointerType()) {
+              ObjCInterfaceDecl *CastClass
+                = InterfacePointerType->getObjectType()->getInterface();
+              if ((CastClass == ExprClass) || (CastClass && ExprClass->isSuperClassOf(CastClass)))
+                return true;
+              S.Diag(castExpr->getLocStart(), diag::warn_objc_invalid_bridge)
+                << T << Target->getName() << castType->getPointeeType();
+              return true;
+            } else {
+              S.Diag(castExpr->getLocStart(), diag::warn_objc_invalid_bridge)
+                << T << Target->getName() << castType;
+              return true;
+           }
+          }
+        }
+        S.Diag(castExpr->getLocStart(), diag::err_objc_cf_bridged_not_interface)
+        << castExpr->getType() << Parm->getName();
+        S.Diag(TDNDecl->getLocStart(), diag::note_declared_at);
+        if (Target)
+          S.Diag(Target->getLocStart(), diag::note_declared_at);
+      }
+      return true;
+    }
+    T = TDNDecl->getUnderlyingType();
+  }
+  return false;
+}
+
+// (CFErrorRef)ns
+static bool CheckObjCBridgeCFCast(Sema &S, QualType castType, Expr *castExpr) {
+  QualType T = castType;
+  while (const TypedefType *TD = dyn_cast<TypedefType>(T.getTypePtr())) {
+    TypedefNameDecl *TDNDecl = TD->getDecl();
+    if (ObjCBridgeAttr *ObjCBAttr = getObjCBridgeAttr(TD)) {
+      if (IdentifierInfo *Parm = ObjCBAttr->getBridgedType()) {
+        NamedDecl *Target = 0;
+        // Check for an existing type with this name.
+        LookupResult R(S, DeclarationName(Parm), SourceLocation(),
+                       Sema::LookupOrdinaryName);
+        if (S.LookupName(R, S.TUScope)) {
+          Target = R.getFoundDecl();
+          if (Target && isa<ObjCInterfaceDecl>(Target)) {
+            ObjCInterfaceDecl *CastClass = cast<ObjCInterfaceDecl>(Target);
+            if (const ObjCObjectPointerType *InterfacePointerType =
+                  castExpr->getType()->getAsObjCInterfacePointerType()) {
+              ObjCInterfaceDecl *ExprClass
+                = InterfacePointerType->getObjectType()->getInterface();
+              if ((CastClass == ExprClass) || (ExprClass && CastClass->isSuperClassOf(ExprClass)))
+                return true;
+              S.Diag(castExpr->getLocStart(), diag::warn_objc_invalid_bridge_to_cf)
+                << castExpr->getType()->getPointeeType() << T;
+              S.Diag(TDNDecl->getLocStart(), diag::note_declared_at);
+              return true;
+            } else {
+              S.Diag(castExpr->getLocStart(), diag::warn_objc_invalid_bridge_to_cf)
+                << castExpr->getType() << castType;
+              S.Diag(TDNDecl->getLocStart(), diag::note_declared_at);
+              return true;
+            }
+          }
+        }
+        S.Diag(castExpr->getLocStart(), diag::err_objc_ns_bridged_invalid_cfobject)
+        << castExpr->getType() << castType;
+        S.Diag(TDNDecl->getLocStart(), diag::note_declared_at);
+        if (Target)
+          S.Diag(Target->getLocStart(), diag::note_declared_at);
+      }
+      return true;
+    }
+    T = TDNDecl->getUnderlyingType();
+  }
+  return false;
+}
+
 Sema::ARCConversionResult
 Sema::CheckObjCARCConversion(SourceRange castRange, QualType castType,
                              Expr *&castExpr, CheckedConversionKind CCK,
@@ -3333,6 +3435,17 @@ Sema::CheckObjCARCConversion(SourceRange castRange, QualType castType,
   if (castACTC == ACTC_indirectRetainable && exprACTC == ACTC_voidPtr &&
       CCK != CCK_ImplicitConversion)
     return ACR_okay;
+  
+  if (castACTC == ACTC_retainable && exprACTC == ACTC_coreFoundation &&
+      (CCK == CCK_CStyleCast || CCK == CCK_FunctionalCast))
+    if (CheckObjCBridgeNSCast(*this, castType, castExpr))
+      return ACR_okay;
+    
+  if (castACTC == ACTC_coreFoundation && exprACTC == ACTC_retainable &&
+      (CCK == CCK_CStyleCast || CCK == CCK_FunctionalCast))
+    if (CheckObjCBridgeCFCast(*this, castType, castExpr))
+      return ACR_okay;
+    
 
   switch (ARCCastChecker(Context, exprACTC, castACTC, false).Visit(castExpr)) {
   // For invalid casts, fall through.
