@@ -3454,10 +3454,17 @@ static void fillAttributedTypeLoc(AttributedTypeLoc TL,
   }
 
   TL.setAttrNameLoc(attrs->getLoc());
-  if (TL.hasAttrExprOperand() && attrs->isArgExpr(0))
+  if (TL.hasAttrExprOperand()) {
+    assert(attrs->isArgExpr(0) && "mismatched attribute operand kind");
     TL.setAttrExprOperand(attrs->getArgAsExpr(0));
-  else if (TL.hasAttrEnumOperand() && attrs->isArgIdent(0))
-    TL.setAttrEnumOperandLoc(attrs->getArgAsIdent(0)->Loc);
+  } else if (TL.hasAttrEnumOperand()) {
+    assert((attrs->isArgIdent(0) || attrs->isArgExpr(0)) &&
+           "unexpected attribute operand kind");
+    if (attrs->isArgIdent(0))
+      TL.setAttrEnumOperandLoc(attrs->getArgAsIdent(0)->Loc);
+    else
+      TL.setAttrEnumOperandLoc(attrs->getArgAsExpr(0)->getExprLoc());
+  }
 
   // FIXME: preserve this information to here.
   if (TL.hasAttrOperand())
@@ -5339,12 +5346,11 @@ bool Sema::RequireLiteralType(SourceLocation Loc, QualType T,
         return true;
       }
     }
-    for (CXXRecordDecl::field_iterator I = RD->field_begin(),
-         E = RD->field_end(); I != E; ++I) {
+    for (const auto *I : RD->fields()) {
       if (!I->getType()->isLiteralType(Context) ||
           I->getType().isVolatileQualified()) {
         Diag(I->getLocation(), diag::note_non_literal_field)
-          << RD << *I << I->getType()
+          << RD << I << I->getType()
           << I->getType().isVolatileQualified();
         return true;
       }

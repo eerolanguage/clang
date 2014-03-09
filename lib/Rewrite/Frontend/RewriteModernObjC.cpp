@@ -24,11 +24,11 @@
 #include "clang/Lex/Lexer.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <memory>
 
 using namespace clang;
 using llvm::utostr;
@@ -3788,11 +3788,8 @@ bool RewriteModernObjC::RewriteObjCFieldDeclType(QualType &Type,
         return true;
       }
       Result += " {\n";
-      for (RecordDecl::field_iterator i = RD->field_begin(), 
-           e = RD->field_end(); i != e; ++i) {
-        FieldDecl *FD = *i;
+      for (auto *FD : RD->fields())
         RewriteObjCFieldDecl(FD, Result);
-      }
       Result += "\t} "; 
       return true;
     }
@@ -3809,8 +3806,7 @@ bool RewriteModernObjC::RewriteObjCFieldDeclType(QualType &Type,
       }
       
       Result += " {\n";
-      for (EnumDecl::enumerator_iterator EC = ED->enumerator_begin(),
-           ECEnd = ED->enumerator_end(); EC != ECEnd; ++EC) {
+      for (const auto *EC : ED->enumerators()) {
         Result += "\t"; Result += EC->getName(); Result += " = ";
         llvm::APSInt Val = EC->getInitVal();
         Result += Val.toString(10);
@@ -5848,9 +5844,7 @@ Stmt *RewriteModernObjC::RewriteFunctionBodyOrGlobalInitializer(Stmt *S) {
 }
 
 void RewriteModernObjC::RewriteRecordBody(RecordDecl *RD) {
-  for (RecordDecl::field_iterator i = RD->field_begin(), 
-                                  e = RD->field_end(); i != e; ++i) {
-    FieldDecl *FD = *i;
+  for (auto *FD : RD->fields()) {
     if (isTopLevelBlockPointerType(FD->getType()))
       RewriteBlockPointerDecl(FD);
     if (FD->getType()->isObjCQualifiedIdType() ||

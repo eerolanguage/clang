@@ -1024,10 +1024,9 @@ static const FieldDecl *FindFirstNamedDataMember(const RecordDecl *RD) {
   assert(RD->isAnonymousStructOrUnion() &&
          "Expected anonymous struct or union!");
   
-  for (RecordDecl::field_iterator I = RD->field_begin(), E = RD->field_end();
-       I != E; ++I) {
+  for (const auto *I : RD->fields()) {
     if (I->getIdentifier())
-      return *I;
+      return I;
     
     if (const RecordType *RT = I->getType()->getAs<RecordType>())
       if (const FieldDecl *NamedDataMember = 
@@ -2432,7 +2431,7 @@ void CXXNameMangler::mangleType(const AutoType *T) {
 }
 
 void CXXNameMangler::mangleType(const AtomicType *T) {
-  // <type> ::= U <source-name> <type>	# vendor extended type qualifier
+  // <type> ::= U <source-name> <type>  # vendor extended type qualifier
   // (Until there's a standardized mangling...)
   Out << "U7_Atomic";
   mangleType(T->getValueType());

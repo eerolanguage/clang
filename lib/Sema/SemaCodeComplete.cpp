@@ -2843,12 +2843,13 @@ CodeCompletionResult::CreateCodeCompletionString(ASTContext &Ctx,
     return Result.TakeString();
   }
 
-  for (Decl::attr_iterator i = ND->attr_begin(); i != ND->attr_end(); ++i) {
-    if (AnnotateAttr *Attr = dyn_cast_or_null<AnnotateAttr>(*i)) {
-      Result.AddAnnotation(Result.getAllocator().CopyString(Attr->getAnnotation()));
-    }
-  }
-  
+  for (specific_attr_iterator<AnnotateAttr>
+           i = ND->specific_attr_begin<AnnotateAttr>(),
+           e = ND->specific_attr_end<AnnotateAttr>();
+       i != e; ++i)
+    Result.AddAnnotation(
+        Result.getAllocator().CopyString((*i)->getAnnotation()));
+
   AddResultTypeChunk(Ctx, Policy, ND, Result);
   
   if (const FunctionDecl *Function = dyn_cast<FunctionDecl>(ND)) {
@@ -4021,13 +4022,11 @@ void Sema::CodeCompleteCase(Scope *S) {
                         CodeCompleter->getCodeCompletionTUInfo(),
                         CodeCompletionContext::CCC_Expression);
   Results.EnterNewScope();
-  for (EnumDecl::enumerator_iterator E = Enum->enumerator_begin(),
-                                  EEnd = Enum->enumerator_end();
-       E != EEnd; ++E) {
-    if (EnumeratorsSeen.count(*E))
+  for (auto *E : Enum->enumerators()) {
+    if (EnumeratorsSeen.count(E))
       continue;
     
-    CodeCompletionResult R(*E, CCP_EnumInCase, Qualifier);
+    CodeCompletionResult R(E, CCP_EnumInCase, Qualifier);
     Results.AddResult(R, CurContext, 0, false);
   }
   Results.ExitScope();
@@ -4524,14 +4523,12 @@ void Sema::CodeCompleteConstructorInitializer(
   }
   
   // Add completions for members.
-  for (CXXRecordDecl::field_iterator Field = ClassDecl->field_begin(),
-                                  FieldEnd = ClassDecl->field_end();
-       Field != FieldEnd; ++Field) {
+  for (auto *Field : ClassDecl->fields()) {
     if (!InitializedFields.insert(cast<FieldDecl>(Field->getCanonicalDecl()))) {
       SawLastInitializer
         = !Initializers.empty() && 
           Initializers.back()->isAnyMemberInitializer() &&
-          Initializers.back()->getAnyMember() == *Field;
+          Initializers.back()->getAnyMember() == Field;
       continue;
     }
     
@@ -4548,7 +4545,7 @@ void Sema::CodeCompleteConstructorInitializer(
                                                      : CCP_MemberDeclaration,
                                            CXCursor_MemberRef,
                                            CXAvailability_Available,
-                                           *Field));
+                                           Field));
     SawLastInitializer = false;
   }
   Results.ExitScope();

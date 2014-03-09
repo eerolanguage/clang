@@ -27,13 +27,13 @@
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "clang/Serialization/ASTBitCodes.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/Path.h"
 #include <cassert>
 #include <map>
+#include <memory>
 #include <string>
 #include <sys/types.h>
 #include <utility>
@@ -261,10 +261,6 @@ private:
   /// Used to inform the lexer as to whether it's starting at the beginning of
   /// a line after skipping the preamble.
   bool PreambleEndsAtStartOfLine;
-  
-  /// \brief The size of the source buffer that we've reserved for the main 
-  /// file within the precompiled preamble.
-  unsigned PreambleReservedSize;
 
   /// \brief Keeps track of the files that were used when computing the 
   /// preamble, with both their buffer size and their modification time.

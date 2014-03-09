@@ -18,10 +18,10 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/StringRef.h"
 #include <cassert>
 #include <list>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -106,7 +106,7 @@ class CompilerInstance : public ModuleLoader {
   IntrusiveRefCntPtr<ASTReader> ModuleManager;
 
   /// \brief The dependency file generator.
-  OwningPtr<DependencyFileGenerator> TheDependencyFileGenerator;
+  std::unique_ptr<DependencyFileGenerator> TheDependencyFileGenerator;
 
   /// \brief The set of top-level modules that has already been loaded,
   /// along with the module map

@@ -1917,9 +1917,7 @@ llvm::DIType CGDebugInfo::CreateEnumType(const EnumType *Ty) {
   // Create DIEnumerator elements for each enumerator.
   SmallVector<llvm::Value *, 16> Enumerators;
   ED = ED->getDefinition();
-  for (EnumDecl::enumerator_iterator
-         Enum = ED->enumerator_begin(), EnumEnd = ED->enumerator_end();
-       Enum != EnumEnd; ++Enum) {
+  for (const auto *Enum : ED->enumerators()) {
     Enumerators.push_back(
       DBuilder.createEnumerator(Enum->getName(),
                                 Enum->getInitVal().getSExtValue()));
@@ -2839,10 +2837,7 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, unsigned Tag,
     // all union fields.
     const RecordDecl *RD = cast<RecordDecl>(RT->getDecl());
     if (RD->isUnion() && RD->isAnonymousStructOrUnion()) {
-      for (RecordDecl::field_iterator I = RD->field_begin(),
-             E = RD->field_end();
-           I != E; ++I) {
-        FieldDecl *Field = *I;
+      for (const auto *Field : RD->fields()) {
         llvm::DIType FieldTy = getOrCreateType(Field->getType(), Unit);
         StringRef FieldName = Field->getName();
 

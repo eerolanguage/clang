@@ -1054,11 +1054,10 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
 
       // Gather all enum values, set their type and sort them,
       // allowing easier comparison with CaseVals.
-      for (EnumDecl::enumerator_iterator EDI = ED->enumerator_begin();
-           EDI != ED->enumerator_end(); ++EDI) {
+      for (auto *EDI : ED->enumerators()) {
         llvm::APSInt Val = EDI->getInitVal();
         AdjustAPSInt(Val, CondWidth, CondIsSigned);
-        EnumVals.push_back(std::make_pair(Val, *EDI));
+        EnumVals.push_back(std::make_pair(Val, EDI));
       }
       std::stable_sort(EnumVals.begin(), EnumVals.end(), CmpEnumVals);
       EnumValsTy::iterator EIend =
@@ -1205,11 +1204,10 @@ Sema::DiagnoseAssignmentEnum(QualType DstType, QualType SrcType,
 
         // Gather all enum values, set their type and sort them,
         // allowing easier comparison with rhs constant.
-        for (EnumDecl::enumerator_iterator EDI = ED->enumerator_begin();
-             EDI != ED->enumerator_end(); ++EDI) {
+        for (auto *EDI : ED->enumerators()) {
           llvm::APSInt Val = EDI->getInitVal();
           AdjustAPSInt(Val, DstWidth, DstIsSigned);
-          EnumVals.push_back(std::make_pair(Val, *EDI));
+          EnumVals.push_back(std::make_pair(Val, EDI));
         }
         if (EnumVals.empty())
           return;
@@ -3659,9 +3657,7 @@ void Sema::ActOnCapturedRegionError() {
   Record->setInvalidDecl();
 
   SmallVector<Decl*, 4> Fields;
-  for (RecordDecl::field_iterator I = Record->field_begin(),
-                                  E = Record->field_end(); I != E; ++I)
-    Fields.push_back(*I);
+  llvm::copy(Record->fields(), std::back_inserter(Fields));
   ActOnFields(/*Scope=*/0, Record->getLocation(), Record, Fields,
               SourceLocation(), SourceLocation(), /*AttributeList=*/0);
 

@@ -2899,6 +2899,12 @@ public:
   // enumerator_iterator - Iterates through the enumerators of this
   // enumeration.
   typedef specific_decl_iterator<EnumConstantDecl> enumerator_iterator;
+  typedef llvm::iterator_range<specific_decl_iterator<EnumConstantDecl>>
+    enumerator_range;
+
+  enumerator_range enumerators() const {
+    return enumerator_range(enumerator_begin(), enumerator_end());
+  }
 
   enumerator_iterator enumerator_begin() const {
     const EnumDecl *E = getDefinition();
@@ -3145,7 +3151,9 @@ public:
   // the non-static data members of this class, ignoring any static
   // data members, functions, constructors, destructors, etc.
   typedef specific_decl_iterator<FieldDecl> field_iterator;
+  typedef llvm::iterator_range<specific_decl_iterator<FieldDecl>> field_range;
 
+  field_range fields() const { return field_range(field_begin(), field_end()); }
   field_iterator field_begin() const;
 
   field_iterator field_end() const {

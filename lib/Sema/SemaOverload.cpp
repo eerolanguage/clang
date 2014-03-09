@@ -1715,9 +1715,7 @@ IsTransparentUnionStandardConversion(Sema &S, Expr* From,
   // The field to initialize within the transparent union.
   RecordDecl *UD = UT->getDecl();
   // It's compatible if the expression matches any of the fields.
-  for (RecordDecl::field_iterator it = UD->field_begin(),
-       itend = UD->field_end();
-       it != itend; ++it) {
+  for (const auto *it : UD->fields()) {
     if (IsStandardConversion(S, From, it->getType(), InOverloadResolution, SCS,
                              CStyle, /*ObjCWritebackConversion=*/false)) {
       ToType = it->getType();
@@ -11687,7 +11685,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
 
   // Build the full argument list for the method call (the implicit object
   // parameter is placed at the beginning of the list).
-  llvm::OwningArrayPtr<Expr *> MethodArgs(new Expr*[Args.size() + 1]);
+  std::unique_ptr<Expr * []> MethodArgs(new Expr *[Args.size() + 1]);
   MethodArgs[0] = Object.get();
   std::copy(Args.begin(), Args.end(), &MethodArgs[1]);
 
