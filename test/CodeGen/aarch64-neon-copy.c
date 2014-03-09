@@ -1192,3 +1192,128 @@ float64x2_t test_vmovq_n_f64(float64_t v1) {
   return vmovq_n_f64(v1);
   // CHECK: dup {{v[0-9]+}}.2d, {{v[0-9]+}}.d[0]
 }
+
+// CHECK: test_vcopy_lane_s64
+int64x1_t test_vcopy_lane_s64(int64x1_t a, int64x1_t c) {
+  return vcopy_lane_s64(a, 0, c, 0);
+// CHECK: fmov {{d[0-9]+}}, {{d[0-9]+}}
+// CHECK-NOT: dup {{d[0-9]+}}, {{v[0-9]+}}.d[0]
+}
+
+// CHECK: test_vcopy_lane_u64
+uint64x1_t test_vcopy_lane_u64(uint64x1_t a, uint64x1_t c) {
+  return vcopy_lane_u64(a, 0, c, 0);
+// CHECK: fmov {{d[0-9]+}}, {{d[0-9]+}}
+// CHECK-NOT: dup {{d[0-9]+}}, {{v[0-9]+}}.d[0]
+}
+
+// CHECK: test_vcopy_lane_f64
+float64x1_t test_vcopy_lane_f64(float64x1_t a, float64x1_t c) {
+  return vcopy_lane_f64(a, 0, c, 0);
+// CHECK: fmov {{d[0-9]+}}, {{d[0-9]+}}
+// CHECK-NOT: dup {{d[0-9]+}}, {{v[0-9]+}}.d[0]
+}
+
+// CHECK: test_vcopy_laneq_s64
+int64x1_t test_vcopy_laneq_s64(int64x1_t a, int64x2_t c) {
+  return vcopy_laneq_s64(a, 0, c, 1);
+// CHECK: dup {{d[0-9]+}}, {{v[0-9]+}}.d[1]
+}
+
+// CHECK: test_vcopy_laneq_u64
+uint64x1_t test_vcopy_laneq_u64(uint64x1_t a, uint64x2_t c) {
+  return vcopy_laneq_u64(a, 0, c, 1);
+// CHECK: dup {{d[0-9]+}}, {{v[0-9]+}}.d[1]
+}
+
+// CHECK: test_vcopy_laneq_f64
+float64x1_t test_vcopy_laneq_f64(float64x1_t a, float64x2_t c) {
+  return vcopy_laneq_f64(a, 0, c, 1);
+// CHECK: dup {{d[0-9]+}}, {{v[0-9]+}}.d[1]
+}
+
+// CHECK: test_vcopy_laneq_p64
+poly64x1_t test_vcopy_laneq_p64(poly64x1_t a, poly64x2_t c) {
+  return vcopy_laneq_p64(a, 0, c, 1);
+// CHECK: dup {{d[0-9]+}}, {{v[0-9]+}}.d[1]
+}
+
+// CHECK: test_vcopyq_laneq_f64
+float64x2_t test_vcopyq_laneq_f64(float64x2_t a, float64x2_t c) {
+// CHECK: ins  {{v[0-9]+}}.d[1], {{v[0-9]+}}.d[1]
+  return vcopyq_laneq_f64(a, 1, c, 1);
+}
+
+// CHECK: test_vget_lane_f16
+int test_vget_lane_f16(float16x4_t v1) {
+  float16_t a = vget_lane_f16(v1, 3);
+  return (int)a;
+// CHECK: dup {{h[0-9]+}}, {{v[0-9]+}}.h[3]
+}
+
+// CHECK: test_vgetq_lane_f16
+int test_vgetq_lane_f16(float16x8_t v1) {
+  float16_t a = vgetq_lane_f16(v1, 7);
+  return (int)a;
+// CHECK: dup {{h[0-9]+}}, {{v[0-9]+}}.h[7]
+}
+
+// CHECK: test_vget_lane_f16_2
+float test_vget_lane_f16_2(float16x4_t v1) {
+  float16_t a = vget_lane_f16(v1, 3);
+  return (float)a;
+// CHECK: dup {{h[0-9]+}}, {{v[0-9]+}}.h[3]
+}
+
+// CHECK: test_vgetq_lane_f16_2
+float test_vgetq_lane_f16_2(float16x8_t v1) {
+  float16_t a = vgetq_lane_f16(v1, 7);
+  return (float)a;
+// CHECK: dup {{h[0-9]+}}, {{v[0-9]+}}.h[7]
+}
+
+// CHECK: test_vset_lane_f16
+float16x4_t test_vset_lane_f16(float16x4_t v1) {
+  float16_t a;
+  return vset_lane_f16(a, v1, 3);
+// CHECK: fmov  {{s[0-9]+}}, wzr
+// CHECK-NEXT: ins {{v[0-9]+}}.h[3],  {{v[0-9]+}}.h[0]
+}
+
+// CHECK: test_vsetq_lane_f16
+float16x8_t test_vsetq_lane_f16(float16x8_t v1) {
+  float16_t a;
+  return vsetq_lane_f16(a, v1, 7);
+// CHECK: fmov  {{s[0-9]+}}, wzr
+// CHECK-NEXT: ins {{v[0-9]+}}.h[7],  {{v[0-9]+}}.h[0]
+}
+
+// CHECK: test_vset_lane_f16_2
+float16x4_t test_vset_lane_f16_2(float16x4_t v1) {
+  float16_t a = vget_lane_f16(v1, 0);
+  return vset_lane_f16(a, v1, 3);
+// CHECK: ins {{v[0-9]+}}.h[3],  {{v[0-9]+}}.h[0]
+}
+
+// CHECK: test_vsetq_lane_f16_2
+float16x8_t test_vsetq_lane_f16_2(float16x8_t v1) {
+  float16_t a = vgetq_lane_f16(v1, 0);
+  return vsetq_lane_f16(a, v1, 7);
+// CHECK: ins {{v[0-9]+}}.h[7],  {{v[0-9]+}}.h[0]
+}
+
+
+// CHECK: test_vsetq_lane_f16_3
+float16x8_t test_vsetq_lane_f16_3(float16x8_t v1, float b, float c) {
+  float16_t a = (float16_t)b;
+  return vsetq_lane_f16(a, v1, 7);
+// CHECK: ins {{v[0-9]+}}.h[7],  {{w[0-9]+}}
+}
+
+// CHECK: test_vsetq_lane_f16_4
+float16x8_t test_vsetq_lane_f16_4(float16x8_t v1, float b, float c) {
+  float16_t a = (float16_t)b + 1.0;
+  return vsetq_lane_f16(a, v1, 7);
+// CHECK: ins {{v[0-9]+}}.h[7],  {{w[0-9]+}}
+}
+

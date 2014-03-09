@@ -4913,6 +4913,10 @@ struct SpecialMemberDeletionInfo {
     // cv-qualifiers on class members don't affect default ctor / dtor calls.
     if (CSM == Sema::CXXDefaultConstructor || CSM == Sema::CXXDestructor)
       Quals = 0;
+    // cv-qualifiers on class members affect the type of both '*this' and the
+    // argument for an assignment.
+    if (IsAssignment)
+      TQ |= Quals;
     return S.LookupSpecialMember(Class, CSM,
                                  ConstArg || (Quals & Qualifiers::Const),
                                  VolatileArg || (Quals & Qualifiers::Volatile),
@@ -6171,6 +6175,10 @@ bool Sema::CheckDestructor(CXXDestructorDecl *Destructor) {
     Context.DeclarationNames.getCXXOperatorName(OO_Delete);
     if (FindDeallocationFunction(Loc, RD, Name, OperatorDelete))
       return true;
+    // If there's no class-specific operator delete, look up the global
+    // non-array delete.
+    if (!OperatorDelete)
+      OperatorDelete = FindUsualDeallocationFunction(Loc, true, Name);
 
     MarkFunctionReferenced(Loc, OperatorDelete);
     

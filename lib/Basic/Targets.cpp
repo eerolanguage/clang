@@ -138,33 +138,37 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
     return;
   }
 
-  // Set the appropriate OS version define.
-  if (Triple.isiOS()) {
-    assert(Maj < 10 && Min < 100 && Rev < 100 && "Invalid version!");
-    char Str[6];
-    Str[0] = '0' + Maj;
-    Str[1] = '0' + (Min / 10);
-    Str[2] = '0' + (Min % 10);
-    Str[3] = '0' + (Rev / 10);
-    Str[4] = '0' + (Rev % 10);
-    Str[5] = '\0';
-    Builder.defineMacro("__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__", Str);
-  } else if (Triple.getArchName() != "thumbv6m" &&
-             Triple.getArchName() != "thumbv7m" &&
-             Triple.getArchName() != "thumbv7em") {
-    // Note that the Driver allows versions which aren't representable in the
-    // define (because we only get a single digit for the minor and micro
-    // revision numbers). So, we limit them to the maximum representable
-    // version.
-    assert(Triple.getEnvironmentName().empty() && "Invalid environment!");
-    assert(Maj < 100 && Min < 100 && Rev < 100 && "Invalid version!");
-    char Str[5];
-    Str[0] = '0' + (Maj / 10);
-    Str[1] = '0' + (Maj % 10);
-    Str[2] = '0' + std::min(Min, 9U);
-    Str[3] = '0' + std::min(Rev, 9U);
-    Str[4] = '\0';
-    Builder.defineMacro("__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__", Str);
+  // If there's an environment specified in the triple, that means we're dealing
+  // with an embedded variant of some sort and don't want the platform
+  // version-min defines, so only add them if there's not one.
+  if (Triple.getEnvironmentName().empty()) {
+    // Set the appropriate OS version define.
+    if (Triple.isiOS()) {
+      assert(Maj < 10 && Min < 100 && Rev < 100 && "Invalid version!");
+      char Str[6];
+      Str[0] = '0' + Maj;
+      Str[1] = '0' + (Min / 10);
+      Str[2] = '0' + (Min % 10);
+      Str[3] = '0' + (Rev / 10);
+      Str[4] = '0' + (Rev % 10);
+      Str[5] = '\0';
+      Builder.defineMacro("__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__",
+                          Str);
+    } else {
+      // Note that the Driver allows versions which aren't representable in the
+      // define (because we only get a single digit for the minor and micro
+      // revision numbers). So, we limit them to the maximum representable
+      // version.
+      assert(Triple.getEnvironmentName().empty() && "Invalid environment!");
+      assert(Maj < 100 && Min < 100 && Rev < 100 && "Invalid version!");
+      char Str[5];
+      Str[0] = '0' + (Maj / 10);
+      Str[1] = '0' + (Maj % 10);
+      Str[2] = '0' + std::min(Min, 9U);
+      Str[3] = '0' + std::min(Rev, 9U);
+      Str[4] = '\0';
+      Builder.defineMacro("__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__", Str);
+    }
   }
 
   PlatformMinVersion = VersionTuple(Maj, Min, Rev);
@@ -3675,6 +3679,7 @@ class ARMTargetInfo : public TargetInfo {
     // it is safe to use atomic instructions on armv6 and newer.
     if (!T.isOSLinux() &&
         T.getOS() != llvm::Triple::FreeBSD &&
+        T.getOS() != llvm::Triple::NetBSD &&
         T.getOS() != llvm::Triple::Bitrig)
       return false;
     StringRef ArchName = T.getArchName();
@@ -3702,10 +3707,19 @@ public:
       : TargetInfo(Triple), ABI("aapcs-linux"), CPU("arm1136j-s"),
         FPMath(FP_Default), IsAAPCS(true) {
     BigEndian = false;
-    SizeType = UnsignedInt;
-    PtrDiffType = SignedInt;
-    // AAPCS 7.1.1, ARM-Linux ABI 2.4: type of wchar_t is unsigned int.
-    WCharType = UnsignedInt;
+    switch (getTriple().getOS()) {
+    case llvm::Triple::NetBSD:
+      SizeType = UnsignedLong;
+      PtrDiffType = SignedLong;
+      WCharType = SignedInt;
+      break;
+    default:
+      // AAPCS 7.1.1, ARM-Linux ABI 2.4: type of wchar_t is unsigned int.
+      WCharType = UnsignedInt;
+      SizeType = UnsignedInt;
+      PtrDiffType = SignedInt;
+      break;
+    }
 
     // {} in inline assembly are neon specifiers, not assembly variant
     // specifiers.
@@ -4092,7 +4106,7 @@ public:
     case 'r': {
       switch (Modifier) {
       default:
-        return (isInOut || isOutput || Size <= 32);
+        return (isInOut || isOutput || Size <= 64);
       case 'q':
         // A register of size 32 cannot fit a vector type.
         return false;
