@@ -41,7 +41,7 @@ namespace {
         : Out(Out ? *Out : llvm::outs()), Dump(Dump),
           FilterString(FilterString), DumpLookups(DumpLookups) {}
 
-    virtual void HandleTranslationUnit(ASTContext &Context) {
+    void HandleTranslationUnit(ASTContext &Context) override {
       TranslationUnitDecl *D = Context.getTranslationUnitDecl();
 
       if (FilterString.empty())
@@ -101,13 +101,13 @@ namespace {
     ASTDeclNodeLister(raw_ostream *Out = NULL)
         : Out(Out ? *Out : llvm::outs()) {}
 
-    virtual void HandleTranslationUnit(ASTContext &Context) {
+    void HandleTranslationUnit(ASTContext &Context) override {
       TraverseDecl(Context.getTranslationUnitDecl());
     }
 
     bool shouldWalkTypesOfTypeLocs() const { return false; }
 
-    virtual bool VisitNamedDecl(NamedDecl *D) {
+    bool VisitNamedDecl(NamedDecl *D) {
       D->printQualifiedName(Out);
       Out << '\n';
       return true;
@@ -138,11 +138,11 @@ namespace {
   class ASTViewer : public ASTConsumer {
     ASTContext *Context;
   public:
-    void Initialize(ASTContext &Context) {
+    void Initialize(ASTContext &Context) override {
       this->Context = &Context;
     }
 
-    virtual bool HandleTopLevelDecl(DeclGroupRef D) {
+    bool HandleTopLevelDecl(DeclGroupRef D) override {
       for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I)
         HandleTopLevelSingleDecl(*I);
       return true;
@@ -177,7 +177,7 @@ class DeclContextPrinter : public ASTConsumer {
 public:
   DeclContextPrinter() : Out(llvm::errs()) {}
 
-  void HandleTranslationUnit(ASTContext &C) {
+  void HandleTranslationUnit(ASTContext &C) override {
     PrintDeclContext(C.getTranslationUnitDecl(), 4);
   }
 

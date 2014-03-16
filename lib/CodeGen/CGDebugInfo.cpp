@@ -1151,11 +1151,9 @@ CollectCXXMemberFunctions(const CXXRecordDecl *RD, llvm::DIFile Unit,
       // Add any template specializations that have already been seen. Like
       // implicit member functions, these may have been added to a declaration
       // in the case of vtable-based debug info reduction.
-      for (FunctionTemplateDecl::spec_iterator SI = FTD->spec_begin(),
-                                               SE = FTD->spec_end();
-           SI != SE; ++SI) {
+      for (const auto *SI : FTD->specializations()) {
         llvm::DenseMap<const FunctionDecl *, llvm::WeakVH>::iterator MI =
-            SPCache.find(cast<CXXMethodDecl>(*SI)->getCanonicalDecl());
+            SPCache.find(cast<CXXMethodDecl>(SI)->getCanonicalDecl());
         if (MI != SPCache.end())
           EltTys.push_back(MI->second);
       }
@@ -1172,15 +1170,14 @@ CollectCXXBases(const CXXRecordDecl *RD, llvm::DIFile Unit,
                 llvm::DIType RecordTy) {
 
   const ASTRecordLayout &RL = CGM.getContext().getASTRecordLayout(RD);
-  for (CXXRecordDecl::base_class_const_iterator BI = RD->bases_begin(),
-         BE = RD->bases_end(); BI != BE; ++BI) {
+  for (const auto &BI : RD->bases()) {
     unsigned BFlags = 0;
     uint64_t BaseOffset;
 
     const CXXRecordDecl *Base =
-      cast<CXXRecordDecl>(BI->getType()->getAs<RecordType>()->getDecl());
+      cast<CXXRecordDecl>(BI.getType()->getAs<RecordType>()->getDecl());
 
-    if (BI->isVirtual()) {
+    if (BI.isVirtual()) {
       // virtual base offset offset is -ve. The code generator emits dwarf
       // expression where it expects +ve number.
       BaseOffset =
@@ -1192,7 +1189,7 @@ CollectCXXBases(const CXXRecordDecl *RD, llvm::DIFile Unit,
     // FIXME: Inconsistent units for BaseOffset. It is in bytes when
     // BI->isVirtual() and bits when not.
 
-    AccessSpecifier Access = BI->getAccessSpecifier();
+    AccessSpecifier Access = BI.getAccessSpecifier();
     if (Access == clang::AS_private)
       BFlags |= llvm::DIDescriptor::FlagPrivate;
     else if (Access == clang::AS_protected)
@@ -1200,7 +1197,7 @@ CollectCXXBases(const CXXRecordDecl *RD, llvm::DIFile Unit,
 
     llvm::DIType DTy =
       DBuilder.createInheritance(RecordTy,
-                                 getOrCreateType(BI->getType(), Unit),
+                                 getOrCreateType(BI.getType(), Unit),
                                  BaseOffset, BFlags);
     EltTys.push_back(DTy);
   }
@@ -1669,9 +1666,7 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
   }
 
   // Create entries for all of the properties.
-  for (ObjCContainerDecl::prop_iterator I = ID->prop_begin(),
-         E = ID->prop_end(); I != E; ++I) {
-    const ObjCPropertyDecl *PD = *I;
+  for (const auto *PD : ID->properties()) {
     SourceLocation Loc = PD->getLocation();
     llvm::DIFile PUnit = getOrCreateFile(Loc);
     unsigned PLine = getLineNumber(Loc);
@@ -3036,10 +3031,7 @@ void CGDebugInfo::EmitDeclareOfBlockLiteralArgVariable(const CGBlockInfo &block,
   }
 
   // Variable captures.
-  for (BlockDecl::capture_const_iterator
-         i = blockDecl->capture_begin(), e = blockDecl->capture_end();
-       i != e; ++i) {
-    const BlockDecl::Capture &capture = *i;
+  for (const auto &capture : blockDecl->captures()) {
     const VarDecl *variable = capture.getVariable();
     const CGBlockInfo::Capture &captureInfo = block.getCapture(variable);
 

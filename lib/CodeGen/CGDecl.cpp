@@ -365,7 +365,7 @@ namespace {
     CodeGenFunction::Destroyer *destroyer;
     bool useEHCleanupForArray;
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       // Don't use an EH cleanup recursively from an EH cleanup.
       bool useEHCleanupForArray =
         flags.isForNormalCleanup() && this->useEHCleanupForArray;
@@ -384,7 +384,7 @@ namespace {
     llvm::Value *NRVOFlag;
     llvm::Value *Loc;
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       // Along the exceptions path we always execute the dtor.
       bool NRVO = flags.isForNormalCleanup() && NRVOFlag;
 
@@ -410,7 +410,7 @@ namespace {
   struct CallStackRestore : EHScopeStack::Cleanup {
     llvm::Value *Stack;
     CallStackRestore(llvm::Value *Stack) : Stack(Stack) {}
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       llvm::Value *V = CGF.Builder.CreateLoad(Stack);
       llvm::Value *F = CGF.CGM.getIntrinsic(llvm::Intrinsic::stackrestore);
       CGF.Builder.CreateCall(F, V);
@@ -421,7 +421,7 @@ namespace {
     const VarDecl &Var;
     ExtendGCLifetime(const VarDecl *var) : Var(*var) {}
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       // Compute the address of the local variable, in case it's a
       // byref or something.
       DeclRefExpr DRE(const_cast<VarDecl*>(&Var), false,
@@ -441,7 +441,7 @@ namespace {
                         const VarDecl *Var)
       : CleanupFn(CleanupFn), FnInfo(*Info), Var(*Var) {}
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       DeclRefExpr DRE(const_cast<VarDecl*>(&Var), false,
                       Var.getType(), VK_LValue, SourceLocation());
       // Compute the address of the local variable, in case it's a byref
@@ -473,7 +473,7 @@ namespace {
     CallLifetimeEnd(llvm::Value *addr, llvm::Value *size)
       : Addr(addr), Size(size) {}
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       llvm::Value *castAddr = CGF.Builder.CreateBitCast(Addr, CGF.Int8PtrTy);
       CGF.Builder.CreateCall2(CGF.CGM.getLLVMLifetimeEndFn(),
                               Size, castAddr)
@@ -530,9 +530,8 @@ static bool isAccessedBy(const VarDecl &var, const Stmt *s) {
       return (ref->getDecl() == &var);
     if (const BlockExpr *be = dyn_cast<BlockExpr>(e)) {
       const BlockDecl *block = be->getBlockDecl();
-      for (BlockDecl::capture_const_iterator i = block->capture_begin(),
-           e = block->capture_end(); i != e; ++i) {
-        if (i->getVariable() == &var)
+      for (const auto &I : block->captures()) {
+        if (I.getVariable() == &var)
           return true;
       }
     }
@@ -571,7 +570,10 @@ void CodeGenFunction::EmitScalarInit(const Expr *init,
     EmitStoreThroughLValue(RValue::get(value), lvalue, true);
     return;
   }
-
+  
+  if (const CXXDefaultInitExpr *DIE = dyn_cast<CXXDefaultInitExpr>(init))
+    init = DIE->getExpr();
+    
   // If we're emitting a value with lifetime, we have to do the
   // initialization *before* we leave the cleanup scopes.
   if (const ExprWithCleanups *ewc = dyn_cast<ExprWithCleanups>(init)) {
@@ -990,9 +992,8 @@ static bool isCapturedBy(const VarDecl &var, const Expr *e) {
 
   if (const BlockExpr *be = dyn_cast<BlockExpr>(e)) {
     const BlockDecl *block = be->getBlockDecl();
-    for (BlockDecl::capture_const_iterator i = block->capture_begin(),
-           e = block->capture_end(); i != e; ++i) {
-      if (i->getVariable() == &var)
+    for (const auto &I : block->captures()) {
+      if (I.getVariable() == &var)
         return true;
     }
 
@@ -1010,10 +1011,9 @@ static bool isCapturedBy(const VarDecl &var, const Expr *e) {
       }
       else if (DeclStmt *DS = dyn_cast<DeclStmt>((*BI))) {
           // special case declarations
-          for (DeclStmt::decl_iterator I = DS->decl_begin(), E = DS->decl_end();
-               I != E; ++I) {
-              if (VarDecl *VD = dyn_cast<VarDecl>((*I))) {
-                Expr *Init = VD->getInit();
+          for (const auto *I : DS->decls()) {
+              if (const auto *VD = dyn_cast<VarDecl>((I))) {
+                const Expr *Init = VD->getInit();
                 if (Init && isCapturedBy(var, Init))
                   return true;
               }
@@ -1509,7 +1509,7 @@ namespace {
       : ArrayBegin(arrayBegin), ArrayEnd(arrayEnd),
         ElementType(elementType), Destroyer(destroyer) {}
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       emitPartialArrayDestroy(CGF, ArrayBegin, ArrayEnd,
                               ElementType, Destroyer);
     }
@@ -1531,7 +1531,7 @@ namespace {
       : ArrayBegin(arrayBegin), ArrayEndPointer(arrayEndPointer),
         ElementType(elementType), Destroyer(destroyer) {}
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       llvm::Value *arrayEnd = CGF.Builder.CreateLoad(ArrayEndPointer);
       emitPartialArrayDestroy(CGF, ArrayBegin, arrayEnd,
                               ElementType, Destroyer);
@@ -1598,7 +1598,7 @@ namespace {
     llvm::Value *Param;
     ARCPreciseLifetime_t Precise;
 
-    void Emit(CodeGenFunction &CGF, Flags flags) {
+    void Emit(CodeGenFunction &CGF, Flags flags) override {
       CGF.EmitARCRelease(Param, Precise);
     }
   };

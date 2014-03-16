@@ -812,13 +812,11 @@ bool CursorVisitor::VisitFunctionDecl(FunctionDecl *ND) {
     if (CXXConstructorDecl *Constructor = dyn_cast<CXXConstructorDecl>(ND)) {
       // Find the initializers that were written in the source.
       SmallVector<CXXCtorInitializer *, 4> WrittenInits;
-      for (CXXConstructorDecl::init_iterator I = Constructor->init_begin(),
-                                          IEnd = Constructor->init_end();
-           I != IEnd; ++I) {
-        if (!(*I)->isWritten())
+      for (auto *I : Constructor->inits()) {
+        if (!I->isWritten())
           continue;
       
-        WrittenInits.push_back(*I);
+        WrittenInits.push_back(I);
       }
       
       // Sort the initializers in source order
@@ -1660,9 +1658,8 @@ bool CursorVisitor::VisitCXXRecordDecl(CXXRecordDecl *D) {
       return true;
 
   if (D->isCompleteDefinition()) {
-    for (CXXRecordDecl::base_class_iterator I = D->bases_begin(),
-         E = D->bases_end(); I != E; ++I) {
-      if (Visit(cxcursor::MakeCursorCXXBaseSpecifier(I, TU)))
+    for (const auto &I : D->bases()) {
+      if (Visit(cxcursor::MakeCursorCXXBaseSpecifier(&I, TU)))
         return true;
     }
   }
@@ -1939,10 +1936,8 @@ void OMPClauseEnqueue::VisitOMPDefaultClause(const OMPDefaultClause *C) { }
 
 template<typename T>
 void OMPClauseEnqueue::VisitOMPClauseList(T *Node) {
-  for (typename T::varlist_const_iterator I = Node->varlist_begin(),
-                                          E = Node->varlist_end();
-         I != E; ++I)
-    Visitor->AddStmt(*I);
+  for (const auto *I : Node->varlists())
+    Visitor->AddStmt(I);
 }
 
 void OMPClauseEnqueue::VisitOMPPrivateClause(const OMPPrivateClause *C) {
@@ -2077,9 +2072,8 @@ void EnqueueVisitor::VisitDependentScopeDeclRefExpr(
 void EnqueueVisitor::VisitDeclStmt(const DeclStmt *S) {
   unsigned size = WL.size();
   bool isFirst = true;
-  for (DeclStmt::const_decl_iterator D = S->decl_begin(), DEnd = S->decl_end();
-       D != DEnd; ++D) {
-    AddDecl(*D, isFirst);
+  for (const auto *D : S->decls()) {
+    AddDecl(D, isFirst);
     isFirst = false;
   }
   if (size == WL.size())
@@ -2780,9 +2774,7 @@ static void clang_parseTranslationUnit_Impl(void *UserData) {
   unsigned NumErrors = Diags->getClient()->getNumErrors();
   std::unique_ptr<ASTUnit> ErrUnit;
   std::unique_ptr<ASTUnit> Unit(ASTUnit::LoadFromCommandLine(
-      Args->size() ? &(*Args)[0] : 0
-          /* vector::data() not portable */,
-      Args->size() ? (&(*Args)[0] + Args->size()) : 0, Diags,
+      Args->data(), Args->data() + Args->size(), Diags,
       CXXIdx->getClangResourcesPath(), CXXIdx->getOnlyLocalDecls(),
       /*CaptureDiagnostics=*/true, *RemappedFiles.get(),
       /*RemappedFilesKeepOriginalName=*/true, PrecompilePreamble, TUKind,

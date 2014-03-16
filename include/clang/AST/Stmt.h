@@ -485,7 +485,13 @@ public:
 
   typedef DeclGroupRef::iterator decl_iterator;
   typedef DeclGroupRef::const_iterator const_decl_iterator;
+  typedef llvm::iterator_range<decl_iterator> decl_range;
+  typedef llvm::iterator_range<const_decl_iterator> decl_const_range;
 
+  decl_range decls() { return decl_range(decl_begin(), decl_end()); }
+  decl_const_range decls() const {
+    return decl_const_range(decl_begin(), decl_end());
+  }
   decl_iterator decl_begin() { return DG.begin(); }
   decl_iterator decl_end() { return DG.end(); }
   const_decl_iterator decl_begin() const { return DG.begin(); }
@@ -2042,6 +2048,15 @@ public:
   /// \brief An iterator that walks over the captures.
   typedef Capture *capture_iterator;
   typedef const Capture *const_capture_iterator;
+  typedef llvm::iterator_range<capture_iterator> capture_range;
+  typedef llvm::iterator_range<const_capture_iterator> capture_const_range;
+
+  capture_range captures() {
+    return capture_range(capture_begin(), capture_end());
+  }
+  capture_const_range captures() const {
+    return capture_const_range(capture_begin(), capture_end());
+  }
 
   /// \brief Retrieve an iterator pointing to the first capture.
   capture_iterator capture_begin() { return getStoredCaptures(); }
@@ -2058,6 +2073,11 @@ public:
 
   /// \brief Iterator that walks over the capture initialization arguments.
   typedef Expr **capture_init_iterator;
+  typedef llvm::iterator_range<capture_init_iterator> capture_init_range;
+
+  capture_init_range capture_inits() const {
+    return capture_init_range(capture_init_begin(), capture_init_end());
+  }
 
   /// \brief Retrieve the first initialization argument.
   capture_init_iterator capture_init_begin() const {

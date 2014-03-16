@@ -419,12 +419,10 @@ void CGRecordLowering::accumulateBases() {
       CharUnits::Zero(),
       getStorageType(Layout.getPrimaryBase())));
   // Accumulate the non-virtual bases.
-  for (CXXRecordDecl::base_class_const_iterator Base = RD->bases_begin(),
-                                                BaseEnd = RD->bases_end();
-        Base != BaseEnd; ++Base) {
-    if (Base->isVirtual())
+  for (const auto &Base : RD->bases()) {
+    if (Base.isVirtual())
       continue;
-    const CXXRecordDecl *BaseDecl = Base->getType()->getAsCXXRecordDecl();
+    const CXXRecordDecl *BaseDecl = Base.getType()->getAsCXXRecordDecl();
     if (!BaseDecl->isEmpty())
       Members.push_back(MemberInfo(Layout.getBaseClassOffset(BaseDecl),
           MemberInfo::Base, getStorageType(BaseDecl), BaseDecl));
@@ -444,10 +442,8 @@ void CGRecordLowering::accumulateVPtrs() {
 void CGRecordLowering::accumulateVBases() {
   Members.push_back(MemberInfo(Layout.getNonVirtualSize(),
                                MemberInfo::Scissor, 0, RD));
-  for (CXXRecordDecl::base_class_const_iterator Base = RD->vbases_begin(),
-                                                BaseEnd = RD->vbases_end();
-       Base != BaseEnd; ++Base) {
-    const CXXRecordDecl *BaseDecl = Base->getType()->getAsCXXRecordDecl();
+  for (const auto &Base : RD->vbases()) {
+    const CXXRecordDecl *BaseDecl = Base.getType()->getAsCXXRecordDecl();
     if (BaseDecl->isEmpty())
       continue;
     CharUnits Offset = Layout.getVBaseClassOffset(BaseDecl);
@@ -472,10 +468,8 @@ bool CGRecordLowering::hasOwnStorage(const CXXRecordDecl *Decl,
   const ASTRecordLayout &DeclLayout = Context.getASTRecordLayout(Decl);
   if (DeclLayout.isPrimaryBaseVirtual() && DeclLayout.getPrimaryBase() == Query)
     return false;
-  for (CXXRecordDecl::base_class_const_iterator Base = Decl->bases_begin(),
-                                                BaseEnd = Decl->bases_end();
-       Base != BaseEnd; ++Base)
-    if (!hasOwnStorage(Base->getType()->getAsCXXRecordDecl(), Query))
+  for (const auto &Base : Decl->bases())
+    if (!hasOwnStorage(Base.getType()->getAsCXXRecordDecl(), Query))
       return false;
   return true;
 }

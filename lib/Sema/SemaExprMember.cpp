@@ -384,9 +384,8 @@ static Decl *FindGetterSetterNameDeclFromProtocolList(const ObjCProtocolDecl*PDe
   if (ObjCMethodDecl *OMD = PDecl->getInstanceMethod(Sel))
     return OMD;
 
-  for (ObjCProtocolDecl::protocol_iterator I = PDecl->protocol_begin(),
-       E = PDecl->protocol_end(); I != E; ++I) {
-    if (Decl *D = FindGetterSetterNameDeclFromProtocolList(*I, Member, Sel,
+  for (const auto *I : PDecl->protocols()) {
+    if (Decl *D = FindGetterSetterNameDeclFromProtocolList(I, Member, Sel,
                                                            Context))
       return D;
   }
@@ -546,7 +545,7 @@ class RecordMemberExprValidatorCCC : public CorrectionCandidateCallback {
   explicit RecordMemberExprValidatorCCC(const RecordType *RTy)
       : Record(RTy->getDecl()) {}
 
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
+  bool ValidateCandidate(const TypoCorrection &candidate) override {
     NamedDecl *ND = candidate.getCorrectionDecl();
     // Don't accept candidates that cannot be member functions, constants,
     // variables, or templates.
@@ -559,11 +558,9 @@ class RecordMemberExprValidatorCCC : public CorrectionCandidateCallback {
 
     if (const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(Record)) {
       // Accept candidates that occur in any of the current class' base classes.
-      for (CXXRecordDecl::base_class_const_iterator BS = RD->bases_begin(),
-                                                    BSEnd = RD->bases_end();
-           BS != BSEnd; ++BS) {
+      for (const auto &BS : RD->bases()) {
         if (const RecordType *BSTy = dyn_cast_or_null<RecordType>(
-                BS->getType().getTypePtrOrNull())) {
+                BS.getType().getTypePtrOrNull())) {
           if (BSTy->getDecl()->containsDecl(ND))
             return true;
         }

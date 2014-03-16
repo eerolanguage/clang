@@ -99,32 +99,6 @@ PGOProfileData::PGOProfileData(CodeGenModule &CGM, std::string Path)
   MaxFunctionCount = MaxCount;
 }
 
-/// Return true if a function is hot. If we know nothing about the function,
-/// return false.
-bool PGOProfileData::isHotFunction(StringRef FuncName) {
-  llvm::StringMap<uint64_t>::const_iterator CountIter =
-    FunctionCounts.find(FuncName);
-  // If we know nothing about the function, return false.
-  if (CountIter == FunctionCounts.end())
-    return false;
-  // FIXME: functions with >= 30% of the maximal function count are
-  // treated as hot. This number is from preliminary tuning on SPEC.
-  return CountIter->getValue() >= (uint64_t)(0.3 * (double)MaxFunctionCount);
-}
-
-/// Return true if a function is cold. If we know nothing about the function,
-/// return false.
-bool PGOProfileData::isColdFunction(StringRef FuncName) {
-  llvm::StringMap<uint64_t>::const_iterator CountIter =
-    FunctionCounts.find(FuncName);
-  // If we know nothing about the function, return false.
-  if (CountIter == FunctionCounts.end())
-    return false;
-  // FIXME: functions with <= 1% of the maximal function count are treated as
-  // cold. This number is from preliminary tuning on SPEC.
-  return CountIter->getValue() <= (uint64_t)(0.01 * (double)MaxFunctionCount);
-}
-
 bool PGOProfileData::getFunctionCounts(StringRef FuncName,
                                        std::vector<uint64_t> &Counts) {
   // Find the relevant section of the pgo-data file.
@@ -796,13 +770,7 @@ void CodeGenPGO::assignRegionCounters(const Decl *D, llvm::Function *Fn) {
   if (PGOData) {
     loadRegionCounts(PGOData);
     computeRegionCounts(D);
-
-    // Turn on InlineHint attribute for hot functions.
-    if (PGOData->isHotFunction(getFuncName()))
-      Fn->addFnAttr(llvm::Attribute::InlineHint);
-    // Turn on Cold attribute for cold functions.
-    else if (PGOData->isColdFunction(getFuncName()))
-      Fn->addFnAttr(llvm::Attribute::Cold);
+    applyFunctionAttributes(PGOData, Fn);
   }
 }
 
@@ -827,6 +795,23 @@ void CodeGenPGO::computeRegionCounts(const Decl *D) {
     Walker.VisitObjCMethodDecl(MD);
   else if (const BlockDecl *BD = dyn_cast_or_null<BlockDecl>(D))
     Walker.VisitBlockDecl(BD);
+}
+
+void CodeGenPGO::applyFunctionAttributes(PGOProfileData *PGOData,
+                                         llvm::Function *Fn) {
+  if (!haveRegionCounts())
+    return;
+
+  uint64_t MaxFunctionCount = PGOData->getMaximumFunctionCount();
+  uint64_t FunctionCount = getRegionCount(0);
+  if (FunctionCount >= (uint64_t)(0.3 * (double)MaxFunctionCount))
+    // Turn on InlineHint attribute for hot functions.
+    // FIXME: 30% is from preliminary tuning on SPEC, it may not be optimal.
+    Fn->addFnAttr(llvm::Attribute::InlineHint);
+  else if (FunctionCount <= (uint64_t)(0.01 * (double)MaxFunctionCount))
+    // Turn on Cold attribute for cold functions.
+    // FIXME: 1% is from preliminary tuning on SPEC, it may not be optimal.
+    Fn->addFnAttr(llvm::Attribute::Cold);
 }
 
 void CodeGenPGO::emitCounterVariables() {
@@ -872,29 +857,59 @@ void CodeGenPGO::destroyRegionCounters() {
     delete RegionCounts;
 }
 
+/// \brief Calculate what to divide by to scale weights.
+///
+/// Given the maximum weight, calculate a divisor that will scale all the
+/// weights to strictly less than UINT32_MAX.
+static uint64_t calculateWeightScale(uint64_t MaxWeight) {
+  return MaxWeight < UINT32_MAX ? 1 : MaxWeight / UINT32_MAX + 1;
+}
+
+/// \brief Scale an individual branch weight (and add 1).
+///
+/// Scale a 64-bit weight down to 32-bits using \c Scale.
+///
+/// According to Laplace's Rule of Succession, it is better to compute the
+/// weight based on the count plus 1, so universally add 1 to the value.
+///
+/// \pre \c Scale was calculated by \a calculateWeightScale() with a weight no
+/// greater than \c Weight.
+static uint32_t scaleBranchWeight(uint64_t Weight, uint64_t Scale) {
+  assert(Scale && "scale by 0?");
+  uint64_t Scaled = Weight / Scale + 1;
+  assert(Scaled <= UINT32_MAX && "overflow 32-bits");
+  return Scaled;
+}
+
 llvm::MDNode *CodeGenPGO::createBranchWeights(uint64_t TrueCount,
                                               uint64_t FalseCount) {
+  // Check for empty weights.
   if (!TrueCount && !FalseCount)
     return 0;
 
+  // Calculate how to scale down to 32-bits.
+  uint64_t Scale = calculateWeightScale(std::max(TrueCount, FalseCount));
+
   llvm::MDBuilder MDHelper(CGM.getLLVMContext());
-  // TODO: need to scale down to 32-bits
-  // According to Laplace's Rule of Succession, it is better to compute the
-  // weight based on the count plus 1.
-  return MDHelper.createBranchWeights(TrueCount + 1, FalseCount + 1);
+  return MDHelper.createBranchWeights(scaleBranchWeight(TrueCount, Scale),
+                                      scaleBranchWeight(FalseCount, Scale));
 }
 
 llvm::MDNode *CodeGenPGO::createBranchWeights(ArrayRef<uint64_t> Weights) {
-  llvm::MDBuilder MDHelper(CGM.getLLVMContext());
-  // TODO: need to scale down to 32-bits, instead of just truncating.
-  // According to Laplace's Rule of Succession, it is better to compute the
-  // weight based on the count plus 1.
+  // We need at least two elements to create meaningful weights.
+  if (Weights.size() < 2)
+    return 0;
+
+  // Calculate how to scale down to 32-bits.
+  uint64_t Scale = calculateWeightScale(*std::max_element(Weights.begin(),
+                                                          Weights.end()));
+
   SmallVector<uint32_t, 16> ScaledWeights;
   ScaledWeights.reserve(Weights.size());
-  for (ArrayRef<uint64_t>::iterator WI = Weights.begin(), WE = Weights.end();
-       WI != WE; ++WI) {
-    ScaledWeights.push_back(*WI + 1);
-  }
+  for (uint64_t W : Weights)
+    ScaledWeights.push_back(scaleBranchWeight(W, Scale));
+
+  llvm::MDBuilder MDHelper(CGM.getLLVMContext());
   return MDHelper.createBranchWeights(ScaledWeights);
 }
 

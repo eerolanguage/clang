@@ -1643,7 +1643,7 @@ class FieldInitializerValidatorCCC : public CorrectionCandidateCallback {
   explicit FieldInitializerValidatorCCC(RecordDecl *RD)
       : Record(RD) {}
 
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
+  bool ValidateCandidate(const TypoCorrection &candidate) override {
     FieldDecl *FD = candidate.getCorrectionDeclAs<FieldDecl>();
     return FD && FD->getDeclContext()->getRedeclContext()->Equals(Record);
   }
@@ -2286,7 +2286,7 @@ InitListChecker::getStructuredSubobjectInit(InitListExpr *IList, unsigned Index,
     if (RDecl->isUnion())
       NumElements = 1;
     else
-      NumElements = llvm::distance(RDecl->fields());
+      NumElements = std::distance(RDecl->field_begin(), RDecl->field_end());
   }
 
   Result->reserveInits(SemaRef.Context, NumElements);
@@ -6263,10 +6263,8 @@ static bool DiagnoseUninitializedReference(Sema &S, SourceLocation Loc,
     }
   }
 
-  for (CXXRecordDecl::base_class_iterator BI = RD->bases_begin(),
-                                          BE = RD->bases_end();
-       BI != BE; ++BI) {
-    if (DiagnoseUninitializedReference(S, BI->getLocStart(), BI->getType())) {
+  for (const auto &BI : RD->bases()) {
+    if (DiagnoseUninitializedReference(S, BI.getLocStart(), BI.getType())) {
       S.Diag(Loc, diag::note_value_initialization_here) << RD;
       return true;
     }

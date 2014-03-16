@@ -1547,10 +1547,10 @@ void ASTWriter::WriteHeaderSearch(const HeaderSearch &HS, StringRef isysroot) {
 
     // Use HeaderSearch's getFileInfo to make sure we get the HeaderFileInfo
     // from the external source if it was not provided already.
-    const HeaderFileInfo &HFI = HS.getFileInfo(File);
-    if (HFI.External && Chain)
-      continue;
-    if (HFI.isModuleHeader && !HFI.isCompilingModuleHeader)
+    HeaderFileInfo HFI;
+    if (!HS.tryGetFileInfo(File, HFI) ||
+        (HFI.External && Chain) ||
+        (HFI.isModuleHeader && !HFI.isCompilingModuleHeader))
       continue;
 
     // Turn the file name into an absolute path, if it isn't already.
@@ -2204,9 +2204,7 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
   // other consumers of this information.
   SourceManager &SrcMgr = PP->getSourceManager();
   ModuleMap &ModMap = PP->getHeaderSearchInfo().getModuleMap();
-  for (ASTContext::import_iterator I = Context->local_import_begin(),
-                                IEnd = Context->local_import_end();
-       I != IEnd; ++I) {
+  for (const auto *I : Context->local_imports()) {
     if (Module *ImportedFrom
           = ModMap.inferModuleFromLocation(FullSourceLoc(I->getLocation(), 
                                                          SrcMgr))) {
@@ -4276,9 +4274,7 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   if (!WritingModule) {
     // Write the submodules that were imported, if any.
     RecordData ImportedModules;
-    for (ASTContext::import_iterator I = Context.local_import_begin(),
-                                  IEnd = Context.local_import_end();
-         I != IEnd; ++I) {
+    for (const auto *I : Context.local_imports()) {
       assert(SubmoduleIDs.find(I->getImportedModule()) != SubmoduleIDs.end());
       ImportedModules.push_back(SubmoduleIDs[I->getImportedModule()]);
     }

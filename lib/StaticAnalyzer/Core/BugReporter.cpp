@@ -311,7 +311,7 @@ class NodeMapClosure : public BugReport::NodeResolver {
 public:
   NodeMapClosure(InterExplodedGraphMap &m) : M(m) {}
 
-  const ExplodedNode *getOriginalNode(const ExplodedNode *N) {
+  const ExplodedNode *getOriginalNode(const ExplodedNode *N) override {
     return M.lookup(N);
   }
 };
@@ -345,7 +345,7 @@ public:
     return getParentMap().getParent(S);
   }
 
-  virtual NodeMapClosure& getNodeResolver() { return NMC; }
+  NodeMapClosure& getNodeResolver() override { return NMC; }
 
   PathDiagnosticLocation getEnclosingStmtLocation(const Stmt *S);
 
@@ -3243,6 +3243,9 @@ void BugReporter::Register(BugType *BT) {
 }
 
 void BugReporter::emitReport(BugReport* R) {
+  // To guarantee memory release.
+  std::unique_ptr<BugReport> UniqueR(R);
+
   // Defensive checking: throw the bug away if it comes from a BodyFarm-
   // generated body. We do this very early because report processing relies
   // on the report's location being valid.
@@ -3273,12 +3276,12 @@ void BugReporter::emitReport(BugReport* R) {
   BugReportEquivClass* EQ = EQClasses.FindNodeOrInsertPos(ID, InsertPos);
 
   if (!EQ) {
-    EQ = new BugReportEquivClass(R);
+    EQ = new BugReportEquivClass(UniqueR.release());
     EQClasses.InsertNode(EQ, InsertPos);
     EQClassesVector.push_back(EQ);
   }
   else
-    EQ->AddReport(R);
+    EQ->AddReport(UniqueR.release());
 }
 
 
@@ -3399,10 +3402,8 @@ void BugReporter::FlushReport(BugReportEquivClass& EQ) {
   SmallVector<BugReport*, 10> bugReports;
   BugReport *exampleReport = FindReportInEquivalenceClass(EQ, bugReports);
   if (exampleReport) {
-    const PathDiagnosticConsumers &C = getPathDiagnosticConsumers();
-    for (PathDiagnosticConsumers::const_iterator I=C.begin(),
-                                                 E=C.end(); I != E; ++I) {
-      FlushReport(exampleReport, **I, bugReports);
+    for (PathDiagnosticConsumer *PDC : getPathDiagnosticConsumers()) {
+      FlushReport(exampleReport, *PDC, bugReports);
     }
   }
 }

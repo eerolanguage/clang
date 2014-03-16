@@ -880,23 +880,21 @@ void CFGBuilder::addImplicitDtorsForDestructor(const CXXDestructorDecl *DD) {
   const CXXRecordDecl *RD = DD->getParent();
 
   // At the end destroy virtual base objects.
-  for (CXXRecordDecl::base_class_const_iterator VI = RD->vbases_begin(),
-      VE = RD->vbases_end(); VI != VE; ++VI) {
-    const CXXRecordDecl *CD = VI->getType()->getAsCXXRecordDecl();
+  for (const auto &VI : RD->vbases()) {
+    const CXXRecordDecl *CD = VI.getType()->getAsCXXRecordDecl();
     if (!CD->hasTrivialDestructor()) {
       autoCreateBlock();
-      appendBaseDtor(Block, VI);
+      appendBaseDtor(Block, &VI);
     }
   }
 
   // Before virtual bases destroy direct base objects.
-  for (CXXRecordDecl::base_class_const_iterator BI = RD->bases_begin(),
-      BE = RD->bases_end(); BI != BE; ++BI) {
-    if (!BI->isVirtual()) {
-      const CXXRecordDecl *CD = BI->getType()->getAsCXXRecordDecl();
+  for (const auto &BI : RD->bases()) {
+    if (!BI.isVirtual()) {
+      const CXXRecordDecl *CD = BI.getType()->getAsCXXRecordDecl();
       if (!CD->hasTrivialDestructor()) {
         autoCreateBlock();
-        appendBaseDtor(Block, BI);
+        appendBaseDtor(Block, &BI);
       }
     }
   }
@@ -963,11 +961,9 @@ LocalScope* CFGBuilder::addLocalScopeForDeclStmt(DeclStmt *DS,
   if (!BuildOpts.AddImplicitDtors)
     return Scope;
 
-  for (DeclStmt::decl_iterator DI = DS->decl_begin(), DE = DS->decl_end()
-      ; DI != DE; ++DI) {
-    if (VarDecl *VD = dyn_cast<VarDecl>(*DI))
+  for (auto *DI : DS->decls())
+    if (VarDecl *VD = dyn_cast<VarDecl>(DI))
       Scope = addLocalScopeForVarDecl(VD, Scope);
-  }
   return Scope;
 }
 
@@ -3631,7 +3627,7 @@ public:
   void setBlockID(signed i) { currentBlock = i; }
   void setStmtID(unsigned i) { currStmt = i; }
 
-  virtual bool handledStmt(Stmt *S, raw_ostream &OS) {
+  bool handledStmt(Stmt *S, raw_ostream &OS) override {
     StmtMapTy::iterator I = StmtMap.find(S);
 
     if (I == StmtMap.end())

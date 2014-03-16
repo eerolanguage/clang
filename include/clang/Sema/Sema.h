@@ -1178,7 +1178,7 @@ public:
   public:
     BoundTypeDiagnoser1(unsigned DiagID, const T1 &Arg1)
       : TypeDiagnoser(DiagID == 0), DiagID(DiagID), Arg1(Arg1) { }
-    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+    void diagnose(Sema &S, SourceLocation Loc, QualType T) override {
       if (Suppressed) return;
       S.Diag(Loc, DiagID) << getPrintable(Arg1) << T;
     }
@@ -1198,7 +1198,7 @@ public:
       : TypeDiagnoser(DiagID == 0), DiagID(DiagID), Arg1(Arg1),
         Arg2(Arg2) { }
 
-    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+    void diagnose(Sema &S, SourceLocation Loc, QualType T) override {
       if (Suppressed) return;
       S.Diag(Loc, DiagID) << getPrintable(Arg1) << getPrintable(Arg2) << T;
     }
@@ -1219,7 +1219,7 @@ public:
     : TypeDiagnoser(DiagID == 0), DiagID(DiagID), Arg1(Arg1),
       Arg2(Arg2), Arg3(Arg3) { }
 
-    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+    void diagnose(Sema &S, SourceLocation Loc, QualType T) override {
       if (Suppressed) return;
       S.Diag(Loc, DiagID)
         << getPrintable(Arg1) << getPrintable(Arg2) << getPrintable(Arg3) << T;
@@ -1584,6 +1584,16 @@ public:
   bool isObjCMethodDecl(Decl *D) {
     return D && isa<ObjCMethodDecl>(D);
   }
+
+  /// \brief Determine whether we can delay parsing the body of a function or
+  /// function template until it is used, assuming we don't care about emitting
+  /// code for that function.
+  ///
+  /// This will be \c false if we may need the body of the function in the
+  /// middle of parsing an expression (where it's impractical to switch to
+  /// parsing a different function), for instance, if it's constexpr in C++11
+  /// or has an 'auto' return type in C++14. These cases are essentially bugs.
+  bool canDelayFunctionBody(const Declarator &D);
 
   /// \brief Determine whether we can skip parsing the body of a function
   /// definition, assuming we don't care about analyzing its body or emitting
@@ -2103,10 +2113,10 @@ public:
           AllowScopedEnumerations(AllowScopedEnumerations) {}
 
     /// Match an integral or (possibly scoped) enumeration type.
-    bool match(QualType T);
+    bool match(QualType T) override;
 
     SemaDiagnosticBuilder
-    diagnoseNoMatch(Sema &S, SourceLocation Loc, QualType T) {
+    diagnoseNoMatch(Sema &S, SourceLocation Loc, QualType T) override {
       return diagnoseNotInt(S, Loc, T);
     }
 
@@ -6320,13 +6330,15 @@ public:
                           SourceRange InstantiationRange = SourceRange());
 
     /// \brief Note that we are substituting prior template arguments into a
-    /// non-type or template template parameter.
+    /// non-type parameter.
     InstantiatingTemplate(Sema &SemaRef, SourceLocation PointOfInstantiation,
                           NamedDecl *Template,
                           NonTypeTemplateParmDecl *Param,
                           ArrayRef<TemplateArgument> TemplateArgs,
                           SourceRange InstantiationRange);
 
+    /// \brief Note that we are substituting prior template arguments into a
+    /// template template parameter.
     InstantiatingTemplate(Sema &SemaRef, SourceLocation PointOfInstantiation,
                           NamedDecl *Template,
                           TemplateTemplateParmDecl *Param,
@@ -6357,6 +6369,15 @@ public:
     bool SavedInNonInstantiationSFINAEContext;
     bool CheckInstantiationDepth(SourceLocation PointOfInstantiation,
                                  SourceRange InstantiationRange);
+
+    // FIXME: Replace this with a constructor once we can use delegating
+    // constructors in llvm.
+    void Initialize(
+        ActiveTemplateInstantiation::InstantiationKind Kind,
+        SourceLocation PointOfInstantiation, SourceRange InstantiationRange,
+        Decl *Entity, NamedDecl *Template = nullptr,
+        ArrayRef<TemplateArgument> TemplateArgs = ArrayRef<TemplateArgument>(),
+        sema::TemplateDeductionInfo *DeductionInfo = nullptr);
 
     InstantiatingTemplate(const InstantiatingTemplate&) LLVM_DELETED_FUNCTION;
 

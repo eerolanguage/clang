@@ -71,10 +71,7 @@ public:
 
     if (const CXXConstructorDecl *Ctor = dyn_cast<CXXConstructorDecl>(D)) {
       // Constructor initializers.
-      for (CXXConstructorDecl::init_const_iterator I = Ctor->init_begin(),
-                                                   E = Ctor->init_end();
-           I != E; ++I) {
-        CXXCtorInitializer *Init = *I;
+      for (const auto *Init : Ctor->inits()) {
         if (Init->isWritten()) {
           IndexCtx.indexTypeSourceInfo(Init->getTypeSourceInfo(), D);
           if (const FieldDecl *Member = Init->getAnyMember())
@@ -168,11 +165,8 @@ public:
 
     // Index the ivars first to make sure the synthesized ivars are indexed
     // before indexing the methods that can reference them.
-    for (ObjCImplementationDecl::ivar_iterator
-           IvarI = D->ivar_begin(),
-           IvarE = D->ivar_end(); IvarI != IvarE; ++IvarI) {
-      IndexCtx.indexDecl(*IvarI);
-    }
+    for (const auto *IvarI : D->ivars())
+      IndexCtx.indexDecl(IvarI);
     for (const auto *I : D->decls()) {
       if (!isa<ObjCIvarDecl>(I))
         IndexCtx.indexDecl(I);
@@ -263,11 +257,9 @@ public:
     // we should do better.
 
     IndexCtx.indexNestedNameSpecifierLoc(D->getQualifierLoc(), D);
-    for (UsingDecl::shadow_iterator
-           I = D->shadow_begin(), E = D->shadow_end(); I != E; ++I) {
-      IndexCtx.handleReference((*I)->getUnderlyingDecl(), D->getLocation(),
-                               D, D->getLexicalDeclContext());
-    }
+    for (const auto *I : D->shadows())
+      IndexCtx.handleReference(I->getUnderlyingDecl(), D->getLocation(), D,
+                               D->getLexicalDeclContext());
     return true;
   }
 

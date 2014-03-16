@@ -192,9 +192,9 @@ public:
 
 private:
   /// Implements MatcherInterface::Matches.
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder * /* Finder */,
-                       BoundNodesTreeBuilder * /*  Builder */) const {
+  bool matches(const T &Node,
+               ASTMatchFinder * /* Finder */,
+               BoundNodesTreeBuilder * /*  Builder */) const override {
     return matchesNode(Node);
   }
 };
@@ -265,9 +265,8 @@ public:
     TypeToQualType(const Matcher<TypeT> &InnerMatcher)
         : InnerMatcher(InnerMatcher) {}
 
-    virtual bool matches(const QualType &Node,
-                         ASTMatchFinder *Finder,
-                         BoundNodesTreeBuilder *Builder) const {
+    bool matches(const QualType &Node, ASTMatchFinder *Finder,
+                 BoundNodesTreeBuilder *Builder) const override {
       if (Node.isNull())
         return false;
       return InnerMatcher.matches(*Node, Finder, Builder);
@@ -285,9 +284,8 @@ private:
     explicit ImplicitCastMatcher(const Matcher<Base> &From)
         : From(From) {}
 
-    virtual bool matches(const T &Node,
-                         ASTMatchFinder *Finder,
-                         BoundNodesTreeBuilder *Builder) const {
+    bool matches(const T &Node, ASTMatchFinder *Finder,
+                 BoundNodesTreeBuilder *Builder) const override {
       return From.matches(Node, Finder, Builder);
     }
 
@@ -528,7 +526,7 @@ public:
   explicit HasOverloadedOperatorNameMatcher(const StringRef Name)
       : SingleNodeMatcherInterface<T>(), Name(Name) {}
 
-  virtual bool matchesNode(const T &Node) const override {
+  bool matchesNode(const T &Node) const override {
     return matchesSpecialized(Node);
   }
 
@@ -564,9 +562,8 @@ public:
   explicit HasDeclarationMatcher(const Matcher<Decl> &InnerMatcher)
       : InnerMatcher(InnerMatcher) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     return matchesSpecialized(Node, Finder, Builder);
   }
 
@@ -989,7 +986,7 @@ private:
 template <typename T>
 class TrueMatcher : public SingleNodeMatcherInterface<T>  {
 public:
-  virtual bool matchesNode(const T &Node) const {
+  bool matchesNode(const T &Node) const override {
     return true;
   }
 };
@@ -1004,9 +1001,8 @@ public:
   IdMatcher(StringRef ID, const Matcher<T> &InnerMatcher)
       : ID(ID), InnerMatcher(InnerMatcher) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     bool Result = InnerMatcher.matches(Node, Finder, Builder);
     if (Result) {
       Builder->setBinding(ID, &Node);
@@ -1052,9 +1048,8 @@ public:
   explicit HasMatcher(const Matcher<ChildT> &ChildMatcher)
       : ChildMatcher(ChildMatcher) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     return Finder->matchesChildOf(
         Node, ChildMatcher, Builder,
         ASTMatchFinder::TK_IgnoreImplicitCastsAndParentheses,
@@ -1079,9 +1074,8 @@ class ForEachMatcher : public MatcherInterface<T> {
   explicit ForEachMatcher(const Matcher<ChildT> &ChildMatcher)
       : ChildMatcher(ChildMatcher) {}
 
-  virtual bool matches(const T& Node,
-                       ASTMatchFinder* Finder,
-                       BoundNodesTreeBuilder* Builder) const {
+  bool matches(const T& Node, ASTMatchFinder* Finder,
+               BoundNodesTreeBuilder* Builder) const override {
     return Finder->matchesChildOf(
       Node, ChildMatcher, Builder,
       ASTMatchFinder::TK_IgnoreImplicitCastsAndParentheses,
@@ -1106,11 +1100,11 @@ template <typename T>
 class VariadicOperatorMatcherInterface : public MatcherInterface<T> {
 public:
   VariadicOperatorMatcherInterface(VariadicOperatorFunction Func,
-                                   ArrayRef<DynTypedMatcher> InnerMatchers)
-      : Func(Func), InnerMatchers(InnerMatchers) {}
+                                   std::vector<DynTypedMatcher> InnerMatchers)
+      : Func(Func), InnerMatchers(std::move(InnerMatchers)) {}
 
-  virtual bool matches(const T &Node, ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     return Func(ast_type_traits::DynTypedNode::create(Node), Finder, Builder,
                 InnerMatchers);
   }
@@ -1150,7 +1144,8 @@ public:
     addMatcher<T>(Param3, Matchers);
     addMatcher<T>(Param4, Matchers);
     addMatcher<T>(Param5, Matchers);
-    return Matcher<T>(new VariadicOperatorMatcherInterface<T>(Func, Matchers));
+    return Matcher<T>(
+        new VariadicOperatorMatcherInterface<T>(Func, std::move(Matchers)));
   }
 
 private:
@@ -1246,8 +1241,8 @@ bool AnyOfVariadicOperator(const ast_type_traits::DynTypedNode DynNode,
 
 template <typename T>
 inline Matcher<T> DynTypedMatcher::unconditionalConvertTo() const {
-  return Matcher<T>(
-      new VariadicOperatorMatcherInterface<T>(AllOfVariadicOperator, *this));
+  return Matcher<T>(new VariadicOperatorMatcherInterface<T>(
+      AllOfVariadicOperator, llvm::makeArrayRef(*this)));
 }
 
 /// \brief Creates a Matcher<T> that matches if all inner matchers match.
@@ -1259,7 +1254,7 @@ BindableMatcher<T> makeAllOfComposite(
     DynMatchers.push_back(*InnerMatchers[i]);
   }
   return BindableMatcher<T>(new VariadicOperatorMatcherInterface<T>(
-      AllOfVariadicOperator, DynMatchers));
+      AllOfVariadicOperator, std::move(DynMatchers)));
 }
 
 /// \brief Creates a Matcher<T> that matches if
@@ -1288,9 +1283,8 @@ public:
   explicit HasDescendantMatcher(const Matcher<DescendantT> &DescendantMatcher)
       : DescendantMatcher(DescendantMatcher) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     return Finder->matchesDescendantOf(
         Node, DescendantMatcher, Builder, ASTMatchFinder::BK_First);
   }
@@ -1312,9 +1306,8 @@ public:
   explicit HasParentMatcher(const Matcher<ParentT> &ParentMatcher)
       : ParentMatcher(ParentMatcher) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     return Finder->matchesAncestorOf(
         Node, ParentMatcher, Builder, ASTMatchFinder::AMM_ParentOnly);
   }
@@ -1336,9 +1329,8 @@ public:
   explicit HasAncestorMatcher(const Matcher<AncestorT> &AncestorMatcher)
       : AncestorMatcher(AncestorMatcher) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     return Finder->matchesAncestorOf(
         Node, AncestorMatcher, Builder, ASTMatchFinder::AMM_All);
   }
@@ -1363,9 +1355,8 @@ class ForEachDescendantMatcher : public MatcherInterface<T> {
       const Matcher<DescendantT>& DescendantMatcher)
       : DescendantMatcher(DescendantMatcher) {}
 
-  virtual bool matches(const T& Node,
-                       ASTMatchFinder* Finder,
-                       BoundNodesTreeBuilder* Builder) const {
+  bool matches(const T& Node, ASTMatchFinder* Finder,
+               BoundNodesTreeBuilder* Builder) const override {
     return Finder->matchesDescendantOf(Node, DescendantMatcher, Builder,
                                        ASTMatchFinder::BK_All);
   }
@@ -1388,7 +1379,7 @@ public:
   explicit ValueEqualsMatcher(const ValueT &ExpectedValue)
       : ExpectedValue(ExpectedValue) {}
 
-  virtual bool matchesNode(const T &Node) const {
+  bool matchesNode(const T &Node) const override {
     return Node.getValue() == ExpectedValue;
   }
 
@@ -1443,9 +1434,8 @@ public:
   explicit LocMatcher(const Matcher<T> &InnerMatcher)
     : InnerMatcher(InnerMatcher) {}
 
-  virtual bool matches(const TLoc &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const TLoc &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     if (!Node)
       return false;
     return InnerMatcher.matches(*extract(Node), Finder, Builder);
@@ -1468,9 +1458,8 @@ public:
   explicit TypeLocTypeMatcher(const Matcher<QualType> &InnerMatcher)
       : InnerMatcher(InnerMatcher) {}
 
-  virtual bool matches(const TypeLoc &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const TypeLoc &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     if (!Node)
       return false;
     return InnerMatcher.matches(Node.getType(), Finder, Builder);
@@ -1490,9 +1479,8 @@ public:
                                QualType (T::*TraverseFunction)() const)
       : InnerMatcher(InnerMatcher), TraverseFunction(TraverseFunction) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     QualType NextNode = (Node.*TraverseFunction)();
     if (NextNode.isNull())
       return false;
@@ -1514,9 +1502,8 @@ public:
                                   TypeLoc (T::*TraverseFunction)() const)
       : InnerMatcher(InnerMatcher), TraverseFunction(TraverseFunction) {}
 
-  virtual bool matches(const T &Node,
-                       ASTMatchFinder *Finder,
-                       BoundNodesTreeBuilder *Builder) const {
+  bool matches(const T &Node, ASTMatchFinder *Finder,
+               BoundNodesTreeBuilder *Builder) const override {
     TypeLoc NextNode = (Node.*TraverseFunction)();
     if (!NextNode)
       return false;

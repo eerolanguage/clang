@@ -24,6 +24,7 @@
 #include "clang/Tooling/ArgumentsAdjusters.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Config/config.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -31,7 +32,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 // For chdir, see the comment in ClangTool::run for more information.
-#ifdef _WIN32
+#ifdef LLVM_ON_WIN32
 #  include <direct.h>
 #else
 #  include <unistd.h>
@@ -159,7 +160,7 @@ class SingleFrontendActionFactory : public FrontendActionFactory {
 public:
   SingleFrontendActionFactory(FrontendAction *Action) : Action(Action) {}
 
-  FrontendAction *create() { return Action; }
+  FrontendAction *create() override { return Action; }
 };
 
 }
@@ -379,7 +380,7 @@ public:
   ASTBuilderAction(std::vector<ASTUnit *> &ASTs) : ASTs(ASTs) {}
 
   bool runInvocation(CompilerInvocation *Invocation, FileManager *Files,
-                     DiagnosticConsumer *DiagConsumer) {
+                     DiagnosticConsumer *DiagConsumer) override {
     // FIXME: This should use the provided FileManager.
     ASTUnit *AST = ASTUnit::LoadFromCompilerInvocation(
         Invocation, CompilerInstance::createDiagnostics(

@@ -145,8 +145,8 @@ static void CheckStringRefAssignedTemporary(const Decl *D, BugReporter &BR,
 void StringRefCheckerVisitor::VisitDeclStmt(DeclStmt *S) {
   VisitChildren(S);
 
-  for (DeclStmt::decl_iterator I = S->decl_begin(), E = S->decl_end();I!=E; ++I)
-    if (VarDecl *VD = dyn_cast<VarDecl>(*I))
+  for (auto *I : S->decls())
+    if (VarDecl *VD = dyn_cast<VarDecl>(I))
       VisitVarDecl(VD);
 }
 
@@ -201,9 +201,7 @@ static bool IsPartOfAST(const CXXRecordDecl *R) {
   if (IsClangStmt(R) || IsClangType(R) || IsClangDecl(R) || IsClangAttr(R))
     return true;
 
-  for (CXXRecordDecl::base_class_const_iterator I = R->bases_begin(),
-                                                E = R->bases_end(); I!=E; ++I) {
-    CXXBaseSpecifier BS = *I;
+  for (const auto &BS : R->bases()) {
     QualType T = BS.getType();
     if (const RecordType *baseT = T->getAs<RecordType>()) {
       CXXRecordDecl *baseD = cast<CXXRecordDecl>(baseT->getDecl());

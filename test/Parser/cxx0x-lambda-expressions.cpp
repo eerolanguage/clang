@@ -64,4 +64,22 @@ class C {
       return x + 2;
     } ();
   }
+
+  void attributes() {
+    [] [[]] {}; // expected-error {{lambda requires '()' before attribute specifier}}
+    [] __attribute__((noreturn)) {}; // expected-error {{lambda requires '()' before attribute specifier}}
+    []() [[]]
+      mutable {}; // expected-error {{expected body of lambda expression}}
+
+    []() [[]] {};
+    []() [[]] -> void {};
+    []() mutable [[]] -> void {};
+    []() mutable noexcept [[]] -> void {};
+
+    // Testing GNU-style attributes on lambdas -- the attribute is specified
+    // before the mutable specifier instead of after (unlike C++11).
+    []() __attribute__((noreturn)) mutable { while(1); };
+    []() mutable
+      __attribute__((noreturn)) { while(1); }; // expected-error {{expected body of lambda expression}}
+  }
 };

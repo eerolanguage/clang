@@ -996,7 +996,6 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     ParsedAttributes Attr(AttrFactory);
     SmallVector<DeclaratorChunk::ParamInfo, 16> ParamInfo;
     SourceLocation EllipsisLoc;
-
     
     if (Tok.isNot(tok::r_paren)) {
       Actions.RecordParsingTemplateParameterDepth(TemplateParameterDepth);
@@ -1009,6 +1008,10 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     T.consumeClose();
     SourceLocation RParenLoc = T.getCloseLocation();
     DeclEndLoc = RParenLoc;
+
+    // GNU-style attributes must be parsed before the mutable specifier to be
+    // compatible with GCC.
+    MaybeParseGNUAttributes(Attr, &DeclEndLoc);
 
     // Parse 'mutable'[opt].
     SourceLocation MutableLoc;
@@ -1067,22 +1070,41 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                                            LParenLoc, FunLocalRangeEnd, D,
                                            TrailingReturnType),
                   Attr, DeclEndLoc);
-  } else if (Tok.is(tok::kw_mutable) || Tok.is(tok::arrow)) {
-    // It's common to forget that one needs '()' before 'mutable' or the 
-    // result type. Deal with this.
+  } else if (Tok.is(tok::kw_mutable) || Tok.is(tok::arrow) ||
+             Tok.is(tok::kw___attribute) ||
+             (Tok.is(tok::l_square) && NextToken().is(tok::l_square))) {
+    // It's common to forget that one needs '()' before 'mutable', an attribute
+    // specifier, or the result type. Deal with this.
+    unsigned TokKind = 0;
+    switch (Tok.getKind()) {
+    case tok::kw_mutable: TokKind = 0; break;
+    case tok::arrow: TokKind = 1; break;
+    case tok::kw___attribute:
+    case tok::l_square: TokKind = 2; break;
+    default: llvm_unreachable("Unknown token kind");
+    }
+
     Diag(Tok, diag::err_lambda_missing_parens)
-      << Tok.is(tok::arrow)
+      << TokKind
       << FixItHint::CreateInsertion(Tok.getLocation(), "() ");
     SourceLocation DeclLoc = Tok.getLocation();
     SourceLocation DeclEndLoc = DeclLoc;
-    
+
+    // GNU-style attributes must be parsed before the mutable specifier to be
+    // compatible with GCC.
+    ParsedAttributes Attr(AttrFactory);
+    MaybeParseGNUAttributes(Attr, &DeclEndLoc);
+
     // Parse 'mutable', if it's there.
     SourceLocation MutableLoc;
     if (Tok.is(tok::kw_mutable)) {
       MutableLoc = ConsumeToken();
       DeclEndLoc = MutableLoc;
     }
-    
+
+    // Parse attribute-specifier[opt].
+    MaybeParseCXX11Attributes(Attr, &DeclEndLoc);
+
     // Parse the return type, if there is one.
     TypeResult TrailingReturnType;
     if (Tok.is(tok::arrow)) {
@@ -1092,7 +1114,6 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
         DeclEndLoc = Range.getEnd();      
     }
 
-    ParsedAttributes Attr(AttrFactory);
     SourceLocation NoLoc;
     D.AddTypeInfo(DeclaratorChunk::getFunction(/*hasProto=*/true,
                                                /*isAmbiguous=*/false,

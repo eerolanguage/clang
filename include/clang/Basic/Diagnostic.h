@@ -1014,8 +1014,13 @@ inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB, int I) {
   return DB;
 }
 
-inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
-                                           bool I) {
+// We use enable_if here to prevent that this overload is selected for
+// pointers or other arguments that are implicitly convertible to bool.
+template <typename T>
+inline
+typename std::enable_if<std::is_same<T, bool>::value,
+                        const DiagnosticBuilder &>::type
+operator<<(const DiagnosticBuilder &DB, T I) {
   DB.AddTaggedVal(I, DiagnosticsEngine::ak_sint);
   return DB;
 }
@@ -1327,7 +1332,7 @@ public:
 class IgnoringDiagConsumer : public DiagnosticConsumer {
   virtual void anchor();
   void HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
-                        const Diagnostic &Info) {
+                        const Diagnostic &Info) override {
     // Just ignore it.
   }
 };
@@ -1343,11 +1348,11 @@ public:
 
   virtual ~ForwardingDiagnosticConsumer();
 
-  virtual void HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
-                                const Diagnostic &Info);
-  virtual void clear();
+  void HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
+                        const Diagnostic &Info) override;
+  void clear() override;
 
-  virtual bool IncludeInDiagnosticCounts() const;
+  bool IncludeInDiagnosticCounts() const override;
 };
 
 // Struct used for sending info about how a type should be printed.

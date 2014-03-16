@@ -1857,10 +1857,8 @@ void BuildLockset::checkAccess(const Expr *Exp, AccessKind AK) {
   }
 
   if (const ArraySubscriptExpr *AE = dyn_cast<ArraySubscriptExpr>(Exp)) {
-    if (Analyzer->Handler.issueBetaWarnings()) {
-      checkPtAccess(AE->getLHS(), AK);
-      return;
-    }
+    checkPtAccess(AE->getLHS(), AK);
+    return;
   }
 
   if (const MemberExpr *ME = dyn_cast<MemberExpr>(Exp)) {
@@ -1878,35 +1876,29 @@ void BuildLockset::checkAccess(const Expr *Exp, AccessKind AK) {
     Analyzer->Handler.handleNoMutexHeld(D, POK_VarAccess, AK,
                                         Exp->getExprLoc());
 
-  for (specific_attr_iterator<GuardedByAttr>
-         I = D->specific_attr_begin<GuardedByAttr>(),
-         E = D->specific_attr_end<GuardedByAttr>(); I != E; ++I)
-    warnIfMutexNotHeld(D, Exp, AK, (*I)->getArg(), POK_VarAccess);
+  for (const auto *I : D->specific_attrs<GuardedByAttr>())
+    warnIfMutexNotHeld(D, Exp, AK, I->getArg(), POK_VarAccess);
 }
 
 /// \brief Checks pt_guarded_by and pt_guarded_var attributes.
 void BuildLockset::checkPtAccess(const Expr *Exp, AccessKind AK) {
-  if (Analyzer->Handler.issueBetaWarnings()) {
-    while (true) {
-      if (const ParenExpr *PE = dyn_cast<ParenExpr>(Exp)) {
-        Exp = PE->getSubExpr();
-        continue;
-      }
-      if (const CastExpr *CE = dyn_cast<CastExpr>(Exp)) {
-        if (CE->getCastKind() == CK_ArrayToPointerDecay) {
-          // If it's an actual array, and not a pointer, then it's elements
-          // are protected by GUARDED_BY, not PT_GUARDED_BY;
-          checkAccess(CE->getSubExpr(), AK);
-          return;
-        }
-        Exp = CE->getSubExpr();
-        continue;
-      }
-      break;
+  while (true) {
+    if (const ParenExpr *PE = dyn_cast<ParenExpr>(Exp)) {
+      Exp = PE->getSubExpr();
+      continue;
     }
+    if (const CastExpr *CE = dyn_cast<CastExpr>(Exp)) {
+      if (CE->getCastKind() == CK_ArrayToPointerDecay) {
+        // If it's an actual array, and not a pointer, then it's elements
+        // are protected by GUARDED_BY, not PT_GUARDED_BY;
+        checkAccess(CE->getSubExpr(), AK);
+        return;
+      }
+      Exp = CE->getSubExpr();
+      continue;
+    }
+    break;
   }
-  else
-    Exp = Exp->IgnoreParenCasts();
 
   const ValueDecl *D = getValueDecl(Exp);
   if (!D || !D->hasAttrs())
@@ -1916,10 +1908,8 @@ void BuildLockset::checkPtAccess(const Expr *Exp, AccessKind AK) {
     Analyzer->Handler.handleNoMutexHeld(D, POK_VarDereference, AK,
                                         Exp->getExprLoc());
 
-  for (specific_attr_iterator<PtGuardedByAttr>
-          I = D->specific_attr_begin<PtGuardedByAttr>(),
-          E = D->specific_attr_end<PtGuardedByAttr>(); I != E; ++I)
-    warnIfMutexNotHeld(D, Exp, AK, (*I)->getArg(), POK_VarDereference);
+  for (auto const *I : D->specific_attrs<PtGuardedByAttr>())
+    warnIfMutexNotHeld(D, Exp, AK, I->getArg(), POK_VarDereference);
 }
 
 
@@ -2138,11 +2128,9 @@ void BuildLockset::VisitCallExpr(CallExpr *Exp) {
       case OO_Star:
       case OO_Arrow:
       case OO_Subscript: {
-        if (Analyzer->Handler.issueBetaWarnings()) {
-          const Expr *Obj = OE->getArg(0);
-          checkAccess(Obj, AK_Read);
-          checkPtAccess(Obj, AK_Read);
-        }
+        const Expr *Obj = OE->getArg(0);
+        checkAccess(Obj, AK_Read);
+        checkPtAccess(Obj, AK_Read);
         break;
       }
       default: {

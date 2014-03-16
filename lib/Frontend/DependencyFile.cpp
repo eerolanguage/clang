@@ -40,6 +40,7 @@ class DFGImpl : public PPCallbacks {
   bool PhonyTarget;
   bool AddMissingHeaderDeps;
   bool SeenMissingHeader;
+  bool IncludeModuleFiles;
 private:
   bool FileMatchesDepCriteria(const char *Filename,
                               SrcMgr::CharacteristicKind FileType);
@@ -51,27 +52,25 @@ public:
       IncludeSystemHeaders(Opts.IncludeSystemHeaders),
       PhonyTarget(Opts.UsePhonyTargets),
       AddMissingHeaderDeps(Opts.AddMissingHeaderDeps),
-      SeenMissingHeader(false) {}
+      SeenMissingHeader(false),
+      IncludeModuleFiles(Opts.IncludeModuleFiles) {}
 
-  virtual void FileChanged(SourceLocation Loc, FileChangeReason Reason,
-                           SrcMgr::CharacteristicKind FileType,
-                           FileID PrevFID);
-  virtual void InclusionDirective(SourceLocation HashLoc,
-                                  const Token &IncludeTok,
-                                  StringRef FileName,
-                                  bool IsAngled,
-                                  CharSourceRange FilenameRange,
-                                  const FileEntry *File,
-                                  StringRef SearchPath,
-                                  StringRef RelativePath,
-                                  const Module *Imported);
+  void FileChanged(SourceLocation Loc, FileChangeReason Reason,
+                   SrcMgr::CharacteristicKind FileType,
+                   FileID PrevFID) override;
+  void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
+                          StringRef FileName, bool IsAngled,
+                          CharSourceRange FilenameRange, const FileEntry *File,
+                          StringRef SearchPath, StringRef RelativePath,
+                          const Module *Imported) override;
 
-  virtual void EndOfMainFile() {
+  void EndOfMainFile() override {
     OutputDependencyFile();
   }
 
   void AddFilename(StringRef Filename);
   bool includeSystemHeaders() const { return IncludeSystemHeaders; }
+  bool includeModuleFiles() const { return IncludeModuleFiles; }
 };
 
 class DFGASTReaderListener : public ASTReaderListener {
@@ -79,11 +78,13 @@ class DFGASTReaderListener : public ASTReaderListener {
 public:
   DFGASTReaderListener(DFGImpl &Parent)
   : Parent(Parent) { }
-  virtual bool needsInputFileVisitation() { return true; }
-  virtual bool needsSystemInputFileVisitation() {
+  bool needsInputFileVisitation() override { return true; }
+  bool needsSystemInputFileVisitation() override {
     return Parent.includeSystemHeaders();
   }
-  virtual bool visitInputFile(StringRef Filename, bool isSystem);
+  void visitModuleFile(StringRef Filename) override;
+  bool visitInputFile(StringRef Filename, bool isSystem,
+                      bool isOverridden) override;
 };
 }
 
@@ -262,9 +263,16 @@ void DFGImpl::OutputDependencyFile() {
 }
 
 bool DFGASTReaderListener::visitInputFile(llvm::StringRef Filename,
-                                          bool IsSystem) {
+                                          bool IsSystem, bool IsOverridden) {
   assert(!IsSystem || needsSystemInputFileVisitation());
+  if (IsOverridden)
+    return true;
+
   Parent.AddFilename(Filename);
   return true;
 }
 
+void DFGASTReaderListener::visitModuleFile(llvm::StringRef Filename) {
+  if (Parent.includeModuleFiles())
+    Parent.AddFilename(Filename);
+}

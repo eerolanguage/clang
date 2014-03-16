@@ -761,10 +761,9 @@ bool Sema::CheckConstexprFunctionDecl(const FunctionDecl *NewFD) {
       Diag(NewFD->getLocation(), diag::err_constexpr_virtual_base)
         << isa<CXXConstructorDecl>(NewFD)
         << getRecordDiagFromTagKind(RD->getTagKind()) << RD->getNumVBases();
-      for (CXXRecordDecl::base_class_const_iterator I = RD->vbases_begin(),
-             E = RD->vbases_end(); I != E; ++I)
-        Diag(I->getLocStart(),
-             diag::note_constexpr_virtual_base_here) << I->getSourceRange();
+      for (const auto &I : RD->vbases())
+        Diag(I.getLocStart(),
+             diag::note_constexpr_virtual_base_here) << I.getSourceRange();
       return false;
     }
   }
@@ -814,9 +813,8 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
   // C++11 [dcl.constexpr]p3 and p4:
   //  The definition of a constexpr function(p3) or constructor(p4) [...] shall
   //  contain only
-  for (DeclStmt::decl_iterator DclIt = DS->decl_begin(),
-         DclEnd = DS->decl_end(); DclIt != DclEnd; ++DclIt) {
-    switch ((*DclIt)->getKind()) {
+  for (const auto *DclIt : DS->decls()) {
+    switch (DclIt->getKind()) {
     case Decl::StaticAssert:
     case Decl::Using:
     case Decl::UsingShadow:
@@ -832,7 +830,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
     case Decl::TypeAlias: {
       //   - typedef declarations and alias-declarations that do not define
       //     classes or enumerations,
-      TypedefNameDecl *TN = cast<TypedefNameDecl>(*DclIt);
+      const auto *TN = cast<TypedefNameDecl>(DclIt);
       if (TN->getUnderlyingType()->isVariablyModifiedType()) {
         // Don't allow variably-modified types in constexpr functions.
         TypeLoc TL = TN->getTypeSourceInfo()->getTypeLoc();
@@ -847,7 +845,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
     case Decl::Enum:
     case Decl::CXXRecord:
       // C++1y allows types to be defined, not just declared.
-      if (cast<TagDecl>(*DclIt)->isThisDeclarationADefinition())
+      if (cast<TagDecl>(DclIt)->isThisDeclarationADefinition())
         SemaRef.Diag(DS->getLocStart(),
                      SemaRef.getLangOpts().CPlusPlus1y
                        ? diag::warn_cxx11_compat_constexpr_type_definition
@@ -866,7 +864,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
       // C++1y [dcl.constexpr]p3 allows anything except:
       //   a definition of a variable of non-literal type or of static or
       //   thread storage duration or for which no initialization is performed.
-      VarDecl *VD = cast<VarDecl>(*DclIt);
+      const auto *VD = cast<VarDecl>(DclIt);
       if (VD->isThisDeclarationADefinition()) {
         if (VD->isStaticLocal()) {
           SemaRef.Diag(VD->getLocation(),
@@ -1156,12 +1154,10 @@ bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body) {
         // always initialized so do not need to be checked. Dependent bases
         // might not have initializers in the member initializer list.
         llvm::SmallSet<Decl*, 16> Inits;
-        for (CXXConstructorDecl::init_const_iterator
-               I = Constructor->init_begin(), E = Constructor->init_end();
-             I != E; ++I) {
-          if (FieldDecl *FD = (*I)->getMember())
+        for (const auto *I: Constructor->inits()) {
+          if (FieldDecl *FD = I->getMember())
             Inits.insert(FD);
-          else if (IndirectFieldDecl *ID = (*I)->getIndirectMember())
+          else if (IndirectFieldDecl *ID = I->getIndirectMember())
             Inits.insert(ID->chain_begin(), ID->chain_end());
         }
 
@@ -1271,10 +1267,8 @@ static bool findCircularInheritance(const CXXRecordDecl *Class,
 
   Class = Class->getCanonicalDecl();
   while (true) {
-    for (CXXRecordDecl::base_class_const_iterator I = Current->bases_begin(),
-                                                  E = Current->bases_end();
-         I != E; ++I) {
-      CXXRecordDecl *Base = I->getType()->getAsCXXRecordDecl();
+    for (const auto &I : Current->bases()) {
+      CXXRecordDecl *Base = I.getType()->getAsCXXRecordDecl();
       if (!Base)
         continue;
 
@@ -2325,17 +2319,13 @@ namespace {
       }
     }
 
-    for (CXXConstructorDecl::init_const_iterator FieldInit =
-             Constructor->init_begin(),
-             FieldInitEnd = Constructor->init_end();
-         FieldInit != FieldInitEnd; ++FieldInit) {
-
-      Expr *InitExpr = (*FieldInit)->getInit();
+    for (const auto *FieldInit : Constructor->inits()) {
+      Expr *InitExpr = FieldInit->getInit();
 
       CheckInitExprContainsUninitializedFields(
           SemaRef, InitExpr, UninitializedFields, Constructor);
 
-      if (FieldDecl *Field = (*FieldInit)->getAnyMember())
+      if (FieldDecl *Field = FieldInit->getAnyMember())
         UninitializedFields.erase(Field);
     }
   }
@@ -2413,13 +2403,11 @@ static bool FindBaseInitializer(Sema &SemaRef,
                                 const CXXBaseSpecifier *&VirtualBaseSpec) {
   // First, check for a direct base class.
   DirectBaseSpec = 0;
-  for (CXXRecordDecl::base_class_const_iterator Base
-         = ClassDecl->bases_begin(); 
-       Base != ClassDecl->bases_end(); ++Base) {
-    if (SemaRef.Context.hasSameUnqualifiedType(BaseType, Base->getType())) {
+  for (const auto &Base : ClassDecl->bases()) {
+    if (SemaRef.Context.hasSameUnqualifiedType(BaseType, Base.getType())) {
       // We found a direct base of this type. That's what we're
       // initializing.
-      DirectBaseSpec = &*Base;
+      DirectBaseSpec = &Base;
       break;
     }
   }
@@ -3575,18 +3563,15 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
 
   // Keep track of the direct virtual bases.
   llvm::SmallPtrSet<CXXBaseSpecifier *, 16> DirectVBases;
-  for (CXXRecordDecl::base_class_iterator I = ClassDecl->bases_begin(),
-       E = ClassDecl->bases_end(); I != E; ++I) {
-    if (I->isVirtual())
-      DirectVBases.insert(I);
+  for (auto &I : ClassDecl->bases()) {
+    if (I.isVirtual())
+      DirectVBases.insert(&I);
   }
 
   // Push virtual bases before others.
-  for (CXXRecordDecl::base_class_iterator VBase = ClassDecl->vbases_begin(),
-       E = ClassDecl->vbases_end(); VBase != E; ++VBase) {
-
+  for (auto &VBase : ClassDecl->vbases()) {
     if (CXXCtorInitializer *Value
-        = Info.AllBaseFields.lookup(VBase->getType()->getAs<RecordType>())) {
+        = Info.AllBaseFields.lookup(VBase.getType()->getAs<RecordType>())) {
       // [class.base.init]p7, per DR257:
       //   A mem-initializer where the mem-initializer-id names a virtual base
       //   class is ignored during execution of a constructor of any class that
@@ -3595,7 +3580,7 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
         // FIXME: Provide a fixit to remove the base specifier. This requires
         // tracking the location of the associated comma for a base specifier.
         Diag(Value->getSourceLocation(), diag::warn_abstract_vbase_init_ignored)
-          << VBase->getType() << ClassDecl;
+          << VBase.getType() << ClassDecl;
         DiagnoseAbstractType(ClassDecl);
       }
 
@@ -3605,10 +3590,10 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
       //   If a given [...] base class is not named by a mem-initializer-id
       //   [...] and the entity is not a virtual base class of an abstract
       //   class, then [...] the entity is default-initialized.
-      bool IsInheritedVirtualBase = !DirectVBases.count(VBase);
+      bool IsInheritedVirtualBase = !DirectVBases.count(&VBase);
       CXXCtorInitializer *CXXBaseInit;
       if (BuildImplicitBaseInitializer(*this, Constructor, Info.IIK,
-                                       VBase, IsInheritedVirtualBase,
+                                       &VBase, IsInheritedVirtualBase,
                                        CXXBaseInit)) {
         HadError = true;
         continue;
@@ -3619,19 +3604,18 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
   }
 
   // Non-virtual bases.
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-       E = ClassDecl->bases_end(); Base != E; ++Base) {
+  for (auto &Base : ClassDecl->bases()) {
     // Virtuals are in the virtual base list and already constructed.
-    if (Base->isVirtual())
+    if (Base.isVirtual())
       continue;
 
     if (CXXCtorInitializer *Value
-          = Info.AllBaseFields.lookup(Base->getType()->getAs<RecordType>())) {
+          = Info.AllBaseFields.lookup(Base.getType()->getAs<RecordType>())) {
       Info.AllToInit.push_back(Value);
     } else if (!AnyErrors) {
       CXXCtorInitializer *CXXBaseInit;
       if (BuildImplicitBaseInitializer(*this, Constructor, Info.IIK,
-                                       Base, /*IsInheritedVirtualBase=*/false,
+                                       &Base, /*IsInheritedVirtualBase=*/false,
                                        CXXBaseInit)) {
         HadError = true;
         continue;
@@ -3752,17 +3736,14 @@ static void DiagnoseBaseOrMemInitializerOrder(
   const CXXRecordDecl *ClassDecl = Constructor->getParent();
 
   // 1. Virtual bases.
-  for (CXXRecordDecl::base_class_const_iterator VBase =
-       ClassDecl->vbases_begin(),
-       E = ClassDecl->vbases_end(); VBase != E; ++VBase)
-    IdealInitKeys.push_back(GetKeyForBase(SemaRef.Context, VBase->getType()));
+  for (const auto &VBase : ClassDecl->vbases())
+    IdealInitKeys.push_back(GetKeyForBase(SemaRef.Context, VBase.getType()));
 
   // 2. Non-virtual bases.
-  for (CXXRecordDecl::base_class_const_iterator Base = ClassDecl->bases_begin(),
-       E = ClassDecl->bases_end(); Base != E; ++Base) {
-    if (Base->isVirtual())
+  for (const auto &Base : ClassDecl->bases()) {
+    if (Base.isVirtual())
       continue;
-    IdealInitKeys.push_back(GetKeyForBase(SemaRef.Context, Base->getType()));
+    IdealInitKeys.push_back(GetKeyForBase(SemaRef.Context, Base.getType()));
   }
 
   // 3. Direct fields.
@@ -4003,13 +3984,12 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
   llvm::SmallPtrSet<const RecordType *, 8> DirectVirtualBases;
 
   // Bases.
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-       E = ClassDecl->bases_end(); Base != E; ++Base) {
+  for (const auto &Base : ClassDecl->bases()) {
     // Bases are always records in a well-formed non-dependent class.
-    const RecordType *RT = Base->getType()->getAs<RecordType>();
+    const RecordType *RT = Base.getType()->getAs<RecordType>();
 
     // Remember direct virtual bases.
-    if (Base->isVirtual())
+    if (Base.isVirtual())
       DirectVirtualBases.insert(RT);
 
     CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(RT->getDecl());
@@ -4023,10 +4003,10 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
     assert(Dtor && "No dtor found for BaseClassDecl!");
 
     // FIXME: caret should be on the start of the class name
-    CheckDestructorAccess(Base->getLocStart(), Dtor,
+    CheckDestructorAccess(Base.getLocStart(), Dtor,
                           PDiag(diag::err_access_dtor_base)
-                            << Base->getType()
-                            << Base->getSourceRange(),
+                            << Base.getType()
+                            << Base.getSourceRange(),
                           Context.getTypeDeclType(ClassDecl));
     
     MarkFunctionReferenced(Location, Dtor);
@@ -4034,11 +4014,9 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
   }
   
   // Virtual bases.
-  for (CXXRecordDecl::base_class_iterator VBase = ClassDecl->vbases_begin(),
-       E = ClassDecl->vbases_end(); VBase != E; ++VBase) {
-
+  for (const auto &VBase : ClassDecl->vbases()) {
     // Bases are always records in a well-formed non-dependent class.
-    const RecordType *RT = VBase->getType()->castAs<RecordType>();
+    const RecordType *RT = VBase.getType()->castAs<RecordType>();
 
     // Ignore direct virtual bases.
     if (DirectVirtualBases.count(RT))
@@ -4056,11 +4034,11 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
     if (CheckDestructorAccess(
             ClassDecl->getLocation(), Dtor,
             PDiag(diag::err_access_dtor_vbase)
-                << Context.getTypeDeclType(ClassDecl) << VBase->getType(),
+                << Context.getTypeDeclType(ClassDecl) << VBase.getType(),
             Context.getTypeDeclType(ClassDecl)) ==
         AR_accessible) {
       CheckDerivedToBaseConversion(
-          Context.getTypeDeclType(ClassDecl), VBase->getType(),
+          Context.getTypeDeclType(ClassDecl), VBase.getType(),
           diag::err_access_dtor_vbase, 0, ClassDecl->getLocation(),
           SourceRange(), DeclarationName(), 0);
     }
@@ -4438,27 +4416,25 @@ void Sema::CheckCompletedCXXClass(CXXRecordDecl *Record) {
   }
 
   if (!Record->isDependentType()) {
-    for (CXXRecordDecl::method_iterator M = Record->method_begin(),
-                                     MEnd = Record->method_end();
-         M != MEnd; ++M) {
+    for (auto *M : Record->methods()) {
       // See if a method overloads virtual methods in a base
       // class without overriding any.
       if (!M->isStatic())
-        DiagnoseHiddenVirtualMethods(*M);
+        DiagnoseHiddenVirtualMethods(M);
 
       // Check whether the explicitly-defaulted special members are valid.
       if (!M->isInvalidDecl() && M->isExplicitlyDefaulted())
-        CheckExplicitlyDefaultedSpecialMember(*M);
+        CheckExplicitlyDefaultedSpecialMember(M);
 
       // For an explicitly defaulted or deleted special member, we defer
       // determining triviality until the class is complete. That time is now!
       if (!M->isImplicit() && !M->isUserProvided()) {
-        CXXSpecialMember CSM = getSpecialMember(*M);
+        CXXSpecialMember CSM = getSpecialMember(M);
         if (CSM != CXXInvalid) {
-          M->setTrivial(SpecialMemberIsTrivial(*M, CSM));
+          M->setTrivial(SpecialMemberIsTrivial(M, CSM));
 
           // Inform the class that we've finished declaring this member.
-          Record->finishedDefaultedOrDeletedMember(*M);
+          Record->finishedDefaultedOrDeletedMember(M);
         }
       }
     }
@@ -4477,10 +4453,8 @@ void Sema::CheckCompletedCXXClass(CXXRecordDecl *Record) {
   // destructor for the class is trivial.
   if (LangOpts.CPlusPlus11 && !Record->isDependentType() &&
       !Record->isLiteral() && !Record->getNumVBases()) {
-    for (CXXRecordDecl::method_iterator M = Record->method_begin(),
-                                     MEnd = Record->method_end();
-         M != MEnd; ++M) {
-      if (M->isConstexpr() && M->isInstance() && !isa<CXXConstructorDecl>(*M)) {
+    for (const auto *M : Record->methods()) {
+      if (M->isConstexpr() && M->isInstance() && !isa<CXXConstructorDecl>(M)) {
         switch (Record->getTemplateSpecializationKind()) {
         case TSK_ImplicitInstantiation:
         case TSK_ExplicitInstantiationDeclaration:
@@ -4633,10 +4607,8 @@ static bool defaultedSpecialMemberIsConstexpr(Sema &S, CXXRecordDecl *ClassDecl,
   //      sub-objects shall be a constexpr constructor;
   //   -- the assignment operator selected to copy/move each direct base
   //      class is a constexpr function, and
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
-                                       BEnd = ClassDecl->bases_end();
-       B != BEnd; ++B) {
-    const RecordType *BaseType = B->getType()->getAs<RecordType>();
+  for (const auto &B : ClassDecl->bases()) {
+    const RecordType *BaseType = B.getType()->getAs<RecordType>();
     if (!BaseType) continue;
 
     CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
@@ -5305,10 +5277,9 @@ bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM,
       if (!Diagnose) return true;
 
       // Find any user-declared move constructor.
-      for (CXXRecordDecl::ctor_iterator I = RD->ctor_begin(),
-                                        E = RD->ctor_end(); I != E; ++I) {
+      for (auto *I : RD->ctors()) {
         if (I->isMoveConstructor()) {
-          UserDeclaredMove = *I;
+          UserDeclaredMove = I;
           break;
         }
       }
@@ -5318,10 +5289,9 @@ bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM,
       if (!Diagnose) return true;
 
       // Find any user-declared move assignment operator.
-      for (CXXRecordDecl::method_iterator I = RD->method_begin(),
-                                          E = RD->method_end(); I != E; ++I) {
+      for (auto *I : RD->methods()) {
         if (I->isMoveAssignmentOperator()) {
-          UserDeclaredMove = *I;
+          UserDeclaredMove = I;
           break;
         }
       }
@@ -5357,19 +5327,16 @@ bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM,
 
   SpecialMemberDeletionInfo SMI(*this, MD, CSM, Diagnose);
 
-  for (CXXRecordDecl::base_class_iterator BI = RD->bases_begin(),
-                                          BE = RD->bases_end(); BI != BE; ++BI)
-    if (!BI->isVirtual() &&
-        SMI.shouldDeleteForBase(BI))
+  for (auto &BI : RD->bases())
+    if (!BI.isVirtual() &&
+        SMI.shouldDeleteForBase(&BI))
       return true;
 
   // Per DR1611, do not consider virtual bases of constructors of abstract
   // classes, since we are not going to construct them.
   if (!RD->isAbstract() || !SMI.IsConstructor) {
-    for (CXXRecordDecl::base_class_iterator BI = RD->vbases_begin(),
-                                            BE = RD->vbases_end();
-         BI != BE; ++BI)
-      if (SMI.shouldDeleteForBase(BI))
+    for (auto &BI : RD->vbases())
+      if (SMI.shouldDeleteForBase(&BI))
         return true;
   }
 
@@ -5418,11 +5385,10 @@ static bool findTrivialSpecialMember(Sema &S, CXXRecordDecl *RD,
       CXXConstructorDecl *DefCtor = 0;
       if (RD->needsImplicitDefaultConstructor())
         S.DeclareImplicitDefaultConstructor(RD);
-      for (CXXRecordDecl::ctor_iterator CI = RD->ctor_begin(),
-                                        CE = RD->ctor_end(); CI != CE; ++CI) {
+      for (auto *CI : RD->ctors()) {
         if (!CI->isDefaultConstructor())
           continue;
-        DefCtor = *CI;
+        DefCtor = CI;
         if (!DefCtor->isUserProvided())
           break;
       }
@@ -5511,10 +5477,9 @@ static bool findTrivialSpecialMember(Sema &S, CXXRecordDecl *RD,
 }
 
 static CXXConstructorDecl *findUserDeclaredCtor(CXXRecordDecl *RD) {
-  for (CXXRecordDecl::ctor_iterator CI = RD->ctor_begin(), CE = RD->ctor_end();
-       CI != CE; ++CI)
+  for (auto *CI : RD->ctors())
     if (!CI->isImplicit())
-      return *CI;
+      return CI;
 
   // Look for constructor templates.
   typedef CXXRecordDecl::specific_decl_iterator<FunctionTemplateDecl> tmpl_iter;
@@ -5726,9 +5691,8 @@ bool Sema::SpecialMemberIsTrivial(CXXMethodDecl *MD, CXXSpecialMember CSM,
   //   A [default constructor or destructor] is trivial if
   //    -- all the direct base classes have trivial [default constructors or
   //       destructors]
-  for (CXXRecordDecl::base_class_iterator BI = RD->bases_begin(),
-                                          BE = RD->bases_end(); BI != BE; ++BI)
-    if (!checkTrivialSubobjectCall(*this, BI->getLocStart(), BI->getType(),
+  for (const auto &BI : RD->bases())
+    if (!checkTrivialSubobjectCall(*this, BI.getLocStart(), BI.getType(),
                                    ConstArg, CSM, TSK_BaseClass, Diagnose))
       return false;
 
@@ -5773,8 +5737,7 @@ bool Sema::SpecialMemberIsTrivial(CXXMethodDecl *MD, CXXSpecialMember CSM,
     }
 
     // Must have a virtual method.
-    for (CXXRecordDecl::method_iterator MI = RD->method_begin(),
-                                        ME = RD->method_end(); MI != ME; ++MI) {
+    for (const auto *MI : RD->methods()) {
       if (MI->isVirtual()) {
         SourceLocation MLoc = MI->getLocStart();
         Diag(MLoc, diag::note_nontrivial_has_virtual) << RD << 0;
@@ -6564,8 +6527,7 @@ static void DiagnoseNamespaceInlineMismatch(Sema &S, SourceLocation KeywordLoc,
     S.Diag(Loc, diag::warn_inline_namespace_reopened_noninline)
       << FixItHint::CreateInsertion(KeywordLoc, "inline ");
   else
-    S.Diag(Loc, diag::err_inline_namespace_mismatch)
-      << IsInline;
+    S.Diag(Loc, diag::err_inline_namespace_mismatch) << *IsInline;
 
   S.Diag(PrevNS->getLocation(), diag::note_previous_definition);
   *IsInline = PrevNS->isInline();
@@ -8003,33 +7965,29 @@ Sema::ComputeDefaultedDefaultCtorExceptionSpec(SourceLocation Loc,
     return ExceptSpec;
 
   // Direct base-class constructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
-                                       BEnd = ClassDecl->bases_end();
-       B != BEnd; ++B) {
-    if (B->isVirtual()) // Handled below.
+  for (const auto &B : ClassDecl->bases()) {
+    if (B.isVirtual()) // Handled below.
       continue;
     
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
       CXXConstructorDecl *Constructor = LookupDefaultConstructor(BaseClassDecl);
       // If this is a deleted function, add it anyway. This might be conformant
       // with the standard. This might not. I'm not sure. It might not matter.
       if (Constructor)
-        ExceptSpec.CalledDecl(B->getLocStart(), Constructor);
+        ExceptSpec.CalledDecl(B.getLocStart(), Constructor);
     }
   }
 
   // Virtual base-class constructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->vbases_begin(),
-                                       BEnd = ClassDecl->vbases_end();
-       B != BEnd; ++B) {
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+  for (const auto &B : ClassDecl->vbases()) {
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
       CXXConstructorDecl *Constructor = LookupDefaultConstructor(BaseClassDecl);
       // If this is a deleted function, add it anyway. This might be conformant
       // with the standard. This might not. I'm not sure. It might not matter.
       if (Constructor)
-        ExceptSpec.CalledDecl(B->getLocStart(), Constructor);
+        ExceptSpec.CalledDecl(B.getLocStart(), Constructor);
     }
   }
 
@@ -8090,33 +8048,29 @@ Sema::ComputeInheritingCtorExceptionSpec(CXXConstructorDecl *CD) {
   ExceptSpec.CalledDecl(CD->getLocStart(), InheritedCD);
 
   // Direct base-class constructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
-                                       BEnd = ClassDecl->bases_end();
-       B != BEnd; ++B) {
-    if (B->isVirtual()) // Handled below.
+  for (const auto &B : ClassDecl->bases()) {
+    if (B.isVirtual()) // Handled below.
       continue;
 
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
       if (BaseClassDecl == InheritedDecl)
         continue;
       CXXConstructorDecl *Constructor = LookupDefaultConstructor(BaseClassDecl);
       if (Constructor)
-        ExceptSpec.CalledDecl(B->getLocStart(), Constructor);
+        ExceptSpec.CalledDecl(B.getLocStart(), Constructor);
     }
   }
 
   // Virtual base-class constructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->vbases_begin(),
-                                       BEnd = ClassDecl->vbases_end();
-       B != BEnd; ++B) {
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+  for (const auto &B : ClassDecl->vbases()) {
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
       if (BaseClassDecl == InheritedDecl)
         continue;
       CXXConstructorDecl *Constructor = LookupDefaultConstructor(BaseClassDecl);
       if (Constructor)
-        ExceptSpec.CalledDecl(B->getLocStart(), Constructor);
+        ExceptSpec.CalledDecl(B.getLocStart(), Constructor);
     }
   }
 
@@ -8332,10 +8286,8 @@ private:
 
   /// Process all constructors for a class.
   void visitAll(const CXXRecordDecl *RD, VisitFn Callback) {
-    for (CXXRecordDecl::ctor_iterator CtorIt = RD->ctor_begin(),
-                                      CtorE = RD->ctor_end();
-         CtorIt != CtorE; ++CtorIt)
-      (this->*Callback)(*CtorIt);
+    for (const auto *Ctor : RD->ctors())
+      (this->*Callback)(Ctor);
     for (CXXRecordDecl::specific_decl_iterator<FunctionTemplateDecl>
              I(RD->decls_begin()), E(RD->decls_end());
          I != E; ++I) {
@@ -8551,11 +8503,9 @@ void Sema::DeclareInheritingConstructors(CXXRecordDecl *ClassDecl) {
 
   // Find base classes from which we might inherit constructors.
   SmallVector<CXXRecordDecl*, 4> InheritedBases;
-  for (CXXRecordDecl::base_class_iterator BaseIt = ClassDecl->bases_begin(),
-                                          BaseE = ClassDecl->bases_end();
-       BaseIt != BaseE; ++BaseIt)
-    if (BaseIt->getInheritConstructors())
-      InheritedBases.push_back(BaseIt->getType()->getAsCXXRecordDecl());
+  for (const auto &BaseIt : ClassDecl->bases())
+    if (BaseIt.getInheritConstructors())
+      InheritedBases.push_back(BaseIt.getType()->getAsCXXRecordDecl());
 
   // Go no further if we're not inheriting any constructors.
   if (InheritedBases.empty())
@@ -8608,23 +8558,19 @@ Sema::ComputeDefaultedDtorExceptionSpec(CXXMethodDecl *MD) {
     return ExceptSpec;
 
   // Direct base-class destructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
-                                       BEnd = ClassDecl->bases_end();
-       B != BEnd; ++B) {
-    if (B->isVirtual()) // Handled below.
+  for (const auto &B : ClassDecl->bases()) {
+    if (B.isVirtual()) // Handled below.
       continue;
     
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>())
-      ExceptSpec.CalledDecl(B->getLocStart(),
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>())
+      ExceptSpec.CalledDecl(B.getLocStart(),
                    LookupDestructor(cast<CXXRecordDecl>(BaseType->getDecl())));
   }
 
   // Virtual base-class destructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->vbases_begin(),
-                                       BEnd = ClassDecl->vbases_end();
-       B != BEnd; ++B) {
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>())
-      ExceptSpec.CalledDecl(B->getLocStart(),
+  for (const auto &B : ClassDecl->vbases()) {
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>())
+      ExceptSpec.CalledDecl(B.getLocStart(),
                   LookupDestructor(cast<CXXRecordDecl>(BaseType->getDecl())));
   }
 
@@ -9214,27 +9160,23 @@ Sema::ComputeDefaultedCopyAssignmentExceptionSpec(CXXMethodDecl *MD) {
   // Based on a similar decision made for constness in C++0x, we're erring on
   // the side of assuming such calls to be made regardless of whether they
   // actually happen.
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-                                       BaseEnd = ClassDecl->bases_end();
-       Base != BaseEnd; ++Base) {
-    if (Base->isVirtual())
+  for (const auto &Base : ClassDecl->bases()) {
+    if (Base.isVirtual())
       continue;
 
     CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
+      = cast<CXXRecordDecl>(Base.getType()->getAs<RecordType>()->getDecl());
     if (CXXMethodDecl *CopyAssign = LookupCopyingAssignment(BaseClassDecl,
                                                             ArgQuals, false, 0))
-      ExceptSpec.CalledDecl(Base->getLocStart(), CopyAssign);
+      ExceptSpec.CalledDecl(Base.getLocStart(), CopyAssign);
   }
 
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->vbases_begin(),
-                                       BaseEnd = ClassDecl->vbases_end();
-       Base != BaseEnd; ++Base) {
+  for (const auto &Base : ClassDecl->vbases()) {
     CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
+      = cast<CXXRecordDecl>(Base.getType()->getAs<RecordType>()->getDecl());
     if (CXXMethodDecl *CopyAssign = LookupCopyingAssignment(BaseClassDecl,
                                                             ArgQuals, false, 0))
-      ExceptSpec.CalledDecl(Base->getLocStart(), CopyAssign);
+      ExceptSpec.CalledDecl(Base.getLocStart(), CopyAssign);
   }
 
   for (const auto *Field : ClassDecl->fields()) {
@@ -9336,10 +9278,9 @@ static void diagnoseDeprecatedCopyOperation(Sema &S, CXXMethodDecl *CopyOp,
              RD->hasUserDeclaredCopyConstructor() &&
              !S.getLangOpts().MSVCCompat) {
     // Find any user-declared copy constructor.
-    for (CXXRecordDecl::ctor_iterator I = RD->ctor_begin(),
-                                      E = RD->ctor_end(); I != E; ++I) {
+    for (auto *I : RD->ctors()) {
       if (I->isCopyConstructor()) {
-        UserDeclaredOperation = *I;
+        UserDeclaredOperation = I;
         break;
       }
     }
@@ -9348,10 +9289,9 @@ static void diagnoseDeprecatedCopyOperation(Sema &S, CXXMethodDecl *CopyOp,
              RD->hasUserDeclaredCopyAssignment() &&
              !S.getLangOpts().MSVCCompat) {
     // Find any user-declared move assignment operator.
-    for (CXXRecordDecl::method_iterator I = RD->method_begin(),
-                                        E = RD->method_end(); I != E; ++I) {
+    for (auto *I : RD->methods()) {
       if (I->isCopyAssignmentOperator()) {
-        UserDeclaredOperation = *I;
+        UserDeclaredOperation = I;
         break;
       }
     }
@@ -9430,18 +9370,17 @@ void Sema::DefineImplicitCopyAssignment(SourceLocation CurrentLocation,
   
   // Assign base classes.
   bool Invalid = false;
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-       E = ClassDecl->bases_end(); Base != E; ++Base) {
+  for (auto &Base : ClassDecl->bases()) {
     // Form the assignment:
     //   static_cast<Base*>(this)->Base::operator=(static_cast<Base&>(other));
-    QualType BaseType = Base->getType().getUnqualifiedType();
+    QualType BaseType = Base.getType().getUnqualifiedType();
     if (!BaseType->isRecordType()) {
       Invalid = true;
       continue;
     }
 
     CXXCastPath BasePath;
-    BasePath.push_back(Base);
+    BasePath.push_back(&Base);
 
     // Construct the "from" expression, which is an implicit cast to the
     // appropriately-qualified base type.
@@ -9599,27 +9538,23 @@ Sema::ComputeDefaultedMoveAssignmentExceptionSpec(CXXMethodDecl *MD) {
   // actually happen.
   // Note that a move constructor is not implicitly declared when there are
   // virtual bases, but it can still be user-declared and explicitly defaulted.
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-                                       BaseEnd = ClassDecl->bases_end();
-       Base != BaseEnd; ++Base) {
-    if (Base->isVirtual())
+  for (const auto &Base : ClassDecl->bases()) {
+    if (Base.isVirtual())
       continue;
 
     CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
+      = cast<CXXRecordDecl>(Base.getType()->getAs<RecordType>()->getDecl());
     if (CXXMethodDecl *MoveAssign = LookupMovingAssignment(BaseClassDecl,
                                                            0, false, 0))
-      ExceptSpec.CalledDecl(Base->getLocStart(), MoveAssign);
+      ExceptSpec.CalledDecl(Base.getLocStart(), MoveAssign);
   }
 
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->vbases_begin(),
-                                       BaseEnd = ClassDecl->vbases_end();
-       Base != BaseEnd; ++Base) {
+  for (const auto &Base : ClassDecl->vbases()) {
     CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
+      = cast<CXXRecordDecl>(Base.getType()->getAs<RecordType>()->getDecl());
     if (CXXMethodDecl *MoveAssign = LookupMovingAssignment(BaseClassDecl,
                                                            0, false, 0))
-      ExceptSpec.CalledDecl(Base->getLocStart(), MoveAssign);
+      ExceptSpec.CalledDecl(Base.getLocStart(), MoveAssign);
   }
 
   for (const auto *Field : ClassDecl->fields()) {
@@ -9720,10 +9655,8 @@ static void checkMoveAssignmentForRepeatedMove(Sema &S, CXXRecordDecl *Class,
   typedef llvm::DenseMap<CXXRecordDecl*, CXXBaseSpecifier*> VBaseMap;
   VBaseMap VBases;
 
-  for (CXXRecordDecl::base_class_iterator BI = Class->bases_begin(),
-                                          BE = Class->bases_end();
-       BI != BE; ++BI) {
-    Worklist.push_back(&*BI);
+  for (auto &BI : Class->bases()) {
+    Worklist.push_back(&BI);
     while (!Worklist.empty()) {
       CXXBaseSpecifier *BaseSpec = Worklist.pop_back_val();
       CXXRecordDecl *Base = BaseSpec->getType()->getAsCXXRecordDecl();
@@ -9755,19 +9688,19 @@ static void checkMoveAssignmentForRepeatedMove(Sema &S, CXXRecordDecl *Class,
         // only happens in one base, we'll diagnose it when synthesizing
         // that base class's move assignment operator.)
         CXXBaseSpecifier *&Existing =
-            VBases.insert(std::make_pair(Base->getCanonicalDecl(), BI))
+            VBases.insert(std::make_pair(Base->getCanonicalDecl(), &BI))
                 .first->second;
-        if (Existing && Existing != BI) {
+        if (Existing && Existing != &BI) {
           S.Diag(CurrentLocation, diag::warn_vbase_moved_multiple_times)
             << Class << Base;
           S.Diag(Existing->getLocStart(), diag::note_vbase_moved_here)
             << (Base->getCanonicalDecl() ==
                 Existing->getType()->getAsCXXRecordDecl()->getCanonicalDecl())
             << Base << Existing->getType() << Existing->getSourceRange();
-          S.Diag(BI->getLocStart(), diag::note_vbase_moved_here)
+          S.Diag(BI.getLocStart(), diag::note_vbase_moved_here)
             << (Base->getCanonicalDecl() ==
-                BI->getType()->getAsCXXRecordDecl()->getCanonicalDecl())
-            << Base << BI->getType() << BaseSpec->getSourceRange();
+                BI.getType()->getAsCXXRecordDecl()->getCanonicalDecl())
+            << Base << BI.getType() << BaseSpec->getSourceRange();
 
           // Only diagnose each vbase once.
           Existing = 0;
@@ -9780,10 +9713,8 @@ static void checkMoveAssignmentForRepeatedMove(Sema &S, CXXRecordDecl *Class,
           continue;
 
         // We're going to move the base classes of Base. Add them to the list.
-        for (CXXRecordDecl::base_class_iterator BI = Base->bases_begin(),
-                                                BE = Base->bases_end();
-             BI != BE; ++BI)
-          Worklist.push_back(&*BI);
+        for (auto &BI : Base->bases())
+          Worklist.push_back(&BI);
       }
     }
   }
@@ -9845,8 +9776,7 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
 
   // Assign base classes.
   bool Invalid = false;
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-       E = ClassDecl->bases_end(); Base != E; ++Base) {
+  for (auto &Base : ClassDecl->bases()) {
     // C++11 [class.copy]p28:
     //   It is unspecified whether subobjects representing virtual base classes
     //   are assigned more than once by the implicitly-defined copy assignment
@@ -9857,14 +9787,14 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
 
     // Form the assignment:
     //   static_cast<Base*>(this)->Base::operator=(static_cast<Base&&>(other));
-    QualType BaseType = Base->getType().getUnqualifiedType();
+    QualType BaseType = Base.getType().getUnqualifiedType();
     if (!BaseType->isRecordType()) {
       Invalid = true;
       continue;
     }
 
     CXXCastPath BasePath;
-    BasePath.push_back(Base);
+    BasePath.push_back(&Base);
 
     // Construct the "from" expression, which is an implicit cast to the
     // appropriately-qualified base type.
@@ -10021,29 +9951,23 @@ Sema::ComputeDefaultedCopyCtorExceptionSpec(CXXMethodDecl *MD) {
   // C++ [except.spec]p14:
   //   An implicitly declared special member function (Clause 12) shall have an 
   //   exception-specification. [...]
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
-                                       BaseEnd = ClassDecl->bases_end();
-       Base != BaseEnd; 
-       ++Base) {
+  for (const auto &Base : ClassDecl->bases()) {
     // Virtual bases are handled below.
-    if (Base->isVirtual())
+    if (Base.isVirtual())
       continue;
     
     CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
+      = cast<CXXRecordDecl>(Base.getType()->getAs<RecordType>()->getDecl());
     if (CXXConstructorDecl *CopyConstructor =
           LookupCopyingConstructor(BaseClassDecl, Quals))
-      ExceptSpec.CalledDecl(Base->getLocStart(), CopyConstructor);
+      ExceptSpec.CalledDecl(Base.getLocStart(), CopyConstructor);
   }
-  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->vbases_begin(),
-                                       BaseEnd = ClassDecl->vbases_end();
-       Base != BaseEnd; 
-       ++Base) {
+  for (const auto &Base : ClassDecl->vbases()) {
     CXXRecordDecl *BaseClassDecl
-      = cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
+      = cast<CXXRecordDecl>(Base.getType()->getAs<RecordType>()->getDecl());
     if (CXXConstructorDecl *CopyConstructor =
           LookupCopyingConstructor(BaseClassDecl, Quals))
-      ExceptSpec.CalledDecl(Base->getLocStart(), CopyConstructor);
+      ExceptSpec.CalledDecl(Base.getLocStart(), CopyConstructor);
   }
   for (const auto *Field : ClassDecl->fields()) {
     QualType FieldType = Context.getBaseElementType(Field->getType());
@@ -10178,35 +10102,31 @@ Sema::ComputeDefaultedMoveCtorExceptionSpec(CXXMethodDecl *MD) {
     return ExceptSpec;
 
   // Direct base-class constructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
-                                       BEnd = ClassDecl->bases_end();
-       B != BEnd; ++B) {
-    if (B->isVirtual()) // Handled below.
+  for (const auto &B : ClassDecl->bases()) {
+    if (B.isVirtual()) // Handled below.
       continue;
     
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
       CXXConstructorDecl *Constructor =
           LookupMovingConstructor(BaseClassDecl, 0);
       // If this is a deleted function, add it anyway. This might be conformant
       // with the standard. This might not. I'm not sure. It might not matter.
       if (Constructor)
-        ExceptSpec.CalledDecl(B->getLocStart(), Constructor);
+        ExceptSpec.CalledDecl(B.getLocStart(), Constructor);
     }
   }
 
   // Virtual base-class constructors.
-  for (CXXRecordDecl::base_class_iterator B = ClassDecl->vbases_begin(),
-                                       BEnd = ClassDecl->vbases_end();
-       B != BEnd; ++B) {
-    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+  for (const auto &B : ClassDecl->vbases()) {
+    if (const RecordType *BaseType = B.getType()->getAs<RecordType>()) {
       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
       CXXConstructorDecl *Constructor =
           LookupMovingConstructor(BaseClassDecl, 0);
       // If this is a deleted function, add it anyway. This might be conformant
       // with the standard. This might not. I'm not sure. It might not matter.
       if (Constructor)
-        ExceptSpec.CalledDecl(B->getLocStart(), Constructor);
+        ExceptSpec.CalledDecl(B.getLocStart(), Constructor);
     }
   }
 
@@ -12406,10 +12326,9 @@ bool Sema::DefineUsedVTables() {
 
 void Sema::MarkVirtualMemberExceptionSpecsNeeded(SourceLocation Loc,
                                                  const CXXRecordDecl *RD) {
-  for (CXXRecordDecl::method_iterator I = RD->method_begin(),
-                                      E = RD->method_end(); I != E; ++I)
-    if ((*I)->isVirtual() && !(*I)->isPure())
-      ResolveExceptionSpec(Loc, (*I)->getType()->castAs<FunctionProtoType>());
+  for (const auto *I : RD->methods())
+    if (I->isVirtual() && !I->isPure())
+      ResolveExceptionSpec(Loc, I->getType()->castAs<FunctionProtoType>());
 }
 
 void Sema::MarkVirtualMembersReferenced(SourceLocation Loc,
@@ -12437,10 +12356,9 @@ void Sema::MarkVirtualMembersReferenced(SourceLocation Loc,
   if (RD->getNumVBases() == 0)
     return;
 
-  for (CXXRecordDecl::base_class_const_iterator i = RD->bases_begin(),
-           e = RD->bases_end(); i != e; ++i) {
+  for (const auto &I : RD->bases()) {
     const CXXRecordDecl *Base =
-        cast<CXXRecordDecl>(i->getType()->getAs<RecordType>()->getDecl());
+        cast<CXXRecordDecl>(I.getType()->getAs<RecordType>()->getDecl());
     if (Base->getNumVBases() == 0)
       continue;
     MarkVirtualMembersReferenced(Loc, Base);

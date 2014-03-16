@@ -1422,10 +1422,10 @@ static bool isArraySizeVLA(Sema &S, Expr *ArraySize, llvm::APSInt &SizeVal) {
   public:
     VLADiagnoser() : Sema::VerifyICEDiagnoser(true) {}
 
-    virtual void diagnoseNotICE(Sema &S, SourceLocation Loc, SourceRange SR) {
+    void diagnoseNotICE(Sema &S, SourceLocation Loc, SourceRange SR) override {
     }
 
-    virtual void diagnoseFold(Sema &S, SourceLocation Loc, SourceRange SR) {
+    void diagnoseFold(Sema &S, SourceLocation Loc, SourceRange SR) override {
       S.Diag(Loc, diag::ext_vla_folded_to_constant) << SR;
     }
   } Diagnoser;
@@ -5037,7 +5037,7 @@ namespace {
     TypeDiagnoserDiag(unsigned DiagID)
       : Sema::TypeDiagnoser(DiagID == 0), DiagID(DiagID) {}
 
-    virtual void diagnose(Sema &S, SourceLocation Loc, QualType T) {
+    void diagnose(Sema &S, SourceLocation Loc, QualType T) override {
       if (Suppressed) return;
       S.Diag(Loc, DiagID) << T;
     }
@@ -5329,20 +5329,18 @@ bool Sema::RequireLiteralType(SourceLocation Loc, QualType T,
   if (RD->getNumVBases()) {
     Diag(RD->getLocation(), diag::note_non_literal_virtual_base)
       << getLiteralDiagFromTagKind(RD->getTagKind()) << RD->getNumVBases();
-    for (CXXRecordDecl::base_class_const_iterator I = RD->vbases_begin(),
-           E = RD->vbases_end(); I != E; ++I)
-      Diag(I->getLocStart(),
-           diag::note_constexpr_virtual_base_here) << I->getSourceRange();
+    for (const auto &I : RD->vbases())
+      Diag(I.getLocStart(), diag::note_constexpr_virtual_base_here)
+          << I.getSourceRange();
   } else if (!RD->isAggregate() && !RD->hasConstexprNonCopyMoveConstructor() &&
              !RD->hasTrivialDefaultConstructor()) {
     Diag(RD->getLocation(), diag::note_non_literal_no_constexpr_ctors) << RD;
   } else if (RD->hasNonLiteralTypeFieldsOrBases()) {
-    for (CXXRecordDecl::base_class_const_iterator I = RD->bases_begin(),
-         E = RD->bases_end(); I != E; ++I) {
-      if (!I->getType()->isLiteralType(Context)) {
-        Diag(I->getLocStart(),
+    for (const auto &I : RD->bases()) {
+      if (!I.getType()->isLiteralType(Context)) {
+        Diag(I.getLocStart(),
              diag::note_non_literal_base_class)
-          << RD << I->getType() << I->getSourceRange();
+          << RD << I.getType() << I.getSourceRange();
         return true;
       }
     }

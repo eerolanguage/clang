@@ -367,9 +367,8 @@ void JumpScopeChecker::BuildScopeInformation(Stmt *S, unsigned &origParentScope)
     if (DeclStmt *DS = dyn_cast<DeclStmt>(SubStmt)) {
       // The decl statement creates a scope if any of the decls in it are VLAs
       // or have the cleanup attribute.
-      for (DeclStmt::decl_iterator I = DS->decl_begin(), E = DS->decl_end();
-           I != E; ++I)
-        BuildScopeInformation(*I, ParentScope);
+      for (auto *I : DS->decls())
+        BuildScopeInformation(I, ParentScope);
       continue;
     }
     // Disallow jumps into any part of an @try statement by pushing a scope and
@@ -445,9 +444,8 @@ void JumpScopeChecker::BuildScopeInformation(Stmt *S, unsigned &origParentScope)
     if (ExprWithCleanups *EWC = dyn_cast<ExprWithCleanups>(SubStmt)) {
       for (unsigned i = 0, e = EWC->getNumObjects(); i != e; ++i) {
         const BlockDecl *BDecl = EWC->getObject(i);
-        for (BlockDecl::capture_const_iterator ci = BDecl->capture_begin(),
-             ce = BDecl->capture_end(); ci != ce; ++ci) {
-          VarDecl *variable = ci->getVariable();
+        for (const auto &CI : BDecl->captures()) {
+          VarDecl *variable = CI.getVariable();
           BuildScopeInformation(variable, BDecl, ParentScope);
         }
       }

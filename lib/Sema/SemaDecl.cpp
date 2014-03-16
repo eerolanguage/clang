@@ -71,7 +71,7 @@ class TypeNameValidatorCCC : public CorrectionCandidateCallback {
     WantRemainingKeywords = false;
   }
 
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
+  bool ValidateCandidate(const TypoCorrection &candidate) override {
     if (NamedDecl *ND = candidate.getCorrectionDecl()) {
       bool IsType = isa<TypeDecl>(ND) || isa<ObjCInterfaceDecl>(ND);
       bool AllowedTemplate = AllowClassTemplates && isa<ClassTemplateDecl>(ND);
@@ -386,9 +386,8 @@ bool Sema::isMicrosoftMissingTypename(const CXXScopeSpec *SS, Scope *S) {
     const Type *Ty = SS->getScopeRep()->getAsType();
 
     CXXRecordDecl *RD = cast<CXXRecordDecl>(CurContext);
-    for (CXXRecordDecl::base_class_const_iterator Base = RD->bases_begin(),
-          BaseEnd = RD->bases_end(); Base != BaseEnd; ++Base)
-      if (Context.hasSameUnqualifiedType(QualType(Ty, 1), Base->getType()))
+    for (const auto &Base : RD->bases())
+      if (Context.hasSameUnqualifiedType(QualType(Ty, 1), Base.getType()))
         return true;
     return S->isFunctionPrototypeScope();
   } 
@@ -1830,9 +1829,7 @@ static bool mergeAlignedAttrs(Sema &S, NamedDecl *New, Decl *Old) {
   AlignedAttr *OldAlignasAttr = 0;
   AlignedAttr *OldStrictestAlignAttr = 0;
   unsigned OldAlign = 0;
-  for (specific_attr_iterator<AlignedAttr>
-         I = Old->specific_attr_begin<AlignedAttr>(),
-         E = Old->specific_attr_end<AlignedAttr>(); I != E; ++I) {
+  for (auto *I : Old->specific_attrs<AlignedAttr>()) {
     // FIXME: We have no way of representing inherited dependent alignments
     // in a case like:
     //   template<int A, int B> struct alignas(A) X;
@@ -1843,26 +1840,24 @@ static bool mergeAlignedAttrs(Sema &S, NamedDecl *New, Decl *Old) {
       return false;
 
     if (I->isAlignas())
-      OldAlignasAttr = *I;
+      OldAlignasAttr = I;
 
     unsigned Align = I->getAlignment(S.Context);
     if (Align > OldAlign) {
       OldAlign = Align;
-      OldStrictestAlignAttr = *I;
+      OldStrictestAlignAttr = I;
     }
   }
 
   // Look for alignas attributes on New.
   AlignedAttr *NewAlignasAttr = 0;
   unsigned NewAlign = 0;
-  for (specific_attr_iterator<AlignedAttr>
-         I = New->specific_attr_begin<AlignedAttr>(),
-         E = New->specific_attr_end<AlignedAttr>(); I != E; ++I) {
+  for (auto *I : New->specific_attrs<AlignedAttr>()) {
     if (I->isAlignmentDependent())
       return false;
 
     if (I->isAlignas())
-      NewAlignasAttr = *I;
+      NewAlignasAttr = I;
 
     unsigned Align = I->getAlignment(S.Context);
     if (Align > NewAlign)
@@ -2108,15 +2103,12 @@ void Sema::mergeDeclAttributes(NamedDecl *New, Decl *Old,
   // we process them.
   if (!foundAny) New->setAttrs(AttrVec());
 
-  for (specific_attr_iterator<InheritableAttr>
-         i = Old->specific_attr_begin<InheritableAttr>(),
-         e = Old->specific_attr_end<InheritableAttr>(); 
-       i != e; ++i) {
+  for (auto *I : Old->specific_attrs<InheritableAttr>()) {
     bool Override = false;
     // Ignore deprecated/unavailable/availability attributes if requested.
-    if (isa<DeprecatedAttr>(*i) ||
-        isa<UnavailableAttr>(*i) ||
-        isa<AvailabilityAttr>(*i)) {
+    if (isa<DeprecatedAttr>(I) ||
+        isa<UnavailableAttr>(I) ||
+        isa<AvailabilityAttr>(I)) {
       switch (AMK) {
       case AMK_None:
         continue;
@@ -2131,10 +2123,10 @@ void Sema::mergeDeclAttributes(NamedDecl *New, Decl *Old,
     }
 
     // Already handled.
-    if (isa<UsedAttr>(*i))
+    if (isa<UsedAttr>(I))
       continue;
 
-    if (mergeDeclAttribute(*this, New, *i, Override))
+    if (mergeDeclAttribute(*this, New, I, Override))
       foundAny = true;
   }
 
@@ -2176,12 +2168,10 @@ static void mergeParamDeclAttributes(ParmVarDecl *newDecl,
   // done before we process them.
   if (!foundAny) newDecl->setAttrs(AttrVec());
 
-  for (specific_attr_iterator<InheritableParamAttr>
-       i = oldDecl->specific_attr_begin<InheritableParamAttr>(),
-       e = oldDecl->specific_attr_end<InheritableParamAttr>(); i != e; ++i) {
-    if (!DeclHasAttr(newDecl, *i)) {
+  for (const auto *I : oldDecl->specific_attrs<InheritableParamAttr>()) {
+    if (!DeclHasAttr(newDecl, I)) {
       InheritableAttr *newAttr =
-        cast<InheritableParamAttr>((*i)->clone(S.Context));
+        cast<InheritableParamAttr>(I->clone(S.Context));
       newAttr->setInherited(true);
       newDecl->addAttr(newAttr);
       foundAny = true;
@@ -5992,9 +5982,8 @@ bool Sema::AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
   bool hasNonDeletedOverridenMethods = false;
   bool AddedAny = false;
   if (DC->lookupInBases(&FindOverriddenMethod, &Data, Paths)) {
-    for (CXXBasePaths::decl_iterator I = Paths.found_decls_begin(),
-         E = Paths.found_decls_end(); I != E; ++I) {
-      if (CXXMethodDecl *OldMD = dyn_cast<CXXMethodDecl>(*I)) {
+    for (auto *I : Paths.found_decls()) {
+      if (CXXMethodDecl *OldMD = dyn_cast<CXXMethodDecl>(I)) {
         MD->addOverriddenMethod(OldMD->getCanonicalDecl());
         if (!CheckOverridingFunctionReturnType(MD, OldMD) &&
             !CheckOverridingFunctionAttributes(MD, OldMD) &&
@@ -6040,7 +6029,7 @@ class DifferentNameValidatorCCC : public CorrectionCandidateCallback {
       : Context(Context), OriginalFD(TypoFD),
         ExpectedParent(Parent ? Parent->getCanonicalDecl() : 0) {}
 
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
+  bool ValidateCandidate(const TypoCorrection &candidate) override {
     if (candidate.getEditDistance() == 0)
       return false;
 
@@ -8107,6 +8096,11 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
         return;
       } else {
         DeduceInit = CXXDirectInit->getExpr(0);
+        if (isa<InitListExpr>(DeduceInit))
+          Diag(CXXDirectInit->getLocStart(),
+               diag::err_auto_var_init_paren_braces)
+            << VDecl->getDeclName() << VDecl->getType()
+            << VDecl->getSourceRange();
       }
     }
 
@@ -8986,10 +8980,7 @@ Sema::FinalizeDeclaration(Decl *ThisDecl) {
       !VD->getType()->isIntegralOrEnumerationType())
     return;
 
-  for (specific_attr_iterator<TypeTagForDatatypeAttr>
-         I = ThisDecl->specific_attr_begin<TypeTagForDatatypeAttr>(),
-         E = ThisDecl->specific_attr_end<TypeTagForDatatypeAttr>();
-       I != E; ++I) {
+  for (const auto *I : ThisDecl->specific_attrs<TypeTagForDatatypeAttr>()) {
     const Expr *MagicValueExpr = VD->getInit();
     if (!MagicValueExpr) {
       continue;
@@ -9522,22 +9513,21 @@ static void RebuildLambdaScopeInfo(CXXMethodDecl *CallOperator,
 
   // Add the captures to the LSI so they can be noted as already
   // captured within tryCaptureVar. 
-  for (LambdaExpr::capture_iterator C = LambdaClass->captures_begin(),
-      CEnd = LambdaClass->captures_end(); C != CEnd; ++C) {
-    if (C->capturesVariable()) {
-      VarDecl *VD = C->getCapturedVar();
+  for (const auto &C : LambdaClass->captures()) {
+    if (C.capturesVariable()) {
+      VarDecl *VD = C.getCapturedVar();
       if (VD->isInitCapture())
         S.CurrentInstantiationScope->InstantiatedLocal(VD, VD);
       QualType CaptureType = VD->getType();
-      const bool ByRef = C->getCaptureKind() == LCK_ByRef;
+      const bool ByRef = C.getCaptureKind() == LCK_ByRef;
       LSI->addCapture(VD, /*IsBlock*/false, ByRef, 
-          /*RefersToEnclosingLocal*/true, C->getLocation(),
-          /*EllipsisLoc*/C->isPackExpansion() 
-                         ? C->getEllipsisLoc() : SourceLocation(),
+          /*RefersToEnclosingLocal*/true, C.getLocation(),
+          /*EllipsisLoc*/C.isPackExpansion() 
+                         ? C.getEllipsisLoc() : SourceLocation(),
           CaptureType, /*Expr*/ 0);
       
-    } else if (C->capturesThis()) {
-      LSI->addThisCapture(/*Nested*/ false, C->getLocation(), 
+    } else if (C.capturesThis()) {
+      LSI->addThisCapture(/*Nested*/ false, C.getLocation(), 
                               S.getCurrentThisType(), /*Expr*/ 0);
     }
   }
@@ -9746,6 +9736,30 @@ void Sema::computeNRVO(Stmt *Body, FunctionScopeInfo *Scope) {
     const_cast<VarDecl*>(NRVOCandidate)->setNRVOVariable(true);
 }
 
+bool Sema::canDelayFunctionBody(const Declarator &D) {
+  // We can't delay parsing the body of a constexpr function template (yet).
+  if (D.getDeclSpec().isConstexprSpecified())
+    return false;
+
+  // We can't delay parsing the body of a function template with a deduced
+  // return type (yet).
+  if (D.getDeclSpec().containsPlaceholderType()) {
+    // If the placeholder introduces a non-deduced trailing return type,
+    // we can still delay parsing it.
+    if (D.getNumTypeObjects()) {
+      const auto &Outer = D.getTypeObject(D.getNumTypeObjects() - 1);
+      if (Outer.Kind == DeclaratorChunk::Function &&
+          Outer.Fun.hasTrailingReturnType()) {
+        QualType Ty = GetTypeFromParser(Outer.Fun.getTrailingReturnType());
+        return Ty.isNull() || !Ty->isUndeducedType();
+      }
+    }
+    return false;
+  }
+
+  return true;
+}
+
 bool Sema::canSkipFunctionBody(Decl *D) {
   // We cannot skip the body of a function (or function template) which is
   // constexpr, since we may need to evaluate its body in order to parse the
@@ -9861,14 +9875,19 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
           MD->isDesignatedInitializerForTheInterface(&InitMethod);
       assert(isDesignated && InitMethod);
       (void)isDesignated;
-      Diag(MD->getLocation(),
-           diag::warn_objc_designated_init_missing_super_call);
-      Diag(InitMethod->getLocation(),
-           diag::note_objc_designated_init_marked_here);
+      // Don't issue this warning for unavaialable inits.
+      if (!MD->isUnavailable()) {
+        Diag(MD->getLocation(),
+             diag::warn_objc_designated_init_missing_super_call);
+        Diag(InitMethod->getLocation(),
+             diag::note_objc_designated_init_marked_here);
+      }
       getCurFunction()->ObjCWarnForNoDesignatedInitChain = false;
     }
     if (getCurFunction()->ObjCWarnForNoInitDelegation) {
-      Diag(MD->getLocation(), diag::warn_objc_secondary_init_missing_init_call);
+      // Don't issue this warning for unavaialable inits.
+      if (!MD->isUnavailable())
+        Diag(MD->getLocation(), diag::warn_objc_secondary_init_missing_init_call);
       getCurFunction()->ObjCWarnForNoInitDelegation = false;
     }
   } else {
@@ -12280,10 +12299,7 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
             Diag(ClsIvar->getLocation(), diag::note_previous_definition);
             continue;
           }
-          for (ObjCInterfaceDecl::known_extensions_iterator
-                 Ext = IDecl->known_extensions_begin(),
-                 ExtEnd = IDecl->known_extensions_end();
-               Ext != ExtEnd; ++Ext) {
+          for (const auto *Ext : IDecl->known_extensions()) {
             if (const ObjCIvarDecl *ClsExtIvar
                   = Ext->getIvarDecl(ClsFields[i]->getIdentifier())) {
               Diag(ClsFields[i]->getLocation(), 

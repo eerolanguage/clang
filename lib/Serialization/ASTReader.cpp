@@ -118,10 +118,15 @@ bool ChainedASTReaderListener::needsSystemInputFileVisitation() {
   return First->needsSystemInputFileVisitation() ||
   Second->needsSystemInputFileVisitation();
 }
+void ChainedASTReaderListener::visitModuleFile(StringRef Filename) {
+  First->visitModuleFile(Filename);
+  Second->visitModuleFile(Filename);
+}
 bool ChainedASTReaderListener::visitInputFile(StringRef Filename,
-                                              bool isSystem) {
-  return First->visitInputFile(Filename, isSystem) ||
-         Second->visitInputFile(Filename, isSystem);
+                                              bool isSystem,
+                                              bool isOverridden) {
+  return First->visitInputFile(Filename, isSystem, isOverridden) ||
+         Second->visitInputFile(Filename, isSystem, isOverridden);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1870,9 +1875,8 @@ void ASTReader::installImportedMacro(IdentifierInfo *II, ModuleMacroInfo *MMI,
   PP.appendMacroDirective(II, MD);
 }
 
-void ASTReader::readInputFileInfo(ModuleFile &F, unsigned ID,
-                                 std::string &Filename, off_t &StoredSize,
-                                 time_t &StoredTime, bool &Overridden) {
+ASTReader::InputFileInfo
+ASTReader::readInputFileInfo(ModuleFile &F, unsigned ID) {
   // Go find this input file.
   BitstreamCursor &Cursor = F.InputFilesCursor;
   SavedStreamPosition SavedPosition(Cursor);
@@ -1887,21 +1891,24 @@ void ASTReader::readInputFileInfo(ModuleFile &F, unsigned ID,
          "invalid record type for input file");
   (void)Result;
 
+  std::string Filename;
+  off_t StoredSize;
+  time_t StoredTime;
+  bool Overridden;
+  
   assert(Record[0] == ID && "Bogus stored ID or offset");
   StoredSize = static_cast<off_t>(Record[1]);
   StoredTime = static_cast<time_t>(Record[2]);
   Overridden = static_cast<bool>(Record[3]);
   Filename = Blob;
   MaybeAddSystemRootToFilename(F, Filename);
+  
+  InputFileInfo R = { std::move(Filename), StoredSize, StoredTime, Overridden };
+  return R;
 }
 
 std::string ASTReader::getInputFileName(ModuleFile &F, unsigned int ID) {
-  off_t StoredSize;
-  time_t StoredTime;
-  bool Overridden;
-  std::string Filename;
-  readInputFileInfo(F, ID, Filename, StoredSize, StoredTime, Overridden);
-  return Filename;
+  return readInputFileInfo(F, ID).Filename;
 }
 
 InputFile ASTReader::getInputFile(ModuleFile &F, unsigned ID, bool Complain) {
@@ -1921,11 +1928,11 @@ InputFile ASTReader::getInputFile(ModuleFile &F, unsigned ID, bool Complain) {
   SavedStreamPosition SavedPosition(Cursor);
   Cursor.JumpToBit(F.InputFileOffsets[ID-1]);
   
-  off_t StoredSize;
-  time_t StoredTime;
-  bool Overridden;
-  std::string Filename;
-  readInputFileInfo(F, ID, Filename, StoredSize, StoredTime, Overridden);
+  InputFileInfo FI = readInputFileInfo(F, ID);
+  off_t StoredSize = FI.StoredSize;
+  time_t StoredTime = FI.StoredTime;
+  bool Overridden = FI.Overridden;
+  StringRef Filename = FI.Filename;
 
   const FileEntry *File
     = Overridden? FileMgr.getVirtualFile(Filename, StoredSize, StoredTime)
@@ -2116,11 +2123,17 @@ ASTReader::ReadControlBlock(ModuleFile &F,
         }
       }
 
+      if (Listener)
+        Listener->visitModuleFile(F.FileName);
+
       if (Listener && Listener->needsInputFileVisitation()) {
         unsigned N = Listener->needsSystemInputFileVisitation() ? NumInputs
                                                                 : NumUserInputs;
-        for (unsigned I = 0; I < N; ++I)
-          Listener->visitInputFile(getInputFileName(F, I+1), I >= NumUserInputs);
+        for (unsigned I = 0; I < N; ++I) {
+          bool IsSystem = I >= NumUserInputs;
+          InputFileInfo FI = readInputFileInfo(F, I+1);
+          Listener->visitInputFile(FI.Filename, IsSystem, FI.Overridden);
+        }
       }
 
       return Success;
@@ -2495,6 +2508,12 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
         DeclContext *TU = Context.getTranslationUnitDecl();
         F.DeclContextInfos[TU].NameLookupTableData = Table;
         TU->setHasExternalVisibleStorage(true);
+      } else if (Decl *D = DeclsLoaded[ID - NUM_PREDEF_DECL_IDS]) {
+        auto *DC = cast<DeclContext>(D);
+        DC->getPrimaryContext()->setHasExternalVisibleStorage(true);
+        auto *&LookupTable = F.DeclContextInfos[DC].NameLookupTableData;
+        delete LookupTable;
+        LookupTable = Table;
       } else
         PendingVisibleUpdates[ID].push_back(std::make_pair(Table, &F));
       break;
@@ -3776,17 +3795,17 @@ namespace {
     {
     }
 
-    virtual bool ReadLanguageOptions(const LangOptions &LangOpts,
-                                     bool Complain) {
+    bool ReadLanguageOptions(const LangOptions &LangOpts,
+                             bool Complain) override {
       return checkLanguageOptions(ExistingLangOpts, LangOpts, 0);
     }
-    virtual bool ReadTargetOptions(const TargetOptions &TargetOpts,
-                                   bool Complain) {
+    bool ReadTargetOptions(const TargetOptions &TargetOpts,
+                           bool Complain) override {
       return checkTargetOptions(ExistingTargetOpts, TargetOpts, 0);
     }
-    virtual bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
-                                         bool Complain,
-                                         std::string &SuggestedPredefines) {
+    bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
+                                 bool Complain,
+                                 std::string &SuggestedPredefines) override {
       return checkPreprocessorOptions(ExistingPPOpts, PPOpts, 0, FileMgr,
                                       SuggestedPredefines, ExistingLangOpts);
     }
@@ -3925,7 +3944,8 @@ bool ASTReader::readASTFileControlBlock(StringRef Filename,
         bool shouldContinue = false;
         switch ((InputFileRecordTypes)Cursor.readRecord(Code, Record, &Blob)) {
         case INPUT_FILE:
-          shouldContinue = Listener.visitInputFile(Blob, isSystemFile);
+          bool Overridden = static_cast<bool>(Record[3]);
+          shouldContinue = Listener.visitInputFile(Blob, isSystemFile, Overridden);
           break;
         }
         if (!shouldContinue)
@@ -5183,9 +5203,9 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
     unsigned Idx = 0;
     QualType Parm = readType(*Loc.F, Record, Idx);
     QualType Replacement = readType(*Loc.F, Record, Idx);
-    return
-      Context.getSubstTemplateTypeParmType(cast<TemplateTypeParmType>(Parm),
-                                            Replacement);
+    return Context.getSubstTemplateTypeParmType(
+        cast<TemplateTypeParmType>(Parm),
+        Context.getCanonicalType(Replacement));
   }
 
   case TYPE_SUBST_TEMPLATE_TYPE_PARM_PACK: {
@@ -6273,9 +6293,8 @@ static void PassObjCImplDeclToConsumer(ObjCImplDecl *ImplD,
                                        ASTConsumer *Consumer) {
   assert(ImplD && Consumer);
 
-  for (ObjCImplDecl::method_iterator
-         I = ImplD->meth_begin(), E = ImplD->meth_end(); I != E; ++I)
-    Consumer->HandleInterestingDecl(DeclGroupRef(*I));
+  for (auto *I : ImplD->methods())
+    Consumer->HandleInterestingDecl(DeclGroupRef(I));
 
   Consumer->HandleInterestingDecl(DeclGroupRef(ImplD));
 }
@@ -6560,7 +6579,7 @@ namespace clang {
   public:
     explicit ASTIdentifierIterator(const ASTReader &Reader);
 
-    virtual StringRef Next();
+    StringRef Next() override;
   };
 }
 

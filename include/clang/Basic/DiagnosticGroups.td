@@ -326,6 +326,7 @@ def : DiagGroup<"strict-prototypes">;
 def StrictSelector : DiagGroup<"strict-selector-match">;
 def MethodDuplicate : DiagGroup<"duplicate-method-match">;
 def CoveredSwitchDefault : DiagGroup<"covered-switch-default">;
+def SwitchBool     : DiagGroup<"switch-bool">;
 def SwitchEnum     : DiagGroup<"switch-enum">;
 def Switch         : DiagGroup<"switch">;
 def ImplicitFallthroughPerFunction :
@@ -422,6 +423,20 @@ def GCCWriteStrings : DiagGroup<"write-strings" , [DeprecatedWritableStr]>;
 def CharSubscript : DiagGroup<"char-subscripts">;
 def LargeByValueCopy : DiagGroup<"large-by-value-copy">;
 def DuplicateArgDecl : DiagGroup<"duplicate-method-arg">;
+
+// Unreachable code warning groups.
+//
+//  The goal is make -Wunreachable-code on by default, in -Wall, or at
+//  least actively used, with more noisy versions of the warning covered
+//  under separate flags.
+//
+def UnreachableCode : DiagGroup<"unreachable-code">;
+def UnreachableCodeBreak : DiagGroup<"unreachable-code-break">;
+def UnreachableCodeReturn : DiagGroup<"unreachable-code-return">;
+def UnreachableCodeAggressive : DiagGroup<"unreachable-code-aggressive",
+                                    [UnreachableCode,
+                                     UnreachableCodeBreak,
+                                     UnreachableCodeReturn]>;
 
 // Aggregation warning settings.
 
@@ -541,7 +556,7 @@ def Consumed       : DiagGroup<"consumed">;
 // Note that putting warnings in -Wall will not disable them by default. If a
 // warning should be active _only_ when -Wall is passed in, mark it as
 // DefaultIgnore in addition to putting it here.
-def : DiagGroup<"all", [Most, Parentheses, Switch]>;
+def : DiagGroup<"all", [Most, Parentheses, Switch, SwitchBool]>;
 
 // Warnings enabled by -pedantic.  This is magically filled in by TableGen.
 def Pedantic : DiagGroup<"pedantic">;

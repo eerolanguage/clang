@@ -30,45 +30,6 @@ using namespace clang;
 // Core Reachability Analysis routines.
 //===----------------------------------------------------------------------===//
 
-static bool bodyEndsWithNoReturn(const CFGBlock *B) {
-  for (CFGBlock::const_reverse_iterator I = B->rbegin(), E = B->rend();
-       I != E; ++I) {
-    if (Optional<CFGStmt> CS = I->getAs<CFGStmt>()) {
-      const Stmt *S = CS->getStmt();
-      if (const ExprWithCleanups *EWC = dyn_cast<ExprWithCleanups>(S))
-        S = EWC->getSubExpr();
-      if (const CallExpr *CE = dyn_cast<CallExpr>(S)) {
-        QualType CalleeType = CE->getCallee()->getType();
-        if (getFunctionExtInfo(*CalleeType).getNoReturn())
-          return true;
-      }
-      break;
-    }
-  }
-  return false;
-}
-
-static bool bodyEndsWithNoReturn(const CFGBlock::AdjacentBlock &AB) {
-  // If the predecessor is a normal CFG edge, then by definition
-  // the predecessor did not end with a 'noreturn'.
-  if (AB.getReachableBlock())
-    return false;
-
-  const CFGBlock *Pred = AB.getPossiblyUnreachableBlock();
-  assert(!AB.isReachable() && Pred);
-  return bodyEndsWithNoReturn(Pred);
-}
-
-static bool isBreakPrecededByNoReturn(const CFGBlock *B,
-                                      const Stmt *S) {
-  if (!isa<BreakStmt>(S) || B->pred_empty())
-    return false;
-
-  assert(B->empty());
-  assert(B->pred_size() == 1);
-  return bodyEndsWithNoReturn(*B->pred_begin());
-}
-
 static bool isEnumConstant(const Expr *Ex) {
   const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(Ex);
   if (!DR)
@@ -131,23 +92,19 @@ static bool isTrivialExpression(const Expr *Ex) {
          isEnumConstant(Ex);
 }
 
-static bool isTrivialReturnOrDoWhile(const CFGBlock *B, const Stmt *S) {
-  const Expr *Ex = dyn_cast<Expr>(S);
-
-  if (Ex && !isTrivialExpression(Ex))
-    return false;
-
+static bool isTrivialDoWhile(const CFGBlock *B, const Stmt *S) {
   // Check if the block ends with a do...while() and see if 'S' is the
   // condition.
   if (const Stmt *Term = B->getTerminator()) {
-    if (const DoStmt *DS = dyn_cast<DoStmt>(Term))
-      if (DS->getCond() == S)
-        return true;
+    if (const DoStmt *DS = dyn_cast<DoStmt>(Term)) {
+      const Expr *Cond = DS->getCond();
+      return Cond == S && isTrivialExpression(Cond);
+    }
   }
+  return false;
+}
 
-  if (B->pred_size() != 1)
-    return false;
-
+static bool isTrivialReturn(const CFGBlock *B, const Stmt *S) {
   // Look to see if the block ends with a 'return', and see if 'S'
   // is a substatement.  The 'return' may not be the last element in
   // the block because of destructors.
@@ -155,17 +112,14 @@ static bool isTrivialReturnOrDoWhile(const CFGBlock *B, const Stmt *S) {
        I != E; ++I) {
     if (Optional<CFGStmt> CS = I->getAs<CFGStmt>()) {
       if (const ReturnStmt *RS = dyn_cast<ReturnStmt>(CS->getStmt())) {
-        bool LookAtBody = false;
+        // Determine if we need to lock at the body of the block
+        // before the dead return.
         if (RS == S)
-          LookAtBody = true;
-        else {
-          const Expr *RE = RS->getRetValue();
-          if (RE && stripExprSugar(RE->IgnoreParenCasts()) == Ex)
-            LookAtBody = true;
+          return true;
+        if (const Expr *RE = RS->getRetValue()) {
+          RE = stripExprSugar(RE->IgnoreParenCasts());
+          return RE == S && isTrivialExpression(RE);
         }
-
-        if (LookAtBody)
-          return bodyEndsWithNoReturn(*B->pred_begin());
       }
       break;
     }
@@ -238,7 +192,12 @@ static bool isConfigurationValue(const Stmt *S,
         // We could generalize this to local variables, but it isn't
         // clear if those truly represent configuration values that
         // gate unreachable code.
-        return !VD->hasLocalStorage();
+        if (!VD->hasLocalStorage())
+          return true;
+
+        // As a heuristic, locals that have been marked 'const' explicitly
+        // can be treated as configuration values as well.
+        return VD->getType().isLocalConstQualified();
       }
       return false;
     }
@@ -588,19 +547,32 @@ static SourceLocation GetUnreachableLoc(const Stmt *S,
 void DeadCodeScan::reportDeadCode(const CFGBlock *B,
                                   const Stmt *S,
                                   clang::reachable_code::Callback &CB) {
-  // Suppress idiomatic cases of calling a noreturn function just
-  // before executing a 'break'.  If there is other code after the 'break'
-  // in the block then don't suppress the warning.
-  if (isBreakPrecededByNoReturn(B, S))
-    return;
+  // The kind of unreachable code found.
+  reachable_code::UnreachableKind UK = reachable_code::UK_Other;
 
-  // Suppress trivial 'return' statements that are dead.
-  if (isTrivialReturnOrDoWhile(B, S))
-    return;
+  do {
+    // Suppress idiomatic cases of calling a noreturn function just
+    // before executing a 'break'.  If there is other code after the 'break'
+    // in the block then don't suppress the warning.
+    if (isa<BreakStmt>(S)) {
+      UK = reachable_code::UK_Break;
+      break;
+    }
+
+    if (isTrivialDoWhile(B, S))
+      return;
+
+    // Suppress trivial 'return' statements that are dead.
+    if (isTrivialReturn(B, S)) {
+      UK = reachable_code::UK_TrivialReturn;
+      break;
+    }
+
+  } while(false);
 
   SourceRange R1, R2;
   SourceLocation Loc = GetUnreachableLoc(S, R1, R2);
-  CB.HandleUnreachable(Loc, R1, R2);
+  CB.HandleUnreachable(UK, Loc, R1, R2);
 }
 
 //===----------------------------------------------------------------------===//
