@@ -73,8 +73,11 @@ namespace {
         case reachable_code::UK_Break:
           diag = diag::warn_unreachable_break;
           break;
-        case reachable_code::UK_TrivialReturn:
+        case reachable_code::UK_Return:
           diag = diag::warn_unreachable_return;
+          break;
+        case reachable_code::UK_Loop_Increment:
+          diag = diag::warn_unreachable_loop_increment;
           break;
         case reachable_code::UK_Other:
           break;
@@ -1449,7 +1452,15 @@ class ThreadSafetyReporter : public clang::thread_safety::ThreadSafetyHandler {
   void handleUnmatchedUnlock(Name LockName, SourceLocation Loc) override {
     warnLockMismatch(diag::warn_unlock_but_no_lock, LockName, Loc);
   }
-
+  void handleIncorrectUnlockKind(Name LockName, LockKind Expected,
+                                 LockKind Received,
+                                 SourceLocation Loc) override {
+    if (Loc.isInvalid())
+      Loc = FunLocation;
+    PartialDiagnosticAt Warning(Loc, S.PDiag(diag::warn_unlock_kind_mismatch)
+                                         << LockName << Received << Expected);
+    Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
+  }
   void handleDoubleLock(Name LockName, SourceLocation Loc) override {
     warnLockMismatch(diag::warn_double_lock, LockName, Loc);
   }
@@ -1688,7 +1699,8 @@ clang::sema::AnalysisBasedWarnings::AnalysisBasedWarnings(Sema &s)
   DefaultPolicy.enableCheckUnreachable =
     isEnabled(D, warn_unreachable) ||
     isEnabled(D, warn_unreachable_break) ||
-    isEnabled(D, warn_unreachable_return);
+    isEnabled(D, warn_unreachable_return) ||
+    isEnabled(D, warn_unreachable_loop_increment);
 
   DefaultPolicy.enableThreadSafetyAnalysis =
     isEnabled(D, warn_double_lock);

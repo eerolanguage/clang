@@ -1323,6 +1323,16 @@ public:
                                                  LParenLoc, EndLoc);
   }
 
+  /// \brief Build a new OpenMP 'safelen' clause.
+  ///
+  /// By default, performs semantic analysis to build the new statement.
+  /// Subclasses may override this routine to provide different behavior.
+  OMPClause *RebuildOMPSafelenClause(Expr *Len, SourceLocation StartLoc,
+                                     SourceLocation LParenLoc,
+                                     SourceLocation EndLoc) {
+    return getSema().ActOnOpenMPSafelenClause(Len, StartLoc, LParenLoc, EndLoc);
+  }
+
   /// \brief Build a new OpenMP 'default' clause.
   ///
   /// By default, performs semantic analysis to build the new statement.
@@ -5273,13 +5283,12 @@ TreeTransform<Derived>::TransformCompoundStmt(CompoundStmt *S,
   bool SubStmtInvalid = false;
   bool SubStmtChanged = false;
   SmallVector<Stmt*, 8> Statements;
-  for (CompoundStmt::body_iterator B = S->body_begin(), BEnd = S->body_end();
-       B != BEnd; ++B) {
-    StmtResult Result = getDerived().TransformStmt(*B);
+  for (auto *B : S->body()) {
+    StmtResult Result = getDerived().TransformStmt(B);
     if (Result.isInvalid()) {
       // Immediately fail if this was a DeclStmt, since it's very
       // likely that this will cause problems for future statements.
-      if (isa<DeclStmt>(*B))
+      if (isa<DeclStmt>(B))
         return StmtError();
 
       // Otherwise, just keep processing substatements and fail later.
@@ -5287,7 +5296,7 @@ TreeTransform<Derived>::TransformCompoundStmt(CompoundStmt *S,
       continue;
     }
 
-    SubStmtChanged = SubStmtChanged || Result.get() != *B;
+    SubStmtChanged = SubStmtChanged || Result.get() != B;
     Statements.push_back(Result.takeAs<Stmt>());
   }
 
@@ -6339,6 +6348,16 @@ TreeTransform<Derived>::TransformOMPNumThreadsClause(OMPNumThreadsClause *C) {
                                                  C->getLocStart(),
                                                  C->getLParenLoc(),
                                                  C->getLocEnd());
+}
+
+template <typename Derived>
+OMPClause *
+TreeTransform<Derived>::TransformOMPSafelenClause(OMPSafelenClause *C) {
+  ExprResult E = getDerived().TransformExpr(C->getSafelen());
+  if (E.isInvalid())
+    return 0;
+  return getDerived().RebuildOMPSafelenClause(
+      E.take(), C->getLocStart(), C->getLParenLoc(), C->getLocEnd());
 }
 
 template<typename Derived>

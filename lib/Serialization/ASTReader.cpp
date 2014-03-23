@@ -1811,6 +1811,7 @@ void ASTReader::installImportedMacro(IdentifierInfo *II, ModuleMacroInfo *MMI,
     // Use the location at which the containing module file was first imported
     // for now.
     ImportLoc = MMI->F->DirectImportLoc;
+    assert(ImportLoc.isValid() && "no import location for a visible macro?");
   }
 
   llvm::SmallVectorImpl<DefMacroDirective*> *Prev =
@@ -2352,14 +2353,7 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
           return true;
         }
         break;
-        
-      case DECL_UPDATES_BLOCK_ID:
-        if (Stream.SkipBlock()) {
-          Error("malformed block record in AST file");
-          return true;
-        }
-        break;
-        
+
       case PREPROCESSOR_BLOCK_ID:
         F.MacroCursor = Stream;
         if (!PP.getExternalSource())
@@ -2707,9 +2701,9 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
 
       // Initialize the remapping table.
       // Invalid stays invalid.
-      F.SLocRemap.insert(std::make_pair(0U, 0));
+      F.SLocRemap.insertOrReplace(std::make_pair(0U, 0));
       // This module. Base was 2 when being compiled.
-      F.SLocRemap.insert(std::make_pair(2U,
+      F.SLocRemap.insertOrReplace(std::make_pair(2U,
                                   static_cast<int>(F.SLocEntryBaseOffset - 2)));
       
       TotalNumSLocEntries += F.LocalNumSLocEntries;
@@ -2720,7 +2714,13 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
       // Additional remapping information.
       const unsigned char *Data = (const unsigned char*)Blob.data();
       const unsigned char *DataEnd = Data + Blob.size();
-      
+
+      // If we see this entry before SOURCE_LOCATION_OFFSETS, add placeholders.
+      if (F.SLocRemap.find(0) == F.SLocRemap.end()) {
+        F.SLocRemap.insert(std::make_pair(0U, 0));
+        F.SLocRemap.insert(std::make_pair(2U, 1));
+      }
+
       // Continuous range maps we may be updating in our module.
       ContinuousRangeMap<uint32_t, int, 2>::Builder SLocRemap(F.SLocRemap);
       ContinuousRangeMap<uint32_t, int, 2>::Builder 
@@ -2892,6 +2892,7 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
         Error("invalid DECL_UPDATE_OFFSETS block in AST file");
         return true;
       }
+      // FIXME: If we've already loaded the decl, perform the updates now.
       for (unsigned I = 0, N = Record.size(); I != N; I += 2)
         DeclUpdateOffsets[getGlobalDeclID(F, Record[I])]
           .push_back(std::make_pair(&F, Record[I+1]));
@@ -3013,9 +3014,11 @@ bool ASTReader::ReadASTBlock(ModuleFile &F) {
         // If we aren't loading a module (which has its own exports), make
         // all of the imported modules visible.
         // FIXME: Deal with macros-only imports.
-        for (unsigned I = 0, N = Record.size(); I != N; ++I) {
-          if (unsigned GlobalID = getGlobalSubmoduleID(F, Record[I]))
-            ImportedModules.push_back(GlobalID);
+        for (unsigned I = 0, N = Record.size(); I != N; /**/) {
+          unsigned GlobalID = getGlobalSubmoduleID(F, Record[I++]);
+          SourceLocation Loc = ReadSourceLocation(F, Record, I);
+          if (GlobalID)
+            ImportedModules.push_back(ImportedSubmodule(GlobalID, Loc));
         }
       }
       break;
@@ -3670,12 +3673,14 @@ void ASTReader::InitializeContext() {
     Context.setcudaConfigureCallDecl(
                            cast<FunctionDecl>(GetDecl(CUDASpecialDeclRefs[0])));
   }
-  
+
   // Re-export any modules that were imported by a non-module AST file.
-  for (unsigned I = 0, N = ImportedModules.size(); I != N; ++I) {
-    if (Module *Imported = getSubmodule(ImportedModules[I]))
+  // FIXME: This does not make macro-only imports visible again. It also doesn't
+  // make #includes mapped to module imports visible.
+  for (auto &Import : ImportedModules) {
+    if (Module *Imported = getSubmodule(Import.ID))
       makeModuleVisible(Imported, Module::AllVisible,
-                        /*ImportLoc=*/SourceLocation(),
+                        /*ImportLoc=*/Import.ImportLoc,
                         /*Complain=*/false);
   }
   ImportedModules.clear();
@@ -5037,23 +5042,8 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
     EPI.HasTrailingReturn = Record[Idx++];
     EPI.TypeQuals = Record[Idx++];
     EPI.RefQualifier = static_cast<RefQualifierKind>(Record[Idx++]);
-    ExceptionSpecificationType EST =
-        static_cast<ExceptionSpecificationType>(Record[Idx++]);
-    EPI.ExceptionSpecType = EST;
-    SmallVector<QualType, 2> Exceptions;
-    if (EST == EST_Dynamic) {
-      EPI.NumExceptions = Record[Idx++];
-      for (unsigned I = 0; I != EPI.NumExceptions; ++I)
-        Exceptions.push_back(readType(*Loc.F, Record, Idx));
-      EPI.Exceptions = Exceptions.data();
-    } else if (EST == EST_ComputedNoexcept) {
-      EPI.NoexceptExpr = ReadExpr(*Loc.F);
-    } else if (EST == EST_Uninstantiated) {
-      EPI.ExceptionSpecDecl = ReadDeclAs<FunctionDecl>(*Loc.F, Record, Idx);
-      EPI.ExceptionSpecTemplate = ReadDeclAs<FunctionDecl>(*Loc.F, Record, Idx);
-    } else if (EST == EST_Unevaluated) {
-      EPI.ExceptionSpecDecl = ReadDeclAs<FunctionDecl>(*Loc.F, Record, Idx);
-    }
+    SmallVector<QualType, 8> ExceptionStorage;
+    readExceptionSpec(*Loc.F, ExceptionStorage, EPI, Record, Idx);
     return Context.getFunctionType(ResultType, ParamTypes, EPI);
   }
 
@@ -5306,6 +5296,29 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
   }
   }
   llvm_unreachable("Invalid TypeCode!");
+}
+
+void ASTReader::readExceptionSpec(ModuleFile &ModuleFile,
+                                  SmallVectorImpl<QualType> &Exceptions,
+                                  FunctionProtoType::ExtProtoInfo &EPI,
+                                  const RecordData &Record, unsigned &Idx) {
+  ExceptionSpecificationType EST =
+      static_cast<ExceptionSpecificationType>(Record[Idx++]);
+  EPI.ExceptionSpecType = EST;
+  if (EST == EST_Dynamic) {
+    EPI.NumExceptions = Record[Idx++];
+    for (unsigned I = 0; I != EPI.NumExceptions; ++I)
+      Exceptions.push_back(readType(ModuleFile, Record, Idx));
+    EPI.Exceptions = Exceptions.data();
+  } else if (EST == EST_ComputedNoexcept) {
+    EPI.NoexceptExpr = ReadExpr(ModuleFile);
+  } else if (EST == EST_Uninstantiated) {
+    EPI.ExceptionSpecDecl = ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
+    EPI.ExceptionSpecTemplate =
+        ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
+  } else if (EST == EST_Unevaluated) {
+    EPI.ExceptionSpecDecl = ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
+  }
 }
 
 class clang::TypeLocReader : public TypeLocVisitor<TypeLocReader> {
@@ -6301,6 +6314,15 @@ static void PassObjCImplDeclToConsumer(ObjCImplDecl *ImplD,
 
 void ASTReader::PassInterestingDeclsToConsumer() {
   assert(Consumer);
+
+  if (PassingDeclsToConsumer)
+    return;
+
+  // Guard variable to avoid recursively redoing the process of passing
+  // decls to consumer.
+  SaveAndRestore<bool> GuardPassingDeclsToConsumer(PassingDeclsToConsumer,
+                                                   true);
+
   while (!InterestingDecls.empty()) {
     Decl *D = InterestingDecls.front();
     InterestingDecls.pop_front();
@@ -7910,20 +7932,10 @@ void ASTReader::FinishedDeserializing() {
   }
   --NumCurrentElementsDeserializing;
 
-  if (NumCurrentElementsDeserializing == 0 &&
-      Consumer && !PassingDeclsToConsumer) {
-    // Guard variable to avoid recursively redoing the process of passing
-    // decls to consumer.
-    SaveAndRestore<bool> GuardPassingDeclsToConsumer(PassingDeclsToConsumer,
-                                                     true);
-
-    while (!InterestingDecls.empty()) {
-      // We are not in recursive loading, so it's safe to pass the "interesting"
-      // decls to the consumer.
-      Decl *D = InterestingDecls.front();
-      InterestingDecls.pop_front();
-      PassInterestingDeclToConsumer(D);
-    }
+  if (NumCurrentElementsDeserializing == 0 && Consumer) {
+    // We are not in recursive loading, so it's safe to pass the "interesting"
+    // decls to the consumer.
+    PassInterestingDeclsToConsumer();
   }
 }
 

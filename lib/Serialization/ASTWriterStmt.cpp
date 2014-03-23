@@ -71,9 +71,8 @@ void ASTStmtWriter::VisitNullStmt(NullStmt *S) {
 void ASTStmtWriter::VisitCompoundStmt(CompoundStmt *S) {
   VisitStmt(S);
   Record.push_back(S->size());
-  for (CompoundStmt::body_iterator CS = S->body_begin(), CSEnd = S->body_end();
-       CS != CSEnd; ++CS)
-    Writer.AddStmt(*CS);
+  for (auto *CS : S->body())
+    Writer.AddStmt(CS);
   Writer.AddSourceLocation(S->getLBracLoc(), Record);
   Writer.AddSourceLocation(S->getRBracLoc(), Record);
   Code = serialization::STMT_COMPOUND;
@@ -1682,6 +1681,11 @@ void OMPClauseWriter::VisitOMPIfClause(OMPIfClause *C) {
 
 void OMPClauseWriter::VisitOMPNumThreadsClause(OMPNumThreadsClause *C) {
   Writer->Writer.AddStmt(C->getNumThreads());
+  Writer->Writer.AddSourceLocation(C->getLParenLoc(), Record);
+}
+
+void OMPClauseWriter::VisitOMPSafelenClause(OMPSafelenClause *C) {
+  Writer->Writer.AddStmt(C->getSafelen());
   Writer->Writer.AddSourceLocation(C->getLParenLoc(), Record);
 }
 

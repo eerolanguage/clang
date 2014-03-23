@@ -149,6 +149,38 @@ namespace  {
       }
     };
 
+    class ChildDumper {
+      ASTDumper &Dumper;
+
+      const Decl *Prev;
+      bool PrevRef;
+    public:
+      ChildDumper(ASTDumper &Dumper) : Dumper(Dumper), Prev(0) {}
+      ~ChildDumper() {
+        if (Prev) {
+          Dumper.lastChild();
+          dump(0);
+        }
+      }
+
+      // FIXME: This should take an arbitrary callable as the dumping action.
+      void dump(const Decl *D, bool Ref = false) {
+        if (Prev) {
+          if (PrevRef)
+            Dumper.dumpDeclRef(Prev);
+          else
+            Dumper.dumpDecl(Prev);
+        }
+        Prev = D;
+        PrevRef = Ref;
+      }
+      void dumpRef(const Decl *D) { dump(D, true); }
+
+      // Give up ownership of the children of the node. By calling this,
+      // the caller takes back responsibility for calling lastChild().
+      void release() { dump(0); }
+    };
+
   public:
     ASTDumper(raw_ostream &OS, const CommandTraits *Traits,
               const SourceManager *SM)
@@ -222,6 +254,13 @@ namespace  {
     void VisitTypeAliasTemplateDecl(const TypeAliasTemplateDecl *D);
     void VisitCXXRecordDecl(const CXXRecordDecl *D);
     void VisitStaticAssertDecl(const StaticAssertDecl *D);
+    template<typename SpecializationDecl>
+    void VisitTemplateDeclSpecialization(ChildDumper &Children,
+                                         const SpecializationDecl *D,
+                                         bool DumpExplicitInst,
+                                         bool DumpRefOnly);
+    template<typename TemplateDecl>
+    void VisitTemplateDecl(const TemplateDecl *D, bool DumpExplicitInst);
     void VisitFunctionTemplateDecl(const FunctionTemplateDecl *D);
     void VisitClassTemplateDecl(const ClassTemplateDecl *D);
     void VisitClassTemplateSpecializationDecl(
@@ -511,17 +550,14 @@ bool ASTDumper::hasNodes(const DeclContext *DC) {
 void ASTDumper::dumpDeclContext(const DeclContext *DC) {
   if (!DC)
     return;
-  bool HasUndeserializedDecls = DC->hasExternalLexicalStorage();
-  for (DeclContext::decl_iterator I = DC->noload_decls_begin(),
-                                  E = DC->noload_decls_end();
-       I != E; ++I) {
-    DeclContext::decl_iterator Next = I;
-    ++Next;
-    if (Next == E && !HasUndeserializedDecls)
-      lastChild();
-    dumpDecl(*I);
-  }
-  if (HasUndeserializedDecls) {
+
+  ChildDumper Children(*this);
+  for (auto *D : DC->noload_decls())
+    Children.dump(D);
+
+  if (DC->hasExternalLexicalStorage()) {
+    Children.release();
+
     lastChild();
     IndentScope Indent(*this);
     ColorScope Color(*this, UndeserializedColor);
@@ -838,13 +874,10 @@ void ASTDumper::VisitEnumConstantDecl(const EnumConstantDecl *D) {
 void ASTDumper::VisitIndirectFieldDecl(const IndirectFieldDecl *D) {
   dumpName(D);
   dumpType(D->getType());
-  for (IndirectFieldDecl::chain_iterator I = D->chain_begin(),
-                                         E = D->chain_end();
-       I != E; ++I) {
-    if (I + 1 == E)
-      lastChild();
-    dumpDeclRef(*I);
-  }
+
+  ChildDumper Children(*this);
+  for (auto *Child : D->chain())
+    Children.dumpRef(Child);
 }
 
 void ASTDumper::VisitFunctionDecl(const FunctionDecl *D) {
@@ -1047,63 +1080,69 @@ void ASTDumper::VisitStaticAssertDecl(const StaticAssertDecl *D) {
   dumpStmt(D->getMessage());
 }
 
-void ASTDumper::VisitFunctionTemplateDecl(const FunctionTemplateDecl *D) {
-  dumpName(D);
-  dumpTemplateParameters(D->getTemplateParameters());
-  dumpDecl(D->getTemplatedDecl());
-  for (FunctionTemplateDecl::spec_iterator I = D->spec_begin(),
-                                           E = D->spec_end();
-       I != E; ++I) {
-    FunctionTemplateDecl::spec_iterator Next = I;
-    ++Next;
-    if (Next == E)
-      lastChild();
-    switch (I->getTemplateSpecializationKind()) {
-    case TSK_Undeclared:
-    case TSK_ImplicitInstantiation:
+template<typename SpecializationDecl>
+void ASTDumper::VisitTemplateDeclSpecialization(ChildDumper &Children,
+                                                const SpecializationDecl *D,
+                                                bool DumpExplicitInst,
+                                                bool DumpRefOnly) {
+  bool DumpedAny = false;
+  for (auto *RedeclWithBadType : D->redecls()) {
+    // FIXME: The redecls() range sometimes has elements of a less-specific
+    // type. (In particular, ClassTemplateSpecializationDecl::redecls() gives
+    // us TagDecls, and should give CXXRecordDecls).
+    auto *Redecl = dyn_cast<SpecializationDecl>(RedeclWithBadType);
+    if (!Redecl) {
+      // Found the injected-class-name for a class template. This will be dumped
+      // as part of its surrounding class so we don't need to dump it here.
+      assert(isa<CXXRecordDecl>(RedeclWithBadType) &&
+             "expected an injected-class-name");
+      continue;
+    }
+
+    switch (Redecl->getTemplateSpecializationKind()) {
     case TSK_ExplicitInstantiationDeclaration:
     case TSK_ExplicitInstantiationDefinition:
-      if (D == D->getCanonicalDecl())
-        dumpDecl(*I);
-      else
-        dumpDeclRef(*I);
+      if (!DumpExplicitInst)
+        break;
+      // Fall through.
+    case TSK_Undeclared:
+    case TSK_ImplicitInstantiation:
+      Children.dump(Redecl, DumpRefOnly);
+      DumpedAny = true;
       break;
     case TSK_ExplicitSpecialization:
-      dumpDeclRef(*I);
       break;
     }
   }
+
+  // Ensure we dump at least one decl for each specialization.
+  if (!DumpedAny)
+    Children.dumpRef(D);
+}
+
+template<typename TemplateDecl>
+void ASTDumper::VisitTemplateDecl(const TemplateDecl *D,
+                                  bool DumpExplicitInst) {
+  dumpName(D);
+  dumpTemplateParameters(D->getTemplateParameters());
+
+  ChildDumper Children(*this);
+  Children.dump(D->getTemplatedDecl());
+
+  for (auto *Child : D->specializations())
+    VisitTemplateDeclSpecialization(Children, Child, DumpExplicitInst,
+                                    !D->isCanonicalDecl());
+}
+
+void ASTDumper::VisitFunctionTemplateDecl(const FunctionTemplateDecl *D) {
+  // FIXME: We don't add a declaration of a function template specialization
+  // to its context when it's explicitly instantiated, so dump explicit
+  // instantiations when we dump the template itself.
+  VisitTemplateDecl(D, true);
 }
 
 void ASTDumper::VisitClassTemplateDecl(const ClassTemplateDecl *D) {
-  dumpName(D);
-  dumpTemplateParameters(D->getTemplateParameters());
-
-  ClassTemplateDecl::spec_iterator I = D->spec_begin();
-  ClassTemplateDecl::spec_iterator E = D->spec_end();
-  if (I == E)
-    lastChild();
-  dumpDecl(D->getTemplatedDecl());
-  for (; I != E; ++I) {
-    ClassTemplateDecl::spec_iterator Next = I;
-    ++Next;
-    if (Next == E)
-      lastChild();
-    switch (I->getTemplateSpecializationKind()) {
-    case TSK_Undeclared:
-    case TSK_ImplicitInstantiation:
-      if (D == D->getCanonicalDecl())
-        dumpDecl(*I);
-      else
-        dumpDeclRef(*I);
-      break;
-    case TSK_ExplicitSpecialization:
-    case TSK_ExplicitInstantiationDeclaration:
-    case TSK_ExplicitInstantiationDefinition:
-      dumpDeclRef(*I);
-      break;
-    }
-  }
+  VisitTemplateDecl(D, false);
 }
 
 void ASTDumper::VisitClassTemplateSpecializationDecl(
@@ -1126,34 +1165,7 @@ void ASTDumper::VisitClassScopeFunctionSpecializationDecl(
 }
 
 void ASTDumper::VisitVarTemplateDecl(const VarTemplateDecl *D) {
-  dumpName(D);
-  dumpTemplateParameters(D->getTemplateParameters());
-
-  VarTemplateDecl::spec_iterator I = D->spec_begin();
-  VarTemplateDecl::spec_iterator E = D->spec_end();
-  if (I == E)
-    lastChild();
-  dumpDecl(D->getTemplatedDecl());
-  for (; I != E; ++I) {
-    VarTemplateDecl::spec_iterator Next = I;
-    ++Next;
-    if (Next == E)
-      lastChild();
-    switch (I->getTemplateSpecializationKind()) {
-    case TSK_Undeclared:
-    case TSK_ImplicitInstantiation:
-      if (D == D->getCanonicalDecl())
-        dumpDecl(*I);
-      else
-        dumpDeclRef(*I);
-      break;
-    case TSK_ExplicitSpecialization:
-    case TSK_ExplicitInstantiationDeclaration:
-    case TSK_ExplicitInstantiationDefinition:
-      dumpDeclRef(*I);
-      break;
-    }
-  }
+  VisitTemplateDecl(D, false);
 }
 
 void ASTDumper::VisitVarTemplateSpecializationDecl(
@@ -1337,28 +1349,20 @@ void ASTDumper::VisitObjCCategoryImplDecl(const ObjCCategoryImplDecl *D) {
 
 void ASTDumper::VisitObjCProtocolDecl(const ObjCProtocolDecl *D) {
   dumpName(D);
-  for (ObjCProtocolDecl::protocol_iterator I = D->protocol_begin(),
-                                           E = D->protocol_end();
-       I != E; ++I) {
-    if (I + 1 == E)
-      lastChild();
-    dumpDeclRef(*I);
-  }
+
+  ChildDumper Children(*this);
+  for (auto *Child : D->protocols())
+    Children.dumpRef(Child);
 }
 
 void ASTDumper::VisitObjCInterfaceDecl(const ObjCInterfaceDecl *D) {
   dumpName(D);
   dumpDeclRef(D->getSuperClass(), "super");
-  if (D->protocol_begin() == D->protocol_end())
-    lastChild();
-  dumpDeclRef(D->getImplementation());
-  for (ObjCInterfaceDecl::protocol_iterator I = D->protocol_begin(),
-                                            E = D->protocol_end();
-       I != E; ++I) {
-    if (I + 1 == E)
-      lastChild();
-    dumpDeclRef(*I);
-  }
+
+  ChildDumper Children(*this);
+  Children.dumpRef(D->getImplementation());
+  for (auto *Child : D->protocols())
+    Children.dumpRef(Child);
 }
 
 void ASTDumper::VisitObjCImplementationDecl(const ObjCImplementationDecl *D) {
@@ -2065,7 +2069,7 @@ void ASTDumper::visitParamCommandComment(const ParamCommandComment *C) {
       OS << " Param=\"" << C->getParamNameAsWritten() << "\"";
   }
 
-  if (C->isParamIndexValid())
+  if (C->isParamIndexValid() && !C->isVarArgParam())
     OS << " ParamIndex=" << C->getParamIndex();
 }
 

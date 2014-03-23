@@ -18,6 +18,7 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/StmtCXX.h"
+#include "clang/AST/ParentMap.h"
 #include "clang/Analysis/AnalysisContext.h"
 #include "clang/Analysis/CFG.h"
 #include "clang/Basic/SourceManager.h"
@@ -37,53 +38,6 @@ static bool isEnumConstant(const Expr *Ex) {
   return isa<EnumConstantDecl>(DR->getDecl());
 }
 
-static const Expr *stripStdStringCtor(const Expr *Ex) {
-  // Go crazy pattern matching an implicit construction of std::string("").
-  const ExprWithCleanups *EWC = dyn_cast<ExprWithCleanups>(Ex);
-  if (!EWC)
-    return 0;
-  const CXXConstructExpr *CCE = dyn_cast<CXXConstructExpr>(EWC->getSubExpr());
-  if (!CCE)
-    return 0;
-  QualType Ty = CCE->getType();
-  if (const ElaboratedType *ET = dyn_cast<ElaboratedType>(Ty))
-    Ty = ET->getNamedType();
-  const TypedefType *TT = dyn_cast<TypedefType>(Ty);
-  StringRef Name = TT->getDecl()->getName();
-  if (Name != "string")
-    return 0;
-  if (CCE->getNumArgs() != 1)
-    return 0;
-  const MaterializeTemporaryExpr *MTE =
-    dyn_cast<MaterializeTemporaryExpr>(CCE->getArg(0));
-  if (!MTE)
-    return 0;
-  CXXBindTemporaryExpr *CBT =
-    dyn_cast<CXXBindTemporaryExpr>(MTE->GetTemporaryExpr()->IgnoreParenCasts());
-  if (!CBT)
-    return 0;
-  Ex = CBT->getSubExpr()->IgnoreParenCasts();
-  CCE = dyn_cast<CXXConstructExpr>(Ex);
-  if (!CCE)
-    return 0;
-  if (CCE->getNumArgs() != 1)
-    return 0;
-  return dyn_cast<StringLiteral>(CCE->getArg(0)->IgnoreParenCasts());
-}
-
-/// Strip away "sugar" around trivial expressions that are for the
-/// purpose of this analysis considered uninteresting for dead code warnings.
-static const Expr *stripExprSugar(const Expr *Ex) {
-  Ex = Ex->IgnoreParenCasts();
-  // If 'Ex' is a constructor for a std::string, strip that
-  // away.  We can only get here if the trivial expression was
-  // something like a C string literal, with the std::string
-  // just wrapping that value.
-  if (const Expr *StdStringVal = stripStdStringCtor(Ex))
-    return StdStringVal;
-  return Ex;
-}
-
 static bool isTrivialExpression(const Expr *Ex) {
   Ex = Ex->IgnoreParenCasts();
   return isa<IntegerLiteral>(Ex) || isa<StringLiteral>(Ex) ||
@@ -97,14 +51,14 @@ static bool isTrivialDoWhile(const CFGBlock *B, const Stmt *S) {
   // condition.
   if (const Stmt *Term = B->getTerminator()) {
     if (const DoStmt *DS = dyn_cast<DoStmt>(Term)) {
-      const Expr *Cond = DS->getCond();
+      const Expr *Cond = DS->getCond()->IgnoreParenCasts();
       return Cond == S && isTrivialExpression(Cond);
     }
   }
   return false;
 }
 
-static bool isTrivialReturn(const CFGBlock *B, const Stmt *S) {
+static bool isDeadReturn(const CFGBlock *B, const Stmt *S) {
   // Look to see if the block ends with a 'return', and see if 'S'
   // is a substatement.  The 'return' may not be the last element in
   // the block because of destructors.
@@ -112,13 +66,19 @@ static bool isTrivialReturn(const CFGBlock *B, const Stmt *S) {
        I != E; ++I) {
     if (Optional<CFGStmt> CS = I->getAs<CFGStmt>()) {
       if (const ReturnStmt *RS = dyn_cast<ReturnStmt>(CS->getStmt())) {
-        // Determine if we need to lock at the body of the block
-        // before the dead return.
         if (RS == S)
           return true;
         if (const Expr *RE = RS->getRetValue()) {
-          RE = stripExprSugar(RE->IgnoreParenCasts());
-          return RE == S && isTrivialExpression(RE);
+          RE = RE->IgnoreParenCasts();
+          if (RE == S)
+            return true;
+          ParentMap PM(const_cast<Expr*>(RE));
+          // If 'S' is in the ParentMap, it is a subexpression of
+          // the return statement.  Note also that we are restricting
+          // to looking at return statements in the same CFGBlock,
+          // so this will intentionally not catch cases where the
+          // return statement contains nested control-flow.
+          return PM.getParent(S);
         }
       }
       break;
@@ -162,6 +122,8 @@ static bool isExpandedFromConfigurationMacro(const Stmt *S,
   return false;
 }
 
+static bool isConfigurationValue(const ValueDecl *D, Preprocessor &PP);
+
 /// Returns true if the statement represents a configuration value.
 ///
 /// A configuration value is something usually determined at compile-time
@@ -179,34 +141,20 @@ static bool isConfigurationValue(const Stmt *S,
     S = Ex->IgnoreParenCasts();
 
   switch (S->getStmtClass()) {
-    case Stmt::DeclRefExprClass: {
-      const DeclRefExpr *DR = cast<DeclRefExpr>(S);
-      const ValueDecl *D = DR->getDecl();
-      if (const EnumConstantDecl *ED = dyn_cast<EnumConstantDecl>(D))
-        return isConfigurationValue(ED->getInitExpr(), PP);
-      if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
-        // As a heuristic, treat globals as configuration values.  Note
-        // that we only will get here if Sema evaluated this
-        // condition to a constant expression, which means the global
-        // had to be declared in a way to be a truly constant value.
-        // We could generalize this to local variables, but it isn't
-        // clear if those truly represent configuration values that
-        // gate unreachable code.
-        if (!VD->hasLocalStorage())
-          return true;
-
-        // As a heuristic, locals that have been marked 'const' explicitly
-        // can be treated as configuration values as well.
-        return VD->getType().isLocalConstQualified();
-      }
-      return false;
+    case Stmt::CallExprClass: {
+      const FunctionDecl *Callee =
+        dyn_cast_or_null<FunctionDecl>(cast<CallExpr>(S)->getCalleeDecl());
+      return Callee ? Callee->isConstexpr() : false;
     }
+    case Stmt::DeclRefExprClass:
+      return isConfigurationValue(cast<DeclRefExpr>(S)->getDecl(), PP);
     case Stmt::IntegerLiteralClass:
       return IncludeIntegers ? isExpandedFromConfigurationMacro(S, PP)
                              : false;
+    case Stmt::MemberExprClass:
+      return isConfigurationValue(cast<MemberExpr>(S)->getMemberDecl(), PP);
     case Stmt::ObjCBoolLiteralExprClass:
       return isExpandedFromConfigurationMacro(S, PP, /* IgnoreYES_NO */ true);
-
     case Stmt::UnaryExprOrTypeTraitExprClass:
       return true;
     case Stmt::BinaryOperatorClass: {
@@ -226,6 +174,27 @@ static bool isConfigurationValue(const Stmt *S,
     default:
       return false;
   }
+}
+
+static bool isConfigurationValue(const ValueDecl *D, Preprocessor &PP) {
+  if (const EnumConstantDecl *ED = dyn_cast<EnumConstantDecl>(D))
+    return isConfigurationValue(ED->getInitExpr(), PP);
+  if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
+    // As a heuristic, treat globals as configuration values.  Note
+    // that we only will get here if Sema evaluated this
+    // condition to a constant expression, which means the global
+    // had to be declared in a way to be a truly constant value.
+    // We could generalize this to local variables, but it isn't
+    // clear if those truly represent configuration values that
+    // gate unreachable code.
+    if (!VD->hasLocalStorage())
+      return true;
+
+    // As a heuristic, locals that have been marked 'const' explicitly
+    // can be treated as configuration values as well.
+    return VD->getType().isLocalConstQualified();
+  }
+  return false;
 }
 
 /// Returns true if we should always explore all successors of a block.
@@ -547,28 +516,38 @@ static SourceLocation GetUnreachableLoc(const Stmt *S,
 void DeadCodeScan::reportDeadCode(const CFGBlock *B,
                                   const Stmt *S,
                                   clang::reachable_code::Callback &CB) {
-  // The kind of unreachable code found.
+  // Classify the unreachable code found, or suppress it in some cases.
   reachable_code::UnreachableKind UK = reachable_code::UK_Other;
 
-  do {
-    // Suppress idiomatic cases of calling a noreturn function just
-    // before executing a 'break'.  If there is other code after the 'break'
-    // in the block then don't suppress the warning.
-    if (isa<BreakStmt>(S)) {
-      UK = reachable_code::UK_Break;
-      break;
-    }
+  if (isa<BreakStmt>(S)) {
+    UK = reachable_code::UK_Break;
+  }
+  else if (isTrivialDoWhile(B, S)) {
+    return;
+  }
+  else if (isDeadReturn(B, S)) {
+    UK = reachable_code::UK_Return;
+  }
 
-    if (isTrivialDoWhile(B, S))
+  if (UK == reachable_code::UK_Other) {
+    // Check if the dead code is part of the "loop target" of
+    // a for/for-range loop.  This is the block that contains
+    // the increment code.
+    if (const Stmt *LoopTarget = B->getLoopTarget()) {
+      SourceLocation Loc = LoopTarget->getLocStart();
+      SourceRange R1(Loc, Loc), R2;
+
+      if (const ForStmt *FS = dyn_cast<ForStmt>(LoopTarget)) {
+        const Expr *Inc = FS->getInc();
+        Loc = Inc->getLocStart();
+        R2 = Inc->getSourceRange();
+      }
+
+      CB.HandleUnreachable(reachable_code::UK_Loop_Increment,
+                           Loc, SourceRange(Loc, Loc), R2);
       return;
-
-    // Suppress trivial 'return' statements that are dead.
-    if (isTrivialReturn(B, S)) {
-      UK = reachable_code::UK_TrivialReturn;
-      break;
     }
-
-  } while(false);
+  }
 
   SourceRange R1, R2;
   SourceLocation Loc = GetUnreachableLoc(S, R1, R2);

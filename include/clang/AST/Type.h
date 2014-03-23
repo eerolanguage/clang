@@ -26,6 +26,7 @@
 #include "clang/Basic/Visibility.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PointerUnion.h"
@@ -3059,6 +3060,11 @@ public:
   }
 
   typedef const QualType *param_type_iterator;
+  typedef llvm::iterator_range<param_type_iterator> param_type_range;
+
+  param_type_range param_types() const {
+    return param_type_range(param_type_begin(), param_type_end());
+  }
   param_type_iterator param_type_begin() const {
     return reinterpret_cast<const QualType *>(this+1);
   }
@@ -3067,6 +3073,11 @@ public:
   }
 
   typedef const QualType *exception_iterator;
+  typedef llvm::iterator_range<exception_iterator> exception_range;
+
+  exception_range exceptions() const {
+    return exception_range(exception_begin(), exception_end());
+  }
   exception_iterator exception_begin() const {
     // exceptions begin where arguments end
     return param_type_end();
@@ -4339,7 +4350,9 @@ public:
   ObjCInterfaceDecl *getInterface() const;
 
   typedef ObjCProtocolDecl * const *qual_iterator;
+  typedef llvm::iterator_range<qual_iterator> qual_range;
 
+  qual_range quals() const { return qual_range(qual_begin(), qual_end()); }
   qual_iterator qual_begin() const { return getProtocolStorage(); }
   qual_iterator qual_end() const { return qual_begin() + getNumProtocols(); }
 
@@ -4541,7 +4554,9 @@ public:
   /// for convenience.  This will always iterate over the full set of
   /// protocols on a type, not just those provided directly.
   typedef ObjCObjectType::qual_iterator qual_iterator;
+  typedef llvm::iterator_range<qual_iterator> qual_range;
 
+  qual_range quals() const { return qual_range(qual_begin(), qual_end()); }
   qual_iterator qual_begin() const {
     return getObjectType()->qual_begin();
   }

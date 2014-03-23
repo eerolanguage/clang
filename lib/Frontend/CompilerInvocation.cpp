@@ -451,9 +451,9 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.LinkBitcodeFile = Args.getLastArgValue(OPT_mlink_bitcode_file);
   Opts.SanitizerBlacklistFile = Args.getLastArgValue(OPT_fsanitize_blacklist);
   Opts.SanitizeMemoryTrackOrigins =
-    Args.hasArg(OPT_fsanitize_memory_track_origins);
+      getLastArgIntValue(Args, OPT_fsanitize_memory_track_origins_EQ, 0, Diags);
   Opts.SanitizeUndefinedTrapOnError =
-    Args.hasArg(OPT_fsanitize_undefined_trap_on_error);
+      Args.hasArg(OPT_fsanitize_undefined_trap_on_error);
   Opts.SSPBufferSize =
       getLastArgIntValue(Args, OPT_stack_protector_buffer_size, 8, Diags);
   Opts.StackRealignment = Args.hasArg(OPT_mstackrealign);
@@ -1130,6 +1130,9 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
 
   // OpenCL and C++ both have bool, true, false keywords.
   Opts.Bool = Opts.OpenCL || Opts.CPlusPlus;
+
+  // OpenCL has half keyword
+  Opts.Half = Opts.OpenCL;
 
   // C++ has wchar_t keyword.
   Opts.WChar = Opts.CPlusPlus;

@@ -105,16 +105,6 @@ public:
   void GenObjCCategory(StringRef cls, StringRef cat) {
     generateUSRForObjCCategory(cls, cat, Out);
   }
-  /// Generate a USR fragment for an Objective-C instance variable.  The
-  /// complete USR can be created by concatenating the USR for the
-  /// encompassing class with this USR fragment.
-  void GenObjCIvar(StringRef ivar) {
-    generateUSRForObjCIvar(ivar, Out);
-  }
-  /// Generate a USR fragment for an Objective-C method.
-  void GenObjCMethod(StringRef sel, bool isInstanceMethod) {
-    generateUSRForObjCMethod(sel, isInstanceMethod, Out);
-  }
   /// Generate a USR fragment for an Objective-C property.
   void GenObjCProperty(StringRef prop) {
     generateUSRForObjCProperty(prop, Out);
@@ -638,11 +628,8 @@ void USRGenerator::VisitType(QualType T) {
     if (const FunctionProtoType *FT = T->getAs<FunctionProtoType>()) {
       Out << 'F';
       VisitType(FT->getReturnType());
-      for (FunctionProtoType::param_type_iterator I = FT->param_type_begin(),
-                                                  E = FT->param_type_end();
-           I != E; ++I) {
-        VisitType(*I);
-      }
+      for (const auto &I : FT->param_types())
+        VisitType(I);
       if (FT->isVariadic())
         Out << '.';
       return;

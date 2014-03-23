@@ -1545,9 +1545,8 @@ ObjCMethodDecl *Sema::LookupMethodInObjectType(Selector sel, QualType type,
   }
 
   // Check qualifiers.
-  for (ObjCObjectType::qual_iterator
-         i = objType->qual_begin(), e = objType->qual_end(); i != e; ++i)
-    if (ObjCMethodDecl *method = (*i)->lookupMethod(sel, isInstance))
+  for (const auto *I : objType->quals())
+    if (ObjCMethodDecl *method = I->lookupMethod(sel, isInstance))
       return method;
 
   return 0;
@@ -1560,9 +1559,7 @@ ObjCMethodDecl *Sema::LookupMethodInQualifiedType(Selector Sel,
                                               bool Instance)
 {
   ObjCMethodDecl *MD = 0;
-  for (ObjCObjectPointerType::qual_iterator I = OPT->qual_begin(),
-       E = OPT->qual_end(); I != E; ++I) {
-    ObjCProtocolDecl *PROTO = (*I);
+  for (const auto *PROTO : OPT->quals()) {
     if ((MD = PROTO->lookupMethod(Sel, Instance))) {
       return MD;
     }
@@ -1671,9 +1668,8 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
                                                      MemberLoc, BaseExpr));
   }
   // Check protocols on qualified interfaces.
-  for (ObjCObjectPointerType::qual_iterator I = OPT->qual_begin(),
-       E = OPT->qual_end(); I != E; ++I)
-    if (ObjCPropertyDecl *PD = (*I)->FindPropertyDeclaration(Member)) {
+  for (const auto *I : OPT->quals())
+    if (ObjCPropertyDecl *PD = I->FindPropertyDeclaration(Member)) {
       // Check whether we can reference this property.
       if (DiagnoseUseOfDecl(PD, MemberLoc))
         return ExprError();
@@ -2614,8 +2610,12 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
     }
   }
 
-  if (Method && Method->getMethodFamily() == OMF_init &&
-      getCurFunction()->ObjCIsDesignatedInit &&
+  FunctionScopeInfo *DIFunctionScopeInfo =
+    (Method && Method->getMethodFamily() == OMF_init)
+      ? getEnclosingFunction() : 0;
+  
+  if (DIFunctionScopeInfo &&
+      DIFunctionScopeInfo->ObjCIsDesignatedInit &&
       (SuperLoc.isValid() || isSelfExpr(Receiver))) {
     bool isDesignatedInitChain = false;
     if (SuperLoc.isValid()) {
@@ -2627,7 +2627,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
           if (!ID->declaresOrInheritsDesignatedInitializers() ||
               ID->isDesignatedInitializer(Sel)) {
             isDesignatedInitChain = true;
-            getCurFunction()->ObjCWarnForNoDesignatedInitChain = false;
+            DIFunctionScopeInfo->ObjCWarnForNoDesignatedInitChain = false;
           }
         }
       }
@@ -2646,13 +2646,13 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
     }
   }
 
-  if (Method && Method->getMethodFamily() == OMF_init &&
-      getCurFunction()->ObjCIsSecondaryInit &&
+  if (DIFunctionScopeInfo &&
+      DIFunctionScopeInfo->ObjCIsSecondaryInit &&
       (SuperLoc.isValid() || isSelfExpr(Receiver))) {
     if (SuperLoc.isValid()) {
       Diag(SelLoc, diag::warn_objc_secondary_init_super_init_call);
     } else {
-      getCurFunction()->ObjCWarnForNoInitDelegation = false;
+      DIFunctionScopeInfo->ObjCWarnForNoInitDelegation = false;
     }
   }
 

@@ -761,6 +761,9 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
   case OMPC_num_threads:
     Res = ActOnOpenMPNumThreadsClause(Expr, StartLoc, LParenLoc, EndLoc);
     break;
+  case OMPC_safelen:
+    Res = ActOnOpenMPSafelenClause(Expr, StartLoc, LParenLoc, EndLoc);
+    break;
   case OMPC_default:
   case OMPC_private:
   case OMPC_firstprivate:
@@ -868,6 +871,38 @@ OMPClause *Sema::ActOnOpenMPNumThreadsClause(Expr *NumThreads,
                                            EndLoc);
 }
 
+ExprResult Sema::VerifyPositiveIntegerConstantInClause(Expr *E,
+                                                       OpenMPClauseKind CKind) {
+  if (!E)
+    return ExprError();
+  if (E->isValueDependent() || E->isTypeDependent() ||
+      E->isInstantiationDependent() || E->containsUnexpandedParameterPack())
+    return Owned(E);
+  llvm::APSInt Result;
+  ExprResult ICE = VerifyIntegerConstantExpression(E, &Result);
+  if (ICE.isInvalid())
+    return ExprError();
+  if (!Result.isStrictlyPositive()) {
+    Diag(E->getExprLoc(), diag::err_omp_negative_expression_in_clause)
+        << getOpenMPClauseName(CKind) << E->getSourceRange();
+    return ExprError();
+  }
+  return ICE;
+}
+
+OMPClause *Sema::ActOnOpenMPSafelenClause(Expr *Len, SourceLocation StartLoc,
+                                          SourceLocation LParenLoc,
+                                          SourceLocation EndLoc) {
+  // OpenMP [2.8.1, simd construct, Description]
+  // The parameter of the safelen clause must be a constant
+  // positive integer expression.
+  ExprResult Safelen = VerifyPositiveIntegerConstantInClause(Len, OMPC_safelen);
+  if (Safelen.isInvalid())
+    return 0;
+  return new (Context)
+      OMPSafelenClause(Safelen.take(), StartLoc, LParenLoc, EndLoc);
+}
+
 OMPClause *Sema::ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
                                          unsigned Argument,
                                          SourceLocation ArgumentLoc,
@@ -883,6 +918,7 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
     break;
   case OMPC_if:
   case OMPC_num_threads:
+  case OMPC_safelen:
   case OMPC_private:
   case OMPC_firstprivate:
   case OMPC_shared:
@@ -901,7 +937,9 @@ OMPClause *Sema::ActOnOpenMPDefaultClause(OpenMPDefaultClauseKind Kind,
                                           SourceLocation EndLoc) {
   if (Kind == OMPC_DEFAULT_unknown) {
     std::string Values;
-    std::string Sep(NUM_OPENMP_DEFAULT_KINDS > 1 ? ", " : "");
+    static_assert(NUM_OPENMP_DEFAULT_KINDS > 1,
+                  "NUM_OPENMP_DEFAULT_KINDS not greater than 1");
+    std::string Sep(", ");
     for (unsigned i = OMPC_DEFAULT_unknown + 1;
          i < NUM_OPENMP_DEFAULT_KINDS; ++i) {
       Values += "'";
@@ -956,6 +994,7 @@ OMPClause *Sema::ActOnOpenMPVarListClause(OpenMPClauseKind Kind,
     break;
   case OMPC_if:
   case OMPC_num_threads:
+  case OMPC_safelen:
   case OMPC_default:
   case OMPC_threadprivate:
   case OMPC_unknown:

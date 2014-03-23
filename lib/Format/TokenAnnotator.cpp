@@ -34,6 +34,7 @@ public:
       : Style(Style), Line(Line), CurrentToken(Line.First),
         KeywordVirtualFound(false), AutoFound(false), Ident_in(Ident_in) {
     Contexts.push_back(Context(tok::unknown, 1, /*IsExpression=*/false));
+    resetTokenMetadata(CurrentToken);
   }
 
 private:
@@ -571,6 +572,22 @@ public:
   }
 
 private:
+  void resetTokenMetadata(FormatToken *Token) {
+    if (Token == nullptr) return;
+
+    // Reset token type in case we have already looked at it and then
+    // recovered from an error (e.g. failure to find the matching >).
+    if (CurrentToken->Type != TT_LambdaLSquare &&
+        CurrentToken->Type != TT_FunctionLBrace &&
+        CurrentToken->Type != TT_ImplicitStringLiteral &&
+        CurrentToken->Type != TT_TrailingReturnArrow)
+      CurrentToken->Type = TT_Unknown;
+    if (CurrentToken->Role)
+      CurrentToken->Role.reset(NULL);
+    CurrentToken->FakeLParens.clear();
+    CurrentToken->FakeRParens = 0;
+  }
+
   void next() {
     if (CurrentToken != NULL) {
       determineTokenType(*CurrentToken);
@@ -581,19 +598,7 @@ private:
     if (CurrentToken != NULL)
       CurrentToken = CurrentToken->Next;
 
-    if (CurrentToken != NULL) {
-      // Reset token type in case we have already looked at it and then
-      // recovered from an error (e.g. failure to find the matching >).
-      if (CurrentToken->Type != TT_LambdaLSquare &&
-          CurrentToken->Type != TT_FunctionLBrace &&
-          CurrentToken->Type != TT_ImplicitStringLiteral &&
-          CurrentToken->Type != TT_TrailingReturnArrow)
-        CurrentToken->Type = TT_Unknown;
-      if (CurrentToken->Role)
-        CurrentToken->Role.reset(NULL);
-      CurrentToken->FakeLParens.clear();
-      CurrentToken->FakeRParens = 0;
-    }
+    resetTokenMetadata(CurrentToken);
   }
 
   /// \brief A struct to hold information valid in a specific context, e.g.
@@ -1109,6 +1114,27 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
         Current->SpacesRequiredBefore = Style.Cpp11BracedListStyle ? 0 : 1;
       else
         Current->SpacesRequiredBefore = Style.SpacesBeforeTrailingComments;
+
+      // If we find a trailing comment, iterate backwards to determine whether
+      // it seems to relate to a specific parameter. If so, break before that
+      // parameter to avoid changing the comment's meaning. E.g. don't move 'b'
+      // to the previous line in:
+      //   SomeFunction(a,
+      //                b, // comment
+      //                c);
+      if (!Current->HasUnescapedNewline) {
+        for (FormatToken *Parameter = Current->Previous; Parameter;
+             Parameter = Parameter->Previous) {
+          if (Parameter->isOneOf(tok::comment, tok::r_brace))
+            break;
+          if (Parameter->Previous && Parameter->Previous->is(tok::comma)) {
+            if (Parameter->Previous->Type != TT_CtorInitializerComma &&
+                Parameter->HasUnescapedNewline)
+              Parameter->MustBreakBefore = true;
+            break;
+          }
+        }
+      }
     } else if (Current->SpacesRequiredBefore == 0 &&
              spaceRequiredBefore(Line, *Current)) {
       Current->SpacesRequiredBefore = 1;
@@ -1452,6 +1478,7 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
 
 bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
                                      const FormatToken &Right) {
+  const FormatToken &Left = *Right.Previous;
   if (Right.is(tok::comment)) {
     return Right.Previous->BlockKind != BK_BracedInit &&
            Right.Previous->Type != TT_CtorInitializerColon &&
@@ -1487,6 +1514,13 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
   } else if (Right.Previous->is(tok::l_brace) && Right.NestingLevel == 1 &&
              Style.Language == FormatStyle::LK_Proto) {
     // Don't enums onto single lines in protocol buffers.
+    return true;
+  } else if ((Left.is(tok::l_brace) && Left.MatchingParen &&
+              Left.MatchingParen->Previous &&
+              Left.MatchingParen->Previous->is(tok::comma)) ||
+             (Right.is(tok::r_brace) && Left.is(tok::comma))) {
+    // If the last token before a '}' is a comma, the intention is to insert a
+    // line break after it in order to make shuffling around entries easier.
     return true;
   }
   return false;

@@ -48,7 +48,7 @@ class SanitizerArgs {
   unsigned Kind;
 
   std::string BlacklistFile;
-  bool MsanTrackOrigins;
+  int MsanTrackOrigins;
   bool AsanZeroBaseShadow;
   bool UbsanTrapOnError;
 
@@ -100,7 +100,7 @@ class SanitizerArgs {
 
   /// Produce an argument string from ArgList \p Args, which shows how it
   /// provides a sanitizer kind in \p Mask. For example, the argument list
-  /// "-fsanitize=thread,vptr -faddress-sanitizer" with mask \c NeedsUbsanRt
+  /// "-fsanitize=thread,vptr -fsanitize=address" with mask \c NeedsUbsanRt
   /// would produce "-fsanitize=vptr".
   static std::string lastArgumentForKind(const Driver &D,
                                          const llvm::opt::ArgList &Args,

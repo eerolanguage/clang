@@ -357,10 +357,6 @@ def fapple_kext : Flag<["-"], "fapple-kext">, Group<f_Group>, Flags<[CC1Option]>
   HelpText<"Use Apple's kernel extensions ABI">;
 def fapple_pragma_pack : Flag<["-"], "fapple-pragma-pack">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Enable Apple gcc-compatible #pragma pack handling">;
-def faddress_sanitizer : Flag<["-"], "faddress-sanitizer">, Group<f_Group>;
-def fno_address_sanitizer : Flag<["-"], "fno-address-sanitizer">, Group<f_Group>;
-def fthread_sanitizer : Flag<["-"], "fthread-sanitizer">, Group<f_Group>;
-def fno_thread_sanitizer : Flag<["-"], "fno-thread-sanitizer">, Group<f_Group>;
 def fasm : Flag<["-"], "fasm">, Group<f_Group>;
 
 def fasm_blocks : Flag<["-"], "fasm-blocks">, Group<f_Group>, Flags<[CC1Option]>;
@@ -395,13 +391,8 @@ def fblocks : Flag<["-"], "fblocks">, Group<f_Group>, Flags<[CC1Option]>,
 def fbootclasspath_EQ : Joined<["-"], "fbootclasspath=">, Group<f_Group>;
 def fborland_extensions : Flag<["-"], "fborland-extensions">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Accept non-standard constructs supported by the Borland compiler">;
-def fbounds_checking : Flag<["-"], "fbounds-checking">, Group<f_Group>,
-  HelpText<"Enable run-time bounds checks">;
-def fbounds_checking_EQ : Joined<["-"], "fbounds-checking=">, Flags<[CC1Option]>,
-  Group<f_Group>;
 def fbuiltin : Flag<["-"], "fbuiltin">, Group<f_Group>;
 def fcaret_diagnostics : Flag<["-"], "fcaret-diagnostics">, Group<f_Group>;
-def fcatch_undefined_behavior : Flag<["-"], "fcatch-undefined-behavior">, Group<f_Group>;
 def fclasspath_EQ : Joined<["-"], "fclasspath=">, Group<f_Group>;
 def fcolor_diagnostics : Flag<["-"], "fcolor-diagnostics">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Use colors in diagnostics">;
@@ -490,11 +481,15 @@ def fsanitize_blacklist : Joined<["-"], "fsanitize-blacklist=">,
 def fno_sanitize_blacklist : Flag<["-"], "fno-sanitize-blacklist">,
                              Group<f_clang_Group>,
                              HelpText<"Don't use blacklist file for sanitizers">;
+def fsanitize_memory_track_origins_EQ : Joined<["-"], "fsanitize-memory-track-origins=">,
+                                        Group<f_clang_Group>, Flags<[CC1Option]>,
+                                        HelpText<"Enable origins tracking in MemorySanitizer">;
 def fsanitize_memory_track_origins : Flag<["-"], "fsanitize-memory-track-origins">,
                                      Group<f_clang_Group>, Flags<[CC1Option]>,
                                      HelpText<"Enable origins tracking in MemorySanitizer">;
 def fno_sanitize_memory_track_origins : Flag<["-"], "fno-sanitize-memory-track-origins">,
-                                        Group<f_clang_Group>;
+                                        Group<f_clang_Group>, Flags<[CC1Option]>,
+                                        HelpText<"Disable origins tracking in MemorySanitizer">;
 def fsanitize_recover : Flag<["-"], "fsanitize-recover">,
                         Group<f_clang_Group>;
 def fno_sanitize_recover : Flag<["-"], "fno-sanitize-recover">,

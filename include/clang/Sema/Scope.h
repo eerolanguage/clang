@@ -239,10 +239,11 @@ public:
     return PrototypeIndex++;
   }
 
-  typedef DeclSetTy::iterator decl_iterator;
-  decl_iterator decl_begin() const { return DeclsInScope.begin(); }
-  decl_iterator decl_end()   const { return DeclsInScope.end(); }
-  bool decl_empty()          const { return DeclsInScope.empty(); }
+  typedef llvm::iterator_range<DeclSetTy::iterator> decl_range;
+  decl_range decls() const {
+    return decl_range(DeclsInScope.begin(), DeclsInScope.end());
+  }
+  bool decl_empty() const { return DeclsInScope.empty(); }
 
   void AddDecl(Decl *D) {
     DeclsInScope.insert(D);
@@ -371,27 +372,16 @@ public:
   /// is a FunctionPrototypeScope.
   bool containedInPrototypeScope() const;
 
-  typedef UsingDirectivesTy::iterator udir_iterator;
-  typedef UsingDirectivesTy::const_iterator const_udir_iterator;
-
   void PushUsingDirective(UsingDirectiveDecl *UDir) {
     UsingDirectives.push_back(UDir);
   }
 
-  udir_iterator using_directives_begin() {
-    return UsingDirectives.begin();
-  }
+  typedef llvm::iterator_range<UsingDirectivesTy::iterator>
+    using_directives_range;
 
-  udir_iterator using_directives_end() {
-    return UsingDirectives.end();
-  }
-
-  const_udir_iterator using_directives_begin() const {
-    return UsingDirectives.begin();
-  }
-
-  const_udir_iterator using_directives_end() const {
-    return UsingDirectives.end();
+  using_directives_range using_directives() {
+    return using_directives_range(UsingDirectives.begin(),
+                                  UsingDirectives.end());
   }
 
   /// Init - This is used by the parser to implement scope caching.

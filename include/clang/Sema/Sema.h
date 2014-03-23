@@ -1013,6 +1013,18 @@ public:
     return FunctionScopes.back();
   }
   
+  sema::FunctionScopeInfo *getEnclosingFunction() const {
+    if (FunctionScopes.empty())
+      return 0;
+    
+    for (int e = FunctionScopes.size()-1; e >= 0; --e) {
+      if (isa<sema::BlockScopeInfo>(FunctionScopes[e]))
+        continue;
+      return FunctionScopes[e];
+    }
+    return 0;
+  }
+  
   template <typename ExprT>
   void recordUseOfEvaluatedWeak(const ExprT *E, bool IsRead=true) {
     if (!isUnevaluatedContext())
@@ -1116,6 +1128,8 @@ public:
   CanThrowResult canThrow(const Expr *E);
   const FunctionProtoType *ResolveExceptionSpec(SourceLocation Loc,
                                                 const FunctionProtoType *FPT);
+  void UpdateExceptionSpec(FunctionDecl *FD,
+                           const FunctionProtoType::ExtProtoInfo &EPI);
   bool CheckSpecifiedExceptionType(QualType &T, const SourceRange &Range);
   bool CheckDistantExceptionSpec(QualType T);
   bool CheckEquivalentExceptionSpec(FunctionDecl *Old, FunctionDecl *New);
@@ -7172,6 +7186,8 @@ private:
   void InitDataSharingAttributesStack();
   void DestroyDataSharingAttributesStack();
   ExprResult PerformImplicitIntegerConversion(SourceLocation OpLoc, Expr *Op);
+  ExprResult VerifyPositiveIntegerConstantInClause(Expr *Op,
+                                                   OpenMPClauseKind CKind);
 public:
   /// \brief Called on start of new data sharing attribute block.
   void StartOpenMPDSABlock(OpenMPDirectiveKind K,
@@ -7227,6 +7243,11 @@ public:
                                          SourceLocation StartLoc,
                                          SourceLocation LParenLoc,
                                          SourceLocation EndLoc);
+  /// \brief Called on well-formed 'safelen' clause.
+  OMPClause *ActOnOpenMPSafelenClause(Expr *Length,
+                                      SourceLocation StartLoc,
+                                      SourceLocation LParenLoc,
+                                      SourceLocation EndLoc);
 
   OMPClause *ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
                                      unsigned Argument,

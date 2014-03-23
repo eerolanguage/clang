@@ -194,15 +194,8 @@ void ASTTypeWriter::VisitFunctionNoProtoType(const FunctionNoProtoType *T) {
   Code = TYPE_FUNCTION_NO_PROTO;
 }
 
-void ASTTypeWriter::VisitFunctionProtoType(const FunctionProtoType *T) {
-  VisitFunctionType(T);
-  Record.push_back(T->getNumParams());
-  for (unsigned I = 0, N = T->getNumParams(); I != N; ++I)
-    Writer.AddTypeRef(T->getParamType(I), Record);
-  Record.push_back(T->isVariadic());
-  Record.push_back(T->hasTrailingReturn());
-  Record.push_back(T->getTypeQuals());
-  Record.push_back(static_cast<unsigned>(T->getRefQualifier()));
+static void addExceptionSpec(ASTWriter &Writer, const FunctionProtoType *T,
+                             ASTWriter::RecordDataImpl &Record) {
   Record.push_back(T->getExceptionSpecType());
   if (T->getExceptionSpecType() == EST_Dynamic) {
     Record.push_back(T->getNumExceptions());
@@ -216,6 +209,18 @@ void ASTTypeWriter::VisitFunctionProtoType(const FunctionProtoType *T) {
   } else if (T->getExceptionSpecType() == EST_Unevaluated) {
     Writer.AddDeclRef(T->getExceptionSpecDecl(), Record);
   }
+}
+
+void ASTTypeWriter::VisitFunctionProtoType(const FunctionProtoType *T) {
+  VisitFunctionType(T);
+  Record.push_back(T->getNumParams());
+  for (unsigned I = 0, N = T->getNumParams(); I != N; ++I)
+    Writer.AddTypeRef(T->getParamType(I), Record);
+  Record.push_back(T->isVariadic());
+  Record.push_back(T->hasTrailingReturn());
+  Record.push_back(T->getTypeQuals());
+  Record.push_back(static_cast<unsigned>(T->getRefQualifier()));
+  addExceptionSpec(Writer, T, Record);
   Code = TYPE_FUNCTION_PROTO;
 }
 
@@ -401,9 +406,8 @@ void ASTTypeWriter::VisitObjCInterfaceType(const ObjCInterfaceType *T) {
 void ASTTypeWriter::VisitObjCObjectType(const ObjCObjectType *T) {
   Writer.AddTypeRef(T->getBaseType(), Record);
   Record.push_back(T->getNumProtocols());
-  for (ObjCObjectType::qual_iterator I = T->qual_begin(),
-       E = T->qual_end(); I != E; ++I)
-    Writer.AddDeclRef(*I, Record);
+  for (const auto *I : T->quals())
+    Writer.AddDeclRef(I, Record);
   Code = TYPE_OBJC_OBJECT;
 }
 
@@ -4074,13 +4078,24 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   
   // If the translation unit has an anonymous namespace, and we don't already
   // have an update block for it, write it as an update block.
+  // FIXME: Why do we not do this if there's already an update block?
   if (NamespaceDecl *NS = TU->getAnonymousNamespace()) {
     ASTWriter::UpdateRecord &Record = DeclUpdates[TU];
-    if (Record.empty()) {
-      Record.push_back(UPD_CXX_ADDED_ANONYMOUS_NAMESPACE);
-      Record.push_back(reinterpret_cast<uint64_t>(NS));
-    }
+    if (Record.empty())
+      Record.push_back(DeclUpdate(UPD_CXX_ADDED_ANONYMOUS_NAMESPACE, NS));
   }
+
+  // Add update records for all mangling numbers and static local numbers.
+  // These aren't really update records, but this is a convenient way of
+  // tagging this rare extra data onto the declarations.
+  for (const auto &Number : Context.MangleNumbers)
+    if (!Number.first->isFromASTFile())
+      DeclUpdates[Number.first].push_back(DeclUpdate(UPD_MANGLING_NUMBER,
+                                                     Number.second));
+  for (const auto &Number : Context.StaticLocalNumbers)
+    if (!Number.first->isFromASTFile())
+      DeclUpdates[Number.first].push_back(DeclUpdate(UPD_STATIC_LOCAL_NUMBER,
+                                                     Number.second));
 
   // Make sure visible decls, added to DeclContexts previously loaded from
   // an AST file, are registered for serialization.
@@ -4105,9 +4120,6 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
     }
   }
 
-  // Resolve any declaration pointers within the declaration updates block.
-  ResolveDeclUpdatesBlocks();
-  
   // Form the record of special types.
   RecordData SpecialTypes;
   AddTypeRef(Context.getRawCFConstantStringType(), SpecialTypes);
@@ -4119,30 +4131,6 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   AddTypeRef(Context.ObjCSelRedefinitionType, SpecialTypes);
   AddTypeRef(Context.getucontext_tType(), SpecialTypes);
 
-  // Keep writing types and declarations until all types and
-  // declarations have been written.
-  Stream.EnterSubblock(DECLTYPES_BLOCK_ID, NUM_ALLOWED_ABBREVS_SIZE);
-  WriteDeclsBlockAbbrevs();
-  for (DeclsToRewriteTy::iterator I = DeclsToRewrite.begin(), 
-                                  E = DeclsToRewrite.end(); 
-       I != E; ++I)
-    DeclTypesToEmit.push(const_cast<Decl*>(*I));
-  while (!DeclTypesToEmit.empty()) {
-    DeclOrType DOT = DeclTypesToEmit.front();
-    DeclTypesToEmit.pop();
-    if (DOT.isType())
-      WriteType(DOT.getType());
-    else
-      WriteDecl(Context, DOT.getDecl());
-  }
-  Stream.ExitBlock();
-
-  DoneWritingDeclsAndTypes = true;
-
-  WriteFileDeclIDsMap();
-  WriteSourceManagerBlock(Context.getSourceManager(), PP, isysroot);
-  WriteComments();
-  
   if (Chain) {
     // Write the mapping information describing our module dependencies and how
     // each of those modules were mapped into our own offset/ID space, so that
@@ -4187,6 +4175,41 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
     Stream.EmitRecordWithBlob(ModuleOffsetMapAbbrev, Record,
                               Buffer.data(), Buffer.size());
   }
+
+  RecordData DeclUpdatesOffsetsRecord;
+
+  // Keep writing types, declarations, and declaration update records
+  // until we've emitted all of them.
+  Stream.EnterSubblock(DECLTYPES_BLOCK_ID, NUM_ALLOWED_ABBREVS_SIZE);
+  WriteDeclsBlockAbbrevs();
+  for (DeclsToRewriteTy::iterator I = DeclsToRewrite.begin(),
+                                  E = DeclsToRewrite.end();
+       I != E; ++I)
+    DeclTypesToEmit.push(const_cast<Decl*>(*I));
+  do {
+    WriteDeclUpdatesBlocks(DeclUpdatesOffsetsRecord);
+    while (!DeclTypesToEmit.empty()) {
+      DeclOrType DOT = DeclTypesToEmit.front();
+      DeclTypesToEmit.pop();
+      if (DOT.isType())
+        WriteType(DOT.getType());
+      else
+        WriteDecl(Context, DOT.getDecl());
+    }
+  } while (!DeclUpdates.empty());
+  Stream.ExitBlock();
+
+  DoneWritingDeclsAndTypes = true;
+
+  // These things can only be done once we've written out decls and types.
+  WriteTypeDeclOffsets();
+  if (!DeclUpdatesOffsetsRecord.empty())
+    Stream.EmitRecord(DECL_UPDATE_OFFSETS, DeclUpdatesOffsetsRecord);
+  WriteCXXBaseSpecifiersOffsets();
+  WriteFileDeclIDsMap();
+  WriteSourceManagerBlock(Context.getSourceManager(), PP, isysroot);
+
+  WriteComments();
   WritePreprocessor(PP, isModule);
   WriteHeaderSearch(PP.getHeaderSearchInfo(), isysroot);
   WriteSelectors(SemaRef);
@@ -4194,12 +4217,8 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   WriteIdentifierTable(PP, SemaRef.IdResolver, isModule);
   WriteFPPragmaOptions(SemaRef.getFPOptions());
   WriteOpenCLExtensions(SemaRef);
-
-  WriteTypeDeclOffsets();
   WritePragmaDiagnosticMappings(Context.getDiagnostics(), isModule);
 
-  WriteCXXBaseSpecifiersOffsets();
-  
   // If we're emitting a module, write out the submodule information.  
   if (WritingModule)
     WriteSubmodules(WritingModule);
@@ -4273,25 +4292,41 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
 
   if (!WritingModule) {
     // Write the submodules that were imported, if any.
-    RecordData ImportedModules;
+    struct ModuleInfo {
+      uint64_t ID;
+      Module *M;
+      ModuleInfo(uint64_t ID, Module *M) : ID(ID), M(M) {}
+    };
+    llvm::SmallVector<ModuleInfo, 64> Imports;
     for (const auto *I : Context.local_imports()) {
       assert(SubmoduleIDs.find(I->getImportedModule()) != SubmoduleIDs.end());
-      ImportedModules.push_back(SubmoduleIDs[I->getImportedModule()]);
+      Imports.push_back(ModuleInfo(SubmoduleIDs[I->getImportedModule()],
+                         I->getImportedModule()));
     }
-    if (!ImportedModules.empty()) {
-      // Sort module IDs.
-      llvm::array_pod_sort(ImportedModules.begin(), ImportedModules.end());
-      
-      // Unique module IDs.
-      ImportedModules.erase(std::unique(ImportedModules.begin(), 
-                                        ImportedModules.end()),
-                            ImportedModules.end());
-      
+
+    if (!Imports.empty()) {
+      auto Cmp = [](const ModuleInfo &A, const ModuleInfo &B) {
+        return A.ID < B.ID;
+      };
+
+      // Sort and deduplicate module IDs.
+      std::sort(Imports.begin(), Imports.end(), Cmp);
+      Imports.erase(std::unique(Imports.begin(), Imports.end(), Cmp),
+                    Imports.end());
+
+      RecordData ImportedModules;
+      for (const auto &Import : Imports) {
+        ImportedModules.push_back(Import.ID);
+        // FIXME: If the module has macros imported then later has declarations
+        // imported, this location won't be the right one as a location for the
+        // declaration imports.
+        AddSourceLocation(Import.M->MacroVisibilityLoc, ImportedModules);
+      }
+
       Stream.EmitRecord(IMPORTED_MODULES, ImportedModules);
     }
   }
 
-  WriteDeclUpdatesBlocks();
   WriteDeclReplacementsBlock();
   WriteRedeclarations();
   WriteMergedDecls();
@@ -4308,64 +4343,79 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   Stream.ExitBlock();
 }
 
-/// \brief Go through the declaration update blocks and resolve declaration
-/// pointers into declaration IDs.
-void ASTWriter::ResolveDeclUpdatesBlocks() {
-  for (DeclUpdateMap::iterator
-       I = DeclUpdates.begin(), E = DeclUpdates.end(); I != E; ++I) {
-    const Decl *D = I->first;
-    UpdateRecord &URec = I->second;
-    
-    if (isRewritten(D))
-      continue; // The decl will be written completely
-
-    unsigned Idx = 0, N = URec.size();
-    while (Idx < N) {
-      switch ((DeclUpdateKind)URec[Idx++]) {
-      case UPD_CXX_ADDED_IMPLICIT_MEMBER:
-      case UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION:
-      case UPD_CXX_ADDED_ANONYMOUS_NAMESPACE:
-        URec[Idx] = GetDeclRef(reinterpret_cast<Decl *>(URec[Idx]));
-        ++Idx;
-        break;
-
-      case UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER:
-      case UPD_DECL_MARKED_USED:
-        ++Idx;
-        break;
-
-      case UPD_CXX_DEDUCED_RETURN_TYPE:
-        URec[Idx] = GetOrCreateTypeID(
-            QualType::getFromOpaquePtr(reinterpret_cast<void *>(URec[Idx])));
-        ++Idx;
-        break;
-      }
-    }
-  }
-}
-
-void ASTWriter::WriteDeclUpdatesBlocks() {
+void ASTWriter::WriteDeclUpdatesBlocks(RecordDataImpl &OffsetsRecord) {
   if (DeclUpdates.empty())
     return;
 
-  RecordData OffsetsRecord;
-  Stream.EnterSubblock(DECL_UPDATES_BLOCK_ID, NUM_ALLOWED_ABBREVS_SIZE);
-  for (DeclUpdateMap::iterator
-         I = DeclUpdates.begin(), E = DeclUpdates.end(); I != E; ++I) {
-    const Decl *D = I->first;
-    UpdateRecord &URec = I->second;
+  DeclUpdateMap LocalUpdates;
+  LocalUpdates.swap(DeclUpdates);
 
+  for (auto &DeclUpdate : LocalUpdates) {
+    const Decl *D = DeclUpdate.first;
     if (isRewritten(D))
       continue; // The decl will be written completely,no need to store updates.
 
-    uint64_t Offset = Stream.GetCurrentBitNo();
-    Stream.EmitRecord(DECL_UPDATES, URec);
-
     OffsetsRecord.push_back(GetDeclRef(D));
-    OffsetsRecord.push_back(Offset);
+    OffsetsRecord.push_back(Stream.GetCurrentBitNo());
+
+    bool HasUpdatedBody = false;
+    RecordData Record;
+    for (auto &Update : DeclUpdate.second) {
+      DeclUpdateKind Kind = (DeclUpdateKind)Update.getKind();
+
+      Record.push_back(Kind);
+      switch (Kind) {
+      case UPD_CXX_ADDED_IMPLICIT_MEMBER:
+      case UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION:
+      case UPD_CXX_ADDED_ANONYMOUS_NAMESPACE:
+        Record.push_back(GetDeclRef(Update.getDecl()));
+        break;
+
+      case UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER:
+        AddSourceLocation(Update.getLoc(), Record);
+        break;
+
+      case UPD_CXX_INSTANTIATED_FUNCTION_DEFINITION:
+        // An updated body is emitted last, so that the reader doesn't need
+        // to skip over the lazy body to reach statements for other records.
+        Record.pop_back();
+        HasUpdatedBody = true;
+        break;
+
+      case UPD_CXX_RESOLVED_EXCEPTION_SPEC:
+        addExceptionSpec(
+            *this,
+            cast<FunctionDecl>(D)->getType()->castAs<FunctionProtoType>(),
+            Record);
+        break;
+
+      case UPD_CXX_DEDUCED_RETURN_TYPE:
+        Record.push_back(GetOrCreateTypeID(Update.getType()));
+        break;
+
+      case UPD_DECL_MARKED_USED:
+        break;
+
+      case UPD_MANGLING_NUMBER:
+      case UPD_STATIC_LOCAL_NUMBER:
+        Record.push_back(Update.getNumber());
+        break;
+      }
+    }
+
+    if (HasUpdatedBody) {
+      const FunctionDecl *Def = cast<FunctionDecl>(D);
+      Record.push_back(UPD_CXX_INSTANTIATED_FUNCTION_DEFINITION);
+      Record.push_back(Def->isInlined());
+      AddSourceLocation(Def->getInnerLocStart(), Record);
+      AddFunctionDefinition(Def, Record);
+    }
+
+    Stream.EmitRecord(DECL_UPDATES, Record);
+
+    // Flush any statements that were written as part of this update record.
+    FlushStmts();
   }
-  Stream.ExitBlock();
-  Stream.EmitRecord(DECL_UPDATE_OFFSETS, OffsetsRecord);
 }
 
 void ASTWriter::WriteDeclReplacementsBlock() {
@@ -5280,9 +5330,7 @@ void ASTWriter::AddedCXXImplicitMember(const CXXRecordDecl *RD, const Decl *D) {
 
   // A decl coming from PCH was modified.
   assert(RD->isCompleteDefinition());
-  UpdateRecord &Record = DeclUpdates[RD];
-  Record.push_back(UPD_CXX_ADDED_IMPLICIT_MEMBER);
-  Record.push_back(reinterpret_cast<uint64_t>(D));
+  DeclUpdates[RD].push_back(DeclUpdate(UPD_CXX_ADDED_IMPLICIT_MEMBER, D));
 }
 
 void ASTWriter::AddedCXXTemplateSpecialization(const ClassTemplateDecl *TD,
@@ -5293,9 +5341,8 @@ void ASTWriter::AddedCXXTemplateSpecialization(const ClassTemplateDecl *TD,
   if (!(!D->isFromASTFile() && TD->isFromASTFile()))
     return; // Not a source specialization added to a template from PCH.
 
-  UpdateRecord &Record = DeclUpdates[TD];
-  Record.push_back(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION);
-  Record.push_back(reinterpret_cast<uint64_t>(D));
+  DeclUpdates[TD].push_back(DeclUpdate(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION,
+                                       D));
 }
 
 void ASTWriter::AddedCXXTemplateSpecialization(
@@ -5306,9 +5353,8 @@ void ASTWriter::AddedCXXTemplateSpecialization(
   if (!(!D->isFromASTFile() && TD->isFromASTFile()))
     return; // Not a source specialization added to a template from PCH.
 
-  UpdateRecord &Record = DeclUpdates[TD];
-  Record.push_back(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION);
-  Record.push_back(reinterpret_cast<uint64_t>(D));
+  DeclUpdates[TD].push_back(DeclUpdate(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION,
+                                       D));
 }
 
 void ASTWriter::AddedCXXTemplateSpecialization(const FunctionTemplateDecl *TD,
@@ -5319,9 +5365,17 @@ void ASTWriter::AddedCXXTemplateSpecialization(const FunctionTemplateDecl *TD,
   if (!(!D->isFromASTFile() && TD->isFromASTFile()))
     return; // Not a source specialization added to a template from PCH.
 
-  UpdateRecord &Record = DeclUpdates[TD];
-  Record.push_back(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION);
-  Record.push_back(reinterpret_cast<uint64_t>(D));
+  DeclUpdates[TD].push_back(DeclUpdate(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION,
+                                       D));
+}
+
+void ASTWriter::ResolvedExceptionSpec(const FunctionDecl *FD) {
+  assert(!WritingAST && "Already writing the AST!");
+  FD = FD->getCanonicalDecl();
+  if (!FD->isFromASTFile())
+    return; // Not a function declared in PCH and defined outside.
+
+  DeclUpdates[FD].push_back(UPD_CXX_RESOLVED_EXCEPTION_SPEC);
 }
 
 void ASTWriter::DeducedReturnType(const FunctionDecl *FD, QualType ReturnType) {
@@ -5330,9 +5384,7 @@ void ASTWriter::DeducedReturnType(const FunctionDecl *FD, QualType ReturnType) {
   if (!FD->isFromASTFile())
     return; // Not a function declared in PCH and defined outside.
 
-  UpdateRecord &Record = DeclUpdates[FD];
-  Record.push_back(UPD_CXX_DEDUCED_RETURN_TYPE);
-  Record.push_back(reinterpret_cast<uint64_t>(ReturnType.getAsOpaquePtr()));
+  DeclUpdates[FD].push_back(DeclUpdate(UPD_CXX_DEDUCED_RETURN_TYPE, ReturnType));
 }
 
 void ASTWriter::CompletedImplicitDefinition(const FunctionDecl *D) {
@@ -5345,6 +5397,17 @@ void ASTWriter::CompletedImplicitDefinition(const FunctionDecl *D) {
   RewriteDecl(D);
 }
 
+void ASTWriter::FunctionDefinitionInstantiated(const FunctionDecl *D) {
+  assert(!WritingAST && "Already writing the AST!");
+  if (!D->isFromASTFile())
+    return;
+
+  // Since the actual instantiation is delayed, this really means that we need
+  // to update the instantiation location.
+  DeclUpdates[D].push_back(
+      DeclUpdate(UPD_CXX_INSTANTIATED_FUNCTION_DEFINITION));
+}
+
 void ASTWriter::StaticDataMemberInstantiated(const VarDecl *D) {
   assert(!WritingAST && "Already writing the AST!");
   if (!D->isFromASTFile())
@@ -5352,10 +5415,9 @@ void ASTWriter::StaticDataMemberInstantiated(const VarDecl *D) {
 
   // Since the actual instantiation is delayed, this really means that we need
   // to update the instantiation location.
-  UpdateRecord &Record = DeclUpdates[D];
-  Record.push_back(UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER);
-  AddSourceLocation(
-      D->getMemberSpecializationInfo()->getPointOfInstantiation(), Record);
+  DeclUpdates[D].push_back(
+      DeclUpdate(UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER,
+       D->getMemberSpecializationInfo()->getPointOfInstantiation()));
 }
 
 void ASTWriter::AddedObjCCategoryToInterface(const ObjCCategoryDecl *CatD,
@@ -5389,6 +5451,5 @@ void ASTWriter::DeclarationMarkedUsed(const Decl *D) {
   if (!D->isFromASTFile())
     return;
 
-  UpdateRecord &Record = DeclUpdates[D];
-  Record.push_back(UPD_DECL_MARKED_USED);
+  DeclUpdates[D].push_back(DeclUpdate(UPD_DECL_MARKED_USED));
 }

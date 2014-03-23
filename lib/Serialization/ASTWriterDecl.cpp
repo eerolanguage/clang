@@ -130,6 +130,14 @@ namespace clang {
     void VisitObjCPropertyDecl(ObjCPropertyDecl *D);
     void VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *D);
     void VisitOMPThreadPrivateDecl(OMPThreadPrivateDecl *D);
+
+    void AddFunctionDefinition(const FunctionDecl *FD) {
+      assert(FD->doesThisDeclarationHaveABody());
+      if (auto *CD = dyn_cast<CXXConstructorDecl>(FD))
+        Writer.AddCXXCtorInitializers(CD->CtorInitializers,
+                                      CD->NumCtorInitializers, Record);
+      Writer.AddStmt(FD->getBody());
+    }
   };
 }
 
@@ -168,6 +176,18 @@ void ASTDeclWriter::VisitDecl(Decl *D) {
   Record.push_back(D->getAccess());
   Record.push_back(D->isModulePrivate());
   Record.push_back(Writer.inferSubmoduleIDFromLocation(D->getLocation()));
+
+  // If this declaration injected a name into a context different from its
+  // lexical context, and that context is an imported namespace, we need to
+  // update its visible declarations to include this name.
+  //
+  // This happens when we instantiate a class with a friend declaration or a
+  // function with a local extern declaration, for instance.
+  if (D->isOutOfLine()) {
+    auto *NS = dyn_cast<NamespaceDecl>(D->getDeclContext()->getRedeclContext());
+    if (NS && NS->isFromASTFile())
+      Writer.AddUpdatedDeclContext(NS);
+  }
 }
 
 void ASTDeclWriter::VisitTranslationUnitDecl(TranslationUnitDecl *D) {
@@ -895,9 +915,8 @@ void ASTDeclWriter::VisitNamespaceDecl(NamespaceDecl *D) {
     Decl *Parent = cast<Decl>(
         D->getParent()->getRedeclContext()->getPrimaryContext());
     if (Parent->isFromASTFile() || isa<TranslationUnitDecl>(Parent)) {
-      ASTWriter::UpdateRecord &Record = Writer.DeclUpdates[Parent];
-      Record.push_back(UPD_CXX_ADDED_ANONYMOUS_NAMESPACE);
-      Writer.AddDeclRef(D, Record);
+      Writer.DeclUpdates[Parent].push_back(
+          ASTWriter::DeclUpdate(UPD_CXX_ADDED_ANONYMOUS_NAMESPACE, D));
     }
   }
 }
@@ -1894,4 +1913,12 @@ void ASTWriter::WriteDecl(ASTContext &Context, Decl *D) {
   // them to a record in the AST file later.
   if (isRequiredDecl(D, Context))
     EagerlyDeserializedDecls.push_back(ID);
+}
+
+void ASTWriter::AddFunctionDefinition(const FunctionDecl *FD,
+                                      RecordData &Record) {
+  ClearSwitchCaseIDs();
+
+  ASTDeclWriter W(*this, FD->getASTContext(), Record);
+  W.AddFunctionDefinition(FD);
 }

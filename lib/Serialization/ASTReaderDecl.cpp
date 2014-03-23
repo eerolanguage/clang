@@ -2644,6 +2644,7 @@ void ASTReader::loadDeclUpdateRecords(serialization::DeclID ID, Decl *D) {
   DeclUpdateOffsetsMap::iterator UpdI = DeclUpdateOffsets.find(ID);
   if (UpdI != DeclUpdateOffsets.end()) {
     FileOffsetsTy &UpdateOffsets = UpdI->second;
+    bool WasInteresting = isConsumerInterestedIn(D, false);
     for (FileOffsetsTy::iterator
          I = UpdateOffsets.begin(), E = UpdateOffsets.end(); I != E; ++I) {
       ModuleFile *F = I->first;
@@ -2656,10 +2657,18 @@ void ASTReader::loadDeclUpdateRecords(serialization::DeclID ID, Decl *D) {
       unsigned RecCode = Cursor.readRecord(Code, Record);
       (void)RecCode;
       assert(RecCode == DECL_UPDATES && "Expected DECL_UPDATES record!");
-      
+
       unsigned Idx = 0;
       ASTDeclReader Reader(*this, *F, ID, 0, Record, Idx);
       Reader.UpdateDecl(D, *F, Record);
+
+      // We might have made this declaration interesting. If so, remember that
+      // we need to hand it off to the consumer.
+      if (!WasInteresting &&
+          isConsumerInterestedIn(D, Reader.hasPendingBody())) {
+        InterestingDecls.push_back(D);
+        WasInteresting = true;
+      }
     }
   }
 }
@@ -2944,6 +2953,36 @@ void ASTDeclReader::UpdateDecl(Decl *D, ModuleFile &ModuleFile,
           Reader.ReadSourceLocation(ModuleFile, Record, Idx));
       break;
 
+    case UPD_CXX_INSTANTIATED_FUNCTION_DEFINITION: {
+      FunctionDecl *FD = cast<FunctionDecl>(D);
+      if (FD->hasBody() || Reader.PendingBodies[FD])
+        // FIXME: Maybe check for ODR violations.
+        break;
+
+      if (Record[Idx++])
+        FD->setImplicitlyInline();
+      FD->setInnerLocStart(Reader.ReadSourceLocation(ModuleFile, Record, Idx));
+      if (auto *CD = dyn_cast<CXXConstructorDecl>(FD))
+        std::tie(CD->CtorInitializers, CD->NumCtorInitializers) =
+            Reader.ReadCXXCtorInitializers(ModuleFile, Record, Idx);
+      // Store the offset of the body so we can lazily load it later.
+      Reader.PendingBodies[FD] = GetCurrentCursorOffset();
+      HasPendingBody = true;
+      assert(Idx == Record.size() && "lazy body must be last");
+      break;
+    }
+
+    case UPD_CXX_RESOLVED_EXCEPTION_SPEC: {
+      auto *FD = cast<FunctionDecl>(D);
+      auto *FPT = FD->getType()->castAs<FunctionProtoType>();
+      auto EPI = FPT->getExtProtoInfo();
+      SmallVector<QualType, 8> ExceptionStorage;
+      Reader.readExceptionSpec(ModuleFile, ExceptionStorage, EPI, Record, Idx);
+      FD->setType(Reader.Context.getFunctionType(FPT->getReturnType(),
+                                                 FPT->getParamTypes(), EPI));
+      break;
+    }
+
     case UPD_CXX_DEDUCED_RETURN_TYPE: {
       FunctionDecl *FD = cast<FunctionDecl>(D);
       Reader.Context.adjustDeducedFunctionResultType(
@@ -2957,6 +2996,14 @@ void ASTDeclReader::UpdateDecl(Decl *D, ModuleFile &ModuleFile,
       D->Used = true;
       break;
     }
+
+    case UPD_MANGLING_NUMBER:
+      Reader.Context.setManglingNumber(cast<NamedDecl>(D), Record[Idx++]);
+      break;
+
+    case UPD_STATIC_LOCAL_NUMBER:
+      Reader.Context.setStaticLocalNumber(cast<VarDecl>(D), Record[Idx++]);
+      break;
     }
   }
 }

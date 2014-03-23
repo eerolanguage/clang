@@ -507,7 +507,7 @@ void CodeGenFunction::GenerateObjCMethod(const ObjCMethodDecl *OMD) {
   Cnt.beginRegion(Builder);
   EmitCompoundStmtWithoutScope(*cast<CompoundStmt>(OMD->getBody()));
   FinishFunction(OMD->getBodyRBrace());
-  PGO.emitWriteoutFunction();
+  PGO.emitInstrumentationData();
   PGO.destroyRegionCounters();
 }
 
@@ -2834,9 +2834,8 @@ void CodeGenFunction::EmitObjCAutoreleasePoolStmt(
     EHStack.pushCleanup<CallObjCMRRAutoreleasePoolObject>(NormalCleanup, token);
   }
 
-  for (CompoundStmt::const_body_iterator I = S.body_begin(),
-       E = S.body_end(); I != E; ++I)
-    EmitStmt(*I);
+  for (const auto *I : S.body())
+    EmitStmt(I);
 
   if (DI)
     DI->EmitLexicalBlockEnd(Builder, S.getRBracLoc());

@@ -174,6 +174,51 @@ TEST_F(FormatTest, RemovesEmptyLines) {
                    "\n"
                    "};"));
 
+  // Don't remove empty lines at the start of namespaces.
+  EXPECT_EQ("namespace N {\n"
+            "\n"
+            "int i;\n"
+            "}",
+            format("namespace N {\n"
+                   "\n"
+                   "int    i;\n"
+                   "}",
+                   getGoogleStyle()));
+
+  // Remove empty lines at the beginning and end of blocks.
+  EXPECT_EQ("void f() {\n"
+            "\n"
+            "  if (a) {\n"
+            "\n"
+            "    f();\n"
+            "  }\n"
+            "}",
+            format("void f() {\n"
+                   "\n"
+                   "  if (a) {\n"
+                   "\n"
+                   "    f();\n"
+                   "\n"
+                   "  }\n"
+                   "\n"
+                   "}",
+                   getLLVMStyle()));
+  EXPECT_EQ("void f() {\n"
+            "  if (a) {\n"
+            "    f();\n"
+            "  }\n"
+            "}",
+            format("void f() {\n"
+                   "\n"
+                   "  if (a) {\n"
+                   "\n"
+                   "    f();\n"
+                   "\n"
+                   "  }\n"
+                   "\n"
+                   "}",
+                   getGoogleStyle()));
+
   // Don't remove empty lines in more complex control statements.
   EXPECT_EQ("void f() {\n"
             "  if (a) {\n"
@@ -775,6 +820,32 @@ TEST_F(FormatTest, UnderstandsSingleLineComments) {
                    " // first\n"
                    "// at start\n"
                    "otherLine();"));
+}
+
+TEST_F(FormatTest, KeepsParameterWithTrailingCommentsOnTheirOwnLine) {
+  EXPECT_EQ("SomeFunction(a,\n"
+            "             b, // comment\n"
+            "             c);",
+            format("SomeFunction(a,\n"
+                   "          b, // comment\n"
+                   "      c);"));
+  EXPECT_EQ("SomeFunction(a, b,\n"
+            "             // comment\n"
+            "             c);",
+            format("SomeFunction(a,\n"
+                   "          b,\n"
+                  "  // comment\n"
+                   "      c);"));
+  EXPECT_EQ("SomeFunction(a, b, // comment (unclear relation)\n"
+            "             c);",
+            format("SomeFunction(a, b, // comment (unclear relation)\n"
+                   "      c);"));
+  EXPECT_EQ("SomeFunction(a, // comment\n"
+            "             b,\n"
+            "             c); // comment",
+            format("SomeFunction(a,     // comment\n"
+                   "          b,\n"
+                   "      c); // comment"));
 }
 
 TEST_F(FormatTest, CanFormatCommentsLocally) {
@@ -2287,30 +2358,30 @@ TEST_F(FormatTest, MacroCallsWithoutTrailingSemicolon) {
                    "  ifstream(x)\n >> x;\n"
                    "}\n"));
   EXPECT_EQ("int q() {\n"
-            "  f(x)\n"
+            "  F(x)\n"
             "  if (1) {\n"
             "  }\n"
-            "  f(x)\n"
+            "  F(x)\n"
             "  while (1) {\n"
             "  }\n"
-            "  f(x)\n"
-            "  g(x);\n"
-            "  f(x)\n"
+            "  F(x)\n"
+            "  G(x);\n"
+            "  F(x)\n"
             "  try {\n"
-            "    q();\n"
+            "    Q();\n"
             "  }\n"
             "  catch (...) {\n"
             "  }\n"
             "}\n",
             format("int q() {\n"
-                   "f(x)\n"
+                   "F(x)\n"
                    "if (1) {}\n"
-                   "f(x)\n"
+                   "F(x)\n"
                    "while (1) {}\n"
-                   "f(x)\n"
-                   "g(x);\n"
-                   "f(x)\n"
-                   "try { q(); } catch (...) {}\n"
+                   "F(x)\n"
+                   "G(x);\n"
+                   "F(x)\n"
+                   "try { Q(); } catch (...) {}\n"
                    "}\n"));
   EXPECT_EQ("class A {\n"
             "  A() : t(0) {}\n"
@@ -2325,6 +2396,27 @@ TEST_F(FormatTest, MacroCallsWithoutTrailingSemicolon) {
                    "  A(X x)\n"
                    "  try : t(0) {} catch (...) {}\n"
                    "};"));
+  EXPECT_EQ(
+      "class SomeClass {\n"
+      "public:\n"
+      "  SomeClass() EXCLUSIVE_LOCK_FUNCTION(mu_);\n"
+      "};",
+      format("class SomeClass {\n"
+             "public:\n"
+             "  SomeClass()\n"
+             "  EXCLUSIVE_LOCK_FUNCTION(mu_);\n"
+             "};"));
+  EXPECT_EQ(
+      "class SomeClass {\n"
+      "public:\n"
+      "  SomeClass()\n"
+      "      EXCLUSIVE_LOCK_FUNCTION(mu_);\n"
+      "};",
+      format("class SomeClass {\n"
+             "public:\n"
+             "  SomeClass()\n"
+             "  EXCLUSIVE_LOCK_FUNCTION(mu_);\n"
+             "};", getLLVMStyleWithColumns(40)));
 }
 
 TEST_F(FormatTest, LayoutMacroDefinitionsStatementsSpanningBlocks) {
@@ -4854,6 +4946,9 @@ TEST_F(FormatTest, LayoutBraceInitializersInReturnStatement) {
 
 TEST_F(FormatTest, LayoutCxx11ConstructorBraceInitializers) {
   verifyFormat("vector<int> x{1, 2, 3, 4};");
+  verifyFormat("vector<int> x{\n"
+               "    1, 2, 3, 4,\n"
+               "};");
   verifyFormat("vector<T> x{{}, {}, {}, {}};");
   verifyFormat("f({1, 2});");
   verifyFormat("auto v = Foo{-1};");
@@ -4989,8 +5084,9 @@ TEST_F(FormatTest, FormatsBracedListsInColumnLayout) {
                getLLVMStyleWithColumns(43));
 
   // Trailing commas.
-  verifyFormat("vector<int> x = {1, 1, 1, 1,\n"
-               "                 1, 1, 1, 1, };",
+  verifyFormat("vector<int> x = {\n"
+               "    1, 1, 1, 1, 1, 1, 1, 1,\n"
+               "};",
                getLLVMStyleWithColumns(39));
   verifyFormat("vector<int> x = {1, 1, 1, 1,\n"
                "                 1, 1, 1, 1, //\n"
@@ -5981,10 +6077,12 @@ TEST_F(FormatTest, ObjCDictLiterals) {
   verifyFormat("@{}");
   verifyFormat("@{@\"one\" : @1}");
   verifyFormat("return @{@\"one\" : @1;");
-  verifyFormat("@{@\"one\" : @1, }");
+  verifyFormat("@{@\"one\" : @1}");
 
   verifyFormat("@{@\"one\" : @{@2 : @1}}");
-  verifyFormat("@{@\"one\" : @{@2 : @1}, }");
+  verifyFormat("@{\n"
+               "  @\"one\" : @{@2 : @1},\n"
+               "}");
 
   verifyFormat("@{1 > 2 ? @\"one\" : @\"two\" : 1 > 2 ? @1 : @2}");
   verifyFormat("[self setDict:@{}");
@@ -6010,6 +6108,11 @@ TEST_F(FormatTest, ObjCDictLiterals) {
       "@{\n"
       "  NSFontAttributeNameeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee : "
       "regularFont,\n"
+      "};");
+  verifyFormat(
+      "@{\n"
+      "  NSFontAttributeNameeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee :\n"
+      "      reeeeeeeeeeeeeeeeeeeeeeeegularFont,\n"
       "};");
 
   // We should try to be robust in case someone forgets the "@".
@@ -7406,6 +7509,7 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(ConstructorInitializerAllOnOneLineOrOnePerLine);
   CHECK_PARSE_BOOL(DerivePointerBinding);
   CHECK_PARSE_BOOL(IndentCaseLabels);
+  CHECK_PARSE_BOOL(KeepEmptyLinesAtTheStartOfBlocks);
   CHECK_PARSE_BOOL(ObjCSpaceAfterProperty);
   CHECK_PARSE_BOOL(ObjCSpaceBeforeProtocolList);
   CHECK_PARSE_BOOL(PointerBindsToType);
@@ -8166,6 +8270,20 @@ TEST_F(FormatTest, SpacesInAngles) {
 
   Spaces.SpacesInAngles = false;
   verifyFormat("A<A<int>>();", Spaces);
+}
+
+TEST_F(FormatTest, HandleUnbalancedImplicitBracesAcrossPPBranches) {
+  std::string code = "#if A\n"
+                     "#if B\n"
+                     "a.\n"
+                     "#endif\n"
+                     "    a = 1;\n"
+                     "#else\n"
+                     "#endif\n"
+                     "#if C\n"
+                     "#else\n"
+                     "#endif\n";
+  EXPECT_EQ(code, format(code));
 }
 
 } // end namespace tooling

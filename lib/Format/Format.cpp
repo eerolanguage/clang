@@ -163,6 +163,8 @@ template <> struct MappingTraits<FormatStyle> {
                    Style.ExperimentalAutoDetectBinPacking);
     IO.mapOptional("IndentCaseLabels", Style.IndentCaseLabels);
     IO.mapOptional("MaxEmptyLinesToKeep", Style.MaxEmptyLinesToKeep);
+    IO.mapOptional("KeepEmptyLinesAtTheStartOfBlocks",
+                   Style.KeepEmptyLinesAtTheStartOfBlocks);
     IO.mapOptional("NamespaceIndentation", Style.NamespaceIndentation);
     IO.mapOptional("ObjCSpaceAfterProperty", Style.ObjCSpaceAfterProperty);
     IO.mapOptional("ObjCSpaceBeforeProtocolList",
@@ -267,6 +269,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.IndentWidth = 2;
   LLVMStyle.TabWidth = 8;
   LLVMStyle.MaxEmptyLinesToKeep = 1;
+  LLVMStyle.KeepEmptyLinesAtTheStartOfBlocks = true;
   LLVMStyle.NamespaceIndentation = FormatStyle::NI_None;
   LLVMStyle.ObjCSpaceAfterProperty = false;
   LLVMStyle.ObjCSpaceBeforeProtocolList = true;
@@ -308,6 +311,7 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
   GoogleStyle.DerivePointerBinding = true;
   GoogleStyle.IndentCaseLabels = true;
   GoogleStyle.IndentFunctionDeclarationAfterType = true;
+  GoogleStyle.KeepEmptyLinesAtTheStartOfBlocks = false;
   GoogleStyle.ObjCSpaceAfterProperty = false;
   GoogleStyle.ObjCSpaceBeforeProtocolList = false;
   GoogleStyle.PointerBindsToType = true;
@@ -886,6 +890,12 @@ private:
          (RootToken.Next->is(tok::semi) && !RootToken.Next->Next)))
       Newlines = std::min(Newlines, 1u);
     if (Newlines == 0 && !RootToken.IsFirst)
+      Newlines = 1;
+
+    // Remove empty lines after "{".
+    if (!Style.KeepEmptyLinesAtTheStartOfBlocks && PreviousLine &&
+        PreviousLine->Last->is(tok::l_brace) &&
+        PreviousLine->First->isNot(tok::kw_namespace))
       Newlines = 1;
 
     // Insert extra new line before access specifiers.

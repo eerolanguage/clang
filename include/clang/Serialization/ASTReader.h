@@ -767,9 +767,17 @@ private:
   // \brief A list of late parsed template function data.
   SmallVector<uint64_t, 1> LateParsedTemplates;
 
+  struct ImportedSubmodule {
+    serialization::SubmoduleID ID;
+    SourceLocation ImportLoc;
+
+    ImportedSubmodule(serialization::SubmoduleID ID, SourceLocation ImportLoc)
+      : ID(ID), ImportLoc(ImportLoc) {}
+  };
+
   /// \brief A list of modules that were imported by precompiled headers or
   /// any other non-module AST file.
-  SmallVector<serialization::SubmoduleID, 2> ImportedModules;
+  SmallVector<ImportedSubmodule, 2> ImportedModules;
   //@}
 
   /// \brief The directory that the PCH we are reading is stored in.
@@ -1100,6 +1108,10 @@ private:
   };
 
   QualType readTypeRecord(unsigned Index);
+  void readExceptionSpec(ModuleFile &ModuleFile,
+                         SmallVectorImpl<QualType> &ExceptionStorage,
+                         FunctionProtoType::ExtProtoInfo &EPI,
+                         const RecordData &Record, unsigned &Index);
   RecordLocation TypeCursorForIndex(unsigned Index);
   void LoadedDecl(unsigned Index, Decl *D);
   Decl *ReadDeclRecord(serialization::DeclID ID);

@@ -1380,9 +1380,7 @@ void Sema::ActOnPopScope(SourceLocation Loc, Scope *S) {
   assert((S->getFlags() & (Scope::DeclScope | Scope::TemplateParamScope)) &&
          "Scope shouldn't contain decls!");
 
-  for (Scope::decl_iterator I = S->decl_begin(), E = S->decl_end();
-       I != E; ++I) {
-    Decl *TmpD = (*I);
+  for (auto *TmpD : S->decls()) {
     assert(TmpD && "This decl didn't get pushed??");
 
     assert(isa<NamedDecl>(TmpD) && "Decl isn't NamedDecl?");
@@ -2654,8 +2652,7 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD,
       // The old declaration provided a function prototype, but the
       // new declaration does not. Merge in the prototype.
       assert(!OldProto->hasExceptionSpec() && "Exception spec in C");
-      SmallVector<QualType, 16> ParamTypes(OldProto->param_type_begin(),
-                                           OldProto->param_type_end());
+      SmallVector<QualType, 16> ParamTypes(OldProto->param_types());
       NewQType =
           Context.getFunctionType(NewFuncType->getReturnType(), ParamTypes,
                                   OldProto->getExtProtoInfo());
@@ -2664,16 +2661,10 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD,
 
       // Synthesize a parameter for each argument type.
       SmallVector<ParmVarDecl*, 16> Params;
-      for (FunctionProtoType::param_type_iterator
-               ParamType = OldProto->param_type_begin(),
-               ParamEnd = OldProto->param_type_end();
-           ParamType != ParamEnd; ++ParamType) {
-        ParmVarDecl *Param = ParmVarDecl::Create(Context, New,
-                                                 SourceLocation(),
-                                                 SourceLocation(), 0,
-                                                 *ParamType, /*TInfo=*/0,
-                                                 SC_None,
-                                                 0);
+      for (const auto &ParamType : OldProto->param_types()) {
+        ParmVarDecl *Param = ParmVarDecl::Create(Context, New, SourceLocation(),
+                                                 SourceLocation(), 0, ParamType,
+                                                 /*TInfo=*/0, SC_None, 0);
         Param->setScopeInfo(0, Params.size());
         Param->setImplicit();
         Params.push_back(Param);
@@ -6950,11 +6941,9 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     // @endcode
 
     // Synthesize a parameter for each argument type.
-    for (FunctionProtoType::param_type_iterator AI = FT->param_type_begin(),
-                                                AE = FT->param_type_end();
-         AI != AE; ++AI) {
+    for (const auto &AI : FT->param_types()) {
       ParmVarDecl *Param =
-        BuildParmVarDeclForTypedef(NewFD, D.getIdentifierLoc(), *AI);
+          BuildParmVarDeclForTypedef(NewFD, D.getIdentifierLoc(), AI);
       Param->setScopeInfo(0, Params.size());
       Params.push_back(Param);
     }

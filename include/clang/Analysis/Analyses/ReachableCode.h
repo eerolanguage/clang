@@ -39,8 +39,9 @@ namespace reachable_code {
 
 /// Classifications of unreachable code.
 enum UnreachableKind {
-  UK_TrivialReturn,
+  UK_Return,
   UK_Break,
+  UK_Loop_Increment,
   UK_Other
 };
 

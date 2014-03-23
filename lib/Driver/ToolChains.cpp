@@ -325,12 +325,18 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
       Args.hasArg(options::OPT_fprofile_instr_generate) ||
       Args.hasArg(options::OPT_fcreate_profile) ||
       Args.hasArg(options::OPT_coverage)) {
-    // Select the appropriate runtime library for the target.
-    if (isTargetIOSBased()) {
-      AddLinkRuntimeLib(Args, CmdArgs, "libclang_rt.profile_ios.a");
-    } else {
-      AddLinkRuntimeLib(Args, CmdArgs, "libclang_rt.profile_osx.a");
+    // Pull in runtime for -fprofile-inst-generate.  This is required since
+    // there are no calls to the runtime in the code.
+    if (Args.hasArg(options::OPT_fprofile_instr_generate)) {
+      CmdArgs.push_back("-u");
+      CmdArgs.push_back("___llvm_profile_runtime");
     }
+
+    // Select the appropriate runtime library for the target.
+    if (isTargetIOSBased())
+      AddLinkRuntimeLib(Args, CmdArgs, "libclang_rt.profile_ios.a");
+    else
+      AddLinkRuntimeLib(Args, CmdArgs, "libclang_rt.profile_osx.a");
   }
 
   const SanitizerArgs &Sanitize = getSanitizerArgs();

@@ -24,6 +24,12 @@
 // RUN: %clang_cl /GR- -### -- %s 2>&1 | FileCheck -check-prefix=GR_ %s
 // GR_: -fno-rtti
 
+// RUN: %clang_cl /Gy -### -- %s 2>&1 | FileCheck -check-prefix=Gy %s
+// Gy: -ffunction-sections
+
+// RUN: %clang_cl /Gy /Gy- -### -- %s 2>&1 | FileCheck -check-prefix=Gy_ %s
+// Gy_-NOT: -ffunction-sections
+
 // RUN: %clang_cl /Imyincludedir -### -- %s 2>&1 | FileCheck -check-prefix=SLASH_I %s
 // RUN: %clang_cl /I myincludedir -### -- %s 2>&1 | FileCheck -check-prefix=SLASH_I %s
 // SLASH_I: "-I" "myincludedir"
@@ -66,6 +72,9 @@
 // RUN: %clang_cl /Umymacro -### -- %s 2>&1 | FileCheck -check-prefix=U %s
 // RUN: %clang_cl /U mymacro -### -- %s 2>&1 | FileCheck -check-prefix=U %s
 // U: "-U" "mymacro"
+
+// RUN: %clang_cl /vd2 -### -- %s 2>&1 | FileCheck -check-prefix=VD2 %s
+// VD2: -vtordisp-mode=2
 
 // RUN: %clang_cl /vmg -### -- %s 2>&1 | FileCheck -check-prefix=VMG %s
 // VMG: "-fms-memptr-rep=virtual"
@@ -195,8 +204,6 @@
 // RUN:     /Gs1000 \
 // RUN:     /GT \
 // RUN:     /GX \
-// RUN:     /Gy \
-// RUN:     /Gy- \
 // RUN:     /Gz \
 // RUN:     /GZ \
 // RUN:     /H \
@@ -215,7 +222,6 @@
 // RUN:     /Qvec-report:2 \
 // RUN:     /u \
 // RUN:     /V \
-// RUN:     /vd2 \
 // RUN:     /volatile \
 // RUN:     /wfoo \
 // RUN:     /WL \

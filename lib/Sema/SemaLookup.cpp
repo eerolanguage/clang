@@ -114,10 +114,8 @@ namespace {
         if (Ctx && Ctx->isFileContext()) {
           visit(Ctx, Ctx);
         } else if (!Ctx || Ctx->isFunctionOrMethod()) {
-          Scope::udir_iterator I = S->using_directives_begin(),
-                             End = S->using_directives_end();
-          for (; I != End; ++I)
-            visit(*I, InnermostFileDC);
+          for (auto *I : S->using_directives())
+            visit(I, InnermostFileDC);
         }
       }
     }
@@ -154,7 +152,7 @@ namespace {
     void addUsingDirectives(DeclContext *DC, DeclContext *EffectiveDC) {
       SmallVector<DeclContext*,4> queue;
       while (true) {
-        for (auto UD : DC->getUsingDirectives()) {
+        for (auto UD : DC->using_directives()) {
           DeclContext *NS = UD->getNominatedNamespace();
           if (visited.insert(NS)) {
             addUsingDirective(UD, EffectiveDC);
@@ -1488,10 +1486,8 @@ static bool LookupQualifiedNameInUsingDirectives(Sema &S, LookupResult &R,
                                                  DeclContext *StartDC) {
   assert(StartDC->isFileContext() && "start context is not a file context");
 
-  DeclContext::udir_iterator I = StartDC->using_directives_begin();
-  DeclContext::udir_iterator E = StartDC->using_directives_end();
-
-  if (I == E) return false;
+  DeclContext::udir_range UsingDirectives = StartDC->using_directives();
+  if (UsingDirectives.begin() == UsingDirectives.end()) return false;
 
   // We have at least added all these contexts to the queue.
   llvm::SmallPtrSet<DeclContext*, 8> Visited;
@@ -1503,8 +1499,8 @@ static bool LookupQualifiedNameInUsingDirectives(Sema &S, LookupResult &R,
 
   // We have already looked into the initial namespace; seed the queue
   // with its using-children.
-  for (; I != E; ++I) {
-    NamespaceDecl *ND = (*I)->getNominatedNamespace()->getOriginalNamespace();
+  for (auto *I : UsingDirectives) {
+    NamespaceDecl *ND = I->getNominatedNamespace()->getOriginalNamespace();
     if (Visited.insert(ND))
       Queue.push_back(ND);
   }
@@ -1551,7 +1547,7 @@ static bool LookupQualifiedNameInUsingDirectives(Sema &S, LookupResult &R,
       continue;
     }
 
-    for (auto I : ND->getUsingDirectives()) {
+    for (auto I : ND->using_directives()) {
       NamespaceDecl *Nom = I->getNominatedNamespace();
       if (Visited.insert(Nom))
         Queue.push_back(Nom);
@@ -2218,11 +2214,8 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result, QualType Ty) {
     //        types and those associated with the return type.
     case Type::FunctionProto: {
       const FunctionProtoType *Proto = cast<FunctionProtoType>(T);
-      for (FunctionProtoType::param_type_iterator
-               Arg = Proto->param_type_begin(),
-               ArgEnd = Proto->param_type_end();
-           Arg != ArgEnd; ++Arg)
-        Queue.push_back(Arg->getTypePtr());
+      for (const auto &Arg : Proto->param_types())
+        Queue.push_back(Arg.getTypePtr());
       // fallthrough
     }
     case Type::FunctionNoProto: {
@@ -3117,7 +3110,7 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
   // Traverse using directives for qualified name lookup.
   if (QualifiedNameLookup) {
     ShadowContextRAII Shadow(Visited);
-    for (auto I : Ctx->getUsingDirectives()) {
+    for (auto I : Ctx->using_directives()) {
       LookupVisibleDecls(I->getNominatedNamespace(), Result,
                          QualifiedNameLookup, InBaseClass, Consumer, Visited);
     }
@@ -3231,9 +3224,8 @@ static void LookupVisibleDecls(Scope *S, LookupResult &Result,
       (S->getEntity())->isFunctionOrMethod()) {
     FindLocalExternScope FindLocals(Result);
     // Walk through the declarations in this Scope.
-    for (Scope::decl_iterator D = S->decl_begin(), DEnd = S->decl_end();
-         D != DEnd; ++D) {
-      if (NamedDecl *ND = dyn_cast<NamedDecl>(*D))
+    for (auto *D : S->decls()) {
+      if (NamedDecl *ND = dyn_cast<NamedDecl>(D))
         if ((ND = Result.getAcceptableDecl(ND))) {
           Consumer.FoundDecl(ND, Visited.checkHidden(ND), 0, false);
           Visited.add(ND);
@@ -4113,10 +4105,8 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
 
     // Look in qualified interfaces.
     if (OPT) {
-      for (ObjCObjectPointerType::qual_iterator
-             I = OPT->qual_begin(), E = OPT->qual_end();
-           I != E; ++I)
-        LookupVisibleDecls(*I, LookupKind, Consumer);
+      for (auto *I : OPT->quals())
+        LookupVisibleDecls(I, LookupKind, Consumer);
     }
   } else if (SS && SS->isSet()) {
     QualifiedDC = computeDeclContext(*SS, EnteringContext);
@@ -4225,11 +4215,8 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
         KnownNamespaces[ExternalKnownNamespaces[I]] = true;
     }
 
-    for (llvm::MapVector<NamespaceDecl*, bool>::iterator
-           KNI = KnownNamespaces.begin(),
-           KNIEnd = KnownNamespaces.end();
-         KNI != KNIEnd; ++KNI)
-      Namespaces.AddNameSpecifier(KNI->first);
+    for (auto KNPair : KnownNamespaces)
+      Namespaces.AddNameSpecifier(KNPair.first);
 
     bool SSIsTemplate = false;
     if (NestedNameSpecifier *NNS =
@@ -4260,13 +4247,17 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
                                               IEnd = DI->second.end();
          I != IEnd; /* Increment in loop. */) {
       // If we only want nested name specifier corrections, ignore potential
-      // corrections that have a different base identifier from the typo.
-      if (AllowOnlyNNSChanges &&
-          I->second.front().getCorrectionAsIdentifierInfo() != Typo) {
-        TypoCorrectionConsumer::result_iterator Prev = I;
-        ++I;
-        DI->second.erase(Prev);
-        continue;
+      // corrections that have a different base identifier from the typo or
+      // which have a normalized edit distance longer than the typo itself.
+      if (AllowOnlyNNSChanges) {
+        TypoCorrection &TC = I->second.front();
+        if (TC.getCorrectionAsIdentifierInfo() != Typo ||
+            TC.getEditDistance(true) > TypoLen) {
+          TypoCorrectionConsumer::result_iterator Prev = I;
+          ++I;
+          DI->second.erase(Prev);
+          continue;
+        }
       }
 
       // If the item already has been looked up or is a keyword, keep it.
@@ -4339,10 +4330,8 @@ retry_lookup:
       case LookupResult::FoundOverloaded: {
         TypoCorrectionConsumer::result_iterator Prev = I;
         // Store all of the Decls for overloaded symbols
-        for (LookupResult::iterator TRD = TmpRes.begin(),
-                                 TRDEnd = TmpRes.end();
-             TRD != TRDEnd; ++TRD)
-          Candidate.addCorrectionDecl(*TRD);
+        for (auto *TRD : TmpRes)
+          Candidate.addCorrectionDecl(TRD);
         ++I;
         if (!isCandidateViable(CCC, Candidate)) {
           QualifiedResults.push_back(Candidate);
@@ -4374,15 +4363,10 @@ retry_lookup:
     // Only perform the qualified lookups for C++
     if (SearchNamespaces) {
       TmpRes.suppressDiagnostics();
-      for (SmallVector<TypoCorrection,
-                       16>::iterator QRI = QualifiedResults.begin(),
-                                  QRIEnd = QualifiedResults.end();
-           QRI != QRIEnd; ++QRI) {
-        for (NamespaceSpecifierSet::iterator NI = Namespaces.begin(),
-                                          NIEnd = Namespaces.end();
-             NI != NIEnd; ++NI) {
-          DeclContext *Ctx = NI->DeclCtx;
-          const Type *NSType = NI->NameSpecifier->getAsType();
+      for (auto QR : QualifiedResults) {
+        for (auto NSI : Namespaces) {
+          DeclContext *Ctx = NSI.DeclCtx;
+          const Type *NSType = NSI.NameSpecifier->getAsType();
 
           // If the current NestedNameSpecifier refers to a class and the
           // current correction candidate is the name of that class, then skip
@@ -4390,26 +4374,26 @@ retry_lookup:
           // is an appropriate correction.
           if (CXXRecordDecl *NSDecl =
                   NSType ? NSType->getAsCXXRecordDecl() : 0) {
-            if (NSDecl->getIdentifier() == QRI->getCorrectionAsIdentifierInfo())
+            if (NSDecl->getIdentifier() == QR.getCorrectionAsIdentifierInfo())
               continue;
           }
 
-          TypoCorrection TC(*QRI);
+          TypoCorrection TC(QR);
           TC.ClearCorrectionDecls();
-          TC.setCorrectionSpecifier(NI->NameSpecifier);
-          TC.setQualifierDistance(NI->EditDistance);
+          TC.setCorrectionSpecifier(NSI.NameSpecifier);
+          TC.setQualifierDistance(NSI.EditDistance);
           TC.setCallbackDistance(0); // Reset the callback distance
 
           // If the current correction candidate and namespace combination are
           // too far away from the original typo based on the normalized edit
           // distance, then skip performing a qualified name lookup.
           unsigned TmpED = TC.getEditDistance(true);
-          if (QRI->getCorrectionAsIdentifierInfo() != Typo &&
+          if (QR.getCorrectionAsIdentifierInfo() != Typo &&
               TmpED && TypoLen / TmpED < 3)
             continue;
 
           TmpRes.clear();
-          TmpRes.setLookupName(QRI->getCorrectionAsIdentifierInfo());
+          TmpRes.setLookupName(QR.getCorrectionAsIdentifierInfo());
           if (!LookupQualifiedName(TmpRes, Ctx)) continue;
 
           // Any corrections added below will be validated in subsequent

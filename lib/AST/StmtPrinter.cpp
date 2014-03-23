@@ -114,9 +114,8 @@ namespace  {
 /// with no newline after the }.
 void StmtPrinter::PrintRawCompoundStmt(CompoundStmt *Node) {
   OS << "{\n";
-  for (CompoundStmt::body_iterator I = Node->body_begin(), E = Node->body_end();
-       I != E; ++I)
-    PrintStmt(*I);
+  for (auto *I : Node->body())
+    PrintStmt(I);
 
   Indent() << "}";
 }
@@ -611,6 +610,12 @@ void OMPClausePrinter::VisitOMPIfClause(OMPIfClause *Node) {
 void OMPClausePrinter::VisitOMPNumThreadsClause(OMPNumThreadsClause *Node) {
   OS << "num_threads(";
   Node->getNumThreads()->printPretty(OS, 0, Policy, 0);
+  OS << ")";
+}
+
+void OMPClausePrinter::VisitOMPSafelenClause(OMPSafelenClause *Node) {
+  OS << "safelen(";
+  Node->getSafelen()->printPretty(OS, 0, Policy, 0);
   OS << ")";
 }
 
