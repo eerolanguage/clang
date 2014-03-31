@@ -743,7 +743,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 
     // Turn a potentially qualified name into a annot_typename or
     // annot_cxxscope if it would be valid.  This handles things like x::y, etc.
-    if (getLangOpts().CPlusPlus) {
+    if (getLangOpts().CPlusPlus || getLangOpts().Eero) {
       // Avoid the unnecessary parse-time lookup in the common case
       // where the syntax forbids a type.
       const Token &Next = NextToken();

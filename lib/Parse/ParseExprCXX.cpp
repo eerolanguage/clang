@@ -187,7 +187,7 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
                                             bool *MayBePseudoDestructor,
                                             bool IsTypename,
                                             IdentifierInfo **LastII) {
-  assert(getLangOpts().CPlusPlus &&
+  assert((getLangOpts().CPlusPlus || getLangOpts().Eero) &&
          "Call sites of this function should be guarded by checking for C++");
 
   if (Tok.is(tok::annot_cxxscope)) {
@@ -454,6 +454,10 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
       continue;
     }
 
+    if (getLangOpts().Eero && !getLangOpts().CPlusPlus) {
+      return false;
+    }
+
     CheckForTemplateAndDigraph(Next, ObjectType, EnteringContext, II, SS);
 
     // nested-name-specifier:
@@ -577,7 +581,7 @@ ExprResult Parser::ParseCXXIdExpression(bool isAddressOfOperand) {
   //   '::' unqualified-id
   //
   CXXScopeSpec SS;
-  if (getLangOpts().CPlusPlus)
+  if (getLangOpts().CPlusPlus || getLangOpts().Eero)
   ParseOptionalCXXScopeSpecifier(SS, ParsedType(), /*EnteringContext=*/false);
 
   SourceLocation TemplateKWLoc;

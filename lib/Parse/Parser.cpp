@@ -1432,7 +1432,7 @@ Parser::TryAnnotateName(bool IsAddressOfOperand,
   const bool WasScopeAnnotation = Tok.is(tok::annot_cxxscope);
 
   CXXScopeSpec SS;
-  if (getLangOpts().CPlusPlus &&
+  if ((getLangOpts().CPlusPlus || getLangOpts().Eero) &&
       ParseOptionalCXXScopeSpecifier(SS, ParsedType(), EnteringContext))
     return ANK_Error;
 
@@ -1686,7 +1686,7 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
   bool WasScopeAnnotation = Tok.is(tok::annot_cxxscope);
 
   CXXScopeSpec SS;
-  if (getLangOpts().CPlusPlus)
+  if (getLangOpts().CPlusPlus || getLangOpts().Eero)
     if (ParseOptionalCXXScopeSpecifier(SS, ParsedType(), EnteringContext))
       return true;
 
@@ -1729,7 +1729,8 @@ bool Parser::TryAnnotateTypeOrScopeTokenAfterScopeSpec(bool EnteringContext,
       return false;
     }
 
-    if (!getLangOpts().CPlusPlus) {
+    if (!getLangOpts().CPlusPlus &&
+        (!getLangOpts().Eero || PP.isInLegacyHeader())) {
       // If we're in C, we can't have :: tokens at all (the lexer won't return
       // them).  If the identifier is not a type, then it can't be scope either,
       // just early exit.
@@ -1793,7 +1794,7 @@ bool Parser::TryAnnotateTypeOrScopeTokenAfterScopeSpec(bool EnteringContext,
 /// Note that this routine emits an error if you call it with ::new or ::delete
 /// as the current tokens, so only call it in contexts where these are invalid.
 bool Parser::TryAnnotateCXXScopeToken(bool EnteringContext) {
-  assert(getLangOpts().CPlusPlus &&
+  assert((getLangOpts().CPlusPlus || getLangOpts().Eero) &&
          "Call sites of this function should be guarded by checking for C++");
   assert((Tok.is(tok::identifier) || Tok.is(tok::coloncolon) ||
           (Tok.is(tok::annot_template_id) && NextToken().is(tok::coloncolon)) ||

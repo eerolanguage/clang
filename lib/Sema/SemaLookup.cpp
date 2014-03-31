@@ -872,7 +872,8 @@ struct FindLocalExternScope {
 }
 
 bool Sema::CppLookupName(LookupResult &R, Scope *S) {
-  assert(getLangOpts().CPlusPlus && "Can perform only C++ lookup");
+  assert((getLangOpts().CPlusPlus || getLangOpts().Eero) &&
+      "Can perform only C++ lookup");
 
   DeclarationName Name = R.getLookupName();
   Sema::LookupNameKind NameKind = R.getLookupKind();
@@ -1314,7 +1315,7 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
 
   LookupNameKind NameKind = R.getLookupKind();
 
-  if (!getLangOpts().CPlusPlus) {
+  if (!getLangOpts().CPlusPlus && !getLangOpts().Eero) {
     // Unqualified name lookup in C/Objective-C is purely lexical, so
     // search in the declarations attached to the name.
     if (NameKind == Sema::LookupRedeclarationWithLinkage) {
@@ -3305,7 +3306,7 @@ void Sema::LookupVisibleDecls(Scope *S, LookupNameKind Kind,
   // unqualified name lookup.
   Scope *Initial = S;
   UnqualUsingDirectiveSet UDirs;
-  if (getLangOpts().CPlusPlus) {
+  if (getLangOpts().CPlusPlus || getLangOpts().Eero) {
     // Find the first namespace or translation-unit scope.
     while (S && !isNamespaceOrTranslationUnitScope(S))
       S = S->getParent();
@@ -3940,7 +3941,7 @@ static void AddKeywordsToConsumer(Sema &SemaRef,
       }
     }
 
-    if (SemaRef.getLangOpts().CPlusPlus) {
+    if (SemaRef.getLangOpts().CPlusPlus || SemaRef.getLangOpts().Eero) {
       Consumer.addKeywordResult("using");
 
       if (SemaRef.getLangOpts().CPlusPlus11)
@@ -4158,7 +4159,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
   // Determine whether we are going to search in the various namespaces for
   // corrections.
   bool SearchNamespaces
-    = getLangOpts().CPlusPlus &&
+    = (getLangOpts().CPlusPlus || getLangOpts().Eero) &&
       (IsUnqualifiedLookup || (SS && SS->isSet()));
   // In a few cases we *only* want to search for corrections based on just
   // adding or changing the nested name specifier.
@@ -4356,7 +4357,8 @@ retry_lookup:
 
     if (DI->second.empty())
       Consumer.erase(DI);
-    else if (!getLangOpts().CPlusPlus || QualifiedResults.empty() || !DI->first)
+    else if ((!getLangOpts().CPlusPlus && !getLangOpts().Eero) ||
+             QualifiedResults.empty() || !DI->first)
       // If there are results in the closest possible bucket, stop
       break;
 
