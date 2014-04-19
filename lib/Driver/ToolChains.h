@@ -368,7 +368,8 @@ public:
                          llvm::opt::ArgStringList &CmdArgs) const override;
 
   bool isKernelStatic() const override {
-    return !isTargetIPhoneOS() || isIPhoneOSVersionLT(6, 0);
+    return !isTargetIPhoneOS() || isIPhoneOSVersionLT(6, 0) ||
+           getTriple().getArch() == llvm::Triple::arm64;
   }
 
 protected:
@@ -487,6 +488,8 @@ public:
   void
   AddCCKextLibArgs(const llvm::opt::ArgList &Args,
                    llvm::opt::ArgStringList &CmdArgs) const override;
+
+  virtual void addClangWarningOptions(llvm::opt::ArgStringList &CC1Args) const;
 
   void
   AddLinkARCArgs(const llvm::opt::ArgList &Args,

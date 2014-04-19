@@ -104,6 +104,9 @@ private:
   /// \c Replacement.
   unsigned addTokenOnNewLine(LineState &State, bool DryRun);
 
+  /// \brief Calculate the new column for a line wrap before the next token.
+  unsigned getNewLineColumn(const LineState &State);
+
   /// \brief Adds a multiline token to the \p State.
   ///
   /// \returns Extra penalty for the first line of the literal: last line is
@@ -132,11 +135,11 @@ struct ParenState {
       : Indent(Indent), IndentLevel(IndentLevel), LastSpace(LastSpace),
         FirstLessLess(0), BreakBeforeClosingBrace(false), QuestionColumn(0),
         AvoidBinPacking(AvoidBinPacking), BreakBeforeParameter(false),
-        NoLineBreak(NoLineBreak), ColonPos(0), StartOfFunctionCall(0),
-        StartOfArraySubscripts(0), NestedNameSpecifierContinuation(0),
-        CallContinuation(0), VariablePos(0), ContainsLineBreak(false),
-        ContainsUnwrappedBuilder(0), AlignColons(true),
-        ObjCSelectorNameFound(false) {}
+        NoLineBreak(NoLineBreak), LastOperatorWrapped(true), ColonPos(0),
+        StartOfFunctionCall(0), StartOfArraySubscripts(0),
+        NestedNameSpecifierContinuation(0), CallContinuation(0), VariablePos(0),
+        ContainsLineBreak(false), ContainsUnwrappedBuilder(0),
+        AlignColons(true), ObjCSelectorNameFound(false), LambdasFound(0) {}
 
   /// \brief The position to which a specific parenthesis level needs to be
   /// indented.
@@ -178,6 +181,10 @@ struct ParenState {
 
   /// \brief Line breaking in this context would break a formatting rule.
   bool NoLineBreak;
+
+  /// \brief True if the last binary operator on this level was wrapped to the
+  /// next line.
+  bool LastOperatorWrapped;
 
   /// \brief The position of the colon in an ObjC method declaration/call.
   unsigned ColonPos;
@@ -227,6 +234,12 @@ struct ParenState {
   /// the same token.
   bool ObjCSelectorNameFound;
 
+  /// \brief Counts the number of lambda introducers found on this level.
+  ///
+  /// Not considered for memoization as it will always have the same value at
+  /// the same token.
+  unsigned LambdasFound;
+
   bool operator<(const ParenState &Other) const {
     if (Indent != Other.Indent)
       return Indent < Other.Indent;
@@ -244,6 +257,8 @@ struct ParenState {
       return BreakBeforeParameter;
     if (NoLineBreak != Other.NoLineBreak)
       return NoLineBreak;
+    if (LastOperatorWrapped != Other.LastOperatorWrapped)
+      return LastOperatorWrapped;
     if (ColonPos != Other.ColonPos)
       return ColonPos < Other.ColonPos;
     if (StartOfFunctionCall != Other.StartOfFunctionCall)

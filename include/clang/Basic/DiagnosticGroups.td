@@ -19,7 +19,6 @@ def Implicit : DiagGroup<"implicit", [
 // Empty DiagGroups are recognized by clang but ignored.
 def : DiagGroup<"abi">;
 def AbsoluteValue : DiagGroup<"absolute-value">;
-def : DiagGroup<"address">;
 def AddressOfTemporary : DiagGroup<"address-of-temporary">;
 def : DiagGroup<"aggregate-return">;
 def GNUAlignofExpression : DiagGroup<"gnu-alignof-expression">;
@@ -38,7 +37,8 @@ def ConstantConversion :
 def LiteralConversion : DiagGroup<"literal-conversion">;
 def StringConversion : DiagGroup<"string-conversion">;
 def SignConversion : DiagGroup<"sign-conversion">;
-def BoolConversion : DiagGroup<"bool-conversion">;
+def PointerBoolConversion : DiagGroup<"pointer-bool-conversion">;
+def BoolConversion : DiagGroup<"bool-conversion", [ PointerBoolConversion ] >;
 def IntConversion : DiagGroup<"int-conversion">;
 def EnumConversion : DiagGroup<"enum-conversion">;
 def EnumTooLarge : DiagGroup<"enum-too-large">;
@@ -48,6 +48,7 @@ def ImplicitConversionFloatingPointToBool :
   DiagGroup<"implicit-conversion-floating-point-to-bool">;
 def ObjCLiteralConversion : DiagGroup<"objc-literal-conversion">;
 def BadArrayNewLength : DiagGroup<"bad-array-new-length">;
+def MacroRedefined : DiagGroup<"macro-redefined">;
 def BuiltinMacroRedefined : DiagGroup<"builtin-macro-redefined">;
 def BuiltinRequiresHeader : DiagGroup<"builtin-requires-header">;
 def C99Compat : DiagGroup<"c99-compat">;
@@ -284,14 +285,17 @@ def StaticLocalInInline : DiagGroup<"static-local-in-inline">;
 def GNUStaticFloatInit : DiagGroup<"gnu-static-float-init">;
 def StaticFloatInit : DiagGroup<"static-float-init", [GNUStaticFloatInit]>;
 def GNUStatementExpression : DiagGroup<"gnu-statement-expression">;
+def StringCompare : DiagGroup<"string-compare">;
 def StringPlusInt : DiagGroup<"string-plus-int">;
 def StringPlusChar : DiagGroup<"string-plus-char">;
 def StrncatSize : DiagGroup<"strncat-size">;
 def TautologicalOutOfRangeCompare : DiagGroup<"tautological-constant-out-of-range-compare">;
 def TautologicalPointerCompare : DiagGroup<"tautological-pointer-compare">;
+def TautologicalOverlapCompare : DiagGroup<"tautological-overlap-compare">;
 def TautologicalCompare : DiagGroup<"tautological-compare",
                                     [TautologicalOutOfRangeCompare,
-                                     TautologicalPointerCompare]>;
+                                     TautologicalPointerCompare,
+                                     TautologicalOverlapCompare]>;
 def HeaderHygiene : DiagGroup<"header-hygiene">;
 def DuplicateDeclSpecifier : DiagGroup<"duplicate-decl-specifier">;
 def CompareDistinctPointerType : DiagGroup<"compare-distinct-pointer-types">;
@@ -441,6 +445,11 @@ def UnreachableCodeAggressive : DiagGroup<"unreachable-code-aggressive",
                                      UnreachableCodeReturn]>;
 
 // Aggregation warning settings.
+
+// Populate -Waddress with warnings from other groups.
+def : DiagGroup<"address", [PointerBoolConversion,
+                            StringCompare,
+                            TautologicalPointerCompare]>;
 
 // -Widiomatic-parentheses contains warnings about 'idiomatic'
 // missing parentheses;  it is off by default.  We do not include it
@@ -656,3 +665,7 @@ def BackendInlineAsm : DiagGroup<"inline-asm">;
 def BackendFrameLargerThan : DiagGroup<"frame-larger-than">;
 def BackendPlugin : DiagGroup<"backend-plugin">;
 def RemarkBackendPlugin : DiagGroup<"remark-backend-plugin">;
+def BackendOptimizationRemark : DiagGroup<"pass">;
+
+// Instrumentation based profiling warnings.
+def ProfileInstrOutOfDate : DiagGroup<"profile-instr-out-of-date">;

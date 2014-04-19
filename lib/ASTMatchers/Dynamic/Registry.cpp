@@ -149,6 +149,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(equalsBoundNode);
   REGISTER_MATCHER(explicitCastExpr);
   REGISTER_MATCHER(expr);
+  REGISTER_MATCHER(exprWithCleanups);
   REGISTER_MATCHER(fieldDecl);
   REGISTER_MATCHER(floatLiteral);
   REGISTER_MATCHER(forEach);
@@ -324,17 +325,12 @@ static llvm::ManagedStatic<RegistryMaps> RegistryData;
 } // anonymous namespace
 
 // static
-llvm::Optional<MatcherCtor>
-Registry::lookupMatcherCtor(StringRef MatcherName, const SourceRange &NameRange,
-                            Diagnostics *Error) {
+llvm::Optional<MatcherCtor> Registry::lookupMatcherCtor(StringRef MatcherName) {
   ConstructorMap::const_iterator it =
       RegistryData->constructors().find(MatcherName);
-  if (it == RegistryData->constructors().end()) {
-    Error->addError(NameRange, Error->ET_RegistryNotFound) << MatcherName;
-    return llvm::Optional<MatcherCtor>();
-  }
-
-  return it->second;
+  return it == RegistryData->constructors().end()
+             ? llvm::Optional<MatcherCtor>()
+             : it->second;
 }
 
 namespace {

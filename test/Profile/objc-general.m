@@ -1,7 +1,9 @@
 // Test instrumentation of general constructs in objective C.
 
 // RUN: %clang_cc1 -triple x86_64-apple-macosx10.9 -main-file-name objc-general.m %s -o - -emit-llvm -fblocks -fprofile-instr-generate | FileCheck -check-prefix=PGOGEN %s
-// RUN: %clang_cc1 -triple x86_64-apple-macosx10.9 -main-file-name objc-general.m %s -o - -emit-llvm -fblocks -fprofile-instr-use=%S/Inputs/objc-general.profdata | FileCheck -check-prefix=PGOUSE %s
+
+// RUN: llvm-profdata merge %S/Inputs/objc-general.proftext -o %t.profdata
+// RUN: %clang_cc1 -triple x86_64-apple-macosx10.9 -main-file-name objc-general.m %s -o - -emit-llvm -fblocks -fprofile-instr-use=%t.profdata | FileCheck -check-prefix=PGOUSE %s
 
 #ifdef HAVE_FOUNDATION
 
@@ -45,7 +47,8 @@ struct NSFastEnumerationState;
 {
   __block id result;
   // PGOGEN: store {{.*}} @[[FRC]], i64 0, i64 1
-  // FIXME: We don't emit branch weights for this yet.
+  // PGOUSE: br {{.*}} !prof ![[FR1:[0-9]+]]
+  // PGOUSE: br {{.*}} !prof ![[FR2:[0-9]+]]
   for (id x in array) {
     // PGOGEN: define {{.*}}_block_invoke
     // PGOUSE: define {{.*}}_block_invoke
@@ -60,6 +63,8 @@ struct NSFastEnumerationState;
 }
 @end
 
+// PGOUSE-DAG: ![[FR1]] = metadata !{metadata !"branch_weights", i32 2, i32 3}
+// PGOUSE-DAG: ![[FR2]] = metadata !{metadata !"branch_weights", i32 3, i32 2}
 // PGOUSE-DAG: ![[BL1]] = metadata !{metadata !"branch_weights", i32 2, i32 2}
 
 int main(int argc, const char *argv[]) {

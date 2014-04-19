@@ -190,6 +190,8 @@ def mlimit_float_precision : Separate<["-"], "mlimit-float-precision">,
   HelpText<"Limit float precision to the given value">;
 def mno_exec_stack : Flag<["-"], "mnoexecstack">,
   HelpText<"Mark the file as not needing an executable stack">;
+def compress_debug_sections : Flag<["-"], "compress-debug-sections">,
+    HelpText<"Compress DWARF debug sections using zlib">;
 def split_stacks : Flag<["-"], "split-stacks">,
   HelpText<"Try to use a split stack if possible.">;
 def mno_zero_initialized_in_bss : Flag<["-"], "mno-zero-initialized-in-bss">,
@@ -508,14 +510,6 @@ def internal_externc_isystem : JoinedOrSeparate<["-"], "internal-externc-isystem
            "implicit extern \"C\" semantics; these are assumed to not be "
            "user-provided and are used to model system and standard headers' "
            "paths.">;
-def isystem_prefix : JoinedOrSeparate<["-"], "isystem-prefix">,
-  MetaVarName<"<prefix>">,
-  HelpText<"Treat all #include paths starting with <prefix> as including a "
-           "system header.">;
-def ino_system_prefix : JoinedOrSeparate<["-"], "ino-system-prefix">,
-  MetaVarName<"<prefix>">,
-  HelpText<"Treat all #include paths starting with <prefix> as not including a "
-           "system header.">;
 
 //===----------------------------------------------------------------------===//
 // Preprocessor Options

@@ -49,7 +49,7 @@ struct Big {
 
 // WIN32: declare void @"{{.*take_bools_and_chars.*}}"
 // WIN32:       (<{ i8, [3 x i8], i8, [3 x i8], %struct.SmallWithDtor,
-// WIN32:           i8, [3 x i8], i8, [3 x i8], i32, i8 }>* inalloca)
+// WIN32:           i8, [3 x i8], i8, [3 x i8], i32, i8, [3 x i8] }>* inalloca)
 void take_bools_and_chars(char a, char b, SmallWithDtor c, char d, bool e, int f, bool g);
 void call_bools_and_chars() {
   take_bools_and_chars('A', 'B', SmallWithDtor(), 'D', true, 13, false);
@@ -223,7 +223,7 @@ struct X {
 };
 void g(X) {
 }
-// WIN32: define void @"\01?g@@YAXUX@@@Z"(<{ %struct.X }>* inalloca) {{.*}} {
+// WIN32: define void @"\01?g@@YAXUX@@@Z"(<{ %struct.X, [3 x i8] }>* inalloca) {{.*}} {
 // WIN32:   call x86_thiscallcc void @"\01??1X@@QAE@XZ"(%struct.X* {{.*}})
 // WIN32: }
 void f() {
@@ -263,3 +263,41 @@ void bar() {
 // WIN32: }
 
 }
+
+namespace test3 {
+
+// Check that we padded the inalloca struct to a multiple of 4.
+struct NonTrivial {
+  NonTrivial();
+  NonTrivial(const NonTrivial &o);
+  ~NonTrivial();
+  int a;
+};
+void foo(NonTrivial a, bool b) { }
+// WIN32-LABEL: define void @"\01?foo@test3@@YAXUNonTrivial@1@_N@Z"(<{ %"struct.test3::NonTrivial", i8, [3 x i8] }>* inalloca)
+
+}
+
+// We would crash here because the later definition of ForwardDeclare1 results
+// in a different IR type for the value we want to store.  However, the alloca's
+// type will use the argument type selected by fn1.
+struct ForwardDeclare1;
+
+typedef void (*FnPtr1)(ForwardDeclare1);
+void fn1(FnPtr1 a, SmallWithDtor b) { }
+
+struct ForwardDeclare1 {};
+
+void fn2(FnPtr1 a, SmallWithDtor b) { fn1(a, b); };
+// WIN32-LABEL: define void @"\01?fn2@@YAXP6AXUForwardDeclare1@@@ZUSmallWithDtor@@@Z"
+// WIN32:   %[[a:[^ ]*]] = getelementptr inbounds [[argmem_ty:<{ {}\*, %struct.SmallWithDtor }>]]* %{{.*}}, i32 0, i32 0
+// WIN32:   %[[a1:[^ ]*]] = bitcast {}** %[[a]] to void [[dst_ty:\(%struct.ForwardDeclare1\*\)\*]]*
+// WIN32:   %[[argmem:[^ ]*]] = alloca inalloca [[argmem_ty]]
+// WIN32:   %[[gep1:[^ ]*]] = getelementptr inbounds [[argmem_ty]]* %[[argmem]], i32 0, i32 1
+// WIN32:   %[[bc1:[^ ]*]] = bitcast %struct.SmallWithDtor* %[[gep1]] to i8*
+// WIN32:   call void @llvm.memcpy.p0i8.p0i8.i32(i8* %[[bc1]], i8* {{.*}}, i32 4, i32 4, i1 false)
+// WIN32:   %[[a2:[^ ]*]] = load void [[dst_ty]]* %[[a1]], align 4
+// WIN32:   %[[gep2:[^ ]*]] = getelementptr inbounds [[argmem_ty]]* %[[argmem]], i32 0, i32 0
+// WIN32:   %[[addr:[^ ]*]] = bitcast {}** %[[gep2]] to void [[dst_ty]]*
+// WIN32:   store void [[dst_ty]] %[[a2]], void [[dst_ty]]* %[[addr]], align 4
+// WIN32:   call void @"\01?fn1@@YAXP6AXUForwardDeclare1@@@ZUSmallWithDtor@@@Z"([[argmem_ty]]* inalloca %[[argmem]])

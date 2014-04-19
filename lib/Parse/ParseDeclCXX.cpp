@@ -15,7 +15,9 @@
 #include "RAIIObjectsForParser.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/Basic/Attributes.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/OperatorKinds.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Sema/DeclSpec.h"
@@ -1539,18 +1541,11 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
       }
 
       // Build the class template specialization.
-      TagOrTempResult
-        = Actions.ActOnClassTemplateSpecialization(getCurScope(), TagType, TUK,
-                       StartLoc, DS.getModulePrivateSpecLoc(), SS,
-                       TemplateId->Template,
-                       TemplateId->TemplateNameLoc,
-                       TemplateId->LAngleLoc,
-                       TemplateArgsPtr,
-                       TemplateId->RAngleLoc,
-                       attrs.getList(),
-                       MultiTemplateParamsArg(
-                                    TemplateParams? &(*TemplateParams)[0] : 0,
-                                 TemplateParams? TemplateParams->size() : 0));
+      TagOrTempResult = Actions.ActOnClassTemplateSpecialization(
+          getCurScope(), TagType, TUK, StartLoc, DS.getModulePrivateSpecLoc(),
+          *TemplateId, attrs.getList(),
+          MultiTemplateParamsArg(TemplateParams ? &(*TemplateParams)[0] : 0,
+                                 TemplateParams ? TemplateParams->size() : 0));
     }
   } else if (TemplateInfo.Kind == ParsedTemplateInfo::ExplicitInstantiation &&
              TUK == Sema::TUK_Declaration) {
@@ -2515,7 +2510,7 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
             << /*ErrorType=*/6
             << (isa<NamedDecl>(TagDecl)
                   ? cast<NamedDecl>(TagDecl)->getQualifiedNameAsString()
-                  : "<anonymous>");
+                  : "(anonymous)");
         }
         break;
       }
@@ -2643,6 +2638,11 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
 
       if (Tok.is(tok::annot_pragma_ms_pointers_to_members)) {
         HandlePragmaMSPointersToMembers();
+        continue;
+      }
+
+      if (Tok.is(tok::annot_pragma_ms_pragma)) {
+        HandlePragmaMSPragma();
         continue;
       }
 
@@ -3187,6 +3187,7 @@ static bool IsBuiltInOrStandardCXX11Attribute(IdentifierInfo *AttrName,
   switch (AttributeList::getKind(AttrName, ScopeName,
                                  AttributeList::AS_CXX11)) {
   case AttributeList::AT_CarriesDependency:
+  case AttributeList::AT_Deprecated:
   case AttributeList::AT_FallThrough:
   case AttributeList::AT_CXX11NoReturn: {
     return true;
@@ -3197,8 +3198,75 @@ static bool IsBuiltInOrStandardCXX11Attribute(IdentifierInfo *AttrName,
   }
 }
 
-/// ParseCXX11AttributeSpecifier - Parse a C++11 attribute-specifier. Currently
-/// only parses standard attributes.
+/// ParseCXX11AttributeArgs -- Parse a C++11 attribute-argument-clause.
+///
+/// [C++11] attribute-argument-clause:
+///         '(' balanced-token-seq ')'
+///
+/// [C++11] balanced-token-seq:
+///         balanced-token
+///         balanced-token-seq balanced-token
+///
+/// [C++11] balanced-token:
+///         '(' balanced-token-seq ')'
+///         '[' balanced-token-seq ']'
+///         '{' balanced-token-seq '}'
+///         any token but '(', ')', '[', ']', '{', or '}'
+bool Parser::ParseCXX11AttributeArgs(IdentifierInfo *AttrName,
+                                     SourceLocation AttrNameLoc,
+                                     ParsedAttributes &Attrs,
+                                     SourceLocation *EndLoc,
+                                     IdentifierInfo *ScopeName,
+                                     SourceLocation ScopeLoc) {
+  assert(Tok.is(tok::l_paren) && "Not a C++11 attribute argument list");
+  SourceLocation LParenLoc = Tok.getLocation();
+
+  // If the attribute isn't known, we will not attempt to parse any
+  // arguments.
+  if (!hasAttribute(AttrSyntax::CXX, ScopeName, AttrName,
+                    getTargetInfo().getTriple(), getLangOpts())) {
+    // Eat the left paren, then skip to the ending right paren.
+    ConsumeParen();
+    SkipUntil(tok::r_paren);
+    return false;
+  }
+
+  if (ScopeName && ScopeName->getName() == "gnu")
+    // GNU-scoped attributes have some special cases to handle GNU-specific
+    // behaviors.
+    ParseGNUAttributeArgs(AttrName, AttrNameLoc, Attrs, EndLoc, ScopeName,
+                          ScopeLoc, AttributeList::AS_CXX11, 0);
+  else {
+    unsigned NumArgs =
+        ParseAttributeArgsCommon(AttrName, AttrNameLoc, Attrs, EndLoc,
+                                 ScopeName, ScopeLoc, AttributeList::AS_CXX11);
+    
+    const AttributeList *Attr = Attrs.getList();
+    if (Attr && IsBuiltInOrStandardCXX11Attribute(AttrName, ScopeName)) {
+      // If the attribute is a standard or built-in attribute and we are
+      // parsing an argument list, we need to determine whether this attribute
+      // was allowed to have an argument list (such as [[deprecated]]), and how
+      // many arguments were parsed (so we can diagnose on [[deprecated()]]).
+      if (Attr->getMaxArgs() && !NumArgs) {
+        // The attribute was allowed to have arguments, but none were provided
+        // even though the attribute parsed successfully. This is an error.
+        // FIXME: This is a good place for a fixit which removes the parens.
+        Diag(LParenLoc, diag::err_attribute_requires_arguments) << AttrName;
+        return false;
+      } else if (!Attr->getMaxArgs()) {
+        // The attribute parsed successfully, but was not allowed to have any
+        // arguments. It doesn't matter whether any were provided -- the
+        // presence of the argument list (even if empty) is diagnosed.
+        Diag(LParenLoc, diag::err_cxx11_attribute_forbids_arguments)
+            << AttrName;
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/// ParseCXX11AttributeSpecifier - Parse a C++11 attribute-specifier.
 ///
 /// [C++11] attribute-specifier:
 ///         '[' '[' attribute-list ']' ']'
@@ -3222,19 +3290,6 @@ static bool IsBuiltInOrStandardCXX11Attribute(IdentifierInfo *AttrName,
 ///
 /// [C++11] attribute-namespace:
 ///         identifier
-///
-/// [C++11] attribute-argument-clause:
-///         '(' balanced-token-seq ')'
-///
-/// [C++11] balanced-token-seq:
-///         balanced-token
-///         balanced-token-seq balanced-token
-///
-/// [C++11] balanced-token:
-///         '(' balanced-token-seq ')'
-///         '[' balanced-token-seq ']'
-///         '{' balanced-token-seq '}'
-///         any token but '(', ')', '[', ']', '{', or '}'
 void Parser::ParseCXX11AttributeSpecifier(ParsedAttributes &attrs,
                                           SourceLocation *endLoc) {
   if (Tok.is(tok::kw_alignas)) {
@@ -3279,30 +3334,18 @@ void Parser::ParseCXX11AttributeSpecifier(ParsedAttributes &attrs,
       }
     }
 
-    bool StandardAttr = IsBuiltInOrStandardCXX11Attribute(AttrName,ScopeName);
+    bool StandardAttr = IsBuiltInOrStandardCXX11Attribute(AttrName, ScopeName);
     bool AttrParsed = false;
 
     if (StandardAttr &&
         !SeenAttrs.insert(std::make_pair(AttrName, AttrLoc)).second)
       Diag(AttrLoc, diag::err_cxx11_attribute_repeated)
-        << AttrName << SourceRange(SeenAttrs[AttrName]);
+          << AttrName << SourceRange(SeenAttrs[AttrName]);
 
     // Parse attribute arguments
-    if (Tok.is(tok::l_paren)) {
-      if (ScopeName && ScopeName->getName() == "gnu") {
-        ParseGNUAttributeArgs(AttrName, AttrLoc, attrs, endLoc,
-                              ScopeName, ScopeLoc, AttributeList::AS_CXX11, 0);
-        AttrParsed = true;
-      } else {
-        if (StandardAttr)
-          Diag(Tok.getLocation(), diag::err_cxx11_attribute_forbids_arguments)
-            << AttrName->getName();
-
-        // FIXME: handle other formats of c++11 attribute arguments
-        ConsumeParen();
-        SkipUntil(tok::r_paren);
-      }
-    }
+    if (Tok.is(tok::l_paren))
+      AttrParsed = ParseCXX11AttributeArgs(AttrName, AttrLoc, attrs, endLoc,
+                                           ScopeName, ScopeLoc);
 
     if (!AttrParsed)
       attrs.addNew(AttrName,

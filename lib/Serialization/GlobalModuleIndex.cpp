@@ -13,7 +13,7 @@
 
 #include "ASTReaderInternals.h"
 #include "clang/Basic/FileManager.h"
-#include "clang/Basic/OnDiskHashTable.h"
+#include "clang/Lex/HeaderSearch.h"
 #include "clang/Serialization/ASTBitCodes.h"
 #include "clang/Serialization/GlobalModuleIndex.h"
 #include "clang/Serialization/Module.h"
@@ -26,6 +26,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LockFileManager.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/OnDiskHashTable.h"
 #include "llvm/Support/Path.h"
 #include <cstdio>
 using namespace clang;
@@ -71,20 +72,22 @@ public:
   typedef StringRef external_key_type;
   typedef StringRef internal_key_type;
   typedef SmallVector<unsigned, 2> data_type;
+  typedef unsigned hash_value_type;
+  typedef unsigned offset_type;
 
   static bool EqualKey(const internal_key_type& a, const internal_key_type& b) {
     return a == b;
   }
 
-  static unsigned ComputeHash(const internal_key_type& a) {
+  static hash_value_type ComputeHash(const internal_key_type& a) {
     return llvm::HashString(a);
   }
 
   static std::pair<unsigned, unsigned>
   ReadKeyDataLength(const unsigned char*& d) {
-    using namespace clang::io;
-    unsigned KeyLen = ReadUnalignedLE16(d);
-    unsigned DataLen = ReadUnalignedLE16(d);
+    using namespace llvm::support;
+    unsigned KeyLen = endian::readNext<uint16_t, little, unaligned>(d);
+    unsigned DataLen = endian::readNext<uint16_t, little, unaligned>(d);
     return std::make_pair(KeyLen, DataLen);
   }
 
@@ -101,11 +104,11 @@ public:
   static data_type ReadData(const internal_key_type& k,
                             const unsigned char* d,
                             unsigned DataLen) {
-    using namespace clang::io;
+    using namespace llvm::support;
 
     data_type Result;
     while (DataLen > 0) {
-      unsigned ID = ReadUnalignedLE32(d);
+      unsigned ID = endian::readNext<uint32_t, little, unaligned>(d);
       Result.push_back(ID);
       DataLen -= 4;
     }
@@ -114,7 +117,8 @@ public:
   }
 };
 
-typedef OnDiskChainedHashTable<IdentifierIndexReaderTrait> IdentifierIndexTable;
+typedef llvm::OnDiskIterableChainedHashTable<IdentifierIndexReaderTrait>
+    IdentifierIndexTable;
 
 }
 
@@ -202,7 +206,12 @@ GlobalModuleIndex::GlobalModuleIndex(llvm::MemoryBuffer *Buffer,
       assert(Idx == Record.size() && "More module info?");
 
       // Record this module as an unresolved module.
-      UnresolvedModules[llvm::sys::path::stem(Modules[ID].FileName)] = ID;
+      // FIXME: this doesn't work correctly for module names containing path
+      // separators.
+      StringRef ModuleName = llvm::sys::path::stem(Modules[ID].FileName);
+      // Remove the -<hash of ModuleMapPath>
+      ModuleName = ModuleName.rsplit('-').first;
+      UnresolvedModules[ModuleName] = ID;
       break;
     }
 
@@ -210,9 +219,9 @@ GlobalModuleIndex::GlobalModuleIndex(llvm::MemoryBuffer *Buffer,
       // Wire up the identifier index.
       if (Record[0]) {
         IdentifierIndex = IdentifierIndexTable::Create(
-                            (const unsigned char *)Blob.data() + Record[0],
-                            (const unsigned char *)Blob.data(),
-                            IdentifierIndexReaderTrait());
+            (const unsigned char *)Blob.data() + Record[0],
+            (const unsigned char *)Blob.data() + sizeof(uint32_t),
+            (const unsigned char *)Blob.data(), IdentifierIndexReaderTrait());
       }
       break;
     }
@@ -307,7 +316,7 @@ bool GlobalModuleIndex::lookupIdentifier(StringRef Name, HitSet &Hits) {
 
 bool GlobalModuleIndex::loadedModuleFile(ModuleFile *File) {
   // Look for the module in the global module index based on the module name.
-  StringRef Name = llvm::sys::path::stem(File->FileName);
+  StringRef Name = File->ModuleName;
   llvm::StringMap<unsigned>::iterator Known = UnresolvedModules.find(Name);
   if (Known == UnresolvedModules.end()) {
     return true;
@@ -340,6 +349,19 @@ void GlobalModuleIndex::printStats() {
             (double)NumIdentifierLookupHits*100.0/NumIdentifierLookups);
   }
   std::fprintf(stderr, "\n");
+}
+
+void GlobalModuleIndex::dump() {
+  llvm::errs() << "*** Global Module Index Dump:\n";
+  llvm::errs() << "Module files:\n";
+  for (auto &MI : Modules) {
+    llvm::errs() << "** " << MI.FileName << "\n";
+    if (MI.File)
+      MI.File->dump();
+    else
+      llvm::errs() << "\n";
+  }
+  llvm::errs() << "\n";
 }
 
 //----------------------------------------------------------------------------//
@@ -459,8 +481,8 @@ namespace {
                        unsigned DataLen) {
       // The first bit indicates whether this identifier is interesting.
       // That's all we care about.
-      using namespace clang::io;
-      unsigned RawID = ReadUnalignedLE32(d);
+      using namespace llvm::support;
+      unsigned RawID = endian::readNext<uint32_t, little, unaligned>(d);
       bool IsInteresting = RawID & 0x01;
       return std::make_pair(k, IsInteresting);
     }
@@ -591,11 +613,12 @@ bool GlobalModuleIndexBuilder::loadModuleFile(const FileEntry *File) {
 
     // Handle the identifier table
     if (State == ASTBlock && Code == IDENTIFIER_TABLE && Record[0] > 0) {
-      typedef OnDiskChainedHashTable<InterestingASTIdentifierLookupTrait>
-        InterestingIdentifierTable;
+      typedef llvm::OnDiskIterableChainedHashTable<
+          InterestingASTIdentifierLookupTrait> InterestingIdentifierTable;
       std::unique_ptr<InterestingIdentifierTable> Table(
           InterestingIdentifierTable::Create(
               (const unsigned char *)Blob.data() + Record[0],
+              (const unsigned char *)Blob.data() + sizeof(uint32_t),
               (const unsigned char *)Blob.data()));
       for (InterestingIdentifierTable::data_iterator D = Table->data_begin(),
                                                      DEnd = Table->data_end();
@@ -624,17 +647,21 @@ public:
   typedef StringRef key_type_ref;
   typedef SmallVector<unsigned, 2> data_type;
   typedef const SmallVector<unsigned, 2> &data_type_ref;
+  typedef unsigned hash_value_type;
+  typedef unsigned offset_type;
 
-  static unsigned ComputeHash(key_type_ref Key) {
+  static hash_value_type ComputeHash(key_type_ref Key) {
     return llvm::HashString(Key);
   }
 
   std::pair<unsigned,unsigned>
   EmitKeyDataLength(raw_ostream& Out, key_type_ref Key, data_type_ref Data) {
+    using namespace llvm::support;
+    endian::Writer<little> LE(Out);
     unsigned KeyLen = Key.size();
     unsigned DataLen = Data.size() * 4;
-    clang::io::Emit16(Out, KeyLen);
-    clang::io::Emit16(Out, DataLen);
+    LE.write<uint16_t>(KeyLen);
+    LE.write<uint16_t>(DataLen);
     return std::make_pair(KeyLen, DataLen);
   }
   
@@ -644,8 +671,9 @@ public:
 
   void EmitData(raw_ostream& Out, key_type_ref Key, data_type_ref Data,
                 unsigned DataLen) {
+    using namespace llvm::support;
     for (unsigned I = 0, N = Data.size(); I != N; ++I)
-      clang::io::Emit32(Out, Data[I]);
+      endian::Writer<little>(Out).write<uint32_t>(Data[I]);
   }
 };
 
@@ -693,7 +721,7 @@ void GlobalModuleIndexBuilder::writeIndex(llvm::BitstreamWriter &Stream) {
 
   // Write the identifier -> module file mapping.
   {
-    OnDiskChainedHashTableGenerator<IdentifierIndexWriterTrait> Generator;
+    llvm::OnDiskChainedHashTableGenerator<IdentifierIndexWriterTrait> Generator;
     IdentifierIndexWriterTrait Trait;
 
     // Populate the hash table.
@@ -707,9 +735,10 @@ void GlobalModuleIndexBuilder::writeIndex(llvm::BitstreamWriter &Stream) {
     SmallString<4096> IdentifierTable;
     uint32_t BucketOffset;
     {
+      using namespace llvm::support;
       llvm::raw_svector_ostream Out(IdentifierTable);
       // Make sure that no bucket is at offset 0
-      clang::io::Emit32(Out, 0);
+      endian::Writer<little>(Out).write<uint32_t>(0);
       BucketOffset = Generator.Emit(Out, Trait);
     }
 

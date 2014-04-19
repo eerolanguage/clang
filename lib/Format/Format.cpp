@@ -33,6 +33,8 @@
 
 using clang::format::FormatStyle;
 
+LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(std::string)
+
 namespace llvm {
 namespace yaml {
 template <> struct ScalarEnumerationTraits<FormatStyle::LanguageKind> {
@@ -60,6 +62,16 @@ template <> struct ScalarEnumerationTraits<FormatStyle::UseTabStyle> {
     IO.enumCase(Value, "Always", FormatStyle::UT_Always);
     IO.enumCase(Value, "true", FormatStyle::UT_Always);
     IO.enumCase(Value, "ForIndentation", FormatStyle::UT_ForIndentation);
+  }
+};
+
+template <> struct ScalarEnumerationTraits<FormatStyle::ShortFunctionStyle> {
+  static void enumeration(IO &IO, FormatStyle::ShortFunctionStyle &Value) {
+    IO.enumCase(Value, "None", FormatStyle::SFS_None);
+    IO.enumCase(Value, "false", FormatStyle::SFS_None);
+    IO.enumCase(Value, "All", FormatStyle::SFS_All);
+    IO.enumCase(Value, "true", FormatStyle::SFS_All);
+    IO.enumCase(Value, "Inline", FormatStyle::SFS_Inline);
   }
 };
 
@@ -200,6 +212,7 @@ template <> struct MappingTraits<FormatStyle> {
                    Style.SpaceBeforeAssignmentOperators);
     IO.mapOptional("ContinuationIndentWidth", Style.ContinuationIndentWidth);
     IO.mapOptional("CommentPragmas", Style.CommentPragmas);
+    IO.mapOptional("ForEachMacros", Style.ForEachMacros); 
 
     // For backward compatibility.
     if (!IO.outputting()) {
@@ -248,7 +261,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.AlignEscapedNewlinesLeft = false;
   LLVMStyle.AlignTrailingComments = true;
   LLVMStyle.AllowAllParametersOfDeclarationOnNextLine = true;
-  LLVMStyle.AllowShortFunctionsOnASingleLine = true;
+  LLVMStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_All;
   LLVMStyle.AllowShortIfStatementsOnASingleLine = false;
   LLVMStyle.AllowShortLoopsOnASingleLine = false;
   LLVMStyle.AlwaysBreakBeforeMultilineStrings = false;
@@ -259,11 +272,16 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.BreakBeforeBraces = FormatStyle::BS_Attach;
   LLVMStyle.BreakConstructorInitializersBeforeComma = false;
   LLVMStyle.ColumnLimit = 80;
+  LLVMStyle.CommentPragmas = "^ IWYU pragma:";
   LLVMStyle.ConstructorInitializerAllOnOneLineOrOnePerLine = false;
   LLVMStyle.ConstructorInitializerIndentWidth = 4;
+  LLVMStyle.ContinuationIndentWidth = 4;
   LLVMStyle.Cpp11BracedListStyle = true;
   LLVMStyle.DerivePointerBinding = false;
   LLVMStyle.ExperimentalAutoDetectBinPacking = false;
+  LLVMStyle.ForEachMacros.push_back("foreach");
+  LLVMStyle.ForEachMacros.push_back("Q_FOREACH");
+  LLVMStyle.ForEachMacros.push_back("BOOST_FOREACH");
   LLVMStyle.IndentCaseLabels = false;
   LLVMStyle.IndentFunctionDeclarationAfterType = false;
   LLVMStyle.IndentWidth = 2;
@@ -283,9 +301,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.SpacesInCStyleCastParentheses = false;
   LLVMStyle.SpaceBeforeParens = FormatStyle::SBPO_ControlStatements;
   LLVMStyle.SpaceBeforeAssignmentOperators = true;
-  LLVMStyle.ContinuationIndentWidth = 4;
   LLVMStyle.SpacesInAngles = false;
-  LLVMStyle.CommentPragmas = "^ IWYU pragma:";
 
   LLVMStyle.PenaltyBreakComment = 300;
   LLVMStyle.PenaltyBreakFirstLessLess = 120;
@@ -326,7 +342,8 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
     GoogleStyle.MaxEmptyLinesToKeep = 2;
     GoogleStyle.SpacesInContainerLiterals = false;
   } else if (Language == FormatStyle::LK_Proto) {
-    GoogleStyle.AllowShortFunctionsOnASingleLine = false;
+    GoogleStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_None;
+    GoogleStyle.SpacesInContainerLiterals = false;
   }
 
   return GoogleStyle;
@@ -335,6 +352,7 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
 FormatStyle getChromiumStyle(FormatStyle::LanguageKind Language) {
   FormatStyle ChromiumStyle = getGoogleStyle(Language);
   ChromiumStyle.AllowAllParametersOfDeclarationOnNextLine = false;
+  ChromiumStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_Inline;
   ChromiumStyle.AllowShortIfStatementsOnASingleLine = false;
   ChromiumStyle.AllowShortLoopsOnASingleLine = false;
   ChromiumStyle.BinPackParameters = false;
@@ -517,11 +535,16 @@ public:
     if (I + 1 == E || I[1]->Type == LT_Invalid)
       return 0;
 
+    // FIXME: TheLine->Level != 0 might or might not be the right check to do.
+    // If necessary, change to something smarter.
+    bool MergeShortFunctions =
+        Style.AllowShortFunctionsOnASingleLine == FormatStyle::SFS_All ||
+        (Style.AllowShortFunctionsOnASingleLine == FormatStyle::SFS_Inline &&
+         TheLine->Level != 0);
+
     if (TheLine->Last->Type == TT_FunctionLBrace &&
         TheLine->First != TheLine->Last) {
-      return Style.AllowShortFunctionsOnASingleLine
-                 ? tryMergeSimpleBlock(I, E, Limit)
-                 : 0;
+      return MergeShortFunctions ? tryMergeSimpleBlock(I, E, Limit) : 0;
     }
     if (TheLine->Last->is(tok::l_brace)) {
       return Style.BreakBeforeBraces == FormatStyle::BS_Attach
@@ -536,7 +559,7 @@ public:
       Limit -= 2;
 
       unsigned MergedLines = 0;
-      if (Style.AllowShortFunctionsOnASingleLine) {
+      if (MergeShortFunctions) {
         MergedLines = tryMergeSimpleBlock(I + 1, E, Limit);
         // If we managed to merge the block, count the function header, which is
         // on a separate line.
@@ -617,7 +640,7 @@ private:
     AnnotatedLine &Line = **I;
     if (Line.First->isOneOf(tok::kw_if, tok::kw_while, tok::kw_do, tok::r_brace,
                             tok::kw_else, tok::kw_try, tok::kw_catch,
-                            tok::kw_for,
+                            tok::kw_for, tok::kw_case,
                             // This gets rid of all ObjC @ keywords and methods.
                             tok::at, tok::minus, tok::plus))
       return 0;
@@ -699,6 +722,13 @@ public:
 
   unsigned format(const SmallVectorImpl<AnnotatedLine *> &Lines, bool DryRun,
                   int AdditionalIndent = 0, bool FixBadIndentation = false) {
+    // Try to look up already computed penalty in DryRun-mode.
+    std::pair<const SmallVectorImpl<AnnotatedLine *> *, unsigned> CacheKey(
+        &Lines, AdditionalIndent);
+    auto CacheIt = PenaltyCache.find(CacheKey);
+    if (DryRun && CacheIt != PenaltyCache.end())
+      return CacheIt->second;
+
     assert(!Lines.empty());
     unsigned Penalty = 0;
     std::vector<int> IndentForLevel;
@@ -822,6 +852,7 @@ public:
       }
       PreviousLine = *I;
     }
+    PenaltyCache[CacheKey] = Penalty;
     return Penalty;
   }
 
@@ -891,6 +922,8 @@ private:
       Newlines = std::min(Newlines, 1u);
     if (Newlines == 0 && !RootToken.IsFirst)
       Newlines = 1;
+    if (RootToken.IsFirst && !RootToken.HasUnescapedNewline)
+      Newlines = 0;
 
     // Remove empty lines after "{".
     if (!Style.KeepEmptyLinesAtTheStartOfBlocks && PreviousLine &&
@@ -1099,8 +1132,19 @@ private:
     if (Previous.Children.size() > 1)
       return false;
 
+    // Cannot merge into one line if this line ends on a comment.
+    if (Previous.is(tok::comment))
+      return false;
+
     // We can't put the closing "}" on a line with a trailing comment.
     if (Previous.Children[0]->Last->isTrailingComment())
+      return false;
+
+    // If the child line exceeds the column limit, we wouldn't want to merge it.
+    // We add +2 for the trailing " }".
+    if (Style.ColumnLimit > 0 &&
+        Previous.Children[0]->Last->TotalLength + State.Column + 2 >
+            Style.ColumnLimit)
       return false;
 
     if (!DryRun) {
@@ -1121,6 +1165,12 @@ private:
   LineJoiner Joiner;
 
   llvm::SpecificBumpPtrAllocator<StateNode> Allocator;
+
+  // Cache to store the penalty of formatting a vector of AnnotatedLines
+  // starting from a specific additional offset. Improves performance if there
+  // are many nested blocks.
+  std::map<std::pair<const SmallVectorImpl<AnnotatedLine *> *, unsigned>,
+           unsigned> PenaltyCache;
 };
 
 class FormatTokenLexer {
@@ -1129,15 +1179,23 @@ public:
                    encoding::Encoding Encoding)
       : FormatTok(NULL), IsFirstToken(true), GreaterStashed(false), Column(0),
         TrailingWhitespace(0), Lex(Lex), SourceMgr(SourceMgr), Style(Style),
-        IdentTable(getFormattingLangOpts()), Encoding(Encoding) {
+        IdentTable(getFormattingLangOpts()), Encoding(Encoding),
+        FirstInLineIndex(0) {
     Lex.SetKeepWhitespaceMode(true);
+
+    for (const std::string& ForEachMacro : Style.ForEachMacros)
+      ForEachMacros.push_back(&IdentTable.get(ForEachMacro));
+    std::sort(ForEachMacros.begin(), ForEachMacros.end());
   }
 
   ArrayRef<FormatToken *> lex() {
     assert(Tokens.empty());
+    assert(FirstInLineIndex == 0);
     do {
       Tokens.push_back(getNextToken());
       tryMergePreviousTokens();
+      if (Tokens.back()->NewlinesBefore > 0)
+        FirstInLineIndex = Tokens.size() - 1;
     } while (Tokens.back()->Tok.isNot(tok::eof));
     return Tokens;
   }
@@ -1147,6 +1205,8 @@ public:
 private:
   void tryMergePreviousTokens() {
     if (tryMerge_TMacro())
+      return;
+    if (tryMergeConflictMarkers())
       return;
 
     if (Style.Language == FormatStyle::LK_JavaScript) {
@@ -1220,6 +1280,68 @@ private:
     Tokens.pop_back();
     Tokens.back() = String;
     return true;
+  }
+
+  bool tryMergeConflictMarkers() {
+    if (Tokens.back()->NewlinesBefore == 0 && Tokens.back()->isNot(tok::eof))
+      return false;
+
+    // Conflict lines look like:
+    // <marker> <text from the vcs>
+    // For example:
+    // >>>>>>> /file/in/file/system at revision 1234
+    //
+    // We merge all tokens in a line that starts with a conflict marker
+    // into a single token with a special token type that the unwrapped line
+    // parser will use to correctly rebuild the underlying code.
+
+    FileID ID;
+    // Get the position of the first token in the line.
+    unsigned FirstInLineOffset;
+    std::tie(ID, FirstInLineOffset) = SourceMgr.getDecomposedLoc(
+        Tokens[FirstInLineIndex]->getStartOfNonWhitespace());
+    StringRef Buffer = SourceMgr.getBuffer(ID)->getBuffer();
+    // Calculate the offset of the start of the current line.
+    auto LineOffset = Buffer.rfind('\n', FirstInLineOffset);
+    if (LineOffset == StringRef::npos) {
+      LineOffset = 0;
+    } else {
+      ++LineOffset;
+    }
+
+    auto FirstSpace = Buffer.find_first_of(" \n", LineOffset);
+    StringRef LineStart;
+    if (FirstSpace == StringRef::npos) {
+      LineStart = Buffer.substr(LineOffset);
+    } else {
+      LineStart = Buffer.substr(LineOffset, FirstSpace - LineOffset);
+    }
+
+    TokenType Type = TT_Unknown;
+    if (LineStart == "<<<<<<<" || LineStart == ">>>>") {
+      Type = TT_ConflictStart;
+    } else if (LineStart == "|||||||" || LineStart == "=======" ||
+               LineStart == "====") {
+      Type = TT_ConflictAlternative;
+    } else if (LineStart == ">>>>>>>" || LineStart == "<<<<") {
+      Type = TT_ConflictEnd;
+    }
+
+    if (Type != TT_Unknown) {
+      FormatToken *Next = Tokens.back();
+
+      Tokens.resize(FirstInLineIndex + 1);
+      // We do not need to build a complete token here, as we will skip it
+      // during parsing anyway (as we must not touch whitespace around conflict
+      // markers).
+      Tokens.back()->Type = Type;
+      Tokens.back()->Tok.setKind(tok::kw___unknown_anytype);
+
+      Tokens.push_back(Next);
+      return true;
+    }
+
+    return false;
   }
 
   FormatToken *getNextToken() {
@@ -1299,7 +1421,7 @@ private:
     // FIXME: Add a more explicit test.
     while (FormatTok->TokenText.size() > 1 && FormatTok->TokenText[0] == '\\' &&
            FormatTok->TokenText[1] == '\n') {
-      // FIXME: ++FormatTok->NewlinesBefore is missing...
+      ++FormatTok->NewlinesBefore;
       WhitespaceLength += 2;
       Column = 0;
       FormatTok->TokenText = FormatTok->TokenText.substr(2);
@@ -1351,6 +1473,10 @@ private:
       Column = FormatTok->LastLineColumnWidth;
     }
 
+    FormatTok->IsForEachMacro =
+        std::binary_search(ForEachMacros.begin(), ForEachMacros.end(),
+                           FormatTok->Tok.getIdentifierInfo());
+
     return FormatTok;
   }
 
@@ -1365,7 +1491,10 @@ private:
   IdentifierTable IdentTable;
   encoding::Encoding Encoding;
   llvm::SpecificBumpPtrAllocator<FormatToken> Allocator;
+  // Index (in 'Tokens') of the last token that starts a new line.
+  unsigned FirstInLineIndex;
   SmallVector<FormatToken *, 16> Tokens;
+  SmallVector<IdentifierInfo*, 8> ForEachMacros;
 
   void readRawToken(FormatToken &Tok) {
     Lex.LexFromRawLexer(Tok.Tok);
@@ -1720,6 +1849,7 @@ LangOptions getFormattingLangOpts(FormatStyle::LanguageStandard Standard) {
   LangOptions LangOpts;
   LangOpts.CPlusPlus = 1;
   LangOpts.CPlusPlus11 = Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
+  LangOpts.CPlusPlus1y = Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
   LangOpts.LineComment = 1;
   LangOpts.Bool = 1;
   LangOpts.ObjC1 = 1;

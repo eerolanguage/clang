@@ -544,8 +544,25 @@ llvm::Constant *RTTIBuilder::BuildTypeInfo(QualType Ty, bool Force) {
   
   // And the name.
   llvm::GlobalVariable *TypeName = GetAddrOfTypeName(Ty, Linkage);
+  llvm::Constant *TypeNameField;
 
-  Fields.push_back(llvm::ConstantExpr::getBitCast(TypeName, CGM.Int8PtrTy));
+  // If we're supposed to demote the visibility, be sure to set a flag
+  // to use a string comparison for type_info comparisons.
+  CGCXXABI::RTTIUniquenessKind RTTIUniqueness =
+      CGM.getCXXABI().classifyRTTIUniqueness(Ty, Linkage);
+  if (RTTIUniqueness != CGCXXABI::RUK_Unique) {
+    // The flag is the sign bit, which on ARM64 is defined to be clear
+    // for global pointers.  This is very ARM64-specific.
+    TypeNameField = llvm::ConstantExpr::getPtrToInt(TypeName, CGM.Int64Ty);
+    llvm::Constant *flag =
+        llvm::ConstantInt::get(CGM.Int64Ty, ((uint64_t)1) << 63);
+    TypeNameField = llvm::ConstantExpr::getAdd(TypeNameField, flag);
+    TypeNameField =
+        llvm::ConstantExpr::getIntToPtr(TypeNameField, CGM.Int8PtrTy);
+  } else {
+    TypeNameField = llvm::ConstantExpr::getBitCast(TypeName, CGM.Int8PtrTy);
+  }
+  Fields.push_back(TypeNameField);
 
   switch (Ty->getTypeClass()) {
 #define TYPE(Class, Base)
@@ -666,6 +683,12 @@ llvm::Constant *RTTIBuilder::BuildTypeInfo(QualType Ty, bool Force) {
     CodeGenModule::GetLLVMVisibility(formalVisibility);
   TypeName->setVisibility(llvmVisibility);
   GV->setVisibility(llvmVisibility);
+
+  // FIXME: integrate this better into the above when we move to trunk
+  if (RTTIUniqueness == CGCXXABI::RUK_NonUniqueHidden) {
+    TypeName->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    GV->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  }
 
   return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
 }
@@ -961,7 +984,8 @@ void CodeGenModule::EmitFundamentalRTTIDescriptors() {
                                   Context.UnsignedShortTy, Context.IntTy,
                                   Context.UnsignedIntTy, Context.LongTy, 
                                   Context.UnsignedLongTy, Context.LongLongTy, 
-                                  Context.UnsignedLongLongTy, Context.FloatTy,
+                                  Context.UnsignedLongLongTy,
+                                  Context.HalfTy, Context.FloatTy,
                                   Context.DoubleTy, Context.LongDoubleTy,
                                   Context.Char16Ty, Context.Char32Ty };
   for (unsigned i = 0; i < llvm::array_lengthof(FundamentalTypes); ++i)

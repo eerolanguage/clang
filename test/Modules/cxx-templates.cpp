@@ -121,15 +121,28 @@ bool testFriendInClassTemplate(Std::WithFriend<int> wfi) {
   return wfi != wfi;
 }
 
+namespace Std {
+  void g(); // expected-error {{functions that differ only in their return type cannot be overloaded}}
+  // expected-note@cxx-templates-common.h:21 {{previous}}
+}
+
+// FIXME: We should only have two entries for each of these names (one for each
+// function template), but we don't attempt to deduplicate lookup results from
+// sibling modules yet.
+
 // CHECK-GLOBAL:      DeclarationName 'f'
+// CHECK-GLOBAL-NEXT: |-FunctionTemplate {{.*}} 'f'
+// CHECK-GLOBAL-NEXT: |-FunctionTemplate {{.*}} 'f'
 // CHECK-GLOBAL-NEXT: |-FunctionTemplate {{.*}} 'f'
 // CHECK-GLOBAL-NEXT: `-FunctionTemplate {{.*}} 'f'
 
 // CHECK-NAMESPACE-N:      DeclarationName 'f'
 // CHECK-NAMESPACE-N-NEXT: |-FunctionTemplate {{.*}} 'f'
+// CHECK-NAMESPACE-N-NEXT: |-FunctionTemplate {{.*}} 'f'
+// CHECK-NAMESPACE-N-NEXT: |-FunctionTemplate {{.*}} 'f'
 // CHECK-NAMESPACE-N-NEXT: `-FunctionTemplate {{.*}} 'f'
 
-// CHECK-DUMP:      ClassTemplateDecl {{.*}} <{{.*[/\\]}}cxx-templates-common.h:1:1, {{.*}}> in cxx_templates_common SomeTemplate
+// CHECK-DUMP:      ClassTemplateDecl {{.*}} <{{.*[/\\]}}cxx-templates-common.h:1:1, {{.*}}>  col:{{.*}} in cxx_templates_common SomeTemplate
 // CHECK-DUMP:        ClassTemplateSpecializationDecl {{.*}} prev [[CHAR2:[^ ]*]] {{.*}} SomeTemplate
 // CHECK-DUMP-NEXT:     TemplateArgument type 'char [2]'
 // CHECK-DUMP:        ClassTemplateSpecializationDecl [[CHAR2]] {{.*}} SomeTemplate definition

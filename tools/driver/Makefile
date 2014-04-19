@@ -33,7 +33,7 @@ endif
 
 LINK_COMPONENTS := $(TARGETS_TO_BUILD) asmparser bitreader bitwriter codegen \
                    instrumentation ipo irreader linker objcarcopts option \
-                   selectiondag
+                   profiledata selectiondag
 USEDLIBS = clangFrontendTool.a clangFrontend.a clangDriver.a \
            clangSerialization.a clangCodeGen.a clangParse.a clangSema.a
 
@@ -50,7 +50,7 @@ ifeq ($(ENABLE_CLANG_REWRITER),1)
 USEDLIBS += clangRewriteFrontend.a clangRewriteCore.a
 endif
 
-USEDLIBS += clangAnalysis.a clangEdit.a clangAST.a clangBasic.a clangLex.a
+USEDLIBS += clangAnalysis.a clangEdit.a clangAST.a clangLex.a clangBasic.a
 
 include $(CLANG_LEVEL)/Makefile
 

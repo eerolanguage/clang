@@ -47,6 +47,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/ProfileData/InstrProfReader.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -60,6 +61,7 @@ static CGCXXABI *createCXXABI(CodeGenModule &CGM) {
   case TargetCXXABI::GenericAArch64:
   case TargetCXXABI::GenericARM:
   case TargetCXXABI::iOS:
+  case TargetCXXABI::iOS64:
   case TargetCXXABI::GenericItanium:
     return CreateItaniumCXXABI(CGM);
   case TargetCXXABI::Microsoft:
@@ -77,7 +79,7 @@ CodeGenModule::CodeGenModule(ASTContext &C, const CodeGenOptions &CGO,
       ABI(createCXXABI(*this)), VMContext(M.getContext()), TBAA(0),
       TheTargetCodeGenInfo(0), Types(*this), VTables(*this), ObjCRuntime(0),
       OpenCLRuntime(0), CUDARuntime(0), DebugInfo(0), ARCData(0),
-      NoObjCARCExceptionsMetadata(0), RRData(0), PGOData(0),
+      NoObjCARCExceptionsMetadata(0), RRData(0), PGOReader(nullptr),
       CFConstantStringClassRef(0),
       ConstantStringClassRef(0), NSConstantStringType(0),
       NSConcreteGlobalBlock(0), NSConcreteStackBlock(0), BlockObjectAssign(0),
@@ -133,8 +135,14 @@ CodeGenModule::CodeGenModule(ASTContext &C, const CodeGenOptions &CGO,
     ARCData = new ARCEntrypoints();
   RRData = new RREntrypoints();
 
-  if (!CodeGenOpts.InstrProfileInput.empty())
-    PGOData = new PGOProfileData(*this, CodeGenOpts.InstrProfileInput);
+  if (!CodeGenOpts.InstrProfileInput.empty()) {
+    if (llvm::error_code EC = llvm::IndexedInstrProfReader::create(
+            CodeGenOpts.InstrProfileInput, PGOReader)) {
+      unsigned DiagID = Diags.getCustomDiagID(DiagnosticsEngine::Error,
+                                              "Could not read profile: %0");
+      getDiags().Report(DiagID) << EC.message();
+    }
+  }
 }
 
 CodeGenModule::~CodeGenModule() {
@@ -208,6 +216,9 @@ void CodeGenModule::applyReplacements() {
 }
 
 void CodeGenModule::checkAliases() {
+  // Check if the constructed aliases are well formed. It is really unfortunate
+  // that we have to do this in CodeGen, but we only construct mangled names
+  // and aliases during codegen.
   bool Error = false;
   for (std::vector<GlobalDecl>::iterator I = Aliases.begin(),
          E = Aliases.end(); I != E; ++I) {
@@ -217,13 +228,38 @@ void CodeGenModule::checkAliases() {
     StringRef MangledName = getMangledName(GD);
     llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
     llvm::GlobalAlias *Alias = cast<llvm::GlobalAlias>(Entry);
-    llvm::GlobalValue *GV = Alias->resolveAliasedGlobal(/*stopOnWeak*/ false);
+    llvm::GlobalValue *GV = Alias->getAliasedGlobal();
     if (!GV) {
       Error = true;
       getDiags().Report(AA->getLocation(), diag::err_cyclic_alias);
     } else if (GV->isDeclaration()) {
       Error = true;
       getDiags().Report(AA->getLocation(), diag::err_alias_to_undefined);
+    }
+
+    // We have to handle alias to weak aliases in here. LLVM itself disallows
+    // this since the object semantics would not match the IL one. For
+    // compatibility with gcc we implement it by just pointing the alias
+    // to its aliasee's aliasee. We also warn, since the user is probably
+    // expecting the link to be weak.
+    llvm::Constant *Aliasee = Alias->getAliasee();
+    llvm::GlobalValue *AliaseeGV;
+    if (auto CE = dyn_cast<llvm::ConstantExpr>(Aliasee)) {
+      assert((CE->getOpcode() == llvm::Instruction::BitCast ||
+              CE->getOpcode() == llvm::Instruction::AddrSpaceCast) &&
+             "Unsupported aliasee");
+      AliaseeGV = cast<llvm::GlobalValue>(CE->getOperand(0));
+    } else {
+      AliaseeGV = cast<llvm::GlobalValue>(Aliasee);
+    }
+    if (auto GA = dyn_cast<llvm::GlobalAlias>(AliaseeGV)) {
+      if (GA->mayBeOverridden()) {
+        getDiags().Report(AA->getLocation(), diag::warn_alias_to_weak_alias)
+          << GA->getAliasedGlobal()->getName() << GA->getName();
+        Aliasee = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
+            GA->getAliasee(), Alias->getType());
+        Alias->setAliasee(Aliasee);
+      }
     }
   }
   if (!Error)
@@ -254,6 +290,12 @@ void CodeGenModule::Release() {
   if (ObjCRuntime)
     if (llvm::Function *ObjCInitFunction = ObjCRuntime->ModuleInitFunction())
       AddGlobalCtor(ObjCInitFunction);
+  if (getCodeGenOpts().ProfileInstrGenerate)
+    if (llvm::Function *PGOInit = CodeGenPGO::emitInitialization(*this))
+      AddGlobalCtor(PGOInit, 0);
+  if (PGOReader && PGOStats.isOutOfDate())
+    getDiags().Report(diag::warn_profile_data_out_of_date)
+        << PGOStats.Visited << PGOStats.Missing << PGOStats.Mismatched;
   EmitCtorList(GlobalCtors, "llvm.global_ctors");
   EmitCtorList(GlobalDtors, "llvm.global_dtors");
   EmitGlobalAnnotations();
@@ -560,7 +602,7 @@ CodeGenModule::getFunctionLinkage(GlobalDecl GD) {
   // explicit instantiations can occur in multiple translation units
   // and must all be equivalent. However, we are not allowed to
   // throw away these explicit instantiations.
-  if (Linkage == GVA_ExplicitTemplateInstantiation)
+  if (Linkage == GVA_StrongODR)
     return !Context.getLangOpts().AppleKext
              ? llvm::Function::WeakODRLinkage
              : llvm::Function::ExternalLinkage;
@@ -631,6 +673,10 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     // Naked implies noinline: we should not be inlining such functions.
     B.addAttribute(llvm::Attribute::Naked);
     B.addAttribute(llvm::Attribute::NoInline);
+  } else if (D->hasAttr<OptimizeNoneAttr>()) {
+    // OptimizeNone implies noinline; we should not be inlining such functions.
+    B.addAttribute(llvm::Attribute::OptimizeNone);
+    B.addAttribute(llvm::Attribute::NoInline);
   } else if (D->hasAttr<NoDuplicateAttr>()) {
     B.addAttribute(llvm::Attribute::NoDuplicate);
   } else if (D->hasAttr<NoInlineAttr>()) {
@@ -649,6 +695,12 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
 
   if (D->hasAttr<MinSizeAttr>())
     B.addAttribute(llvm::Attribute::MinSize);
+
+  if (D->hasAttr<OptimizeNoneAttr>()) {
+    // OptimizeNone wins over OptimizeForSize and MinSize.
+    B.removeAttribute(llvm::Attribute::OptimizeForSize);
+    B.removeAttribute(llvm::Attribute::MinSize);
+  }
 
   if (LangOpts.getStackProtector() == LangOptions::SSPOn)
     B.addAttribute(llvm::Attribute::StackProtect);
@@ -736,7 +788,12 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD,
   if (!IsIncompleteFunction)
     SetLLVMFunctionAttributes(FD, getTypes().arrangeGlobalDeclaration(GD), F);
 
-  if (getCXXABI().HasThisReturn(GD)) {
+  // Add the Returned attribute for "this", except for iOS 5 and earlier
+  // where substantial code, including the libstdc++ dylib, was compiled with
+  // GCC and does not actually return "this".
+  if (getCXXABI().HasThisReturn(GD) &&
+      !(getTarget().getTriple().isiOS() &&
+        getTarget().getTriple().isOSVersionLT(6))) {
     assert(!F->arg_empty() &&
            F->arg_begin()->getType()
              ->canLosslesslyBitCastTo(F->getReturnType()) &&
@@ -1149,12 +1206,14 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
       if (!FD->doesDeclarationForceExternallyVisibleDefinition())
         return;
 
-      const FunctionDecl *InlineDefinition = 0;
-      FD->getBody(InlineDefinition);
-
       StringRef MangledName = getMangledName(GD);
-      DeferredDecls.erase(MangledName);
-      EmitGlobalDefinition(InlineDefinition);
+
+      // Compute the function info and LLVM type.
+      const CGFunctionInfo &FI = getTypes().arrangeGlobalDeclaration(GD);
+      llvm::Type *Ty = getTypes().GetFunctionType(FI);
+
+      GetOrCreateLLVMFunction(MangledName, Ty, GD, /*ForVTable=*/false,
+                              /*DontDefer=*/false);
       return;
     }
   } else {
@@ -1882,6 +1941,34 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D) {
       DI->EmitGlobalVariable(GV, D);
 }
 
+static bool isVarDeclStrongDefinition(const VarDecl *D, bool NoCommon) {
+  // Don't give variables common linkage if -fno-common was specified unless it
+  // was overridden by a NoCommon attribute.
+  if ((NoCommon || D->hasAttr<NoCommonAttr>()) && !D->hasAttr<CommonAttr>())
+    return true;
+
+  // C11 6.9.2/2:
+  //   A declaration of an identifier for an object that has file scope without
+  //   an initializer, and without a storage-class specifier or with the
+  //   storage-class specifier static, constitutes a tentative definition.
+  if (D->getInit() || D->hasExternalStorage())
+    return true;
+
+  // A variable cannot be both common and exist in a section.
+  if (D->hasAttr<SectionAttr>())
+    return true;
+
+  // Thread local vars aren't considered common linkage.
+  if (D->getTLSKind())
+    return true;
+
+  // Tentative definitions marked with WeakImportAttr are true definitions.
+  if (D->hasAttr<WeakImportAttr>())
+    return true;
+
+  return false;
+}
+
 llvm::GlobalValue::LinkageTypes
 CodeGenModule::GetLLVMLinkageVarDefinition(const VarDecl *D, bool isConstant) {
   GVALinkage Linkage = getContext().GetGVALinkageForVariable(D);
@@ -1902,24 +1989,20 @@ CodeGenModule::GetLLVMLinkageVarDefinition(const VarDecl *D, bool isConstant) {
       return llvm::GlobalVariable::WeakODRLinkage;
     else
       return llvm::GlobalVariable::WeakAnyLinkage;
-  } else if (Linkage == GVA_TemplateInstantiation ||
-             Linkage == GVA_ExplicitTemplateInstantiation)
+  } else if (Linkage == GVA_TemplateInstantiation || Linkage == GVA_StrongODR)
     return llvm::GlobalVariable::WeakODRLinkage;
-  else if (!getLangOpts().CPlusPlus && 
-           ((!CodeGenOpts.NoCommon && !D->hasAttr<NoCommonAttr>()) ||
-             D->hasAttr<CommonAttr>()) &&
-           !D->hasExternalStorage() && !D->getInit() &&
-           !D->hasAttr<SectionAttr>() && !D->getTLSKind() &&
-           !D->hasAttr<WeakImportAttr>()) {
-    // Thread local vars aren't considered common linkage.
-    return llvm::GlobalVariable::CommonLinkage;
-  } else if (D->getTLSKind() == VarDecl::TLS_Dynamic &&
-             getTarget().getTriple().isMacOSX())
+  else if (D->getTLSKind() == VarDecl::TLS_Dynamic &&
+           getTarget().getTriple().isMacOSX())
     // On Darwin, the backing variable for a C++11 thread_local variable always
     // has internal linkage; all accesses should just be calls to the
     // Itanium-specified entry point, which has the normal linkage of the
     // variable.
     return llvm::GlobalValue::InternalLinkage;
+  // C++ doesn't have tentative definitions and thus cannot have common linkage.
+  else if (!getLangOpts().CPlusPlus &&
+           !isVarDeclStrongDefinition(D, CodeGenOpts.NoCommon))
+    return llvm::GlobalVariable::CommonLinkage;
+
   return llvm::GlobalVariable::ExternalLinkage;
 }
 
@@ -2148,10 +2231,6 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
     AddGlobalDtor(Fn, DA->getPriority());
   if (D->hasAttr<AnnotateAttr>())
     AddGlobalAnnotations(D, Fn);
-
-  llvm::Function *PGOInit = CodeGenPGO::emitInitialization(*this);
-  if (PGOInit)
-    AddGlobalCtor(PGOInit, 0);
 }
 
 void CodeGenModule::EmitAliasDefinition(GlobalDecl GD) {
@@ -2595,21 +2674,21 @@ CodeGenModule::GetAddrOfConstantStringFromLiteral(const StringLiteral *S) {
   }
 
   if (!GV) {
+    SmallString<256> MangledNameBuffer;
     StringRef GlobalVariableName;
     llvm::GlobalValue::LinkageTypes LT;
-    if (!LangOpts.WritableStrings &&
-        getCXXABI().getMangleContext().shouldMangleStringLiteral(S)) {
-      LT = llvm::GlobalValue::LinkOnceODRLinkage;
 
-      SmallString<256> Buffer;
-      llvm::raw_svector_ostream Out(Buffer);
+    // Mangle the string literal if the ABI allows for it.  However, we cannot
+    // do this if  we are compiling with ASan or -fwritable-strings because they
+    // rely on strings having normal linkage.
+    if (!LangOpts.WritableStrings && !SanOpts.Address &&
+        getCXXABI().getMangleContext().shouldMangleStringLiteral(S)) {
+      llvm::raw_svector_ostream Out(MangledNameBuffer);
       getCXXABI().getMangleContext().mangleStringLiteral(S, Out);
       Out.flush();
 
-      size_t Length = Buffer.size();
-      char *Name = MangledNamesAllocator.Allocate<char>(Length);
-      std::copy(Buffer.begin(), Buffer.end(), Name);
-      GlobalVariableName = StringRef(Name, Length);
+      LT = llvm::GlobalValue::LinkOnceODRLinkage;
+      GlobalVariableName = MangledNameBuffer;
     } else {
       LT = llvm::GlobalValue::PrivateLinkage;;
       GlobalVariableName = ".str";

@@ -11,6 +11,8 @@ struct ExplicitSpec_Exported {};
 struct ExplicitSpec_Def_Exported {};
 struct ExplicitSpec_InlineDef_Exported {};
 struct ExplicitSpec_NotExported {};
+namespace { struct Internal {}; }
+struct External { int v; };
 
 
 // Invalid usage.
@@ -43,9 +45,31 @@ int __declspec(dllexport) GlobalInit2 = 1;
 __declspec(dllexport) extern int GlobalDeclInit;
 int GlobalDeclInit = 1;
 
+// Redeclarations
+__declspec(dllexport) extern int GlobalRedecl1;
+__declspec(dllexport)        int GlobalRedecl1;
+
+__declspec(dllexport) extern int GlobalRedecl2;
+                             int GlobalRedecl2;
+
+                      extern int GlobalRedecl3; // expected-note{{previous declaration is here}}
+__declspec(dllexport) extern int GlobalRedecl3; // expected-error{{redeclaration of 'GlobalRedecl3' cannot add 'dllexport' attribute}}
+
+// External linkage is required.
+__declspec(dllexport) static int StaticGlobal; // expected-error{{'StaticGlobal' must have external linkage when declared 'dllexport'}}
+__declspec(dllexport) Internal InternalTypeGlobal; // expected-error{{'InternalTypeGlobal' must have external linkage when declared 'dllexport'}}
+namespace    { __declspec(dllexport) int InternalGlobal; } // expected-error{{'(anonymous namespace)::InternalGlobal' must have external linkage when declared 'dllexport'}}
+namespace ns { __declspec(dllexport) int ExternalGlobal; }
+
+__declspec(dllexport) auto InternalAutoTypeGlobal = Internal(); // expected-error{{'InternalAutoTypeGlobal' must have external linkage when declared 'dllexport'}}
+__declspec(dllexport) auto ExternalAutoTypeGlobal = External();
+
 // Export in local scope.
 void functionScope() {
+  __declspec(dllexport)        int LocalVarDecl; // expected-error{{'LocalVarDecl' must have external linkage when declared 'dllexport'}}
+  __declspec(dllexport)        int LocalVarDef = 1; // expected-error{{'LocalVarDef' must have external linkage when declared 'dllexport'}}
   __declspec(dllexport) extern int ExternLocalVarDecl;
+  __declspec(dllexport) static int StaticLocalVar; // expected-error{{'StaticLocalVar' must have external linkage when declared 'dllexport'}}
 }
 
 
@@ -84,6 +108,28 @@ __declspec(dllexport) void redecl1() {}
 __declspec(dllexport) void redecl2();
                       void redecl2() {}
 
+                      void redecl3(); // expected-note{{previous declaration is here}}
+__declspec(dllexport) void redecl3(); // expected-error{{redeclaration of 'redecl3' cannot add 'dllexport' attribute}}
+
+// Friend functions
+struct FuncFriend {
+  friend __declspec(dllexport) void friend1();
+  friend __declspec(dllexport) void friend2();
+  friend                       void friend3(); // expected-note{{previous declaration is here}}
+};
+__declspec(dllexport) void friend1() {}
+                      void friend2() {}
+__declspec(dllexport) void friend3() {} // expected-error{{redeclaration of 'friend3' cannot add 'dllexport' attribute}}
+
+// Implicit declarations can be redeclared with dllexport.
+__declspec(dllexport) void* operator new(__SIZE_TYPE__ n);
+
+// External linkage is required.
+__declspec(dllexport) static int staticFunc(); // expected-error{{'staticFunc' must have external linkage when declared 'dllexport'}}
+__declspec(dllexport) Internal internalRetFunc(); // expected-error{{'internalRetFunc' must have external linkage when declared 'dllexport'}}
+namespace    { __declspec(dllexport) void internalFunc() {} } // expected-error{{'(anonymous namespace)::internalFunc' must have external linkage when declared 'dllexport'}}
+namespace ns { __declspec(dllexport) void externalFunc() {} }
+
 
 
 //===----------------------------------------------------------------------===//
@@ -104,8 +150,24 @@ template<typename T> __declspec(dllexport) void funcTmplRedecl1() {}
 template<typename T> __declspec(dllexport) void funcTmplRedecl2();
 template<typename T>                       void funcTmplRedecl2() {}
 
-template<typename T> __declspec(dllexport) void funcTmplRedecl3();
-template<typename T>                       void funcTmplRedecl3() {}
+template<typename T>                       void funcTmplRedecl3(); // expected-note{{previous declaration is here}}
+template<typename T> __declspec(dllexport) void funcTmplRedecl3(); // expected-error{{redeclaration of 'funcTmplRedecl3' cannot add 'dllexport' attribute}}
+
+// Function template friends
+struct FuncTmplFriend {
+  template<typename T> friend __declspec(dllexport) void funcTmplFriend1();
+  template<typename T> friend __declspec(dllexport) void funcTmplFriend2();
+  template<typename T> friend                       void funcTmplFriend3(); // expected-note{{previous declaration is here}}
+};
+template<typename T> __declspec(dllexport) void funcTmplFriend1() {}
+template<typename T>                       void funcTmplFriend2() {}
+template<typename T> __declspec(dllexport) void funcTmplFriend3() {} // expected-error{{redeclaration of 'funcTmplFriend3' cannot add 'dllexport' attribute}}
+
+// External linkage is required.
+template<typename T> __declspec(dllexport) static int staticFuncTmpl(); // expected-error{{'staticFuncTmpl' must have external linkage when declared 'dllexport'}}
+template<typename T> __declspec(dllexport) Internal internalRetFuncTmpl(); // expected-error{{'internalRetFuncTmpl' must have external linkage when declared 'dllexport'}}
+namespace    { template<typename T> __declspec(dllexport) void internalFuncTmpl(); } // expected-error{{'(anonymous namespace)::internalFuncTmpl' must have external linkage when declared 'dllexport'}}
+namespace ns { template<typename T> __declspec(dllexport) void externalFuncTmpl(); }
 
 
 template<typename T> void funcTmpl() {}

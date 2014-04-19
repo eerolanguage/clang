@@ -105,6 +105,7 @@ unsigned __int64 __rdtsc(void);
 unsigned __int64 __rdtscp(unsigned int *);
 unsigned long __readcr0(void);
 unsigned long __readcr2(void);
+static __inline__
 unsigned long __readcr3(void);
 unsigned long __readcr4(void);
 unsigned long __readcr8(void);
@@ -119,6 +120,7 @@ unsigned __int64 __readfsqword(unsigned long);
 static __inline__
 unsigned short __readfsword(unsigned long);
 #endif
+static __inline__
 unsigned __int64 __readmsr(unsigned long);
 unsigned __int64 __readpmc(unsigned long);
 unsigned long __segmentlimit(unsigned long);
@@ -143,6 +145,7 @@ void __vmx_off(void);
 void __vmx_vmptrst(unsigned __int64 *);
 void __wbinvd(void);
 void __writecr0(unsigned int);
+static __inline__
 void __writecr3(unsigned int);
 void __writecr4(unsigned int);
 void __writecr8(unsigned int);
@@ -422,6 +425,7 @@ static __inline__
 __int64 _InterlockedExchange64(__int64 volatile *_Target, __int64 _Value);
 static __inline__
 __int64 _InterlockedExchangeAdd64(__int64 volatile *_Addend, __int64 _Value);
+static __inline__
 void *_InterlockedExchangePointer(void *volatile *_Target, void *_Value);
 static __inline__
 __int64 _InterlockedIncrement64(__int64 volatile *_Addend);
@@ -795,6 +799,11 @@ _InterlockedExchange64(__int64 volatile *_Target, __int64 _Value) {
   __atomic_exchange(_Target, &_Value, &_Value, 0);
   return _Value;
 }
+static __inline__ void *__attribute__((__always_inline__, __nodebug__))
+_InterlockedExchangePointer(void *volatile *_Target, void *_Value) {
+  __atomic_exchange(_Target, &_Value, &_Value, 0);
+  return _Value;
+}
 #endif
 /*----------------------------------------------------------------------------*\
 |* Interlocked Compare Exchange
@@ -970,15 +979,38 @@ _xgetbv(unsigned int __xcr_no) {
   __asm__ ("xgetbv" : "=a" (__eax), "=d" (__edx) : "c" (__xcr_no));
   return ((unsigned __int64)__edx << 32) | __eax;
 }
-static __inline__ unsigned __int64 __attribute__((__always_inline__, __nodebug__))
-__rdtsc(void) {
-  unsigned int __eax, __edx;
-  __asm__ ("rdtsc" : "=a" (__eax), "=d" (__edx));
-  return ((unsigned __int64)__edx << 32) | __eax;
-}
 static __inline__ void __attribute__((__always_inline__, __nodebug__))
 __halt(void) {
   __asm__ volatile ("hlt");
+}
+
+/*----------------------------------------------------------------------------*\
+|* Privileged intrinsics
+\*----------------------------------------------------------------------------*/
+static __inline__ unsigned __int64 __attribute__((__always_inline__, __nodebug__))
+__readmsr(unsigned long __register) {
+  // Loads the contents of a 64-bit model specific register (MSR) specified in
+  // the ECX register into registers EDX:EAX. The EDX register is loaded with
+  // the high-order 32 bits of the MSR and the EAX register is loaded with the
+  // low-order 32 bits. If less than 64 bits are implemented in the MSR being
+  // read, the values returned to EDX:EAX in unimplemented bit locations are
+  // undefined.
+  unsigned long __edx;
+  unsigned long __eax;
+  __asm__ ("rdmsr" : "=d"(__edx), "=a"(__eax) : "c"(__register));
+  return (((unsigned __int64)__edx) << 32) | (unsigned __int64)__eax;
+}
+
+static __inline__ unsigned long __attribute__((always_inline, __nodebug__))
+__readcr3(void) {
+  unsigned long __cr3_val;
+  __asm__ __volatile__ ("mov %%cr3, %0" : "=q"(__cr3_val) : : "memory");
+  return __cr3_val;
+}
+
+static __inline__ void __attribute__((always_inline, __nodebug__))
+__writecr3(unsigned int __cr3_val) {
+  __asm__ ("mov %0, %%cr3" : : "q"(__cr3_val) : "memory");
 }
 
 #ifdef __cplusplus

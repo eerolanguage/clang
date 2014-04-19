@@ -63,6 +63,13 @@ enum FloatingRank {
 RawComment *ASTContext::getRawCommentForDeclNoCache(const Decl *D) const {
   if (!CommentsLoaded && ExternalSource) {
     ExternalSource->ReadComments();
+
+#ifndef NDEBUG
+    ArrayRef<RawComment *> RawComments = Comments.getComments();
+    assert(std::is_sorted(RawComments.begin(), RawComments.end(),
+                          BeforeThanCompare<RawComment>(SourceMgr)));
+#endif
+
     CommentsLoaded = true;
   }
 
@@ -138,11 +145,23 @@ RawComment *ASTContext::getRawCommentForDeclNoCache(const Decl *D) const {
     DeclLoc = D->getLocStart();
   else {
     DeclLoc = D->getLocation();
-    // If location of the typedef name is in a macro, it is because being
-    // declared via a macro. Try using declaration's starting location
-    // as the "declaration location".
-    if (DeclLoc.isMacroID() && isa<TypedefDecl>(D))
-      DeclLoc = D->getLocStart();
+    if (DeclLoc.isMacroID()) {
+      if (isa<TypedefDecl>(D)) {
+        // If location of the typedef name is in a macro, it is because being
+        // declared via a macro. Try using declaration's starting location as
+        // the "declaration location".
+        DeclLoc = D->getLocStart();
+      } else if (const TagDecl *TD = dyn_cast<TagDecl>(D)) {
+        // If location of the tag decl is inside a macro, but the spelling of
+        // the tag name comes from a macro argument, it looks like a special
+        // macro like NS_ENUM is being used to define the tag decl.  In that
+        // case, adjust the source location to the expansion loc so that we can
+        // attach the comment to the tag decl.
+        if (SourceMgr.isMacroArgExpansion(DeclLoc) &&
+            TD->isCompleteDefinition())
+          DeclLoc = SourceMgr.getExpansionLoc(DeclLoc);
+      }
+    }
   }
 
   // If the declaration doesn't map directly to a location in a file, we
@@ -659,6 +678,7 @@ CXXABI *ASTContext::createCXXABI(const TargetInfo &T) {
   switch (T.getCXXABI().getKind()) {
   case TargetCXXABI::GenericARM:
   case TargetCXXABI::iOS:
+  case TargetCXXABI::iOS64:
     return CreateARMCXXABI(*this);
   case TargetCXXABI::GenericAArch64: // Same as Itanium at this level
   case TargetCXXABI::GenericItanium:
@@ -1302,7 +1322,9 @@ CharUnits ASTContext::getDeclAlign(const Decl *D, bool ForAlignof) const {
             Align = std::max(Align, Target->getLargeArrayAlign());
         }
 
-        // Walk through any array types while we're at it.
+        // Keep track of extra alignment requirements on the array itself, then
+        // work with the element type.
+        Align = std::max(Align, getPreferredTypeAlign(T.getTypePtr()));
         T = getBaseElementType(arrayType);
       }
       Align = std::max(Align, getPreferredTypeAlign(T.getTypePtr()));
@@ -3539,12 +3561,28 @@ bool ASTContext::QIdProtocolsAdoptObjCObjectProtocols(QualType QT,
   CollectInheritedProtocols(IDecl, InheritedProtocols);
   if (InheritedProtocols.empty())
     return false;
-      
+  // Check that if every protocol in list of id<plist> conforms to a protcol
+  // of IDecl's, then bridge casting is ok.
+  bool Conforms = false;
+  for (auto *Proto : OPT->quals()) {
+    Conforms = false;
+    for (auto *PI : InheritedProtocols) {
+      if (ProtocolCompatibleWithProtocol(Proto, PI)) {
+        Conforms = true;
+        break;
+      }
+    }
+    if (!Conforms)
+      break;
+  }
+  if (Conforms)
+    return true;
+  
   for (auto *PI : InheritedProtocols) {
     // If both the right and left sides have qualifiers.
     bool Adopts = false;
     for (auto *Proto : OPT->quals()) {
-      // return 'true' if '*PI' is in the inheritance hierarchy of Proto
+      // return 'true' if 'PI' is in the inheritance hierarchy of Proto
       if ((Adopts = ProtocolCompatibleWithProtocol(PI, Proto)))
         break;
     }
@@ -4998,6 +5036,8 @@ void ASTContext::getObjCEncodingForPropertyDecl(const ObjCPropertyDecl *PD,
       S += ",C";
     if (PD->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_retain)
       S += ",&";
+    if (PD->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_weak)
+      S += ",W";
   } else {
     switch (PD->getSetterKind()) {
     case ObjCPropertyDecl::Assign: break;
@@ -7710,7 +7750,7 @@ QualType ASTContext::GetBuiltinType(unsigned Id,
   return getFunctionType(ResType, ArgTypes, EPI);
 }
 
-GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) {
+GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
   if (!FD->isExternallyVisible())
     return GVA_Internal;
 
@@ -7722,7 +7762,7 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) {
     break;
 
   case TSK_ExplicitInstantiationDefinition:
-    return GVA_ExplicitTemplateInstantiation;
+    return GVA_StrongODR;
 
   case TSK_ExplicitInstantiationDeclaration:
   case TSK_ImplicitInstantiation:
@@ -7754,6 +7794,12 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) {
                                        == TSK_ExplicitInstantiationDeclaration)
     return GVA_C99Inline;
 
+  // Functions specified with extern and inline in -fms-compatibility mode
+  // forcibly get emitted.  While the body of the function cannot be later
+  // replaced, the function definition cannot be discarded.
+  if (FD->getMostRecentDecl()->isMSExternInline())
+    return GVA_StrongODR;
+
   return GVA_CXXInline;
 }
 
@@ -7771,7 +7817,7 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
   // Fall through to treat this like any other instantiation.
 
   case TSK_ExplicitInstantiationDefinition:
-    return GVA_ExplicitTemplateInstantiation;
+    return GVA_StrongODR;
 
   case TSK_ImplicitInstantiation:
     return GVA_TemplateInstantiation;
@@ -7888,6 +7934,7 @@ MangleContext *ASTContext::createMangleContext() {
   case TargetCXXABI::GenericItanium:
   case TargetCXXABI::GenericARM:
   case TargetCXXABI::iOS:
+  case TargetCXXABI::iOS64:
     return ItaniumMangleContext::create(*this, getDiagnostics());
   case TargetCXXABI::Microsoft:
     return MicrosoftMangleContext::create(*this, getDiagnostics());

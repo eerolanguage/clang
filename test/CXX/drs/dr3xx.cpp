@@ -82,7 +82,7 @@ namespace dr304 { // dr304: yes
 #endif
 }
 
-namespace dr305 { // dr305: yes
+namespace dr305 { // dr305: no
   struct A {
     typedef A C;
   };
@@ -109,6 +109,18 @@ namespace dr305 { // dr305: yes
     x->~X<char>(); // expected-error {{no member named}}
   }
 
+  // FIXME: This appears to be valid (but allowing the nested types might be a
+  // defect).
+  template<typename> struct Nested {
+    template<typename> struct Nested {};
+  };
+  void testNested(Nested<int> n) { n.~Nested<int>(); } // expected-error {{no member named}}
+#if __cplusplus < 201103L
+  // expected-error@-2 {{ambiguous}}
+  // expected-note@-6 {{here}}
+  // expected-note@-6 {{here}}
+#endif
+
 #if __cplusplus >= 201103L
   struct Y {
     template<typename T> using T1 = Y;
@@ -127,6 +139,13 @@ namespace dr305 { // dr305: yes
     z->~T2<int>(); // expected-error {{no member named '~int'}}
     z->~T2<Z>();
   }
+
+  // FIXME: This is valid.
+  namespace Q {
+    template<typename A> struct R {};
+  }
+  template<typename A> using R = Q::R<int>;
+  void qr(Q::R<int> x) { x.~R<char>(); } // expected-error {{no member named}}
 #endif
 }
 
@@ -192,9 +211,9 @@ namespace dr314 { // dr314: dup 1710
 // dr315: na
 // dr316: sup 1004
 
-namespace dr317 { // dr317: no
-  void f() {}
-  inline void f(); // FIXME: ill-formed
+namespace dr317 { // dr317: 3.5
+  void f() {} // expected-note {{previous}}
+  inline void f(); // expected-error {{inline declaration of 'f' follows non-inline definition}}
 
   int g();
   int n = g();
@@ -202,8 +221,8 @@ namespace dr317 { // dr317: no
 
   int h();
   int m = h();
-  int h() { return 0; }
-  inline int h(); // FIXME: ill-formed
+  int h() { return 0; } // expected-note {{previous}}
+  inline int h(); // expected-error {{inline declaration of 'h' follows non-inline definition}}
 }
 
 namespace dr318 { // dr318: sup 1310

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 %s -fcxx-exceptions -fexceptions -fsyntax-only -verify -fblocks -std=c++11 -Wunreachable-code-aggressive -Wno-unused-value
+// RUN: %clang_cc1 %s -fcxx-exceptions -fexceptions -fsyntax-only -verify -fblocks -std=c++11 -Wunreachable-code-aggressive -Wno-unused-value -Wno-tautological-compare
 
 int &halt() __attribute__((noreturn));
 int &live();
@@ -294,3 +294,116 @@ void test_unreachable_forrange_increment() {
   }
 }
 
+void calledFun() {}
+
+// Test "silencing" with parentheses.
+void test_with_paren_silencing(int x) {
+  if (false) calledFun(); // expected-warning {{will never be executed}} expected-note {{silence by adding parentheses to mark code as explicitly dead}}
+  if ((false)) calledFun(); // no-warning
+
+  if (true) // expected-note {{silence by adding parentheses to mark code as explicitly dead}}
+    calledFun();
+  else
+    calledFun(); // expected-warning {{will never be executed}}
+
+  if ((true))
+    calledFun();
+  else
+    calledFun(); // no-warning
+  
+  if (!true) // expected-note {{silence by adding parentheses to mark code as explicitly dead}}
+    calledFun(); // expected-warning {{code will never be executed}}
+  else
+    calledFun();
+  
+  if ((!true))
+    calledFun(); // no-warning
+  else
+    calledFun();
+  
+  if (!(true))
+    calledFun(); // no-warning
+  else
+    calledFun();
+}
+
+void test_with_paren_silencing_impcast(int x) {
+  if (0) calledFun(); // expected-warning {{will never be executed}} expected-note {{silence by adding parentheses to mark code as explicitly dead}}
+  if ((0)) calledFun(); // no-warning
+
+  if (1) // expected-note {{silence by adding parentheses to mark code as explicitly dead}}
+    calledFun();
+  else
+    calledFun(); // expected-warning {{will never be executed}}
+
+  if ((1))
+    calledFun();
+  else
+    calledFun(); // no-warning
+  
+  if (!1) // expected-note {{silence by adding parentheses to mark code as explicitly dead}}
+    calledFun(); // expected-warning {{code will never be executed}}
+  else
+    calledFun();
+  
+  if ((!1))
+    calledFun(); // no-warning
+  else
+    calledFun();
+  
+  if (!(1))
+    calledFun(); // no-warning
+  else
+    calledFun();
+}
+
+void tautological_compare(bool x, int y) {
+  if (x > 10)           // expected-note {{silence}}
+    calledFun();        // expected-warning {{will never be executed}}
+  if (10 < x)           // expected-note {{silence}}
+    calledFun();        // expected-warning {{will never be executed}}
+  if (x == 10)          // expected-note {{silence}}
+    calledFun();        // expected-warning {{will never be executed}}
+
+  if (x < 10)           // expected-note {{silence}}
+    calledFun();
+  else
+    calledFun();        // expected-warning {{will never be executed}}
+  if (10 > x)           // expected-note {{silence}}
+    calledFun();
+  else
+    calledFun();        // expected-warning {{will never be executed}}
+  if (x != 10)          // expected-note {{silence}}
+    calledFun();
+  else
+    calledFun();        // expected-warning {{will never be executed}}
+
+  if (y != 5 && y == 5) // expected-note {{silence}}
+    calledFun();        // expected-warning {{will never be executed}}
+
+  if (y > 5 && y < 4)   // expected-note {{silence}}
+    calledFun();        // expected-warning {{will never be executed}}
+
+  if (y < 10 || y > 5)  // expected-note {{silence}}
+    calledFun();
+  else
+    calledFun();        // expected-warning {{will never be executed}}
+
+  // TODO: Extend warning to the following code:
+  if (x < -1)
+    calledFun();
+  if (x == -1)
+    calledFun();
+
+  if (x != -1)
+    calledFun();
+  else
+    calledFun();
+  if (-1 > x)
+    calledFun();
+  else
+    calledFun();
+
+  if (y == -1 && y != -1)
+    calledFun();
+}

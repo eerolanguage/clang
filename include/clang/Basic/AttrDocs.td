@@ -27,6 +27,14 @@ This page lists the attributes currently supported by Clang.
 }];
 }
 
+def SectionDocs : Documentation {
+  let Category = DocCatVariable;
+  let Content = [{
+The ``section`` attribute allows you to specify a specific section a
+global variable or function should be in after translation.
+  }];
+}
+
 def TLSModelDocs : Documentation {
   let Category = DocCatVariable;
   let Content = [{
@@ -577,6 +585,15 @@ The semantics are as follows:
   }];
 }
 
+def PcsDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+On ARM targets, this can attribute can be used to select calling conventions,
+similar to ``stdcall`` on x86. Valid parameter values are "aapcs" and
+"aapcs-vfp".
+  }];
+}
+
 def DocCatConsumed : DocumentationCategory<"Consumed Annotation Checking"> {
   let Content = [{
 Clang supports additional attributes for checking basic resource management
@@ -943,3 +960,19 @@ an error:
   struct S {};
 }];
 }
+
+def OptnoneDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+The ``optnone`` attribute suppresses essentially all optimizations
+on a function or method, regardless of the optimization level applied to
+the compilation unit as a whole.  This is particularly useful when you
+need to debug a particular function, but it is infeasible to build the
+entire application without optimization.  Avoiding optimization on the
+specified function can improve the quality of the debugging information
+for that function.
+
+This attribute is incompatible with the ``always_inline`` attribute.
+  }];
+}
+

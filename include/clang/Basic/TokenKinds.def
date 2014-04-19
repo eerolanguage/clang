@@ -370,6 +370,7 @@ KEYWORD(typeof                      , KEYGNU)
 
 // MS Extensions
 KEYWORD(__FUNCDNAME__               , KEYMS)
+KEYWORD(__FUNCSIG__                 , KEYMS)
 KEYWORD(L__FUNCTION__               , KEYMS)
 TYPE_TRAIT_1(__is_interface_class, IsInterfaceClass, KEYMS)
 TYPE_TRAIT_1(__is_sealed, IsSealed, KEYMS)
@@ -706,6 +707,11 @@ ANNOTATION(pragma_ms_pointers_to_members)
 // The lexer produces these so that they only take effect when the parser
 // handles them.
 ANNOTATION(pragma_ms_vtordisp)
+
+// Annotation for all microsoft #pragmas...
+// The lexer produces these so that they only take effect when the parser
+// handles them.
+ANNOTATION(pragma_ms_pragma)
 
 // Annotation for #pragma OPENCL EXTENSION...
 // The lexer produces these so that they only take effect when the parser

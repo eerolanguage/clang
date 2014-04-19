@@ -768,6 +768,8 @@ static void PrintCursor(CXCursor Cursor,
       printf(" (static)");
     if (clang_CXXMethod_isVirtual(Cursor))
       printf(" (virtual)");
+    if (clang_CXXMethod_isConst(Cursor))
+      printf(" (const)");
     if (clang_CXXMethod_isPureVirtual(Cursor))
       printf(" (pure)");
     if (clang_Cursor_isVariadic(Cursor))
@@ -1293,6 +1295,13 @@ static enum CXChildVisitResult PrintType(CXCursor cursor, CXCursor p,
     }
     /* Print if this is a non-POD type. */
     printf(" [isPOD=%d]", clang_isPODType(T));
+    /* Print the pointee type. */
+    {
+      CXType PT = clang_getPointeeType(T);
+      if (PT.kind != CXType_Invalid) {
+        PrintTypeAndTypeKind(PT, " [pointeetype=%s] [pointeekind=%s]");
+      }
+    }
 
     printf("\n");
   }

@@ -10,18 +10,21 @@
 // A intra-procedural analysis for thread safety (e.g. deadlocks and race
 // conditions), based off of an annotation system.
 //
-// See http://clang.llvm.org/docs/LanguageExtensions.html#thread-safety-annotation-checking
+// See http://clang.llvm.org/docs/ThreadSafetyAnalysis.html
 // for more information.
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Analysis/Analyses/ThreadSafety.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Analysis/Analyses/PostOrderCFGView.h"
+#include "clang/Analysis/Analyses/ThreadSafety.h"
+#include "clang/Analysis/Analyses/ThreadSafetyTIL.h"
+#include "clang/Analysis/Analyses/ThreadSafetyTraverse.h"
+#include "clang/Analysis/Analyses/ThreadSafetyCommon.h"
 #include "clang/Analysis/AnalysisContext.h"
 #include "clang/Analysis/CFG.h"
 #include "clang/Analysis/CFGStmtMap.h"
@@ -564,15 +567,15 @@ public:
 
   /// Issue a warning about an invalid lock expression
   static void warnInvalidLock(ThreadSafetyHandler &Handler,
-                              const Expr *MutexExp,
-                              const Expr *DeclExp, const NamedDecl* D) {
+                              const Expr *MutexExp, const Expr *DeclExp,
+                              const NamedDecl *D, StringRef Kind) {
     SourceLocation Loc;
     if (DeclExp)
       Loc = DeclExp->getExprLoc();
 
     // FIXME: add a note about the attribute location in MutexExp or D
     if (Loc.isValid())
-      Handler.handleInvalidLockExp(Loc);
+      Handler.handleInvalidLockExp(Kind, Loc);
   }
 
   bool operator==(const SExpr &other) const {
@@ -1066,8 +1069,8 @@ public:
   }
 
   /// Builds the variable map.
-  void traverseCFG(CFG *CFGraph, PostOrderCFGView *SortedGraph,
-                     std::vector<CFGBlockInfo> &BlockInfo);
+  void traverseCFG(CFG *CFGraph, const PostOrderCFGView *SortedGraph,
+                   std::vector<CFGBlockInfo> &BlockInfo);
 
 protected:
   // Get the current context index
@@ -1286,15 +1289,13 @@ void LocalVariableMap::intersectBackEdge(Context C1, Context C2) {
 //   ...                 { y -> y1           | x3 = 2, x2 = 1, ... }
 //
 void LocalVariableMap::traverseCFG(CFG *CFGraph,
-                                   PostOrderCFGView *SortedGraph,
+                                   const PostOrderCFGView *SortedGraph,
                                    std::vector<CFGBlockInfo> &BlockInfo) {
   PostOrderCFGView::CFGBlockSet VisitedBlocks(CFGraph);
 
   CtxIndices.resize(CFGraph->getNumBlockIDs());
 
-  for (PostOrderCFGView::iterator I = SortedGraph->begin(),
-       E = SortedGraph->end(); I!= E; ++I) {
-    const CFGBlock *CurrBlock = *I;
+  for (const auto *CurrBlock : *SortedGraph) {
     int CurrBlockID = CurrBlock->getBlockID();
     CFGBlockInfo *CurrBlockInfo = &BlockInfo[CurrBlockID];
 
@@ -1373,11 +1374,9 @@ void LocalVariableMap::traverseCFG(CFG *CFGraph,
 /// Find the appropriate source locations to use when producing diagnostics for
 /// each block in the CFG.
 static void findBlockLocations(CFG *CFGraph,
-                               PostOrderCFGView *SortedGraph,
+                               const PostOrderCFGView *SortedGraph,
                                std::vector<CFGBlockInfo> &BlockInfo) {
-  for (PostOrderCFGView::iterator I = SortedGraph->begin(),
-       E = SortedGraph->end(); I!= E; ++I) {
-    const CFGBlock *CurrBlock = *I;
+  for (const auto *CurrBlock : *SortedGraph) {
     CFGBlockInfo *CurrBlockInfo = &BlockInfo[CurrBlock->getBlockID()];
 
     // Find the source location of the last statement in the block, if the
@@ -1428,9 +1427,10 @@ class ThreadSafetyAnalyzer {
 public:
   ThreadSafetyAnalyzer(ThreadSafetyHandler &H) : Handler(H) {}
 
-  void addLock(FactSet &FSet, const SExpr &Mutex, const LockData &LDat);
-  void removeLock(FactSet &FSet, const SExpr &Mutex,
-                  SourceLocation UnlockLoc, bool FullyRemove, LockKind Kind);
+  void addLock(FactSet &FSet, const SExpr &Mutex, const LockData &LDat,
+               StringRef DiagKind);
+  void removeLock(FactSet &FSet, const SExpr &Mutex, SourceLocation UnlockLoc,
+                  bool FullyRemove, LockKind Kind, StringRef DiagKind);
 
   template <typename AttrType>
   void getMutexIDs(MutexIDList &Mtxs, AttrType *Attr, Expr *Exp,
@@ -1463,12 +1463,89 @@ public:
   void runAnalysis(AnalysisDeclContext &AC);
 };
 
+/// \brief Gets the value decl pointer from DeclRefExprs or MemberExprs.
+static const ValueDecl *getValueDecl(const Expr *Exp) {
+  if (const auto *CE = dyn_cast<ImplicitCastExpr>(Exp))
+    return getValueDecl(CE->getSubExpr());
+
+  if (const auto *DR = dyn_cast<DeclRefExpr>(Exp))
+    return DR->getDecl();
+
+  if (const auto *ME = dyn_cast<MemberExpr>(Exp))
+    return ME->getMemberDecl();
+
+  return nullptr;
+}
+
+template <typename Ty>
+class has_arg_iterator {
+  typedef char yes[1];
+  typedef char no[2];
+
+  template <typename Inner>
+  static yes& test(Inner *I, decltype(I->args_begin()) * = nullptr);
+
+  template <typename>
+  static no& test(...);
+
+public:
+  static const bool value = sizeof(test<Ty>(nullptr)) == sizeof(yes);
+};
+
+static StringRef ClassifyDiagnostic(const CapabilityAttr *A) {
+  return A->getName();
+}
+
+static StringRef ClassifyDiagnostic(QualType VDT) {
+  // We need to look at the declaration of the type of the value to determine
+  // which it is. The type should either be a record or a typedef, or a pointer
+  // or reference thereof.
+  if (const auto *RT = VDT->getAs<RecordType>()) {
+    if (const auto *RD = RT->getDecl())
+      if (const auto *CA = RD->getAttr<CapabilityAttr>())
+        return ClassifyDiagnostic(CA);
+  } else if (const auto *TT = VDT->getAs<TypedefType>()) {
+    if (const auto *TD = TT->getDecl())
+      if (const auto *CA = TD->getAttr<CapabilityAttr>())
+        return ClassifyDiagnostic(CA);
+  } else if (VDT->isPointerType() || VDT->isReferenceType())
+    return ClassifyDiagnostic(VDT->getPointeeType());
+
+  return "mutex";
+}
+
+static StringRef ClassifyDiagnostic(const ValueDecl *VD) {
+  assert(VD && "No ValueDecl passed");
+
+  // The ValueDecl is the declaration of a mutex or role (hopefully).
+  return ClassifyDiagnostic(VD->getType());
+}
+
+template <typename AttrTy>
+static typename std::enable_if<!has_arg_iterator<AttrTy>::value,
+                               StringRef>::type
+ClassifyDiagnostic(const AttrTy *A) {
+  if (const ValueDecl *VD = getValueDecl(A->getArg()))
+    return ClassifyDiagnostic(VD);
+  return "mutex";
+}
+
+template <typename AttrTy>
+static typename std::enable_if<has_arg_iterator<AttrTy>::value,
+                               StringRef>::type
+ClassifyDiagnostic(const AttrTy *A) {
+  for (auto I = A->args_begin(), E = A->args_end(); I != E; ++I) {
+    if (const ValueDecl *VD = getValueDecl(*I))
+      return ClassifyDiagnostic(VD);
+  }
+  return "mutex";
+}
 
 /// \brief Add a new lock to the lockset, warning if the lock is already there.
 /// \param Mutex -- the Mutex expression for the lock
 /// \param LDat  -- the LockData for the lock
 void ThreadSafetyAnalyzer::addLock(FactSet &FSet, const SExpr &Mutex,
-                                   const LockData &LDat) {
+                                   const LockData &LDat, StringRef DiagKind) {
   // FIXME: deal with acquired before/after annotations.
   // FIXME: Don't always warn when we have support for reentrant locks.
   if (Mutex.shouldIgnore())
@@ -1476,7 +1553,7 @@ void ThreadSafetyAnalyzer::addLock(FactSet &FSet, const SExpr &Mutex,
 
   if (FSet.findLock(FactMan, Mutex)) {
     if (!LDat.Asserted)
-      Handler.handleDoubleLock(Mutex.toString(), LDat.AcquireLoc);
+      Handler.handleDoubleLock(DiagKind, Mutex.toString(), LDat.AcquireLoc);
   } else {
     FSet.addLock(FactMan, Mutex, LDat);
   }
@@ -1488,20 +1565,21 @@ void ThreadSafetyAnalyzer::addLock(FactSet &FSet, const SExpr &Mutex,
 /// \param UnlockLoc The source location of the unlock (only used in error msg)
 void ThreadSafetyAnalyzer::removeLock(FactSet &FSet, const SExpr &Mutex,
                                       SourceLocation UnlockLoc,
-                                      bool FullyRemove, LockKind ReceivedKind) {
+                                      bool FullyRemove, LockKind ReceivedKind,
+                                      StringRef DiagKind) {
   if (Mutex.shouldIgnore())
     return;
 
   const LockData *LDat = FSet.findLock(FactMan, Mutex);
   if (!LDat) {
-    Handler.handleUnmatchedUnlock(Mutex.toString(), UnlockLoc);
+    Handler.handleUnmatchedUnlock(DiagKind, Mutex.toString(), UnlockLoc);
     return;
   }
 
   // Generic lock removal doesn't care about lock kind mismatches, but
   // otherwise diagnose when the lock kinds are mismatched.
   if (ReceivedKind != LK_Generic && LDat->LKind != ReceivedKind) {
-    Handler.handleIncorrectUnlockKind(Mutex.toString(), LDat->LKind,
+    Handler.handleIncorrectUnlockKind(DiagKind, Mutex.toString(), LDat->LKind,
                                       ReceivedKind, UnlockLoc);
     return;
   }
@@ -1517,8 +1595,8 @@ void ThreadSafetyAnalyzer::removeLock(FactSet &FSet, const SExpr &Mutex,
       // We're releasing the underlying mutex, but not destroying the
       // managing object.  Warn on dual release.
       if (!FSet.findLock(FactMan, LDat->UnderlyingMutex)) {
-        Handler.handleUnmatchedUnlock(LDat->UnderlyingMutex.toString(),
-                                      UnlockLoc);
+        Handler.handleUnmatchedUnlock(
+            DiagKind, LDat->UnderlyingMutex.toString(), UnlockLoc);
       }
       FSet.removeLock(FactMan, LDat->UnderlyingMutex);
       return;
@@ -1540,7 +1618,7 @@ void ThreadSafetyAnalyzer::getMutexIDs(MutexIDList &Mtxs, AttrType *Attr,
     // The mutex held is the "this" object.
     SExpr Mu(0, Exp, D, SelfDecl);
     if (!Mu.isValid())
-      SExpr::warnInvalidLock(Handler, 0, Exp, D);
+      SExpr::warnInvalidLock(Handler, 0, Exp, D, ClassifyDiagnostic(Attr));
     else
       Mtxs.push_back_nodup(Mu);
     return;
@@ -1549,7 +1627,7 @@ void ThreadSafetyAnalyzer::getMutexIDs(MutexIDList &Mtxs, AttrType *Attr,
   for (iterator_type I=Attr->args_begin(), E=Attr->args_end(); I != E; ++I) {
     SExpr Mu(*I, Exp, D, SelfDecl);
     if (!Mu.isValid())
-      SExpr::warnInvalidLock(Handler, *I, Exp, D);
+      SExpr::warnInvalidLock(Handler, *I, Exp, D, ClassifyDiagnostic(Attr));
     else
       Mtxs.push_back_nodup(Mu);
   }
@@ -1682,6 +1760,7 @@ void ThreadSafetyAnalyzer::getEdgeLockset(FactSet& Result,
   bool Negate = false;
   const CFGBlockInfo *PredBlockInfo = &BlockInfo[PredBlock->getBlockID()];
   const LocalVarContext &LVarCtx = PredBlockInfo->ExitContext;
+  StringRef CapDiagKind = "mutex";
 
   CallExpr *Exp =
     const_cast<CallExpr*>(getTrylockCallExpr(Cond, LVarCtx, Negate));
@@ -1705,6 +1784,7 @@ void ThreadSafetyAnalyzer::getEdgeLockset(FactSet& Result,
           cast<ExclusiveTrylockFunctionAttr>(Attr);
         getMutexIDs(ExclusiveLocksToAdd, A, Exp, FunDecl,
                     PredBlock, CurrBlock, A->getSuccessValue(), Negate);
+        CapDiagKind = ClassifyDiagnostic(A);
         break;
       }
       case attr::SharedTrylockFunction: {
@@ -1712,6 +1792,7 @@ void ThreadSafetyAnalyzer::getEdgeLockset(FactSet& Result,
           cast<SharedTrylockFunctionAttr>(Attr);
         getMutexIDs(SharedLocksToAdd, A, Exp, FunDecl,
                     PredBlock, CurrBlock, A->getSuccessValue(), Negate);
+        CapDiagKind = ClassifyDiagnostic(A);
         break;
       }
       default:
@@ -1721,16 +1802,12 @@ void ThreadSafetyAnalyzer::getEdgeLockset(FactSet& Result,
 
   // Add and remove locks.
   SourceLocation Loc = Exp->getExprLoc();
-  for (unsigned i=0,n=ExclusiveLocksToAdd.size(); i<n; ++i) {
-    addLock(Result, ExclusiveLocksToAdd[i],
-            LockData(Loc, LK_Exclusive));
-  }
-  for (unsigned i=0,n=SharedLocksToAdd.size(); i<n; ++i) {
-    addLock(Result, SharedLocksToAdd[i],
-            LockData(Loc, LK_Shared));
-  }
+  for (const auto &ExclusiveLockToAdd : ExclusiveLocksToAdd)
+    addLock(Result, ExclusiveLockToAdd, LockData(Loc, LK_Exclusive),
+            CapDiagKind);
+  for (const auto &SharedLockToAdd : SharedLocksToAdd)
+    addLock(Result, SharedLockToAdd, LockData(Loc, LK_Shared), CapDiagKind);
 }
-
 
 /// \brief We use this class to visit different types of expressions in
 /// CFGBlocks, and build up the lockset.
@@ -1746,11 +1823,12 @@ class BuildLockset : public StmtVisitor<BuildLockset> {
   unsigned CtxIndex;
 
   // Helper functions
-  const ValueDecl *getValueDecl(const Expr *Exp);
 
   void warnIfMutexNotHeld(const NamedDecl *D, const Expr *Exp, AccessKind AK,
-                          Expr *MutexExp, ProtectedOperationKind POK);
-  void warnIfMutexHeld(const NamedDecl *D, const Expr *Exp, Expr *MutexExp);
+                          Expr *MutexExp, ProtectedOperationKind POK,
+                          StringRef DiagKind);
+  void warnIfMutexHeld(const NamedDecl *D, const Expr *Exp, Expr *MutexExp,
+                       StringRef DiagKind);
 
   void checkAccess(const Expr *Exp, AccessKind AK);
   void checkPtAccess(const Expr *Exp, AccessKind AK);
@@ -1774,31 +1852,17 @@ public:
   void VisitDeclStmt(DeclStmt *S);
 };
 
-
-/// \brief Gets the value decl pointer from DeclRefExprs or MemberExprs
-const ValueDecl *BuildLockset::getValueDecl(const Expr *Exp) {
-  if (const ImplicitCastExpr *CE = dyn_cast<ImplicitCastExpr>(Exp))
-    return getValueDecl(CE->getSubExpr());
-
-  if (const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(Exp))
-    return DR->getDecl();
-
-  if (const MemberExpr *ME = dyn_cast<MemberExpr>(Exp))
-    return ME->getMemberDecl();
-
-  return 0;
-}
-
 /// \brief Warn if the LSet does not contain a lock sufficient to protect access
 /// of at least the passed in AccessKind.
 void BuildLockset::warnIfMutexNotHeld(const NamedDecl *D, const Expr *Exp,
                                       AccessKind AK, Expr *MutexExp,
-                                      ProtectedOperationKind POK) {
+                                      ProtectedOperationKind POK,
+                                      StringRef DiagKind) {
   LockKind LK = getLockKindFromAccessKind(AK);
 
   SExpr Mutex(MutexExp, Exp, D);
   if (!Mutex.isValid()) {
-    SExpr::warnInvalidLock(Analyzer->Handler, MutexExp, Exp, D);
+    SExpr::warnInvalidLock(Analyzer->Handler, MutexExp, Exp, D, DiagKind);
     return;
   } else if (Mutex.shouldIgnore()) {
     return;
@@ -1814,39 +1878,37 @@ void BuildLockset::warnIfMutexNotHeld(const NamedDecl *D, const Expr *Exp,
       LDat = &FEntry->LDat;
       std::string PartMatchStr = FEntry->MutID.toString();
       StringRef   PartMatchName(PartMatchStr);
-      Analyzer->Handler.handleMutexNotHeld(D, POK, Mutex.toString(), LK,
-                                           Exp->getExprLoc(), &PartMatchName);
+      Analyzer->Handler.handleMutexNotHeld(DiagKind, D, POK, Mutex.toString(),
+                                           LK, Exp->getExprLoc(),
+                                           &PartMatchName);
     } else {
       // Warn that there's no match at all.
-      Analyzer->Handler.handleMutexNotHeld(D, POK, Mutex.toString(), LK,
-                                           Exp->getExprLoc());
+      Analyzer->Handler.handleMutexNotHeld(DiagKind, D, POK, Mutex.toString(),
+                                           LK, Exp->getExprLoc());
     }
     NoError = false;
   }
   // Make sure the mutex we found is the right kind.
   if (NoError && LDat && !LDat->isAtLeast(LK))
-    Analyzer->Handler.handleMutexNotHeld(D, POK, Mutex.toString(), LK,
+    Analyzer->Handler.handleMutexNotHeld(DiagKind, D, POK, Mutex.toString(), LK,
                                          Exp->getExprLoc());
 }
 
 /// \brief Warn if the LSet contains the given lock.
-void BuildLockset::warnIfMutexHeld(const NamedDecl *D, const Expr* Exp,
-                                   Expr *MutexExp) {
+void BuildLockset::warnIfMutexHeld(const NamedDecl *D, const Expr *Exp,
+                                   Expr *MutexExp,
+                                   StringRef DiagKind) {
   SExpr Mutex(MutexExp, Exp, D);
   if (!Mutex.isValid()) {
-    SExpr::warnInvalidLock(Analyzer->Handler, MutexExp, Exp, D);
+    SExpr::warnInvalidLock(Analyzer->Handler, MutexExp, Exp, D, DiagKind);
     return;
   }
 
   LockData* LDat = FSet.findLock(Analyzer->FactMan, Mutex);
-  if (LDat) {
-    std::string DeclName = D->getNameAsString();
-    StringRef   DeclNameSR (DeclName);
-    Analyzer->Handler.handleFunExcludesLock(DeclNameSR, Mutex.toString(),
-                                            Exp->getExprLoc());
-  }
+  if (LDat)
+    Analyzer->Handler.handleFunExcludesLock(
+        DiagKind, D->getNameAsString(), Mutex.toString(), Exp->getExprLoc());
 }
-
 
 /// \brief Checks guarded_by and pt_guarded_by attributes.
 /// Whenever we identify an access (read or write) to a DeclRefExpr that is
@@ -1880,11 +1942,12 @@ void BuildLockset::checkAccess(const Expr *Exp, AccessKind AK) {
     return;
 
   if (D->hasAttr<GuardedVarAttr>() && FSet.isEmpty())
-    Analyzer->Handler.handleNoMutexHeld(D, POK_VarAccess, AK,
+    Analyzer->Handler.handleNoMutexHeld("mutex", D, POK_VarAccess, AK,
                                         Exp->getExprLoc());
 
   for (const auto *I : D->specific_attrs<GuardedByAttr>())
-    warnIfMutexNotHeld(D, Exp, AK, I->getArg(), POK_VarAccess);
+    warnIfMutexNotHeld(D, Exp, AK, I->getArg(), POK_VarAccess,
+                       ClassifyDiagnostic(I));
 }
 
 /// \brief Checks pt_guarded_by and pt_guarded_var attributes.
@@ -1912,13 +1975,13 @@ void BuildLockset::checkPtAccess(const Expr *Exp, AccessKind AK) {
     return;
 
   if (D->hasAttr<PtGuardedVarAttr>() && FSet.isEmpty())
-    Analyzer->Handler.handleNoMutexHeld(D, POK_VarDereference, AK,
+    Analyzer->Handler.handleNoMutexHeld("mutex", D, POK_VarDereference, AK,
                                         Exp->getExprLoc());
 
   for (auto const *I : D->specific_attrs<PtGuardedByAttr>())
-    warnIfMutexNotHeld(D, Exp, AK, I->getArg(), POK_VarDereference);
+    warnIfMutexNotHeld(D, Exp, AK, I->getArg(), POK_VarDereference,
+                       ClassifyDiagnostic(I));
 }
-
 
 /// \brief Process a function call, method call, constructor call,
 /// or destructor call.  This involves looking at the attributes on the
@@ -1935,6 +1998,7 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
   const AttrVec &ArgAttrs = D->getAttrs();
   MutexIDList ExclusiveLocksToAdd, SharedLocksToAdd;
   MutexIDList ExclusiveLocksToRemove, SharedLocksToRemove, GenericLocksToRemove;
+  StringRef CapDiagKind = "mutex";
 
   for(unsigned i = 0; i < ArgAttrs.size(); ++i) {
     Attr *At = const_cast<Attr*>(ArgAttrs[i]);
@@ -1946,6 +2010,8 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
         Analyzer->getMutexIDs(A->isShared() ? SharedLocksToAdd
                                             : ExclusiveLocksToAdd,
                               A, Exp, D, VD);
+
+        CapDiagKind = ClassifyDiagnostic(A);
         break;
       }
 
@@ -1957,10 +2023,10 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
 
         MutexIDList AssertLocks;
         Analyzer->getMutexIDs(AssertLocks, A, Exp, D, VD);
-        for (unsigned i=0,n=AssertLocks.size(); i<n; ++i) {
-          Analyzer->addLock(FSet, AssertLocks[i],
-                            LockData(Loc, LK_Exclusive, false, true));
-        }
+        for (const auto &AssertLock : AssertLocks)
+          Analyzer->addLock(FSet, AssertLock,
+                            LockData(Loc, LK_Exclusive, false, true),
+                            ClassifyDiagnostic(A));
         break;
       }
       case attr::AssertSharedLock: {
@@ -1968,10 +2034,10 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
 
         MutexIDList AssertLocks;
         Analyzer->getMutexIDs(AssertLocks, A, Exp, D, VD);
-        for (unsigned i=0,n=AssertLocks.size(); i<n; ++i) {
-          Analyzer->addLock(FSet, AssertLocks[i],
-                            LockData(Loc, LK_Shared, false, true));
-        }
+        for (const auto &AssertLock : AssertLocks)
+          Analyzer->addLock(FSet, AssertLock,
+                            LockData(Loc, LK_Shared, false, true),
+                            ClassifyDiagnostic(A));
         break;
       }
 
@@ -1985,6 +2051,8 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
           Analyzer->getMutexIDs(SharedLocksToRemove, A, Exp, D, VD);
         else
           Analyzer->getMutexIDs(ExclusiveLocksToRemove, A, Exp, D, VD);
+
+        CapDiagKind = ClassifyDiagnostic(A);
         break;
       }
 
@@ -1994,7 +2062,7 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
         for (RequiresCapabilityAttr::args_iterator I = A->args_begin(),
              E = A->args_end(); I != E; ++I)
           warnIfMutexNotHeld(D, Exp, A->isShared() ? AK_Read : AK_Written, *I,
-                             POK_FunctionCall);
+                             POK_FunctionCall, ClassifyDiagnostic(A));
         break;
       }
 
@@ -2003,7 +2071,7 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
 
         for (LocksExcludedAttr::args_iterator I = A->args_begin(),
             E = A->args_end(); I != E; ++I) {
-          warnIfMutexHeld(D, Exp, *I);
+          warnIfMutexHeld(D, Exp, *I, ClassifyDiagnostic(A));
         }
         break;
       }
@@ -2026,9 +2094,11 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
 
   // Add locks.
   for (const auto &M : ExclusiveLocksToAdd)
-    Analyzer->addLock(FSet, M, LockData(Loc, LK_Exclusive, isScopedVar));
+    Analyzer->addLock(FSet, M, LockData(Loc, LK_Exclusive, isScopedVar),
+                      CapDiagKind);
   for (const auto &M : SharedLocksToAdd)
-    Analyzer->addLock(FSet, M, LockData(Loc, LK_Shared, isScopedVar));
+    Analyzer->addLock(FSet, M, LockData(Loc, LK_Shared, isScopedVar),
+                      CapDiagKind);
 
   // Add the managing object as a dummy mutex, mapped to the underlying mutex.
   // FIXME -- this doesn't work if we acquire multiple locks.
@@ -2038,20 +2108,22 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
     SExpr SMutex(&DRE, 0, 0);
 
     for (const auto &M : ExclusiveLocksToAdd)
-      Analyzer->addLock(FSet, SMutex, LockData(MLoc, LK_Exclusive, M));
+      Analyzer->addLock(FSet, SMutex, LockData(MLoc, LK_Exclusive, M),
+                        CapDiagKind);
     for (const auto &M : SharedLocksToAdd)
-      Analyzer->addLock(FSet, SMutex, LockData(MLoc, LK_Shared, M));
+      Analyzer->addLock(FSet, SMutex, LockData(MLoc, LK_Shared, M),
+                        CapDiagKind);
   }
 
   // Remove locks.
   // FIXME -- should only fully remove if the attribute refers to 'this'.
   bool Dtor = isa<CXXDestructorDecl>(D);
   for (const auto &M : ExclusiveLocksToRemove)
-    Analyzer->removeLock(FSet, M, Loc, Dtor, LK_Exclusive);
+    Analyzer->removeLock(FSet, M, Loc, Dtor, LK_Exclusive, CapDiagKind);
   for (const auto &M : SharedLocksToRemove)
-    Analyzer->removeLock(FSet, M, Loc, Dtor, LK_Shared);
+    Analyzer->removeLock(FSet, M, Loc, Dtor, LK_Shared, CapDiagKind);
   for (const auto &M : GenericLocksToRemove)
-    Analyzer->removeLock(FSet, M, Loc, Dtor, LK_Generic);
+    Analyzer->removeLock(FSet, M, Loc, Dtor, LK_Generic, CapDiagKind);
 }
 
 
@@ -2212,9 +2284,8 @@ void ThreadSafetyAnalyzer::intersectAndWarn(FactSet &FSet1,
     if (I1 != FSet1.end()) {
       const LockData* LDat1 = &FactMan[*I1].LDat;
       if (LDat1->LKind != LDat2.LKind) {
-        Handler.handleExclusiveAndShared(FSet2Mutex.toString(),
-                                         LDat2.AcquireLoc,
-                                         LDat1->AcquireLoc);
+        Handler.handleExclusiveAndShared("mutex", FSet2Mutex.toString(),
+                                         LDat2.AcquireLoc, LDat1->AcquireLoc);
         if (Modify && LDat1->LKind != LK_Exclusive) {
           // Take the exclusive lock, which is the one in FSet2.
           *I1 = *I;
@@ -2230,15 +2301,14 @@ void ThreadSafetyAnalyzer::intersectAndWarn(FactSet &FSet1,
           // If this is a scoped lock that manages another mutex, and if the
           // underlying mutex is still held, then warn about the underlying
           // mutex.
-          Handler.handleMutexHeldEndOfScope(LDat2.UnderlyingMutex.toString(),
-                                            LDat2.AcquireLoc,
-                                            JoinLoc, LEK1);
+          Handler.handleMutexHeldEndOfScope("mutex",
+                                            LDat2.UnderlyingMutex.toString(),
+                                            LDat2.AcquireLoc, JoinLoc, LEK1);
         }
       }
       else if (!LDat2.Managed && !FSet2Mutex.isUniversal() && !LDat2.Asserted)
-        Handler.handleMutexHeldEndOfScope(FSet2Mutex.toString(),
-                                          LDat2.AcquireLoc,
-                                          JoinLoc, LEK1);
+        Handler.handleMutexHeldEndOfScope("mutex", FSet2Mutex.toString(),
+                                          LDat2.AcquireLoc, JoinLoc, LEK1);
     }
   }
 
@@ -2254,15 +2324,14 @@ void ThreadSafetyAnalyzer::intersectAndWarn(FactSet &FSet1,
           // If this is a scoped lock that manages another mutex, and if the
           // underlying mutex is still held, then warn about the underlying
           // mutex.
-          Handler.handleMutexHeldEndOfScope(LDat1.UnderlyingMutex.toString(),
-                                            LDat1.AcquireLoc,
-                                            JoinLoc, LEK1);
+          Handler.handleMutexHeldEndOfScope("mutex",
+                                            LDat1.UnderlyingMutex.toString(),
+                                            LDat1.AcquireLoc, JoinLoc, LEK1);
         }
       }
       else if (!LDat1.Managed && !FSet1Mutex.isUniversal() && !LDat1.Asserted)
-        Handler.handleMutexHeldEndOfScope(FSet1Mutex.toString(),
-                                          LDat1.AcquireLoc,
-                                          JoinLoc, LEK2);
+        Handler.handleMutexHeldEndOfScope("mutex", FSet1Mutex.toString(),
+                                          LDat1.AcquireLoc, JoinLoc, LEK2);
       if (Modify)
         FSet1.removeLock(FactMan, FSet1Mutex);
     }
@@ -2292,16 +2361,21 @@ inline bool neverReturns(const CFGBlock* B) {
 /// at the end of each block, and issue warnings for thread safety violations.
 /// Each block in the CFG is traversed exactly once.
 void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
-  CFG *CFGraph = AC.getCFG();
-  if (!CFGraph) return;
-  const NamedDecl *D = dyn_cast_or_null<NamedDecl>(AC.getDecl());
+  // TODO: this whole function needs be rewritten as a visitor for CFGWalker.
+  // For now, we just use the walker to set things up.
+  threadSafety::CFGWalker walker;
+  if (!walker.init(AC))
+    return;
 
   // AC.dumpCFG(true);
+  // threadSafety::printSCFG(walker);
 
-  if (!D)
-    return;  // Ignore anonymous functions for now.
+  CFG *CFGraph = walker.getGraph();
+  const NamedDecl *D = walker.getDecl();
+
   if (D->hasAttr<NoThreadSafetyAnalysisAttr>())
     return;
+
   // FIXME: Do something a bit more intelligent inside constructor and
   // destructor code.  Constructors and destructors must assume unique access
   // to 'this', so checks on member variable access is disabled, but we should
@@ -2317,7 +2391,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   // We need to explore the CFG via a "topological" ordering.
   // That way, we will be guaranteed to have information about required
   // predecessor locksets when exploring a new block.
-  PostOrderCFGView *SortedGraph = AC.getAnalysis<PostOrderCFGView>();
+  const PostOrderCFGView *SortedGraph = walker.getSortedGraph();
   PostOrderCFGView::CFGBlockSet VisitedBlocks(CFGraph);
 
   // Mark entry block as reachable
@@ -2343,28 +2417,31 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
 
     MutexIDList ExclusiveLocksToAdd;
     MutexIDList SharedLocksToAdd;
+    StringRef CapDiagKind = "mutex";
 
     SourceLocation Loc = D->getLocation();
-    for (unsigned i = 0; i < ArgAttrs.size(); ++i) {
-      Attr *Attr = ArgAttrs[i];
+    for (const auto *Attr : ArgAttrs) {
       Loc = Attr->getLocation();
-      if (RequiresCapabilityAttr *A = dyn_cast<RequiresCapabilityAttr>(Attr)) {
+      if (const auto *A = dyn_cast<RequiresCapabilityAttr>(Attr)) {
         getMutexIDs(A->isShared() ? SharedLocksToAdd : ExclusiveLocksToAdd, A,
                     0, D);
-      } else if (auto *A = dyn_cast<ReleaseCapabilityAttr>(Attr)) {
+        CapDiagKind = ClassifyDiagnostic(A);
+      } else if (const auto *A = dyn_cast<ReleaseCapabilityAttr>(Attr)) {
         // UNLOCK_FUNCTION() is used to hide the underlying lock implementation.
         // We must ignore such methods.
         if (A->args_size() == 0)
           return;
         // FIXME -- deal with exclusive vs. shared unlock functions?
-        getMutexIDs(ExclusiveLocksToAdd, A, (Expr*) 0, D);
-        getMutexIDs(LocksReleased, A, (Expr*) 0, D);
-      } else if (auto *A = dyn_cast<AcquireCapabilityAttr>(Attr)) {
+        getMutexIDs(ExclusiveLocksToAdd, A, nullptr, D);
+        getMutexIDs(LocksReleased, A, nullptr, D);
+        CapDiagKind = ClassifyDiagnostic(A);
+      } else if (const auto *A = dyn_cast<AcquireCapabilityAttr>(Attr)) {
         if (A->args_size() == 0)
           return;
         getMutexIDs(A->isShared() ? SharedLocksAcquired
                                   : ExclusiveLocksAcquired,
                     A, nullptr, D);
+        CapDiagKind = ClassifyDiagnostic(A);
       } else if (isa<ExclusiveTrylockFunctionAttr>(Attr)) {
         // Don't try to check trylock functions for now
         return;
@@ -2375,19 +2452,15 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
     }
 
     // FIXME -- Loc can be wrong here.
-    for (unsigned i=0,n=ExclusiveLocksToAdd.size(); i<n; ++i) {
-      addLock(InitialLockset, ExclusiveLocksToAdd[i],
-              LockData(Loc, LK_Exclusive));
-    }
-    for (unsigned i=0,n=SharedLocksToAdd.size(); i<n; ++i) {
-      addLock(InitialLockset, SharedLocksToAdd[i],
-              LockData(Loc, LK_Shared));
-    }
+    for (const auto &ExclusiveLockToAdd : ExclusiveLocksToAdd)
+      addLock(InitialLockset, ExclusiveLockToAdd, LockData(Loc, LK_Exclusive),
+              CapDiagKind);
+    for (const auto &SharedLockToAdd : SharedLocksToAdd)
+      addLock(InitialLockset, SharedLockToAdd, LockData(Loc, LK_Shared),
+              CapDiagKind);
   }
 
-  for (PostOrderCFGView::iterator I = SortedGraph->begin(),
-       E = SortedGraph->end(); I!= E; ++I) {
-    const CFGBlock *CurrBlock = *I;
+  for (const auto *CurrBlock : *SortedGraph) {
     int CurrBlockID = CurrBlock->getBlockID();
     CFGBlockInfo *CurrBlockInfo = &BlockInfo[CurrBlockID];
 
@@ -2413,7 +2486,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
          PE  = CurrBlock->pred_end(); PI != PE; ++PI) {
 
       // if *PI -> CurrBlock is a back edge
-      if (*PI == 0 || !VisitedBlocks.alreadySet(*PI))
+      if (*PI == nullptr || !VisitedBlocks.alreadySet(*PI))
         continue;
 
       int PrevBlockID = (*PI)->getBlockID();
@@ -2456,9 +2529,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
 
     // Process continue and break blocks. Assume that the lockset for the
     // resulting block is unaffected by any discrepancies in them.
-    for (unsigned SpecialI = 0, SpecialN = SpecialBlocks.size();
-         SpecialI < SpecialN; ++SpecialI) {
-      CFGBlock *PrevBlock = SpecialBlocks[SpecialI];
+    for (const auto *PrevBlock : SpecialBlocks) {
       int PrevBlockID = PrevBlock->getBlockID();
       CFGBlockInfo *PrevBlockInfo = &BlockInfo[PrevBlockID];
 
@@ -2554,17 +2625,14 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   // by *-LOCK_FUNCTION and UNLOCK_FUNCTION.  The intersect below will then
   // issue the appropriate warning.
   // FIXME: the location here is not quite right.
-  for (unsigned i=0,n=ExclusiveLocksAcquired.size(); i<n; ++i) {
-    ExpectedExitSet.addLock(FactMan, ExclusiveLocksAcquired[i],
+  for (const auto &Lock : ExclusiveLocksAcquired)
+    ExpectedExitSet.addLock(FactMan, Lock,
                             LockData(D->getLocation(), LK_Exclusive));
-  }
-  for (unsigned i=0,n=SharedLocksAcquired.size(); i<n; ++i) {
-    ExpectedExitSet.addLock(FactMan, SharedLocksAcquired[i],
+  for (const auto &Lock : SharedLocksAcquired)
+    ExpectedExitSet.addLock(FactMan, Lock,
                             LockData(D->getLocation(), LK_Shared));
-  }
-  for (unsigned i=0,n=LocksReleased.size(); i<n; ++i) {
-    ExpectedExitSet.removeLock(FactMan, LocksReleased[i]);
-  }
+  for (const auto &Lock : LocksReleased)
+    ExpectedExitSet.removeLock(FactMan, Lock);
 
   // FIXME: Should we call this function for all blocks which exit the function?
   intersectAndWarn(ExpectedExitSet, Final->ExitSet,

@@ -27,7 +27,7 @@ __attribute__((objc_root_class))
 -(void)meth {}
 -(id)init NS_DESIGNATED_INITIALIZER { return 0; } // expected-error {{only applies to init methods of interface or class extension declarations}}
 +(id)init { return 0; }
--(id)init3 { return 0; } // expected-warning {{secondary initializer missing a 'self' call to another initializer}}
+-(id)init3 { return 0; }
 -(id)init4 NS_DESIGNATED_INITIALIZER { return 0; } // expected-error {{only applies to init methods of interface or class extension declarations}} \
 									 			   // expected-warning {{secondary initializer missing a 'self' call to another initializer}}
 @end
@@ -36,8 +36,11 @@ __attribute__((objc_root_class))
 @interface B1
 -(id)initB1 NS_DESIGNATED_INITIALIZER; // expected-note 6 {{method marked as designated initializer of the class here}}
 -(id)initB2;
--(id)initB3 NS_DESIGNATED_INITIALIZER; // expected-note 4 {{method marked as designated initializer of the class here}}
 @end
+
+@interface B1()
+-(id)initB3 NS_DESIGNATED_INITIALIZER; // expected-note 4 {{method marked as designated initializer of the class here}}
+@end;
 
 @implementation B1
 -(id)initB1 { return 0; }
@@ -49,8 +52,11 @@ __attribute__((objc_root_class))
 -(id)initS1 NS_DESIGNATED_INITIALIZER; // expected-note {{method marked as designated initializer of the class here}}
 -(id)initS2 NS_DESIGNATED_INITIALIZER;
 -(id)initS3 NS_DESIGNATED_INITIALIZER; // expected-note 2 {{method marked as designated initializer of the class here}}
--(id)initS4 NS_DESIGNATED_INITIALIZER; // expected-note 2 {{method marked as designated initializer of the class here}}
 -(id)initB1;
+@end
+
+@interface S1()
+-(id)initS4 NS_DESIGNATED_INITIALIZER; // expected-note 2 {{method marked as designated initializer of the class here}}
 @end
 
 @implementation S1
@@ -136,12 +142,6 @@ __attribute__((objc_root_class))
   return [super initB3];
 }
 -(void)meth {}
--(id)initS1 {
-  return 0;
-}
--(id)initS2 {
-  return [super initB1];
-}
 @end
 
 @interface S6 : B1
@@ -266,7 +266,8 @@ __attribute__((objc_root_class))
 // rdar://16323233
 __attribute__((objc_root_class))
 @interface B4 
--(id)initB4 NS_DESIGNATED_INITIALIZER; 
+-(id)initB4 NS_DESIGNATED_INITIALIZER; // expected-note 4 {{method marked as designated initializer of the class here}}
+-(id)initNonDI;
 @end
 
 @interface rdar16323233 : B4
@@ -283,5 +284,107 @@ __attribute__((objc_root_class))
 }
 -(id)initB4 {
    return [self initS4];
+}
+@end
+
+@interface S1B4 : B4
+@end
+@implementation S1B4
+-(id)initB4 { // expected-warning {{designated initializer missing a 'super' call to a designated initializer of the super class}}
+   return [super initNonDI]; // expected-warning {{designated initializer invoked a non-designated initializer}}
+}
+@end
+
+@interface S2B4 : B4
+-(id)initB4;
+@end
+@implementation S2B4
+-(id)initB4 { // expected-warning {{designated initializer missing a 'super' call to a designated initializer of the super class}}
+   return [super initNonDI]; // expected-warning {{designated initializer invoked a non-designated initializer}}
+}
+@end
+
+@interface S3B4 : B4
+@end
+@implementation S3B4
+-(id)initNew {
+  return [super initB4];
+}
+-(id)initB4 {
+   return [self initNew];
+}
+@end
+
+@interface S4B4 : B4
+-(id)initNew;
+@end
+@implementation S4B4
+-(id)initNew {
+  return [super initB4];
+}
+-(id)initB4 {
+   return [self initNew];
+}
+@end
+
+@interface S5B4 : B4
+-(id)initB4;
+@end
+@implementation S5B4
+-(id)initNew {
+  return [super initB4];
+}
+-(id)initB4 {
+   return [self initNew];
+}
+@end
+
+@interface S6B4 : B4
+-(id)initNew;
+-(id)initB4;
+@end
+@implementation S6B4
+-(id)initNew {
+  return [super initB4];
+}
+-(id)initB4 {
+   return [self initNew];
+}
+@end
+
+__attribute__((objc_root_class))
+@interface NSObject
+-(instancetype) init NS_DESIGNATED_INITIALIZER; // expected-note {{method marked as designated initializer of the class here}}
+@end
+
+@interface Test3 : NSObject
+@end
+
+@implementation Test3
+-(instancetype) initWithBasePath:(id)path {
+  return [super init];
+}
+-(instancetype) init {
+  return [self initWithBasePath:0];
+}
+@end
+
+@interface Test1 : NSObject
+-(instancetype) init NS_DESIGNATED_INITIALIZER;
+@end
+@implementation Test1
+-(instancetype) init {
+  return self;
+}
+@end
+
+
+@interface Test2 : NSObject
+@end
+@interface SubTest2 : Test2
+@end
+@implementation SubTest2
+-(instancetype) init { // expected-warning {{designated initializer missing a 'super' call to a designated initializer of the super class}}
+  return self;
 }
 @end

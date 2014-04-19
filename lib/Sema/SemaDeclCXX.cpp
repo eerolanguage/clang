@@ -584,6 +584,7 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
     }
   }
 
+  const FunctionDecl *Def;
   // C++11 [dcl.constexpr]p1: If any declaration of a function or function
   // template has a constexpr specifier then all its declarations shall
   // contain the constexpr specifier.
@@ -591,6 +592,13 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
     Diag(New->getLocation(), diag::err_constexpr_redecl_mismatch)
       << New << New->isConstexpr();
     Diag(Old->getLocation(), diag::note_previous_declaration);
+    Invalid = true;
+  } else if (!Old->isInlined() && New->isInlined() && Old->isDefined(Def)) {
+    // C++11 [dcl.fcn.spec]p4:
+    //   If the definition of a function appears in a translation unit before its
+    //   first declaration as inline, the program is ill-formed.
+    Diag(New->getLocation(), diag::err_inline_decl_follows_def) << New;
+    Diag(Def->getLocation(), diag::note_previous_definition);
     Invalid = true;
   }
 
@@ -1952,14 +1960,19 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
         Diag(DS.getConstexprSpecLoc(), diag::err_invalid_constexpr_member);
     SourceLocation ConstexprLoc = DS.getConstexprSpecLoc();
     if (InitStyle == ICIS_NoInit) {
-      B << 0 << 0 << FixItHint::CreateReplacement(ConstexprLoc, "const");
-      D.getMutableDeclSpec().ClearConstexprSpec();
-      const char *PrevSpec;
-      unsigned DiagID;
-      bool Failed = D.getMutableDeclSpec().SetTypeQual(DeclSpec::TQ_const, ConstexprLoc,
-                                         PrevSpec, DiagID, getLangOpts());
-      (void)Failed;
-      assert(!Failed && "Making a constexpr member const shouldn't fail");
+      B << 0 << 0;
+      if (D.getDeclSpec().getTypeQualifiers() & DeclSpec::TQ_const)
+        B << FixItHint::CreateRemoval(ConstexprLoc);
+      else {
+        B << FixItHint::CreateReplacement(ConstexprLoc, "const");
+        D.getMutableDeclSpec().ClearConstexprSpec();
+        const char *PrevSpec;
+        unsigned DiagID;
+        bool Failed = D.getMutableDeclSpec().SetTypeQual(
+            DeclSpec::TQ_const, ConstexprLoc, PrevSpec, DiagID, getLangOpts());
+        (void)Failed;
+        assert(!Failed && "Making a constexpr member const shouldn't fail");
+      }
     } else {
       B << 1;
       const char *PrevSpec;
@@ -3427,7 +3440,8 @@ static bool CollectFieldInitializer(Sema &SemaRef, BaseAndFieldInfo &Info,
     return false;
 
   // Overwhelmingly common case: we have a direct initializer for this field.
-  if (CXXCtorInitializer *Init = Info.AllBaseFields.lookup(Field))
+  if (CXXCtorInitializer *Init =
+          Info.AllBaseFields.lookup(Field->getCanonicalDecl()))
     return Info.addFieldInitializer(Init);
 
   // C++11 [class.base.init]p8:
@@ -3540,7 +3554,7 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor, bool AnyErrors,
     if (Member->isBaseInitializer())
       Info.AllBaseFields[Member->getBaseClass()->getAs<RecordType>()] = Member;
     else {
-      Info.AllBaseFields[Member->getAnyMember()] = Member;
+      Info.AllBaseFields[Member->getAnyMember()->getCanonicalDecl()] = Member;
 
       if (IndirectFieldDecl *F = Member->getIndirectMember()) {
         for (auto *C : F->chain()) {
@@ -3688,7 +3702,7 @@ static void PopulateKeysForFields(FieldDecl *Field, SmallVectorImpl<const void*>
       return;
     }
   }
-  IdealInits.push_back(Field);
+  IdealInits.push_back(Field->getCanonicalDecl());
 }
 
 static const void *GetKeyForBase(ASTContext &Context, QualType BaseType) {
@@ -3700,7 +3714,7 @@ static const void *GetKeyForMember(ASTContext &Context,
   if (!Member->isAnyMemberInitializer())
     return GetKeyForBase(Context, QualType(Member->getBaseClass(), 0));
     
-  return Member->getAnyMember();
+  return Member->getAnyMember()->getCanonicalDecl();
 }
 
 static void DiagnoseBaseOrMemInitializerOrder(
@@ -3895,13 +3909,12 @@ void Sema::ActOnMemInitializers(Decl *ConstructorDecl,
     Init->setSourceOrder(i);
 
     if (Init->isAnyMemberInitializer()) {
-      FieldDecl *Field = Init->getAnyMember();
-      if (CheckRedundantInit(*this, Init, Members[Field]) ||
+      const void *Key = GetKeyForMember(Context, Init);
+      if (CheckRedundantInit(*this, Init, Members[Key]) ||
           CheckRedundantUnionInit(*this, Init, MemberUnions))
         HadError = true;
     } else if (Init->isBaseInitializer()) {
-      const void *Key =
-          GetKeyForBase(Context, QualType(Init->getBaseClass(), 0));
+      const void *Key = GetKeyForMember(Context, Init);
       if (CheckRedundantInit(*this, Init, Members[Key]))
         HadError = true;
     } else {
@@ -7371,6 +7384,13 @@ NamedDecl *Sema::BuildUsingDeclaration(Scope *S, AccessSpecifier AS,
       NamedDecl *D = F.next();
       if (!isDeclInScope(D, CurContext, S))
         F.erase();
+      // If we found a local extern declaration that's not ordinarily visible,
+      // and this declaration is being added to a non-block scope, ignore it.
+      // We're only checking for scope conflicts here, not also for violations
+      // of the linkage rules.
+      else if (!CurContext->isFunctionOrMethod() && D->isLocalExternDecl() &&
+               !(D->getIdentifierNamespace() & Decl::IDNS_Ordinary))
+        F.erase();
     }
     F.done();
   } else {
@@ -7385,7 +7405,7 @@ NamedDecl *Sema::BuildUsingDeclaration(Scope *S, AccessSpecifier AS,
     return 0;
 
   // Check for bad qualifiers.
-  if (CheckUsingDeclQualifier(UsingLoc, SS, IdentLoc))
+  if (CheckUsingDeclQualifier(UsingLoc, SS, NameInfo, IdentLoc))
     return 0;
 
   DeclContext *LookupContext = computeDeclContext(SS);
@@ -7611,6 +7631,7 @@ bool Sema::CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
 /// scope.  If an error is found, diagnoses it and returns true.
 bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
                                    const CXXScopeSpec &SS,
+                                   const DeclarationNameInfo &NameInfo,
                                    SourceLocation NameLoc) {
   DeclContext *NamedContext = computeDeclContext(SS);
 
@@ -7622,8 +7643,56 @@ bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
     // If we weren't able to compute a valid scope, it must be a
     // dependent class scope.
     if (!NamedContext || NamedContext->isRecord()) {
+      auto *RD = dyn_cast<CXXRecordDecl>(NamedContext);
+      if (RD && RequireCompleteDeclContext(const_cast<CXXScopeSpec&>(SS), RD))
+        RD = 0;
+
       Diag(NameLoc, diag::err_using_decl_can_not_refer_to_class_member)
         << SS.getRange();
+
+      // If we have a complete, non-dependent source type, try to suggest a
+      // way to get the same effect.
+      if (!RD)
+        return true;
+
+      // Find what this using-declaration was referring to.
+      LookupResult R(*this, NameInfo, LookupOrdinaryName);
+      R.setHideTags(false);
+      R.suppressDiagnostics();
+      LookupQualifiedName(R, RD);
+
+      if (R.getAsSingle<TypeDecl>()) {
+        if (getLangOpts().CPlusPlus11) {
+          // Convert 'using X::Y;' to 'using Y = X::Y;'.
+          Diag(SS.getBeginLoc(), diag::note_using_decl_class_member_workaround)
+            << 0 // alias declaration
+            << FixItHint::CreateInsertion(SS.getBeginLoc(),
+                                          NameInfo.getName().getAsString() +
+                                              " = ");
+        } else {
+          // Convert 'using X::Y;' to 'typedef X::Y Y;'.
+          SourceLocation InsertLoc =
+              PP.getLocForEndOfToken(NameInfo.getLocEnd());
+          Diag(InsertLoc, diag::note_using_decl_class_member_workaround)
+            << 1 // typedef declaration
+            << FixItHint::CreateReplacement(UsingLoc, "typedef")
+            << FixItHint::CreateInsertion(
+                   InsertLoc, " " + NameInfo.getName().getAsString());
+        }
+      } else if (R.getAsSingle<VarDecl>()) {
+        // Don't provide a fixit outside C++11 mode; we don't want to suggest
+        // repeating the type of the static data member here.
+        FixItHint FixIt;
+        if (getLangOpts().CPlusPlus11) {
+          // Convert 'using X::Y;' to 'auto &Y = X::Y;'.
+          FixIt = FixItHint::CreateReplacement(
+              UsingLoc, "auto &" + NameInfo.getName().getAsString() + " = ");
+        }
+
+        Diag(UsingLoc, diag::note_using_decl_class_member_workaround)
+          << 2 // reference declaration
+          << FixIt;
+      }
       return true;
     }
 
@@ -10463,6 +10532,7 @@ void Sema::FinalizeVarWithDestructor(VarDecl *VD, const RecordType *Record) {
                         << VD->getType());
   DiagnoseUseOfDecl(Destructor, VD->getLocation());
 
+  if (Destructor->isTrivial()) return;
   if (!VD->hasGlobalStorage()) return;
 
   // Emit warning for non-trivial dtor in global scope (a real global,
@@ -11300,7 +11370,7 @@ Decl *Sema::ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
 
   if (TemplateParameterList *TemplateParams =
           MatchTemplateParametersToScopeSpecifier(
-              TagLoc, NameLoc, SS, TempParamLists, /*friend*/ true,
+              TagLoc, NameLoc, SS, 0, TempParamLists, /*friend*/ true,
               isExplicitSpecialization, Invalid)) {
     if (TemplateParams->size() > 0) {
       // This is a declaration of a class template.
