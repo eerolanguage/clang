@@ -197,6 +197,7 @@ PUNCTUATOR(at,                  "@")
 // Eero support
 PUNCTUATOR(colonequal,          ":=")
 PUNCTUATOR(equalgreater,        "=>")
+PUNCTUATOR(pipeperiod,          "|.")
 
 // CUDA support.
 PUNCTUATOR(lesslessless,          "<<<")

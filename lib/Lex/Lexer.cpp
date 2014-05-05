@@ -3478,6 +3478,9 @@ LexNextToken:
     if (Char == '=') {
       Kind = tok::pipeequal;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+    } else if (Char == '.') {
+      Kind = tok::pipeperiod;
+      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
     } else if (Char == '|') {
       // If this is '|||||||' and we're in a conflict marker, ignore it.
       if (CurPtr[1] == '|' && HandleEndOfConflictMarker(CurPtr-1))

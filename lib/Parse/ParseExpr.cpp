@@ -229,11 +229,24 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
   SourceLocation ColonLoc;
 
   while (1) {
+
     // If this token has a lower precedence than we are allowed to parse (e.g.
     // because we are called recursively, or because the token is not a binop),
     // then we are done!
     if (NextTokPrec < MinPrec)
       return LHS;
+
+    if (isEero && Tok.is(tok::pipeperiod)) {
+      Tok.setKind(tok::period);
+      if (InMessageExpression) {
+        return LHS;
+      } else {
+        ConsumeToken(); // '|.'
+        return ParseAssignmentExprWithObjCMessageExprStart(LHS.get()->getLocStart(),
+                                                           SourceLocation(),
+                                                           ParsedType(), LHS.take());
+      }
+    }
 
     // Catches cases where the next line looks like the RHS of a bin op,
     // but it really isn't, e.g. after some (non-decl) assignments.

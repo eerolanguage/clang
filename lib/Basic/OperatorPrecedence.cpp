@@ -42,6 +42,7 @@ prec::Level getBinOpPrecedence(tok::TokenKind Kind, bool GreaterThanIsOperator,
   case tok::comma:                return prec::Comma;
   case tok::equal:
   case tok::colonequal:
+  case tok::pipeperiod:
   case tok::starequal:
   case tok::slashequal:
   case tok::percentequal:
