@@ -828,7 +828,8 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     SourceLocation ILoc = ConsumeToken();
 
     // Support 'Class.property' and 'super.property' notation.
-    if (getLangOpts().ObjC1 && Tok.is(tok::period) &&
+    if (getLangOpts().ObjC1 && (Tok.is(tok::period) ||
+                                Tok.is(tok::pipeperiod)) &&
         (Actions.getTypeName(II, ILoc, getCurScope()) ||
          // Allow the base to be 'super' if in an objc-method.
          (&II == Ident_super && getCurScope()->isInObjcMethodScope()))) {
