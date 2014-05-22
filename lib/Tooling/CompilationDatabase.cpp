@@ -14,6 +14,7 @@
 
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Driver/Action.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
@@ -211,11 +212,11 @@ static bool stripPositionalArgs(std::vector<const char *> Args,
       IntrusiveRefCntPtr<clang::DiagnosticIDs>(new DiagnosticIDs()),
       &*DiagOpts, &DiagClient, false);
 
-  // Neither clang executable nor default image name are required since the
-  // jobs the driver builds will not be executed.
+  // The clang executable path isn't required since the jobs the driver builds
+  // will not be executed.
   std::unique_ptr<driver::Driver> NewDriver(new driver::Driver(
       /* ClangExecutable= */ "", llvm::sys::getDefaultTargetTriple(),
-      /* DefaultImageName= */ "", Diagnostics));
+      Diagnostics));
   NewDriver->setCheckInputsExist(false);
 
   // This becomes the new argv[0]. The value is actually not important as it
@@ -238,8 +239,9 @@ static bool stripPositionalArgs(std::vector<const char *> Args,
 
   // Remove -no-integrated-as; it's not used for syntax checking,
   // and it confuses targets which don't support this option.
-  std::remove_if(Args.begin(), Args.end(),
-                 MatchesAny(std::string("-no-integrated-as")));
+  Args.erase(std::remove_if(Args.begin(), Args.end(),
+                            MatchesAny(std::string("-no-integrated-as"))),
+             Args.end());
 
   const std::unique_ptr<driver::Compilation> Compilation(
       NewDriver->BuildCompilation(Args));

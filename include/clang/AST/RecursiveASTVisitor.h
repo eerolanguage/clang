@@ -252,7 +252,7 @@ public:
   /// \brief Recursively visit a lambda capture.
   ///
   /// \returns false if the visitation was terminated early, true otherwise.
-  bool TraverseLambdaCapture(LambdaExpr *LE, const LambdaExpr::Capture *C);
+  bool TraverseLambdaCapture(LambdaExpr *LE, const LambdaCapture *C);
 
   /// \brief Recursively visit the body of a lambda expression.
   ///
@@ -856,7 +856,7 @@ bool RecursiveASTVisitor<Derived>::TraverseConstructorInitializer(
 
 template<typename Derived>
 bool RecursiveASTVisitor<Derived>::TraverseLambdaCapture(
-    LambdaExpr *LE, const LambdaExpr::Capture *C) {
+    LambdaExpr *LE, const LambdaCapture *C) {
   if (C->isInitCapture())
     TRY_TO(TraverseDecl(C->getCapturedVar()));
   return true;
@@ -2417,6 +2417,11 @@ bool RecursiveASTVisitor<Derived>::VisitOMPDefaultClause(OMPDefaultClause *C) {
 }
 
 template<typename Derived>
+bool RecursiveASTVisitor<Derived>::VisitOMPProcBindClause(OMPProcBindClause *C) {
+  return true;
+}
+
+template<typename Derived>
 template<typename T>
 void RecursiveASTVisitor<Derived>::VisitOMPClauseList(T *Node) {
   for (auto *I : Node->varlists())
@@ -2439,6 +2444,13 @@ bool RecursiveASTVisitor<Derived>::VisitOMPFirstprivateClause(
 template<typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPSharedClause(OMPSharedClause *C) {
   VisitOMPClauseList(C);
+  return true;
+}
+
+template<typename Derived>
+bool RecursiveASTVisitor<Derived>::VisitOMPLinearClause(OMPLinearClause *C) {
+  VisitOMPClauseList(C);
+  TraverseStmt(C->getStep());
   return true;
 }
 

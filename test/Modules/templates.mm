@@ -39,6 +39,11 @@ void testRedeclDefinition() {
   redeclDefinitionEmit();
 }
 
+// CHECK-NOT: @_ZN21ExplicitInstantiationILb0ELb0EE1fEv(
+// CHECK: declare {{.*}}@_ZN21ExplicitInstantiationILb1ELb0EE1fEv(
+// CHECK: define {{.*}}@_ZN21ExplicitInstantiationILb1ELb1EE1fEv(
+// CHECK-NOT: @_ZN21ExplicitInstantiationILb0ELb0EE1fEv(
+
 // These three are all the same type.
 typedef OuterIntInner_left OuterIntInner;
 typedef OuterIntInner_right OuterIntInner;
@@ -70,3 +75,14 @@ unsigned testMixedStruct() {
   // CHECK: load i32* bitcast (i8* getelementptr inbounds (i8* bitcast ({{.*}}* @list_right to i8*), i64 8) to i32*)
   return list_left.*size_right + list_right.*size_left;
 }
+
+template<typename T> struct MergePatternDecl {
+  typedef int Type;
+  void f(Type);
+};
+template<typename T> void MergePatternDecl<T>::f(Type type) {}
+// CHECK: define {{.*}}@_ZN21ExplicitInstantiationILb0ELb1EE1fEv(
+template struct ExplicitInstantiation<false, true>;
+template struct ExplicitInstantiation<true, true>;
+
+void testDelayUpdatesImpl() { testDelayUpdates<int>(); }

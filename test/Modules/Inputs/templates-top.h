@@ -25,3 +25,9 @@ public:
 template<typename T> struct Outer {
   struct Inner {};
 };
+
+template<bool, bool> struct ExplicitInstantiation {
+  void f() {}
+};
+
+template<typename> struct DelayUpdates {};

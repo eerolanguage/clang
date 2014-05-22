@@ -768,7 +768,7 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
               !Intro.Captures.empty())) {
           Actions.CodeCompleteLambdaIntroducer(getCurScope(), Intro, 
                                                /*AfterAmpersand=*/false);
-          ConsumeCodeCompletionToken();
+          cutOffParsing();
           break;
         }
 
@@ -785,7 +785,7 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
       else
         Actions.CodeCompleteLambdaIntroducer(getCurScope(), Intro, 
                                              /*AfterAmpersand=*/false);
-      ConsumeCodeCompletionToken();
+      cutOffParsing();
       break;
     }
 
@@ -809,7 +809,7 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
         if (Tok.is(tok::code_completion)) {
           Actions.CodeCompleteLambdaIntroducer(getCurScope(), Intro, 
                                                /*AfterAmpersand=*/true);
-          ConsumeCodeCompletionToken();
+          cutOffParsing();
           break;
         }
       }
@@ -2910,7 +2910,8 @@ ExprResult Parser::ParseExpressionTrait() {
 ExprResult
 Parser::ParseCXXAmbiguousParenExpression(ParenParseOption &ExprType,
                                          ParsedType &CastTy,
-                                         BalancedDelimiterTracker &Tracker) {
+                                         BalancedDelimiterTracker &Tracker,
+                                         ColonProtectionRAIIObject &ColonProt) {
   assert(getLangOpts().CPlusPlus && "Should only be called for C++!");
   assert(ExprType == CastExpr && "Compound literals are not ambiguous!");
   assert(isTypeIdInParens() && "Not a type-id!");
@@ -2959,6 +2960,7 @@ Parser::ParseCXXAmbiguousParenExpression(ParenParseOption &ExprType,
       // Try parsing the cast-expression that may follow.
       // If it is not a cast-expression, NotCastExpr will be true and no token
       // will be consumed.
+      ColonProt.restore();
       Result = ParseCastExpression(false/*isUnaryExpression*/,
                                    false/*isAddressofOperand*/,
                                    NotCastExpr,
@@ -2984,17 +2986,24 @@ Parser::ParseCXXAmbiguousParenExpression(ParenParseOption &ExprType,
   if (ParseAs >= CompoundLiteral) {
     // Parse the type declarator.
     DeclSpec DS(AttrFactory);
-    ParseSpecifierQualifierList(DS);
     Declarator DeclaratorInfo(DS, Declarator::TypeNameContext);
-    ParseDeclarator(DeclaratorInfo);
+    {
+      ColonProtectionRAIIObject InnerColonProtection(*this);
+      ParseSpecifierQualifierList(DS);
+      ParseDeclarator(DeclaratorInfo);
+    }
 
     // Match the ')'.
     Tracker.consumeClose();
+    ColonProt.restore();
 
     if (ParseAs == CompoundLiteral) {
       ExprType = CompoundLiteral;
-      TypeResult Ty = ParseTypeName();
-       return ParseCompoundLiteralExpression(Ty.get(),
+      if (DeclaratorInfo.isInvalidType())
+        return ExprError();
+
+      TypeResult Ty = Actions.ActOnTypeName(getCurScope(), DeclaratorInfo);
+      return ParseCompoundLiteralExpression(Ty.get(),
                                             Tracker.getOpenLocation(),
                                             Tracker.getCloseLocation());
     }

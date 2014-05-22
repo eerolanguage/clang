@@ -67,12 +67,14 @@ FileSystem::~FileSystem() {}
 error_code FileSystem::getBufferForFile(const llvm::Twine &Name,
                                         std::unique_ptr<MemoryBuffer> &Result,
                                         int64_t FileSize,
-                                        bool RequiresNullTerminator) {
+                                        bool RequiresNullTerminator,
+                                        bool IsVolatile) {
   std::unique_ptr<File> F;
   if (error_code EC = openFileForRead(Name, F))
     return EC;
 
-  error_code EC = F->getBuffer(Name, Result, FileSize, RequiresNullTerminator);
+  error_code EC = F->getBuffer(Name, Result, FileSize, RequiresNullTerminator,
+                               IsVolatile);
   return EC;
 }
 
@@ -95,7 +97,8 @@ public:
   ErrorOr<Status> status() override;
   error_code getBuffer(const Twine &Name, std::unique_ptr<MemoryBuffer> &Result,
                        int64_t FileSize = -1,
-                       bool RequiresNullTerminator = true) override;
+                       bool RequiresNullTerminator = true,
+                       bool IsVolatile = false) override;
   error_code close() override;
   void setName(StringRef Name) override;
 };
@@ -117,10 +120,11 @@ ErrorOr<Status> RealFile::status() {
 
 error_code RealFile::getBuffer(const Twine &Name,
                                std::unique_ptr<MemoryBuffer> &Result,
-                               int64_t FileSize, bool RequiresNullTerminator) {
+                               int64_t FileSize, bool RequiresNullTerminator,
+                               bool IsVolatile) {
   assert(FD != -1 && "cannot get buffer for closed file");
   return MemoryBuffer::getOpenFile(FD, Name.str().c_str(), Result, FileSize,
-                                   RequiresNullTerminator);
+                                   RequiresNullTerminator, IsVolatile);
 }
 
 // FIXME: This is terrible, we need this for ::close.
@@ -469,7 +473,7 @@ class VFSFromYAMLParser {
     yaml::MappingNode *M = dyn_cast<yaml::MappingNode>(N);
     if (!M) {
       error(N, "expected mapping node for file or directory entry");
-      return NULL;
+      return nullptr;
     }
 
     KeyStatusPair Fields[] = {
@@ -497,32 +501,32 @@ class VFSFromYAMLParser {
       // parsing value.
       SmallString<256> Buffer;
       if (!parseScalarString(I->getKey(), Key, Buffer))
-        return NULL;
+        return nullptr;
 
       if (!checkDuplicateOrUnknownKey(I->getKey(), Key, Keys))
-        return NULL;
+        return nullptr;
 
       StringRef Value;
       if (Key == "name") {
         if (!parseScalarString(I->getValue(), Value, Buffer))
-          return NULL;
+          return nullptr;
         Name = Value;
       } else if (Key == "type") {
         if (!parseScalarString(I->getValue(), Value, Buffer))
-          return NULL;
+          return nullptr;
         if (Value == "file")
           Kind = EK_File;
         else if (Value == "directory")
           Kind = EK_Directory;
         else {
           error(I->getValue(), "unknown value for 'type'");
-          return NULL;
+          return nullptr;
         }
       } else if (Key == "contents") {
         if (HasContents) {
           error(I->getKey(),
                 "entry already has 'contents' or 'external-contents'");
-          return NULL;
+          return nullptr;
         }
         HasContents = true;
         yaml::SequenceNode *Contents =
@@ -530,7 +534,7 @@ class VFSFromYAMLParser {
         if (!Contents) {
           // FIXME: this is only for directories, what about files?
           error(I->getValue(), "expected array");
-          return NULL;
+          return nullptr;
         }
 
         for (yaml::SequenceNode::iterator I = Contents->begin(),
@@ -539,22 +543,22 @@ class VFSFromYAMLParser {
           if (Entry *E = parseEntry(&*I))
             EntryArrayContents.push_back(E);
           else
-            return NULL;
+            return nullptr;
         }
       } else if (Key == "external-contents") {
         if (HasContents) {
           error(I->getKey(),
                 "entry already has 'contents' or 'external-contents'");
-          return NULL;
+          return nullptr;
         }
         HasContents = true;
         if (!parseScalarString(I->getValue(), Value, Buffer))
-          return NULL;
+          return nullptr;
         ExternalContentsPath = Value;
       } else if (Key == "use-external-name") {
         bool Val;
         if (!parseScalarBool(I->getValue(), Val))
-          return NULL;
+          return nullptr;
         UseExternalName = Val ? FileEntry::NK_External : FileEntry::NK_Virtual;
       } else {
         llvm_unreachable("key missing from Keys");
@@ -562,20 +566,20 @@ class VFSFromYAMLParser {
     }
 
     if (Stream.failed())
-      return NULL;
+      return nullptr;
 
     // check for missing keys
     if (!HasContents) {
       error(N, "missing key 'contents' or 'external-contents'");
-      return NULL;
+      return nullptr;
     }
     if (!checkMissingKeys(N, Keys))
-      return NULL;
+      return nullptr;
 
     // check invalid configuration
     if (Kind == EK_Directory && UseExternalName != FileEntry::NK_NotSet) {
       error(N, "'use-external-name' is not supported for directories");
-      return NULL;
+      return nullptr;
     }
 
     // Remove trailing slash(es), being careful not to remove the root path
@@ -587,7 +591,7 @@ class VFSFromYAMLParser {
     // Get the last component
     StringRef LastComponent = sys::path::filename(Trimmed);
 
-    Entry *Result = 0;
+    Entry *Result = nullptr;
     switch (Kind) {
     case EK_File:
       Result = new FileEntry(LastComponent, std::move(ExternalContentsPath),
@@ -718,14 +722,14 @@ VFSFromYAML *VFSFromYAML::create(MemoryBuffer *Buffer,
   yaml::Node *Root = DI->getRoot();
   if (DI == Stream.end() || !Root) {
     SM.PrintMessage(SMLoc(), SourceMgr::DK_Error, "expected root node");
-    return NULL;
+    return nullptr;
   }
 
   VFSFromYAMLParser P(Stream);
 
   std::unique_ptr<VFSFromYAML> FS(new VFSFromYAML(ExternalFS));
   if (!P.parse(Root, FS.get()))
-    return NULL;
+    return nullptr;
 
   return FS.release();
 }
