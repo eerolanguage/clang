@@ -513,35 +513,30 @@ static bool isTagTypeWithMissingTag(Sema &SemaRef, LookupResult &Result,
   LookupResult R(SemaRef, Name, NameLoc, Sema::LookupTagName);
   SemaRef.LookupParsedName(R, S, &SS);
   if (TagDecl *Tag = R.getAsSingle<TagDecl>()) {
-    const char *TagName = 0;
-    const char *FixItTagName = 0;
+    StringRef FixItTagName;
     switch (Tag->getTagKind()) {
       case TTK_Class:
-        TagName = "class";
         FixItTagName = "class ";
         break;
 
       case TTK_Enum:
-        TagName = "enum";
         FixItTagName = "enum ";
         break;
 
       case TTK_Struct:
-        TagName = "struct";
         FixItTagName = "struct ";
         break;
 
       case TTK_Interface:
-        TagName = "__interface";
         FixItTagName = "__interface ";
         break;
 
       case TTK_Union:
-        TagName = "union";
         FixItTagName = "union ";
         break;
     }
 
+    StringRef TagName = FixItTagName.drop_back();
     SemaRef.Diag(NameLoc, diag::err_use_of_tag_name_without_tag)
       << Name << TagName << SemaRef.getLangOpts().CPlusPlus
       << FixItHint::CreateInsertion(NameLoc, FixItTagName);
@@ -5133,13 +5128,9 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   if (!DC->isRecord() && S->getFnParent() == 0) {
     // C99 6.9p2: The storage-class specifiers auto and register shall not
     // appear in the declaration specifiers in an external declaration.
-    if (SC == SC_Auto || SC == SC_Register) {
-      // If this is a register variable with an asm label specified, then this
-      // is a GNU extension.
-      if (SC == SC_Register && D.getAsmLabel())
-        Diag(D.getIdentifierLoc(), diag::err_unsupported_global_register);
-      else
-        Diag(D.getIdentifierLoc(), diag::err_typecheck_sclass_fscope);
+    // Global Register+Asm is a GNU extension we support.
+    if (SC == SC_Auto || (SC == SC_Register && !D.getAsmLabel())) {
+      Diag(D.getIdentifierLoc(), diag::err_typecheck_sclass_fscope);
       D.setInvalidType();
     }
   }
@@ -5451,6 +5442,7 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         Diag(E->getExprLoc(), diag::warn_asm_label_on_auto_decl) << Label;
         break;
       case SC_Register:
+        // Local Named register
         if (!Context.getTargetInfo().isValidGCCRegisterName(Label))
           Diag(E->getExprLoc(), diag::err_asm_unknown_register_name) << Label;
         break;
@@ -5460,6 +5452,10 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       case SC_OpenCLWorkGroupLocal:
         break;
       }
+    } else if (SC == SC_Register) {
+      // Global Named register
+      if (!Context.getTargetInfo().isValidGCCRegisterName(Label))
+        Diag(E->getExprLoc(), diag::err_asm_unknown_register_name) << Label;
     }
 
     NewVD->addAttr(::new (Context) AsmLabelAttr(SE->getStrTokenLoc(0),
@@ -9809,7 +9805,8 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
     ResolveExceptionSpec(D->getLocation(), FPT);
 
   // dllimport cannot be applied to non-inline function definitions.
-  if (FD->hasAttr<DLLImportAttr>() && !FD->isInlined()) {
+  if (FD->hasAttr<DLLImportAttr>() && !FD->isInlined() &&
+      !FD->isTemplateInstantiation()) {
     assert(!FD->hasAttr<DLLExportAttr>());
     Diag(FD->getLocation(), diag::err_attribute_dllimport_function_definition);
     FD->setInvalidDecl();

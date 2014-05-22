@@ -1146,8 +1146,13 @@ private:
       return true;
 
     if (NewLine) {
-      int AdditionalIndent = State.Stack.back().Indent -
-                             Previous.Children[0]->Level * Style.IndentWidth;
+      int AdditionalIndent = 0;
+      if (State.Stack.size() < 2 ||
+          !State.Stack[State.Stack.size() - 2].JSFunctionInlined) {
+        AdditionalIndent = State.Stack.back().Indent -
+                           Previous.Children[0]->Level * Style.IndentWidth;
+      }
+
       Penalty += format(Previous.Children, DryRun, AdditionalIndent,
                         /*FixBadIndentation=*/true);
       return true;
@@ -1244,6 +1249,7 @@ private:
       static tok::TokenKind JSNotIdentity[] = { tok::exclaimequal, tok::equal };
       static tok::TokenKind JSShiftEqual[] = { tok::greater, tok::greater,
                                                tok::greaterequal };
+      static tok::TokenKind JSRightArrow[] = { tok::equal, tok::greater };
       // FIXME: We probably need to change token type to mimic operator with the
       // correct priority.
       if (tryMergeTokens(JSIdentity))
@@ -1251,6 +1257,8 @@ private:
       if (tryMergeTokens(JSNotIdentity))
         return;
       if (tryMergeTokens(JSShiftEqual))
+        return;
+      if (tryMergeTokens(JSRightArrow))
         return;
     }
   }

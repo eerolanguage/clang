@@ -2557,6 +2557,7 @@ TEST_F(FormatTest, MacroCallsWithoutTrailingSemicolon) {
                    "}\n"));
   EXPECT_EQ("class A {\n"
             "  A() : t(0) {}\n"
+            "  A(int i) noexcept() : {}\n"
             "  A(X x)\n" // FIXME: function-level try blocks are broken.
             "  try : t(0) {\n"
             "  } catch (...) {\n"
@@ -2564,6 +2565,7 @@ TEST_F(FormatTest, MacroCallsWithoutTrailingSemicolon) {
             "};",
             format("class A {\n"
                    "  A()\n : t(0) {}\n"
+                   "  A(int i)\n noexcept() : {}\n"
                    "  A(X x)\n"
                    "  try : t(0) {} catch (...) {}\n"
                    "};"));
@@ -8547,12 +8549,16 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
                    Style));
 
   // Keep empty and one-element array literals on a single line.
-  verifyFormat("NSArray* a = [[NSArray alloc] initWithArray:@[]\n"
-               "                                  copyItems:YES];",
-               Style);
-  verifyFormat("NSArray* a = [[NSArray alloc] initWithArray:@[ @\"a\" ]\n"
-               "                                  copyItems:YES];",
-               Style);
+  EXPECT_EQ("NSArray* a = [[NSArray alloc] initWithArray:@[]\n"
+            "                                  copyItems:YES];",
+            format("NSArray*a=[[NSArray alloc] initWithArray:@[]\n"
+                   "copyItems:YES];",
+                   Style));
+  EXPECT_EQ("NSArray* a = [[NSArray alloc] initWithArray:@[ @\"a\" ]\n"
+            "                                  copyItems:YES];",
+            format("NSArray*a=[[NSArray alloc]initWithArray:@[ @\"a\" ]\n"
+                   "             copyItems:YES];",
+                   Style));
   EXPECT_EQ("NSArray* a = [[NSArray alloc] initWithArray:@[\n"
             "                                               @\"a\",\n"
             "                                               @\"a\"\n"
@@ -8564,10 +8570,19 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
                    "     ]\n"
                    "       copyItems:YES];",
                    Style));
-  verifyFormat(
+  EXPECT_EQ(
       "NSArray* a = [[NSArray alloc] initWithArray:@[ @\"a\", @\"a\" ]\n"
       "                                  copyItems:YES];",
-      Style);
+      format("NSArray* a = [[NSArray alloc] initWithArray:@[ @\"a\", @\"a\" ]\n"
+             "   copyItems:YES];",
+             Style));
+
+  verifyFormat("[self.a b:c c:d];", Style);
+  EXPECT_EQ("[self.a b:c\n"
+            "        c:d];",
+            format("[self.a b:c\n"
+                   "c:d];",
+                   Style));
 }
 
 TEST_F(FormatTest, FormatsLambdas) {

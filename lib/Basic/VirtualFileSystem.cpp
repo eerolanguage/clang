@@ -11,6 +11,7 @@
 
 #include "clang/Basic/VirtualFileSystem.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -842,4 +843,139 @@ UniqueID vfs::getNextVirtualUniqueID() {
   // The following assumes that uint64_t max will never collide with a real
   // dev_t value from the OS.
   return UniqueID(std::numeric_limits<uint64_t>::max(), ID);
+}
+
+#ifndef NDEBUG
+static bool pathHasTraversal(StringRef Path) {
+  using namespace llvm::sys;
+  for (StringRef Comp : llvm::make_range(path::begin(Path), path::end(Path)))
+    if (Comp == "." || Comp == "..")
+      return true;
+  return false;
+}
+#endif
+
+void YAMLVFSWriter::addFileMapping(StringRef VirtualPath, StringRef RealPath) {
+  assert(sys::path::is_absolute(VirtualPath) && "virtual path not absolute");
+  assert(sys::path::is_absolute(RealPath) && "real path not absolute");
+  assert(!pathHasTraversal(VirtualPath) && "path traversal is not supported");
+  Mappings.emplace_back(VirtualPath, RealPath);
+}
+
+namespace {
+class JSONWriter {
+  llvm::raw_ostream &OS;
+  SmallVector<StringRef, 16> DirStack;
+  inline unsigned getDirIndent() { return 4 * DirStack.size(); }
+  inline unsigned getFileIndent() { return 4 * (DirStack.size() + 1); }
+  bool containedIn(StringRef Parent, StringRef Path);
+  StringRef containedPart(StringRef Parent, StringRef Path);
+  void startDirectory(StringRef Path);
+  void endDirectory();
+  void writeEntry(StringRef VPath, StringRef RPath);
+
+public:
+  JSONWriter(llvm::raw_ostream &OS) : OS(OS) {}
+  void write(ArrayRef<YAMLVFSEntry> Entries, Optional<bool> IsCaseSensitive);
+};
+}
+
+bool JSONWriter::containedIn(StringRef Parent, StringRef Path) {
+  using namespace llvm::sys;
+  // Compare each path component.
+  auto IParent = path::begin(Parent), EParent = path::end(Parent);
+  for (auto IChild = path::begin(Path), EChild = path::end(Path);
+       IParent != EParent && IChild != EChild; ++IParent, ++IChild) {
+    if (*IParent != *IChild)
+      return false;
+  }
+  // Have we exhausted the parent path?
+  return IParent == EParent;
+}
+
+StringRef JSONWriter::containedPart(StringRef Parent, StringRef Path) {
+  assert(!Parent.empty());
+  assert(containedIn(Parent, Path));
+  return Path.slice(Parent.size() + 1, StringRef::npos);
+}
+
+void JSONWriter::startDirectory(StringRef Path) {
+  StringRef Name =
+      DirStack.empty() ? Path : containedPart(DirStack.back(), Path);
+  DirStack.push_back(Path);
+  unsigned Indent = getDirIndent();
+  OS.indent(Indent) << "{\n";
+  OS.indent(Indent + 2) << "'type': 'directory',\n";
+  OS.indent(Indent + 2) << "'name': \"" << llvm::yaml::escape(Name) << "\",\n";
+  OS.indent(Indent + 2) << "'contents': [\n";
+}
+
+void JSONWriter::endDirectory() {
+  unsigned Indent = getDirIndent();
+  OS.indent(Indent + 2) << "]\n";
+  OS.indent(Indent) << "}";
+
+  DirStack.pop_back();
+}
+
+void JSONWriter::writeEntry(StringRef VPath, StringRef RPath) {
+  unsigned Indent = getFileIndent();
+  OS.indent(Indent) << "{\n";
+  OS.indent(Indent + 2) << "'type': 'file',\n";
+  OS.indent(Indent + 2) << "'name': \"" << llvm::yaml::escape(VPath) << "\",\n";
+  OS.indent(Indent + 2) << "'external-contents': \""
+                        << llvm::yaml::escape(RPath) << "\"\n";
+  OS.indent(Indent) << "}";
+}
+
+void JSONWriter::write(ArrayRef<YAMLVFSEntry> Entries,
+                       Optional<bool> IsCaseSensitive) {
+  using namespace llvm::sys;
+
+  OS << "{\n"
+        "  'version': 0,\n";
+  if (IsCaseSensitive.hasValue())
+    OS << "  'case-sensitive': '"
+       << (IsCaseSensitive.getValue() ? "true" : "false") << "',\n";
+  OS << "  'roots': [\n";
+
+  if (Entries.empty())
+    return;
+
+  const YAMLVFSEntry &Entry = Entries.front();
+  startDirectory(path::parent_path(Entry.VPath));
+  writeEntry(path::filename(Entry.VPath), Entry.RPath);
+
+  for (const auto &Entry : Entries.slice(1)) {
+    StringRef Dir = path::parent_path(Entry.VPath);
+    if (Dir == DirStack.back())
+      OS << ",\n";
+    else {
+      while (!DirStack.empty() && !containedIn(DirStack.back(), Dir)) {
+        OS << "\n";
+        endDirectory();
+      }
+      OS << ",\n";
+      startDirectory(Dir);
+    }
+    writeEntry(path::filename(Entry.VPath), Entry.RPath);
+  }
+
+  while (!DirStack.empty()) {
+    OS << "\n";
+    endDirectory();
+  }
+
+  OS << "\n"
+     << "  ]\n"
+     << "}\n";
+}
+
+void YAMLVFSWriter::write(llvm::raw_ostream &OS) {
+  std::sort(Mappings.begin(), Mappings.end(),
+            [](const YAMLVFSEntry &LHS, const YAMLVFSEntry &RHS) {
+    return LHS.VPath < RHS.VPath;
+  });
+
+  JSONWriter(OS).write(Mappings, IsCaseSensitive);
 }

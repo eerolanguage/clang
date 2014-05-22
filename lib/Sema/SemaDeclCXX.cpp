@@ -18,7 +18,6 @@
 #include "clang/AST/ASTMutationListener.h"
 #include "clang/AST/CXXInheritance.h"
 #include "clang/AST/CharUnits.h"
-#include "clang/AST/DeclVisitor.h"
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/RecordLayout.h"
@@ -7013,7 +7012,7 @@ void Sema::PushUsingDirective(Scope *S, UsingDirectiveDecl *UDir) {
   if (Ctx && !Ctx->isFunctionOrMethod())
     Ctx->addDecl(UDir);
   else
-    // Otherwise, it is at block sope. The using-directives will affect lookup
+    // Otherwise, it is at block scope. The using-directives will affect lookup
     // only to the end of the scope.
     S->PushUsingDirective(UDir);
 }

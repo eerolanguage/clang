@@ -15,8 +15,10 @@
 
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SourceMgr.h"
 
 namespace llvm {
@@ -165,6 +167,26 @@ getVFSFromYAML(llvm::MemoryBuffer *Buffer,
                llvm::SourceMgr::DiagHandlerTy DiagHandler,
                void *DiagContext = nullptr,
                IntrusiveRefCntPtr<FileSystem> ExternalFS = getRealFileSystem());
+
+struct YAMLVFSEntry {
+  template <typename T1, typename T2> YAMLVFSEntry(T1 &&VPath, T2 &&RPath)
+      : VPath(std::forward<T1>(VPath)), RPath(std::forward<T2>(RPath)) {}
+  std::string VPath;
+  std::string RPath;
+};
+
+class YAMLVFSWriter {
+  std::vector<YAMLVFSEntry> Mappings;
+  Optional<bool> IsCaseSensitive;
+
+public:
+  YAMLVFSWriter() {}
+  void addFileMapping(StringRef VirtualPath, StringRef RealPath);
+  void setCaseSensitivity(bool CaseSensitive) {
+    IsCaseSensitive = CaseSensitive;
+  }
+  void write(llvm::raw_ostream &OS);
+};
 
 } // end namespace vfs
 } // end namespace clang

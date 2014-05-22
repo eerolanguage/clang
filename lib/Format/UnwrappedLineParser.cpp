@@ -605,7 +605,9 @@ bool tokenCanStartNewLine(clang::Token Tok) {
          // Colon is used in labels, base class lists, initializer lists,
          // range-based for loops, ternary operator, but should never be the
          // first token in an unwrapped line.
-         Tok.isNot(tok::colon);
+         Tok.isNot(tok::colon) &&
+         // 'noexcept' is a trailing annotation.
+         Tok.isNot(tok::kw_noexcept);
 }
 
 void UnwrappedLineParser::parseStructuralElement() {
@@ -763,6 +765,10 @@ void UnwrappedLineParser::parseStructuralElement() {
       return;
     case tok::identifier: {
       StringRef Text = FormatTok->TokenText;
+      if (Style.Language == FormatStyle::LK_JavaScript && Text == "function") {
+        tryToParseJSFunction();
+        break;
+      }
       nextToken();
       if (Line->Tokens.size() == 1) {
         if (FormatTok->Tok.is(tok::colon)) {

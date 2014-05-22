@@ -622,7 +622,7 @@ bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input,
     Kind = Input.isSystem() ? SrcMgr::C_System : SrcMgr::C_User;
 
   if (Input.isBuffer()) {
-    SourceMgr.createMainFileIDForMemBuffer(Input.getBuffer(), Kind);
+    SourceMgr.setMainFileID(SourceMgr.createFileID(Input.getBuffer(), Kind));
     assert(!SourceMgr.getMainFileID().isInvalid() &&
            "Couldn't establish MainFileID!");
     return true;
@@ -656,7 +656,8 @@ bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input,
       }
     }
 
-    SourceMgr.createMainFileID(File, Kind);
+    SourceMgr.setMainFileID(
+        SourceMgr.createFileID(File, SourceLocation(), Kind));
   } else {
     std::unique_ptr<llvm::MemoryBuffer> SB;
     if (llvm::error_code ec = llvm::MemoryBuffer::getSTDIN(SB)) {
@@ -665,7 +666,8 @@ bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input,
     }
     const FileEntry *File = FileMgr.getVirtualFile(SB->getBufferIdentifier(),
                                                    SB->getBufferSize(), 0);
-    SourceMgr.createMainFileID(File, Kind);
+    SourceMgr.setMainFileID(
+        SourceMgr.createFileID(File, SourceLocation(), Kind));
     SourceMgr.overrideFileContents(File, SB.release());
   }
 
