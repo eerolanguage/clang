@@ -18,6 +18,7 @@
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Sema/LoopHint.h"
 #include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/CallSite.h"
@@ -76,7 +77,6 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::SEHExceptStmtClass:
   case Stmt::SEHFinallyStmtClass:
   case Stmt::MSDependentExistsStmtClass:
-  case Stmt::OMPSimdDirectiveClass:
     llvm_unreachable("invalid statement class to emit generically");
   case Stmt::NullStmtClass:
   case Stmt::CompoundStmtClass:
@@ -175,6 +175,9 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     break;
   case Stmt::OMPParallelDirectiveClass:
     EmitOMPParallelDirective(cast<OMPParallelDirective>(*S));
+    break;
+  case Stmt::OMPSimdDirectiveClass:
+    EmitOMPSimdDirective(cast<OMPSimdDirective>(*S));
     break;
   }
 }
@@ -396,7 +399,23 @@ void CodeGenFunction::EmitLabelStmt(const LabelStmt &S) {
 }
 
 void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
-  EmitStmt(S.getSubStmt());
+  const Stmt *SubStmt = S.getSubStmt();
+  switch (SubStmt->getStmtClass()) {
+  case Stmt::DoStmtClass:
+    EmitDoStmt(cast<DoStmt>(*SubStmt), S.getAttrs());
+    break;
+  case Stmt::ForStmtClass:
+    EmitForStmt(cast<ForStmt>(*SubStmt), S.getAttrs());
+    break;
+  case Stmt::WhileStmtClass:
+    EmitWhileStmt(cast<WhileStmt>(*SubStmt), S.getAttrs());
+    break;
+  case Stmt::CXXForRangeStmtClass:
+    EmitCXXForRangeStmt(cast<CXXForRangeStmt>(*SubStmt), S.getAttrs());
+    break;
+  default:
+    EmitStmt(SubStmt);
+  }
 }
 
 void CodeGenFunction::EmitGotoStmt(const GotoStmt &S) {
@@ -434,7 +453,7 @@ void CodeGenFunction::EmitIndirectGotoStmt(const IndirectGotoStmt &S) {
 void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
   // C99 6.8.4.1: The first substatement is executed if the expression compares
   // unequal to 0.  The condition must be a scalar type.
-  LexicalScope ConditionScope(*this, S.getSourceRange());
+  LexicalScope ConditionScope(*this, S.getCond()->getSourceRange());
   RegionCounter Cnt = getPGORegionCounter(&S);
 
   if (S.getConditionVariable())
@@ -502,13 +521,100 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
   EmitBlock(ContBlock, true);
 }
 
-void CodeGenFunction::EmitWhileStmt(const WhileStmt &S) {
+void CodeGenFunction::EmitCondBrHints(llvm::LLVMContext &Context,
+                                      llvm::BranchInst *CondBr,
+                                      const ArrayRef<const Attr *> &Attrs) {
+  // Return if there are no hints.
+  if (Attrs.empty())
+    return;
+
+  // Add vectorize hints to the metadata on the conditional branch.
+  SmallVector<llvm::Value *, 2> Metadata(1);
+  for (const auto *Attr : Attrs) {
+    const LoopHintAttr *LH = dyn_cast<LoopHintAttr>(Attr);
+
+    // Skip non loop hint attributes
+    if (!LH)
+      continue;
+
+    LoopHintAttr::OptionType Option = LH->getOption();
+    int ValueInt = LH->getValue();
+
+    const char *MetadataName;
+    switch (Option) {
+    case LoopHintAttr::Vectorize:
+    case LoopHintAttr::VectorizeWidth:
+      MetadataName = "llvm.vectorizer.width";
+      break;
+    case LoopHintAttr::Interleave:
+    case LoopHintAttr::InterleaveCount:
+      MetadataName = "llvm.vectorizer.unroll";
+      break;
+    case LoopHintAttr::Unroll:
+      MetadataName = "llvm.loopunroll.enable";
+      break;
+    case LoopHintAttr::UnrollCount:
+      MetadataName = "llvm.loopunroll.count";
+      break;
+    }
+
+    llvm::Value *Value;
+    llvm::MDString *Name;
+    switch (Option) {
+    case LoopHintAttr::Vectorize:
+    case LoopHintAttr::Interleave:
+      if (ValueInt == 1) {
+        // FIXME: In the future I will modifiy the behavior of the metadata
+        // so we can enable/disable vectorization and interleaving separately.
+        Name = llvm::MDString::get(Context, "llvm.vectorizer.enable");
+        Value = Builder.getTrue();
+        break;
+      }
+      // Vectorization/interleaving is disabled, set width/count to 1.
+      ValueInt = 1;
+      // Fallthrough.
+    case LoopHintAttr::VectorizeWidth:
+    case LoopHintAttr::InterleaveCount:
+      Name = llvm::MDString::get(Context, MetadataName);
+      Value = llvm::ConstantInt::get(Int32Ty, ValueInt);
+      break;
+    case LoopHintAttr::Unroll:
+      Name = llvm::MDString::get(Context, MetadataName);
+      Value = (ValueInt == 0) ? Builder.getFalse() : Builder.getTrue();
+      break;
+    case LoopHintAttr::UnrollCount:
+      Name = llvm::MDString::get(Context, MetadataName);
+      Value = llvm::ConstantInt::get(Int32Ty, ValueInt);
+      break;
+    }
+
+    SmallVector<llvm::Value *, 2> OpValues;
+    OpValues.push_back(Name);
+    OpValues.push_back(Value);
+
+    // Set or overwrite metadata indicated by Name.
+    Metadata.push_back(llvm::MDNode::get(Context, OpValues));
+  }
+
+  if (!Metadata.empty()) {
+    // Add llvm.loop MDNode to CondBr.
+    llvm::MDNode *LoopID = llvm::MDNode::get(Context, Metadata);
+    LoopID->replaceOperandWith(0, LoopID); // First op points to itself.
+
+    CondBr->setMetadata("llvm.loop", LoopID);
+  }
+}
+
+void CodeGenFunction::EmitWhileStmt(const WhileStmt &S,
+                                    const ArrayRef<const Attr *> &WhileAttrs) {
   RegionCounter Cnt = getPGORegionCounter(&S);
 
   // Emit the header for the loop, which will also become
   // the continue target.
   JumpDest LoopHeader = getJumpDestInCurrentScope("while.cond");
   EmitBlock(LoopHeader.getBlock());
+
+  LoopStack.push(LoopHeader.getBlock());
 
   // Create an exit block for when the condition fails, which will
   // also become the break target.
@@ -547,13 +653,17 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S) {
     llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
     if (ConditionScope.requiresCleanups())
       ExitBlock = createBasicBlock("while.exit");
-    Builder.CreateCondBr(BoolCondVal, LoopBody, ExitBlock,
-                         PGO.createLoopWeights(S.getCond(), Cnt));
+    llvm::BranchInst *CondBr =
+        Builder.CreateCondBr(BoolCondVal, LoopBody, ExitBlock,
+                             PGO.createLoopWeights(S.getCond(), Cnt));
 
     if (ExitBlock != LoopExit.getBlock()) {
       EmitBlock(ExitBlock);
       EmitBranchThroughCleanup(LoopExit);
     }
+
+    // Attach metadata to loop body conditional branch.
+    EmitCondBrHints(LoopBody->getContext(), CondBr, WhileAttrs);
   }
 
   // Emit the loop body.  We have to emit this in a cleanup scope
@@ -573,6 +683,8 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S) {
   // Branch to the loop header again.
   EmitBranch(LoopHeader.getBlock());
 
+  LoopStack.pop();
+
   // Emit the exit block.
   EmitBlock(LoopExit.getBlock(), true);
 
@@ -582,7 +694,8 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S) {
     SimplifyForwardingBlocks(LoopHeader.getBlock());
 }
 
-void CodeGenFunction::EmitDoStmt(const DoStmt &S) {
+void CodeGenFunction::EmitDoStmt(const DoStmt &S,
+                                 const ArrayRef<const Attr *> &DoAttrs) {
   JumpDest LoopExit = getJumpDestInCurrentScope("do.end");
   JumpDest LoopCond = getJumpDestInCurrentScope("do.cond");
 
@@ -593,6 +706,9 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S) {
 
   // Emit the body of the loop.
   llvm::BasicBlock *LoopBody = createBasicBlock("do.body");
+
+  LoopStack.push(LoopBody);
+
   EmitBlockWithFallThrough(LoopBody, Cnt);
   {
     RunCleanupsScope BodyScope(*this);
@@ -619,9 +735,16 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S) {
       EmitBoolCondBranch = false;
 
   // As long as the condition is true, iterate the loop.
-  if (EmitBoolCondBranch)
-    Builder.CreateCondBr(BoolCondVal, LoopBody, LoopExit.getBlock(),
-                         PGO.createLoopWeights(S.getCond(), Cnt));
+  if (EmitBoolCondBranch) {
+    llvm::BranchInst *CondBr =
+        Builder.CreateCondBr(BoolCondVal, LoopBody, LoopExit.getBlock(),
+                             PGO.createLoopWeights(S.getCond(), Cnt));
+
+    // Attach metadata to loop body conditional branch.
+    EmitCondBrHints(LoopBody->getContext(), CondBr, DoAttrs);
+  }
+
+  LoopStack.pop();
 
   // Emit the exit block.
   EmitBlock(LoopExit.getBlock());
@@ -632,7 +755,8 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S) {
     SimplifyForwardingBlocks(LoopCond.getBlock());
 }
 
-void CodeGenFunction::EmitForStmt(const ForStmt &S) {
+void CodeGenFunction::EmitForStmt(const ForStmt &S,
+                                  const ArrayRef<const Attr *> &ForAttrs) {
   JumpDest LoopExit = getJumpDestInCurrentScope("for.end");
 
   RunCleanupsScope ForScope(*this);
@@ -653,6 +777,8 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S) {
   JumpDest Continue = getJumpDestInCurrentScope("for.cond");
   llvm::BasicBlock *CondBlock = Continue.getBlock();
   EmitBlock(CondBlock);
+
+  LoopStack.push(CondBlock);
 
   // If the for loop doesn't have an increment we can just use the
   // condition as the continue block.  Otherwise we'll need to create
@@ -686,8 +812,12 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S) {
     // C99 6.8.5p2/p4: The first substatement is executed if the expression
     // compares unequal to 0.  The condition must be a scalar type.
     llvm::Value *BoolCondVal = EvaluateExprAsBool(S.getCond());
-    Builder.CreateCondBr(BoolCondVal, ForBody, ExitBlock,
-                         PGO.createLoopWeights(S.getCond(), Cnt));
+    llvm::BranchInst *CondBr =
+        Builder.CreateCondBr(BoolCondVal, ForBody, ExitBlock,
+                             PGO.createLoopWeights(S.getCond(), Cnt));
+
+    // Attach metadata to loop body conditional branch.
+    EmitCondBrHints(ForBody->getContext(), CondBr, ForAttrs);
 
     if (ExitBlock != LoopExit.getBlock()) {
       EmitBlock(ExitBlock);
@@ -724,11 +854,15 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S) {
   if (DI)
     DI->EmitLexicalBlockEnd(Builder, S.getSourceRange().getEnd());
 
+  LoopStack.pop();
+
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);
 }
 
-void CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S) {
+void
+CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
+                                     const ArrayRef<const Attr *> &ForAttrs) {
   JumpDest LoopExit = getJumpDestInCurrentScope("for.end");
 
   RunCleanupsScope ForScope(*this);
@@ -749,6 +883,8 @@ void CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S) {
   llvm::BasicBlock *CondBlock = createBasicBlock("for.cond");
   EmitBlock(CondBlock);
 
+  LoopStack.push(CondBlock);
+
   // If there are any cleanups between here and the loop-exit scope,
   // create a block to stage a loop exit along.
   llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
@@ -761,8 +897,11 @@ void CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S) {
   // The body is executed if the expression, contextually converted
   // to bool, is true.
   llvm::Value *BoolCondVal = EvaluateExprAsBool(S.getCond());
-  Builder.CreateCondBr(BoolCondVal, ForBody, ExitBlock,
-                       PGO.createLoopWeights(S.getCond(), Cnt));
+  llvm::BranchInst *CondBr = Builder.CreateCondBr(
+      BoolCondVal, ForBody, ExitBlock, PGO.createLoopWeights(S.getCond(), Cnt));
+
+  // Attach metadata to loop body conditional branch.
+  EmitCondBrHints(ForBody->getContext(), CondBr, ForAttrs);
 
   if (ExitBlock != LoopExit.getBlock()) {
     EmitBlock(ExitBlock);
@@ -797,6 +936,8 @@ void CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S) {
 
   if (DI)
     DI->EmitLexicalBlockEnd(Builder, S.getSourceRange().getEnd());
+
+  LoopStack.pop();
 
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);

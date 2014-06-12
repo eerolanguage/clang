@@ -2300,10 +2300,10 @@ void CXXNameMangler::mangleType(const VectorType *T) {
     llvm::Triple Target = getASTContext().getTargetInfo().getTriple();
     llvm::Triple::ArchType Arch =
         getASTContext().getTargetInfo().getTriple().getArch();
-    if (Arch == llvm::Triple::aarch64 ||
-        Arch == llvm::Triple::aarch64_be ||
-        Arch == llvm::Triple::arm64_be ||
-        (Arch == llvm::Triple::arm64 && !Target.isOSDarwin()))
+    if ((Arch == llvm::Triple::aarch64 ||
+         Arch == llvm::Triple::aarch64_be ||
+         Arch == llvm::Triple::arm64_be ||
+         Arch == llvm::Triple::arm64) && !Target.isOSDarwin())
       mangleAArch64NeonVectorType(T);
     else
       mangleNeonVectorType(T);
@@ -2674,7 +2674,6 @@ recurse:
     llvm_unreachable("cannot mangle opaque value; mangling wrong thing?");
 
   case Expr::InitListExprClass: {
-    // Proposal by Jason Merrill, 2012-01-03
     Out << "il";
     const InitListExpr *InitList = cast<InitListExpr>(E);
     for (unsigned i = 0, e = InitList->getNumInits(); i != e; ++i)
@@ -2739,7 +2738,6 @@ recurse:
     Out << '_';
     mangleType(New->getAllocatedType());
     if (New->hasInitializer()) {
-      // Proposal by Jason Merrill, 2012-01-03
       if (New->getInitializationStyle() == CXXNewExpr::ListInit)
         Out << "il";
       else
@@ -2825,7 +2823,6 @@ recurse:
     const CXXConstructExpr *CE = cast<CXXConstructExpr>(E);
     unsigned N = CE->getNumArgs();
 
-    // Proposal by Jason Merrill, 2012-01-03
     if (CE->isListInitialization())
       Out << "tl";
     else

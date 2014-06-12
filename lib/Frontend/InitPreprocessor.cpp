@@ -86,7 +86,7 @@ static void AddImplicitIncludePTH(MacroBuilder &Builder, Preprocessor &PP,
                                   StringRef ImplicitIncludePTH) {
   PTHManager *P = PP.getPTHManager();
   // Null check 'P' in the corner case where it couldn't be created.
-  const char *OriginalFile = P ? P->getOriginalSourceFile() : 0;
+  const char *OriginalFile = P ? P->getOriginalSourceFile() : nullptr;
 
   if (!OriginalFile) {
     PP.getDiagnostics().Report(diag::err_fe_pth_file_has_no_source_header)
@@ -491,7 +491,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
     Builder.defineMacro("__BLOCKS__");
   }
 
-  if (LangOpts.CXXExceptions)
+  if (!LangOpts.MSVCCompat && LangOpts.CXXExceptions)
     Builder.defineMacro("__EXCEPTIONS");
   if (LangOpts.RTTI)
     Builder.defineMacro("__GXX_RTTI");

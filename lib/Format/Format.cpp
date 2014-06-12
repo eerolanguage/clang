@@ -223,6 +223,7 @@ template <> struct MappingTraits<FormatStyle> {
                      Style.SpaceBeforeParens);
     }
     IO.mapOptional("SpaceBeforeParens", Style.SpaceBeforeParens);
+    IO.mapOptional("DisableFormat", Style.DisableFormat);
   }
 };
 
@@ -256,6 +257,30 @@ template <> struct DocumentListTraits<std::vector<FormatStyle> > {
 
 namespace clang {
 namespace format {
+
+const std::error_category &getParseCategory() {
+  static ParseErrorCategory C;
+  return C;
+}
+std::error_code make_error_code(ParseError e) {
+  return std::error_code(static_cast<int>(e), getParseCategory());
+}
+
+const char *ParseErrorCategory::name() const LLVM_NOEXCEPT {
+  return "clang-format.parse_error";
+}
+
+std::string ParseErrorCategory::message(int EV) const {
+  switch (static_cast<ParseError>(EV)) {
+  default: llvm_unreachable("unexpected parse error");
+  case ParseError::Success:
+    return "Success";
+  case ParseError::Error:
+    return "Invalid argument";
+  case ParseError::Unsuitable:
+    return "Unsuitable";
+  }
+}
 
 FormatStyle getLLVMStyle() {
   FormatStyle LLVMStyle;
@@ -313,6 +338,8 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.PenaltyExcessCharacter = 1000000;
   LLVMStyle.PenaltyReturnTypeOnItsOwnLine = 60;
   LLVMStyle.PenaltyBreakBeforeFirstCallParameter = 19;
+
+  LLVMStyle.DisableFormat = false;
 
   return LLVMStyle;
 }
@@ -409,6 +436,12 @@ FormatStyle getGNUStyle() {
   return Style;
 }
 
+FormatStyle getNoStyle() {
+  FormatStyle NoStyle = getLLVMStyle();
+  NoStyle.DisableFormat = true;
+  return NoStyle;
+}
+
 bool getPredefinedStyle(StringRef Name, FormatStyle::LanguageKind Language,
                         FormatStyle *Style) {
   if (Name.equals_lower("llvm")) {
@@ -423,6 +456,8 @@ bool getPredefinedStyle(StringRef Name, FormatStyle::LanguageKind Language,
     *Style = getWebKitStyle();
   } else if (Name.equals_lower("gnu")) {
     *Style = getGNUStyle();
+  } else if (Name.equals_lower("none")) {
+    *Style = getNoStyle();
   } else {
     return false;
   }
@@ -431,12 +466,12 @@ bool getPredefinedStyle(StringRef Name, FormatStyle::LanguageKind Language,
   return true;
 }
 
-llvm::error_code parseConfiguration(StringRef Text, FormatStyle *Style) {
+std::error_code parseConfiguration(StringRef Text, FormatStyle *Style) {
   assert(Style);
   FormatStyle::LanguageKind Language = Style->Language;
   assert(Language != FormatStyle::LK_None);
   if (Text.trim().empty())
-    return llvm::make_error_code(llvm::errc::invalid_argument);
+    return make_error_code(ParseError::Error);
 
   std::vector<FormatStyle> Styles;
   llvm::yaml::Input Input(Text);
@@ -452,14 +487,14 @@ llvm::error_code parseConfiguration(StringRef Text, FormatStyle *Style) {
   for (unsigned i = 0; i < Styles.size(); ++i) {
     // Ensures that only the first configuration can skip the Language option.
     if (Styles[i].Language == FormatStyle::LK_None && i != 0)
-      return llvm::make_error_code(llvm::errc::invalid_argument);
+      return make_error_code(ParseError::Error);
     // Ensure that each language is configured at most once.
     for (unsigned j = 0; j < i; ++j) {
       if (Styles[i].Language == Styles[j].Language) {
         DEBUG(llvm::dbgs()
               << "Duplicate languages in the config file on positions " << j
               << " and " << i << "\n");
-        return llvm::make_error_code(llvm::errc::invalid_argument);
+        return make_error_code(ParseError::Error);
       }
     }
   }
@@ -471,10 +506,10 @@ llvm::error_code parseConfiguration(StringRef Text, FormatStyle *Style) {
         Styles[i].Language == FormatStyle::LK_None) {
       *Style = Styles[i];
       Style->Language = Language;
-      return llvm::make_error_code(llvm::errc::success);
+      return make_error_code(ParseError::Success);
     }
   }
-  return llvm::make_error_code(llvm::errc::not_supported);
+  return make_error_code(ParseError::Unsuitable);
 }
 
 std::string configurationAsText(const FormatStyle &Style) {
@@ -690,8 +725,7 @@ private:
       if (I[1]->Last->Type == TT_LineComment)
         return 0;
       do {
-        if (Tok->isOneOf(tok::l_brace, tok::r_brace) &&
-            !Style.AllowShortBlocksOnASingleLine)
+        if (Tok->is(tok::l_brace) && Tok->BlockKind != BK_BracedInit)
           return 0;
         Tok = Tok->Next;
       } while (Tok);
@@ -828,8 +862,10 @@ public:
 
         if (TheLine.Last->TotalLength + Indent <= ColumnLimit) {
           LineState State = Indenter->getInitialState(Indent, &TheLine, DryRun);
-          while (State.NextToken)
+          while (State.NextToken) {
+            formatChildren(State, /*Newline=*/false, /*DryRun=*/false, Penalty);
             Indenter->addTokenToState(State, /*Newline=*/false, DryRun);
+          }
         } else if (Style.ColumnLimit == 0) {
           // FIXME: Implement nested blocks for ColumnLimit = 0.
           NoColumnLimitFormatter Formatter(Indenter);
@@ -1003,6 +1039,12 @@ private:
     return Style.ColumnLimit - (InPPDirective ? 2 : 0);
   }
 
+  struct CompareLineStatePointers {
+    bool operator()(LineState *obj1, LineState *obj2) const {
+      return *obj1 < *obj2;
+    }
+  };
+
   /// \brief Analyze the entire solution space starting from \p InitialState.
   ///
   /// This implements a variant of Dijkstra's algorithm on the graph that spans
@@ -1012,7 +1054,7 @@ private:
   ///
   /// If \p DryRun is \c false, directly applies the changes.
   unsigned analyzeSolutionSpace(LineState &InitialState, bool DryRun = false) {
-    std::set<LineState> Seen;
+    std::set<LineState *, CompareLineStatePointers> Seen;
 
     // Increasing count of \c StateNode items we have created. This is used to
     // create a deterministic order independent of the container.
@@ -1042,7 +1084,7 @@ private:
       if (Count > 10000)
         Node->State.IgnoreStackForComparison = true;
 
-      if (!Seen.insert(Node->State).second)
+      if (!Seen.insert(&Node->State).second)
         // State already examined with lower penalty.
         continue;
 
@@ -1146,7 +1188,8 @@ private:
       return true;
 
     if (NewLine) {
-      int AdditionalIndent = 0;
+      int AdditionalIndent =
+          State.FirstIndent - State.Line->Level * Style.IndentWidth;
       if (State.Stack.size() < 2 ||
           !State.Stack[State.Stack.size() - 2].JSFunctionInlined) {
         AdditionalIndent = State.Stack.back().Indent -
@@ -1902,6 +1945,11 @@ private:
 tooling::Replacements reformat(const FormatStyle &Style, Lexer &Lex,
                                SourceManager &SourceMgr,
                                std::vector<CharSourceRange> Ranges) {
+  if (Style.DisableFormat) {
+    tooling::Replacements EmptyResult;
+    return EmptyResult;
+  }
+
   Formatter formatter(Style, Lex, SourceMgr, Ranges);
   return formatter.format();
 }
@@ -1978,7 +2026,7 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName,
 
   if (StyleName.startswith("{")) {
     // Parse YAML/JSON style from the command line.
-    if (llvm::error_code ec = parseConfiguration(StyleName, &Style)) {
+    if (std::error_code ec = parseConfiguration(StyleName, &Style)) {
       llvm::errs() << "Error parsing -style: " << ec.message() << ", using "
                    << FallbackStyle << " style\n";
     }
@@ -2019,13 +2067,13 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName,
 
     if (IsFile) {
       std::unique_ptr<llvm::MemoryBuffer> Text;
-      if (llvm::error_code ec =
+      if (std::error_code ec =
               llvm::MemoryBuffer::getFile(ConfigFile.c_str(), Text)) {
         llvm::errs() << ec.message() << "\n";
         break;
       }
-      if (llvm::error_code ec = parseConfiguration(Text->getBuffer(), &Style)) {
-        if (ec == llvm::errc::not_supported) {
+      if (std::error_code ec = parseConfiguration(Text->getBuffer(), &Style)) {
+        if (ec == ParseError::Unsuitable) {
           if (!UnsuitableConfigFiles.empty())
             UnsuitableConfigFiles.append(", ");
           UnsuitableConfigFiles.append(ConfigFile);

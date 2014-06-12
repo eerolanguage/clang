@@ -1088,10 +1088,10 @@ def InitPriority : InheritableAttr {
 def Section : InheritableAttr {
   let Spellings = [GCC<"section">, Declspec<"allocate">];
   let Args = [StringArgument<"Name">];
-  let Subjects = SubjectList<[Function, GlobalVar, 
+  let Subjects = SubjectList<[Function, GlobalVar,
                               ObjCMethod, ObjCProperty], ErrorDiag,
                              "ExpectedFunctionGlobalVarMethodOrProperty">;
-  let Documentation = [Undocumented];
+  let Documentation = [SectionDocs];
 }
 
 def Sentinel : InheritableAttr {
@@ -1659,14 +1659,13 @@ def MsStruct : InheritableAttr {
 
 def DLLExport : InheritableAttr, TargetSpecificAttr<TargetWindows> {
   let Spellings = [Declspec<"dllexport">, GCC<"dllexport">];
-  let Subjects = SubjectList<[Function, Var]>;
+  let Subjects = SubjectList<[Function, Var, CXXRecord]>;
   let Documentation = [Undocumented];
 }
 
 def DLLImport : InheritableAttr, TargetSpecificAttr<TargetWindows> {
   let Spellings = [Declspec<"dllimport">, GCC<"dllimport">];
-  // Technically, the subjects for DllImport are Function and Var, but there is
-  // custom semantic handling required when MicrosoftExt is true.
+  let Subjects = SubjectList<[Function, Var, CXXRecord]>;
   let Documentation = [Undocumented];
 }
 
@@ -1715,7 +1714,6 @@ def MSInheritance : InheritableAttr {
                    Keyword<"__multiple_inheritance">,
                    Keyword<"__virtual_inheritance">,
                    Keyword<"__unspecified_inheritance">];
-  let Documentation = [SectionDocs];
   let AdditionalMembers = [{
   static bool hasVBPtrOffsetField(Spelling Inheritance) {
     return Inheritance == Keyword_unspecified_inheritance;
@@ -1761,4 +1759,58 @@ def MSVtorDisp : InheritableAttr {
 
 def Unaligned : IgnoredAttr {
   let Spellings = [Keyword<"__unaligned">];
+}
+
+def LoopHint : Attr {
+  /// vectorize: vectorizes loop operations if 'value != 0'.
+  /// vectorize_width: vectorize loop operations with width 'value'.
+  /// interleave: interleave multiple loop iterations if 'value != 0'.
+  /// interleave_count: interleaves 'value' loop interations.
+  /// unroll: unroll loop if 'value != 0'.
+  /// unroll_count: unrolls loop 'value' times.
+
+  /// FIXME: Add Pragma spelling to tablegen and
+  /// use it here.
+  let Spellings = [Keyword<"loop">];
+
+  /// State of the loop optimization specified by the spelling.
+  let Args = [EnumArgument<"Option", "OptionType",
+                          ["vectorize", "vectorize_width", "interleave", "interleave_count",
+                           "unroll", "unroll_count"],
+                          ["Vectorize", "VectorizeWidth", "Interleave", "InterleaveCount",
+                           "Unroll", "UnrollCount"]>,
+              DefaultIntArgument<"Value", 1>];
+
+  let AdditionalMembers = [{
+  static StringRef getOptionName(int Option) {
+    switch(Option) {
+    case Vectorize: return "vectorize";
+    case VectorizeWidth: return "vectorize_width";
+    case Interleave: return "interleave";
+    case InterleaveCount: return "interleave_count";
+    case Unroll: return "unroll";
+    case UnrollCount: return "unroll_count";
+    }
+    llvm_unreachable("Unhandled LoopHint option.");
+  }
+
+  static StringRef getValueName(int Value) {
+    if (Value)
+      return "enable";
+    return "disable";
+  }
+
+  // FIXME: Modify pretty printer to print this pragma.
+  void print(raw_ostream &OS, const PrintingPolicy &Policy) const {
+    OS << "#pragma clang loop " << getOptionName(option) << "(";
+    if (option == VectorizeWidth || option == InterleaveCount ||
+        option == UnrollCount)
+      OS << value;
+    else
+      OS << getValueName(value);
+    OS << ")\n";
+  }
+  }];
+
+  let Documentation = [Undocumented];
 }

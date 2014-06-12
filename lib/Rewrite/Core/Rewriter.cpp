@@ -21,7 +21,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/Config/config.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace clang;
@@ -332,6 +332,8 @@ bool Rewriter::ReplaceText(SourceRange range, SourceRange replacementRange) {
 /// printer to generate the replacement code.  This returns true if the input
 /// could not be rewritten, or false if successful.
 bool Rewriter::ReplaceStmt(Stmt *From, Stmt *To) {
+  assert(From != nullptr && To != nullptr && "Expected non-null Stmt's");
+
   // Measaure the old text.
   int Size = getRangeSize(From->getSourceRange());
   if (Size == -1)
@@ -348,6 +350,7 @@ bool Rewriter::ReplaceStmt(Stmt *From, Stmt *To) {
 }
 
 std::string Rewriter::ConvertToString(Stmt *From) {
+  assert(From != nullptr && "Expected non-null Stmt");
   std::string SStr;
   llvm::raw_string_ostream S(SStr);
   From->printPretty(S, nullptr, PrintingPolicy(*LangOpts));
@@ -454,8 +457,8 @@ public:
     // Win32 does not allow rename/removing opened files.
     FileStream.reset();
 #endif
-    if (llvm::error_code ec =
-          llvm::sys::fs::rename(TempFilename.str(), Filename)) {
+    if (std::error_code ec =
+            llvm::sys::fs::rename(TempFilename.str(), Filename)) {
       AllWritten = false;
       Diagnostics.Report(clang::diag::err_unable_to_rename_temp)
         << TempFilename << Filename << ec.message();

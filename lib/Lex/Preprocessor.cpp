@@ -60,7 +60,7 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
                            ModuleLoader &TheModuleLoader,
                            IdentifierInfoLookup *IILookup, bool OwnsHeaders,
                            TranslationUnitKind TUKind)
-    : PPOpts(PPOpts), Diags(&diags), LangOpts(opts), Target(0),
+    : PPOpts(PPOpts), Diags(&diags), LangOpts(opts), Target(nullptr),
       FileMgr(Headers.getFileMgr()), SourceMgr(SM), HeaderInfo(Headers),
       TheModuleLoader(TheModuleLoader), ExternalSource(nullptr),
       Identifiers(opts, IILookup), IncrementalProcessing(false), TUKind(TUKind),
@@ -71,7 +71,7 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
       CurDirLookup(nullptr), CurLexerKind(CLK_Lexer), CurSubmodule(nullptr),
       Callbacks(nullptr), MacroArgCache(nullptr), Record(nullptr),
       inLegacyHeader(true), inLegacyMacro(false),
-      MIChainHead(nullptr), MICache(nullptr), DeserialMIChainHead(0) {
+      MIChainHead(nullptr), MICache(nullptr), DeserialMIChainHead(nullptr) {
   OwnsHeaderSearch = OwnsHeaders;
   
   ScratchBuf = new ScratchBuffer(SourceMgr);

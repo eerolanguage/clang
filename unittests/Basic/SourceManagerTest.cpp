@@ -20,7 +20,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/Config/config.h"
+#include "llvm/Config/llvm-config.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -65,7 +65,7 @@ class VoidModuleLoader : public ModuleLoader {
                          bool Complain) override { }
 
   GlobalModuleIndex *loadGlobalModuleIndex(SourceLocation TriggerLoc) override
-    { return 0; }
+    { return nullptr; }
   bool lookupMissingImports(StringRef Name, SourceLocation TriggerLoc) override
     { return 0; };
 };
@@ -83,7 +83,7 @@ TEST_F(SourceManagerTest, isBeforeInTranslationUnit) {
                           &*Target);
   Preprocessor PP(new PreprocessorOptions(), Diags, LangOpts, SourceMgr,
                   HeaderInfo, ModLoader,
-                  /*IILookup =*/0,
+                  /*IILookup =*/nullptr,
                   /*OwnsHeaderSearch =*/false);
   PP.Initialize(*Target);
   PP.EnterMainSourceFile();
@@ -168,7 +168,7 @@ TEST_F(SourceManagerTest, getColumnNumber) {
   EXPECT_TRUE(Invalid);
 
   // Test with no invalid flag.
-  EXPECT_EQ(1U, SourceMgr.getColumnNumber(MainFileID, 0, NULL));
+  EXPECT_EQ(1U, SourceMgr.getColumnNumber(MainFileID, 0, nullptr));
 }
 
 #if defined(LLVM_ON_UNIX)
@@ -200,7 +200,7 @@ TEST_F(SourceManagerTest, getMacroArgExpandedLocation) {
                           &*Target);
   Preprocessor PP(new PreprocessorOptions(), Diags, LangOpts, SourceMgr,
                   HeaderInfo, ModLoader,
-                  /*IILookup =*/0,
+                  /*IILookup =*/nullptr,
                   /*OwnsHeaderSearch =*/false);
   PP.Initialize(*Target);
   PP.EnterMainSourceFile();
@@ -298,7 +298,7 @@ TEST_F(SourceManagerTest, isBeforeInTranslationUnitWithMacroInInclude) {
                           &*Target);
   Preprocessor PP(new PreprocessorOptions(), Diags, LangOpts, SourceMgr,
                   HeaderInfo, ModLoader,
-                  /*IILookup =*/0,
+                  /*IILookup =*/nullptr,
                   /*OwnsHeaderSearch =*/false);
   PP.Initialize(*Target);
 

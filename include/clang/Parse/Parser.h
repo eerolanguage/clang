@@ -20,6 +20,7 @@
 #include "clang/Lex/CodeCompletionHandler.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/LoopHint.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
@@ -160,6 +161,8 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> MSConstSeg;
   std::unique_ptr<PragmaHandler> MSCodeSeg;
   std::unique_ptr<PragmaHandler> MSSection;
+  std::unique_ptr<PragmaHandler> OptimizeHandler;
+  std::unique_ptr<PragmaHandler> LoopHintHandler;
 
   std::unique_ptr<CommentHandler> CommentSemaHandler;
 
@@ -524,6 +527,10 @@ private:
   /// \brief Handle the annotation token produced for
   /// #pragma clang __debug captured
   StmtResult HandlePragmaCaptured();
+
+  /// \brief Handle the annotation token produced for
+  /// #pragma vectorize...
+  LoopHint HandlePragmaLoopHint();
 
   /// GetLookAheadToken - This peeks ahead N tokens and returns that token
   /// without consuming any tokens.  LookAhead(0) returns 'Tok', LookAhead(1)
@@ -1717,6 +1724,9 @@ private:
   StmtResult ParseReturnStatement();
   StmtResult ParseAsmStatement(bool &msAsm);
   StmtResult ParseMicrosoftAsmStatement(SourceLocation AsmLoc);
+  StmtResult ParsePragmaLoopHint(StmtVector &Stmts, bool OnlyStatement,
+                                 SourceLocation *TrailingElseLoc,
+                                 ParsedAttributesWithRange &Attrs);
 
   /// \brief Describes the behavior that should be taken for an __if_exists
   /// block.
@@ -1802,7 +1812,8 @@ private:
     DSC_type_specifier, // C++ type-specifier-seq or C specifier-qualifier-list
     DSC_trailing, // C++11 trailing-type-specifier in a trailing return type
     DSC_alias_declaration, // C++11 type-specifier-seq in an alias-declaration
-    DSC_top_level // top-level/namespace declaration context
+    DSC_top_level, // top-level/namespace declaration context
+    DSC_template_type_arg // template type argument context
   };
 
   /// Is this a context in which we are parsing just a type-specifier (or
@@ -1814,6 +1825,7 @@ private:
     case DSC_top_level:
       return false;
 
+    case DSC_template_type_arg:
     case DSC_type_specifier:
     case DSC_trailing:
     case DSC_alias_declaration:
@@ -2494,6 +2506,12 @@ private:
   Decl *ParseTypeParameter(unsigned Depth, unsigned Position);
   Decl *ParseTemplateTemplateParameter(unsigned Depth, unsigned Position);
   Decl *ParseNonTypeTemplateParameter(unsigned Depth, unsigned Position);
+  void DiagnoseMisplacedEllipsis(SourceLocation EllipsisLoc,
+                                 SourceLocation CorrectLoc,
+                                 bool AlreadyHasEllipsis,
+                                 bool IdentifierHasName);
+  void DiagnoseMisplacedEllipsisInDeclarator(SourceLocation EllipsisLoc,
+                                             Declarator &D);
   // C++ 14.3: Template arguments [temp.arg]
   typedef SmallVector<ParsedTemplateArgument, 16> TemplateArgList;
 

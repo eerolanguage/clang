@@ -20,7 +20,6 @@
 #include "clang/Lex/ModuleLoader.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
-#include "llvm/Config/config.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -42,7 +41,7 @@ class VoidModuleLoader : public ModuleLoader {
                          bool Complain) override { }
 
   GlobalModuleIndex *loadGlobalModuleIndex(SourceLocation TriggerLoc) override
-    { return 0; }
+    { return nullptr; }
   bool lookupMissingImports(StringRef Name, SourceLocation TriggerLoc) override
     { return 0; };
 };
@@ -70,7 +69,7 @@ protected:
     HeaderSearch HeaderInfo(new HeaderSearchOptions, SourceMgr, Diags, LangOpts,
                             Target.getPtr());
     Preprocessor PP(new PreprocessorOptions(), Diags, LangOpts, SourceMgr,
-                    HeaderInfo, ModLoader, /*IILookup =*/0,
+                    HeaderInfo, ModLoader, /*IILookup =*/nullptr,
                     /*OwnsHeaderSearch =*/false);
     PP.Initialize(*Target);
     PP.EnterMainSourceFile();

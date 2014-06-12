@@ -10,6 +10,7 @@
 #include "ToolChains.h"
 #include "clang/Basic/ObjCRuntime.h"
 #include "clang/Basic/Version.h"
+#include "clang/Config/config.h" // for GCC_INSTALL_PREFIX
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
@@ -29,13 +30,8 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
-
-// FIXME: This needs to be listed last until we fix the broken include guards
-// in these files and the LLVM config.h files.
-#include "clang/Config/config.h" // for GCC_INSTALL_PREFIX
-
 #include <cstdlib> // ::getenv
+#include <system_error>
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -45,6 +41,14 @@ using namespace llvm::opt;
 MachO::MachO(const Driver &D, const llvm::Triple &Triple,
                        const ArgList &Args)
   : ToolChain(D, Triple, Args) {
+  getProgramPaths().push_back(getDriver().getInstalledDir());
+  if (getDriver().getInstalledDir() != getDriver().Dir)
+    getProgramPaths().push_back(getDriver().Dir);
+
+  // We expect 'as', 'ld', etc. to be adjacent to our install dir.
+  getProgramPaths().push_back(getDriver().getInstalledDir());
+  if (getDriver().getInstalledDir() != getDriver().Dir)
+    getProgramPaths().push_back(getDriver().Dir);
 }
 
 /// Darwin - Darwin tool chain for i386 and x86_64.
@@ -232,14 +236,6 @@ Tool *MachO::buildAssembler() const {
 DarwinClang::DarwinClang(const Driver &D, const llvm::Triple& Triple,
                          const ArgList &Args)
   : Darwin(D, Triple, Args) {
-  getProgramPaths().push_back(getDriver().getInstalledDir());
-  if (getDriver().getInstalledDir() != getDriver().Dir)
-    getProgramPaths().push_back(getDriver().Dir);
-
-  // We expect 'as', 'ld', etc. to be adjacent to our install dir.
-  getProgramPaths().push_back(getDriver().getInstalledDir());
-  if (getDriver().getInstalledDir() != getDriver().Dir)
-    getProgramPaths().push_back(getDriver().Dir);
 }
 
 void DarwinClang::addClangWarningOptions(ArgStringList &CC1Args) const {
@@ -400,7 +396,8 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
     // it never went into the SDK.
     // Linking against libgcc_s.1 isn't needed for iOS 5.0+
     if (isIPhoneOSVersionLT(5, 0) && !isTargetIOSSimulator() &&
-        getTriple().getArch() != llvm::Triple::arm64)
+        (getTriple().getArch() != llvm::Triple::arm64 &&
+         getTriple().getArch() != llvm::Triple::aarch64))
       CmdArgs.push_back("-lgcc_s.1");
 
     // We currently always need a static runtime library for iOS.
@@ -520,6 +517,7 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
     if (!OSXTarget.empty() && !iOSTarget.empty()) {
       if (getTriple().getArch() == llvm::Triple::arm ||
           getTriple().getArch() == llvm::Triple::arm64 ||
+          getTriple().getArch() == llvm::Triple::aarch64 ||
           getTriple().getArch() == llvm::Triple::thumb)
         OSXTarget = "";
       else
@@ -656,6 +654,7 @@ void DarwinClang::AddCCKextLibArgs(const ArgList &Args,
   // Use the newer cc_kext for iOS ARM after 6.0.
   if (!isTargetIPhoneOS() || isTargetIOSSimulator() ||
       getTriple().getArch() == llvm::Triple::arm64 ||
+      getTriple().getArch() == llvm::Triple::aarch64 ||
       !isIPhoneOSVersionLT(6, 0)) {
     llvm::sys::path::append(P, "libclang_rt.cc_kext.a");
   } else {
@@ -926,7 +925,8 @@ DerivedArgList *Darwin::TranslateArgs(const DerivedArgList &Args,
   // but we can't check the deployment target in the translation code until
   // it is set here.
   if (isTargetIOSBased() && !isIPhoneOSVersionLT(6, 0) &&
-      getTriple().getArch() != llvm::Triple::arm64) {
+      getTriple().getArch() != llvm::Triple::arm64 &&
+      getTriple().getArch() != llvm::Triple::aarch64) {
     for (ArgList::iterator it = DAL->begin(), ie = DAL->end(); it != ie; ) {
       Arg *A = *it;
       ++it;
@@ -993,7 +993,8 @@ bool MachO::isPIEDefault() const {
 
 bool MachO::isPICDefaultForced() const {
   return (getArch() == llvm::Triple::x86_64 ||
-          getArch() == llvm::Triple::arm64);
+          getArch() == llvm::Triple::arm64 ||
+          getArch() == llvm::Triple::aarch64);
 }
 
 bool MachO::SupportsProfiling() const {
@@ -1082,7 +1083,8 @@ void Darwin::addStartObjectFileArgs(const llvm::opt::ArgList &Args,
           if (isTargetIOSSimulator()) {
             ; // iOS simulator does not need crt1.o.
           } else if (isTargetIPhoneOS()) {
-            if (getArch() == llvm::Triple::arm64)
+            if (getArch() == llvm::Triple::arm64 ||
+                getArch() == llvm::Triple::aarch64)
               ; // iOS does not need any crt1 files for arm64
             else if (isIPhoneOSVersionLT(3, 1))
               CmdArgs.push_back("-lcrt1.o");
@@ -2015,7 +2017,7 @@ void Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple(
       (llvm::array_lengthof(LibSuffixes) - (TargetArch != llvm::Triple::x86));
   for (unsigned i = 0; i < NumLibSuffixes; ++i) {
     StringRef LibSuffix = LibSuffixes[i];
-    llvm::error_code EC;
+    std::error_code EC;
     for (llvm::sys::fs::directory_iterator LI(LibDir + LibSuffix, EC), LE;
          !EC && LI != LE; LI = LI.increment(EC)) {
       StringRef VersionText = llvm::sys::path::filename(LI->path());
@@ -2225,7 +2227,7 @@ Hexagon_TC::Hexagon_TC(const Driver &D, const llvm::Triple &Triple,
 
   // Determine version of GCC libraries and headers to use.
   const std::string HexagonDir(GnuDir + "/lib/gcc/hexagon");
-  llvm::error_code ec;
+  std::error_code ec;
   GCCVersion MaxVersion= GCCVersion::Parse("0.0.0");
   for (llvm::sys::fs::directory_iterator di(HexagonDir, ec), de;
        !ec && di != de; di = di.increment(ec)) {

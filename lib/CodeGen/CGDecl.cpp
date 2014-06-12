@@ -149,32 +149,27 @@ void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
 static std::string GetStaticDeclName(CodeGenFunction &CGF, const VarDecl &D,
                                      const char *Separator) {
   CodeGenModule &CGM = CGF.CGM;
-  if (CGF.getLangOpts().CPlusPlus) {
-    StringRef Name = CGM.getMangledName(&D);
-    return Name.str();
-  }
 
-  std::string ContextName;
+  if (CGF.getLangOpts().CPlusPlus)
+    return CGM.getMangledName(&D).str();
+
+  StringRef ContextName;
   if (!CGF.CurFuncDecl) {
     // Better be in a block declared in global scope.
     const NamedDecl *ND = cast<NamedDecl>(&D);
     const DeclContext *DC = ND->getDeclContext();
-    if (const BlockDecl *BD = dyn_cast<BlockDecl>(DC)) {
-      MangleBuffer Name;
-      CGM.getBlockMangledName(GlobalDecl(), Name, BD);
-      ContextName = Name.getString();
-    }
+    if (const BlockDecl *BD = dyn_cast<BlockDecl>(DC))
+      ContextName = CGM.getBlockMangledName(GlobalDecl(), BD);
     else
       llvm_unreachable("Unknown context for block static var decl");
-  } else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(CGF.CurFuncDecl)) {
-    StringRef Name = CGM.getMangledName(FD);
-    ContextName = Name.str();
-  } else if (isa<ObjCMethodDecl>(CGF.CurFuncDecl))
+  } else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(CGF.CurFuncDecl))
+    ContextName = CGM.getMangledName(FD);
+  else if (isa<ObjCMethodDecl>(CGF.CurFuncDecl))
     ContextName = CGF.CurFn->getName();
   else
     llvm_unreachable("Unknown context for static var decl");
 
-  return ContextName + Separator + D.getNameAsString();
+  return ContextName.str() + Separator + D.getNameAsString();
 }
 
 llvm::Constant *

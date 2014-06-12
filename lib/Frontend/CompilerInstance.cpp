@@ -16,6 +16,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/Version.h"
+#include "clang/Config/config.h"
 #include "clang/Frontend/ChainedDiagnosticConsumer.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -34,7 +35,6 @@
 #include "clang/Serialization/ASTReader.h"
 #include "clang/Serialization/GlobalModuleIndex.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Config/config.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
@@ -45,15 +45,15 @@
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
 #include <sys/stat.h>
+#include <system_error>
 #include <time.h>
 
 using namespace clang;
 
 CompilerInstance::CompilerInstance(bool BuildingModule)
   : ModuleLoader(BuildingModule),
-    Invocation(new CompilerInvocation()), ModuleManager(0),
+    Invocation(new CompilerInvocation()), ModuleManager(nullptr),
     BuildGlobalModuleIndex(false), HaveFullGlobalModuleIndex(false),
     ModuleBuildFailed(false) {
 }
@@ -230,7 +230,7 @@ void CompilerInstance::createPreprocessor(TranslationUnitKind TUKind) {
   const PreprocessorOptions &PPOpts = getPreprocessorOpts();
 
   // Create a PTH manager if we are using some form of a token cache.
-  PTHManager *PTHMgr = 0;
+  PTHManager *PTHMgr = nullptr;
   if (!PPOpts.TokenCache.empty())
     PTHMgr = PTHManager::Create(PPOpts.TokenCache, getDiagnostics());
 
@@ -365,7 +365,7 @@ ExternalASTSource *CompilerInstance::createPCHExternalASTSource(
     break;
   }
 
-  return 0;
+  return nullptr;
 }
 
 // Code Completion
@@ -400,14 +400,14 @@ void CompilerInstance::createCodeCompletionConsumer() {
       return;
   } else if (EnableCodeCompletion(getPreprocessor(), Loc.FileName,
                                   Loc.Line, Loc.Column)) {
-    setCodeCompletionConsumer(0);
+    setCodeCompletionConsumer(nullptr);
     return;
   }
 
   if (CompletionConsumer->isOutputBinary() &&
       llvm::sys::ChangeStdoutToBinary()) {
     getPreprocessor().getDiagnostics().Report(diag::err_fe_stdout_binary);
-    setCodeCompletionConsumer(0);
+    setCodeCompletionConsumer(nullptr);
   }
 }
 
@@ -423,7 +423,7 @@ CompilerInstance::createCodeCompletionConsumer(Preprocessor &PP,
                                                const CodeCompleteOptions &Opts,
                                                raw_ostream &OS) {
   if (EnableCodeCompletion(PP, Filename, Line, Column))
-    return 0;
+    return nullptr;
 
   // Set up the creation routine for code-completion.
   return new PrintingCodeCompleteConsumer(Opts, OS);
@@ -455,8 +455,8 @@ void CompilerInstance::clearOutputFiles(bool EraseFiles) {
         // If '-working-directory' was passed, the output filename should be
         // relative to that.
         FileMgr->FixupRelativePath(NewOutFile);
-        if (llvm::error_code ec = llvm::sys::fs::rename(it->TempFilename,
-                                                        NewOutFile.str())) {
+        if (std::error_code ec =
+                llvm::sys::fs::rename(it->TempFilename, NewOutFile.str())) {
           getDiagnostics().Report(diag::err_unable_to_rename_temp)
             << it->TempFilename << it->Filename << ec.message();
 
@@ -479,6 +479,12 @@ CompilerInstance::createDefaultOutputFile(bool Binary,
                           /*UseTemporary=*/true);
 }
 
+llvm::raw_null_ostream *CompilerInstance::createNullOutputFile() {
+  llvm::raw_null_ostream *OS = new llvm::raw_null_ostream();
+  addOutputFile(OutputFile("", "", OS));
+  return OS;
+}
+
 llvm::raw_fd_ostream *
 CompilerInstance::createOutputFile(StringRef OutputPath,
                                    bool Binary, bool RemoveFileOnSignal,
@@ -497,7 +503,7 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
   if (!OS) {
     getDiagnostics().Report(diag::err_fe_unable_to_open_output)
       << OutputPath << Error;
-    return 0;
+    return nullptr;
   }
 
   // Add the output file -- but don't try to remove "-", since this means we are
@@ -547,7 +553,7 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
       if (llvm::sys::fs::exists(Status)) {
         // Fail early if we can't write to the final destination.
         if (!llvm::sys::fs::can_write(OutputPath))
-          return 0;
+          return nullptr;
 
         // Don't use a temporary if the output is a special file. This handles
         // things like '-o /dev/null'
@@ -563,11 +569,11 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
     TempPath = OutFile;
     TempPath += "-%%%%%%%%";
     int fd;
-    llvm::error_code EC =
+    std::error_code EC =
         llvm::sys::fs::createUniqueFile(TempPath.str(), fd, TempPath);
 
     if (CreateMissingDirectories &&
-        EC == llvm::errc::no_such_file_or_directory) {
+        EC == std::errc::no_such_file_or_directory) {
       StringRef Parent = llvm::sys::path::parent_path(OutputPath);
       EC = llvm::sys::fs::create_directories(Parent);
       if (!EC) {
@@ -590,7 +596,7 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
         OSFile.c_str(), Error,
         (Binary ? llvm::sys::fs::F_None : llvm::sys::fs::F_Text)));
     if (!Error.empty())
-      return 0;
+      return nullptr;
   }
 
   // Make sure the out stream file gets removed if we crash.
@@ -660,7 +666,7 @@ bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input,
         SourceMgr.createFileID(File, SourceLocation(), Kind));
   } else {
     std::unique_ptr<llvm::MemoryBuffer> SB;
-    if (llvm::error_code ec = llvm::MemoryBuffer::getSTDIN(SB)) {
+    if (std::error_code ec = llvm::MemoryBuffer::getSTDIN(SB)) {
       Diags.Report(diag::err_fe_error_reading_stdin) << ec.message();
       return false;
     }
@@ -749,7 +755,7 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
   // Validate/process some options.
   if (getHeaderSearchOpts().Verbose)
     OS << "clang -cc1 version " CLANG_VERSION_STRING
-       << " based upon " << PACKAGE_STRING
+       << " based upon " << BACKEND_PACKAGE_STRING
        << " default target " << llvm::sys::getDefaultTargetTriple() << "\n";
 
   if (getFrontendOpts().ShowTimers)
@@ -1087,7 +1093,7 @@ static void pruneModuleCache(const HeaderSearchOptions &HSOpts) {
   // Check whether the time stamp is older than our pruning interval.
   // If not, do nothing.
   time_t TimeStampModTime = StatBuf.st_mtime;
-  time_t CurrentTime = time(0);
+  time_t CurrentTime = time(nullptr);
   if (CurrentTime - TimeStampModTime <= time_t(HSOpts.ModuleCachePruneInterval))
     return;
 
@@ -1098,7 +1104,7 @@ static void pruneModuleCache(const HeaderSearchOptions &HSOpts) {
 
   // Walk the entire module cache, looking for unused module files and module
   // indices.
-  llvm::error_code EC;
+  std::error_code EC;
   SmallString<128> ModuleCachePathNative;
   llvm::sys::path::native(HSOpts.ModuleCachePath, ModuleCachePathNative);
   for (llvm::sys::fs::directory_iterator
@@ -1202,7 +1208,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
     return LastModuleImportResult;
   }
 
-  clang::Module *Module = 0;
+  clang::Module *Module = nullptr;
 
   // If we don't already have information on this module, load the module now.
   llvm::DenseMap<const IdentifierInfo *, clang::Module *>::iterator Known
@@ -1300,7 +1306,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
 
         if (getPreprocessorOpts().FailedModules)
           getPreprocessorOpts().FailedModules->addFailed(ModuleName);
-        KnownModules[Path[0].first] = 0;
+        KnownModules[Path[0].first] = nullptr;
         ModuleBuildFailed = true;
         return ModuleLoadResult();
       }
@@ -1315,13 +1321,13 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
       ModuleLoader::HadFatalFailure = true;
       // FIXME: The ASTReader will already have complained, but can we showhorn
       // that diagnostic information into a more useful form?
-      KnownModules[Path[0].first] = 0;
+      KnownModules[Path[0].first] = nullptr;
       return ModuleLoadResult();
 
     case ASTReader::Failure:
       ModuleLoader::HadFatalFailure = true;
       // Already complained, but note now that we failed.
-      KnownModules[Path[0].first] = 0;
+      KnownModules[Path[0].first] = nullptr;
       ModuleBuildFailed = true;
       return ModuleLoadResult();
     }
@@ -1401,8 +1407,8 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
       getDiagnostics().Report(ImportLoc, diag::warn_missing_submodule)
         << Module->getFullModuleName()
         << SourceRange(Path.front().second, Path.back().second);
-      
-      return ModuleLoadResult(0, true);
+
+      return ModuleLoadResult(nullptr, true);
     }
 
     // Check whether this module is available.
@@ -1466,7 +1472,7 @@ GlobalModuleIndex *CompilerInstance::loadGlobalModuleIndex(
     createModuleManager();
   // Can't do anything if we don't have the module manager.
   if (!ModuleManager)
-    return 0;
+    return nullptr;
   // Get an existing global index.  This loads it if not already
   // loaded.
   ModuleManager->loadGlobalIndex();

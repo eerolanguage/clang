@@ -39,6 +39,7 @@ static void copyStatusToFileData(const vfs::Status &Status,
   Data.IsDirectory = Status.isDirectory();
   Data.IsNamedPipe = Status.getType() == llvm::sys::fs::file_type::fifo_file;
   Data.InPCH = false;
+  Data.IsVFSMapped = Status.IsVFSMapped;
 }
 
 /// FileSystemStatCache::get - Get the 'stat' information for the specified
@@ -78,7 +79,7 @@ bool FileSystemStatCache::get(const char *Path, FileData &Data, bool isFile,
     // Because of this, check to see if the file exists with 'open'.  If the
     // open succeeds, use fstat to get the stat info.
     std::unique_ptr<vfs::File> OwnedFile;
-    llvm::error_code EC = FS.openFileForRead(Path, OwnedFile);
+    std::error_code EC = FS.openFileForRead(Path, OwnedFile);
 
     if (EC) {
       // If the open fails, our "stat" fails.

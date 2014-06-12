@@ -2579,14 +2579,11 @@ void CGDebugInfo::EmitLocation(CGBuilderTy &Builder, SourceLocation Loc,
 /// CreateLexicalBlock - Creates a new lexical block node and pushes it on
 /// the stack.
 void CGDebugInfo::CreateLexicalBlock(SourceLocation Loc) {
-  llvm::DIDescriptor D =
-    DBuilder.createLexicalBlock(LexicalBlockStack.empty() ?
-                                llvm::DIDescriptor() :
-                                llvm::DIDescriptor(LexicalBlockStack.back()),
-                                getOrCreateFile(CurLoc),
-                                getLineNumber(CurLoc),
-                                getColumnNumber(CurLoc),
-                                0);
+  llvm::DIDescriptor D = DBuilder.createLexicalBlock(
+      llvm::DIDescriptor(LexicalBlockStack.empty() ? nullptr
+                                                   : LexicalBlockStack.back()),
+      getOrCreateFile(CurLoc), getLineNumber(CurLoc), getColumnNumber(CurLoc),
+      0);
   llvm::MDNode *DN = D;
   LexicalBlockStack.push_back(DN);
 }
@@ -3188,32 +3185,6 @@ void CGDebugInfo::EmitGlobalVariable(llvm::GlobalVariable *Var,
         getOrCreateStaticDataMemberDeclarationOrNull(D));
   }
   DeclCache.insert(std::make_pair(D->getCanonicalDecl(), llvm::WeakVH(GV)));
-}
-
-/// EmitGlobalVariable - Emit information about an objective-c interface.
-void CGDebugInfo::EmitGlobalVariable(llvm::GlobalVariable *Var,
-                                     ObjCInterfaceDecl *ID) {
-  assert(DebugKind >= CodeGenOptions::LimitedDebugInfo);
-  // Create global variable debug descriptor.
-  llvm::DIFile Unit = getOrCreateFile(ID->getLocation());
-  unsigned LineNo = getLineNumber(ID->getLocation());
-
-  StringRef Name = ID->getName();
-
-  QualType T = CGM.getContext().getObjCInterfaceType(ID);
-  if (T->isIncompleteArrayType()) {
-
-    // CodeGen turns int[] into int[1] so we'll do the same here.
-    llvm::APInt ConstVal(32, 1);
-    QualType ET = CGM.getContext().getAsArrayType(T)->getElementType();
-
-    T = CGM.getContext().getConstantArrayType(ET, ConstVal,
-                                           ArrayType::Normal, 0);
-  }
-
-  DBuilder.createGlobalVariable(Name, Unit, LineNo,
-                                getOrCreateType(T, Unit),
-                                Var->hasInternalLinkage(), Var);
 }
 
 /// EmitGlobalVariable - Emit global variable's debug info.

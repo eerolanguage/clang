@@ -88,6 +88,31 @@ TEST_F(FormatTestJS, ES6DestructuringAssignment) {
   verifyFormat("var {a, b} = {a: 1, b: 2};");
 }
 
+TEST_F(FormatTestJS, ContainerLiterals) {
+  verifyFormat("return {\n"
+               "  link: function() {\n"
+               "    f();  //\n"
+               "  }\n"
+               "};");
+  verifyFormat("return {\n"
+               "  a: a,\n"
+               "  link: function() {\n"
+               "    f();  //\n"
+               "  }\n"
+               "};");
+  verifyFormat("return {\n"
+               "  a: a,\n"
+               "  link:\n"
+               "      function() {\n"
+               "        f();  //\n"
+               "      },\n"
+               "  link:\n"
+               "      function() {\n"
+               "        f();  //\n"
+               "      }\n"
+               "};");
+}
+
 TEST_F(FormatTestJS, SpacesInContainerLiterals) {
   verifyFormat("var arr = [1, 2, 3];");
   verifyFormat("var obj = {a: 1, b: 2, c: 3};");
@@ -137,6 +162,54 @@ TEST_F(FormatTestJS, Closures) {
                "  foo();\n"
                "  bar();\n"
                "}, this);");
+  verifyFormat("return {\n"
+               "  a: 'E',\n"
+               "  b: function() {\n"
+               "    return function() {\n"
+               "      f();  //\n"
+               "    };\n"
+               "  }\n"
+               "};");
+
+  verifyFormat("var x = {a: function() { return 1; }};",
+               getGoogleJSStyleWithColumns(38));
+  verifyFormat("var x = {\n"
+               "  a: function() { return 1; }\n"
+               "};",
+               getGoogleJSStyleWithColumns(37));
+}
+
+TEST_F(FormatTestJS, MultipleFunctionLiterals) {
+  verifyFormat("promise.then(\n"
+               "    function success() {\n"
+               "      doFoo();\n"
+               "      doBar();\n"
+               "    },\n"
+               "    function error() {\n"
+               "      doFoo();\n"
+               "      doBaz();\n"
+               "    },\n"
+               "    []);\n");
+  verifyFormat("promise.then(\n"
+               "    function success() {\n"
+               "      doFoo();\n"
+               "      doBar();\n"
+               "    },\n"
+               "    [],\n"
+               "    function error() {\n"
+               "      doFoo();\n"
+               "      doBaz();\n"
+               "    });\n");
+  // FIXME: Here, we should probably break right after the "(" for consistency.
+  verifyFormat("promise.then([],\n"
+               "             function success() {\n"
+               "               doFoo();\n"
+               "               doBar();\n"
+               "             },\n"
+               "             function error() {\n"
+               "               doFoo();\n"
+               "               doBaz();\n"
+               "             });\n");
 }
 
 TEST_F(FormatTestJS, ReturnStatements) {
@@ -155,6 +228,11 @@ TEST_F(FormatTestJS, TryCatch) {
                "} finally {\n"
                "  h();\n"
                "}");
+}
+
+TEST_F(FormatTestJS, StringLiteralConcatenation) {
+  verifyFormat("var literal = 'hello ' +\n"
+               "              'world';");
 }
 
 TEST_F(FormatTestJS, RegexLiteralClassification) {

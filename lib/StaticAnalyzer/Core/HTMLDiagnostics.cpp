@@ -42,7 +42,7 @@ class HTMLDiagnostics : public PathDiagnosticConsumer {
 public:
   HTMLDiagnostics(const std::string& prefix, const Preprocessor &pp);
 
-  virtual ~HTMLDiagnostics() { FlushDiagnostics(NULL); }
+  virtual ~HTMLDiagnostics() { FlushDiagnostics(nullptr); }
 
   void FlushDiagnosticsImpl(std::vector<const PathDiagnostic *> &Diags,
                             FilesMade *filesMade) override;
@@ -99,7 +99,7 @@ void HTMLDiagnostics::ReportDiag(const PathDiagnostic& D,
   // Create the HTML directory if it is missing.
   if (!createdDir) {
     createdDir = true;
-    if (llvm::error_code ec = llvm::sys::fs::create_directories(Directory)) {
+    if (std::error_code ec = llvm::sys::fs::create_directories(Directory)) {
       llvm::errs() << "warning: could not create directory '"
                    << Directory << "': " << ec.message() << '\n';
 
@@ -249,7 +249,7 @@ void HTMLDiagnostics::ReportDiag(const PathDiagnostic& D,
   SmallString<128> Model, ResultPath;
   llvm::sys::path::append(Model, Directory, "report-%%%%%%.html");
 
-  if (llvm::error_code EC =
+  if (std::error_code EC =
           llvm::sys::fs::createUniqueFile(Model.str(), FD, ResultPath)) {
     llvm::errs() << "warning: could not create file in '" << Directory
                  << "': " << EC.message() << '\n';
@@ -307,7 +307,7 @@ void HTMLDiagnostics::HandlePiece(Rewriter& R, FileID BugFileID,
 
   // Create the html for the message.
 
-  const char *Kind = 0;
+  const char *Kind = nullptr;
   switch (P.getKind()) {
   case PathDiagnosticPiece::Call:
       llvm_unreachable("Calls should already be handled");

@@ -382,12 +382,14 @@ void CodeGenVTables::emitThunk(GlobalDecl GD, const ThunkInfo &Thunk,
     // FIXME: Do something better here; GenerateVarArgsThunk is extremely ugly.
     if (!UseAvailableExternallyLinkage) {
       CodeGenFunction(CGM).GenerateVarArgsThunk(ThunkFn, FnInfo, GD, Thunk);
-      CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable);
+      CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable, GD,
+                                      !Thunk.Return.isEmpty());
     }
   } else {
     // Normal thunk body generation.
     CodeGenFunction(CGM).GenerateThunk(ThunkFn, FnInfo, GD, Thunk);
-    CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable);
+    CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable, GD,
+                                    !Thunk.Return.isEmpty());
   }
 }
 
@@ -651,18 +653,31 @@ CodeGenModule::getVTableLinkage(const CXXRecordDecl *RD) {
   // internal linkage.
   if (Context.getLangOpts().AppleKext)
     return llvm::Function::InternalLinkage;
-  
+
+  llvm::GlobalVariable::LinkageTypes DiscardableODRLinkage =
+      llvm::GlobalValue::LinkOnceODRLinkage;
+  llvm::GlobalVariable::LinkageTypes NonDiscardableODRLinkage =
+      llvm::GlobalValue::WeakODRLinkage;
+  if (RD->hasAttr<DLLExportAttr>()) {
+    // Cannot discard exported vtables.
+    DiscardableODRLinkage = NonDiscardableODRLinkage;
+  } else if (RD->hasAttr<DLLImportAttr>()) {
+    // Imported vtables are available externally.
+    DiscardableODRLinkage = llvm::GlobalVariable::AvailableExternallyLinkage;
+    NonDiscardableODRLinkage = llvm::GlobalVariable::AvailableExternallyLinkage;
+  }
+
   switch (RD->getTemplateSpecializationKind()) {
   case TSK_Undeclared:
   case TSK_ExplicitSpecialization:
   case TSK_ImplicitInstantiation:
-    return llvm::GlobalVariable::LinkOnceODRLinkage;
+    return DiscardableODRLinkage;
 
   case TSK_ExplicitInstantiationDeclaration:
     llvm_unreachable("Should not have been asked to emit this");
 
   case TSK_ExplicitInstantiationDefinition:
-      return llvm::GlobalVariable::WeakODRLinkage;
+    return NonDiscardableODRLinkage;
   }
 
   llvm_unreachable("Invalid TemplateSpecializationKind!");

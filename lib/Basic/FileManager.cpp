@@ -25,10 +25,10 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
 #include <map>
 #include <set>
 #include <string>
+#include <system_error>
 
 using namespace clang;
 
@@ -274,6 +274,16 @@ const FileEntry *FileManager::getFile(StringRef Filename, bool openFile,
 
   NamedFileEnt.setValue(&UFE);
   if (UFE.isValid()) { // Already have an entry with this inode, return it.
+
+    // FIXME: this hack ensures that if we look up a file by a virtual path in
+    // the VFS that the getDir() will have the virtual path, even if we found
+    // the file by a 'real' path first. This is required in order to find a
+    // module's structure when its headers/module map are mapped in the VFS.
+    // We should remove this as soon as we can properly support a file having
+    // multiple names.
+    if (DirInfo != UFE.Dir && Data.IsVFSMapped)
+      UFE.Dir = DirInfo;
+
     // If the stat process opened the file, close it to avoid a FD leak.
     if (F)
       delete F;
@@ -380,7 +390,7 @@ llvm::MemoryBuffer *FileManager::
 getBufferForFile(const FileEntry *Entry, std::string *ErrorStr,
                  bool isVolatile) {
   std::unique_ptr<llvm::MemoryBuffer> Result;
-  llvm::error_code ec;
+  std::error_code ec;
 
   uint64_t FileSize = Entry->getSize();
   // If there's a high enough chance that the file have changed since we
@@ -421,7 +431,7 @@ getBufferForFile(const FileEntry *Entry, std::string *ErrorStr,
 llvm::MemoryBuffer *FileManager::
 getBufferForFile(StringRef Filename, std::string *ErrorStr) {
   std::unique_ptr<llvm::MemoryBuffer> Result;
-  llvm::error_code ec;
+  std::error_code ec;
   if (FileSystemOpts.WorkingDir.empty()) {
     ec = FS->getBufferForFile(Filename, Result);
     if (ec && ErrorStr)

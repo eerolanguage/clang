@@ -15,6 +15,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Parse/Parser.h"
+#include "clang/Sema/LoopHint.h"
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/StringSwitch.h"
 using namespace clang;
@@ -131,6 +132,22 @@ struct PragmaMSPragma : public PragmaHandler {
                     Token &FirstToken) override;
 };
 
+/// PragmaOptimizeHandler - "\#pragma clang optimize on/off".
+struct PragmaOptimizeHandler : public PragmaHandler {
+  PragmaOptimizeHandler(Sema &S)
+    : PragmaHandler("optimize"), Actions(S) {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
+                    Token &FirstToken) override;
+private:
+  Sema &Actions;
+};
+
+struct PragmaLoopHintHandler : public PragmaHandler {
+  PragmaLoopHintHandler() : PragmaHandler("loop") {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
+                    Token &FirstToken) override;
+};
+
 }  // end namespace
 
 void Parser::initializePragmaHandlers() {
@@ -195,6 +212,12 @@ void Parser::initializePragmaHandlers() {
     MSSection.reset(new PragmaMSPragma("section"));
     PP.AddPragmaHandler(MSSection.get());
   }
+
+  OptimizeHandler.reset(new PragmaOptimizeHandler(Actions));
+  PP.AddPragmaHandler("clang", OptimizeHandler.get());
+
+  LoopHintHandler.reset(new PragmaLoopHintHandler());
+  PP.AddPragmaHandler("clang", LoopHintHandler.get());
 }
 
 void Parser::resetPragmaHandlers() {
@@ -249,6 +272,12 @@ void Parser::resetPragmaHandlers() {
 
   PP.RemovePragmaHandler("STDC", FPContractHandler.get());
   FPContractHandler.reset();
+
+  PP.RemovePragmaHandler("clang", OptimizeHandler.get());
+  OptimizeHandler.reset();
+
+  PP.RemovePragmaHandler("clang", LoopHintHandler.get());
+  LoopHintHandler.reset();
 }
 
 /// \brief Handle the annotation token produced for #pragma unused(...)
@@ -568,6 +597,40 @@ unsigned Parser::HandlePragmaMSInitSeg(llvm::StringRef PragmaName,
                                        SourceLocation PragmaLocation) {
   return PP.getDiagnostics().getCustomDiagID(
       DiagnosticsEngine::Error, "'#pragma %0' not implemented.");
+}
+
+struct PragmaLoopHintInfo {
+  Token Loop;
+  Token Value;
+  Token Option;
+};
+
+LoopHint Parser::HandlePragmaLoopHint() {
+  assert(Tok.is(tok::annot_pragma_loop_hint));
+  PragmaLoopHintInfo *Info =
+      static_cast<PragmaLoopHintInfo *>(Tok.getAnnotationValue());
+
+  LoopHint Hint;
+  Hint.LoopLoc =
+      IdentifierLoc::create(Actions.Context, Info->Loop.getLocation(),
+                            Info->Loop.getIdentifierInfo());
+  Hint.OptionLoc =
+      IdentifierLoc::create(Actions.Context, Info->Option.getLocation(),
+                            Info->Option.getIdentifierInfo());
+  Hint.ValueLoc =
+      IdentifierLoc::create(Actions.Context, Info->Value.getLocation(),
+                            Info->Value.getIdentifierInfo());
+  Hint.Range =
+      SourceRange(Info->Option.getLocation(), Info->Value.getLocation());
+
+  // FIXME: We should support template parameters for the loop hint value.
+  // See bug report #19610
+  if (Info->Value.is(tok::numeric_constant))
+    Hint.ValueExpr = Actions.ActOnNumericConstant(Info->Value).get();
+  else
+    Hint.ValueExpr = nullptr;
+
+  return Hint;
 }
 
 // #pragma GCC visibility comes in two variants:
@@ -1152,9 +1215,8 @@ PragmaNoOpenMPHandler::HandlePragma(Preprocessor &PP,
                                              FirstTok.getLocation()) !=
       DiagnosticsEngine::Ignored) {
     PP.Diag(FirstTok, diag::warn_pragma_omp_ignored);
-    PP.getDiagnostics().setDiagnosticMapping(diag::warn_pragma_omp_ignored,
-                                             diag::MAP_IGNORE,
-                                             SourceLocation());
+    PP.getDiagnostics().setSeverity(diag::warn_pragma_omp_ignored,
+                                    diag::Severity::Ignored, SourceLocation());
   }
   PP.DiscardUntilEndOfDirective();
 }
@@ -1530,4 +1592,163 @@ void PragmaCommentHandler::HandlePragma(Preprocessor &PP,
     PP.getPPCallbacks()->PragmaComment(CommentLoc, II, ArgumentString);
 
   Actions.ActOnPragmaMSComment(Kind, ArgumentString);
+}
+
+// #pragma clang optimize off
+// #pragma clang optimize on
+void PragmaOptimizeHandler::HandlePragma(Preprocessor &PP, 
+                                        PragmaIntroducerKind Introducer,
+                                        Token &FirstToken) {
+  Token Tok;
+  PP.Lex(Tok);
+  if (Tok.is(tok::eod)) {
+    PP.Diag(Tok.getLocation(), diag::err_pragma_optimize_missing_argument);
+    return;
+  }
+  if (Tok.isNot(tok::identifier)) {
+    PP.Diag(Tok.getLocation(), diag::err_pragma_optimize_invalid_argument)
+      << PP.getSpelling(Tok);
+    return;
+  }
+  const IdentifierInfo *II = Tok.getIdentifierInfo();
+  // The only accepted values are 'on' or 'off'.
+  bool IsOn = false;
+  if (II->isStr("on")) {
+    IsOn = true;
+  } else if (!II->isStr("off")) {
+    PP.Diag(Tok.getLocation(), diag::err_pragma_optimize_invalid_argument)
+      << PP.getSpelling(Tok);
+    return;
+  }
+  PP.Lex(Tok);
+  
+  if (Tok.isNot(tok::eod)) {
+    PP.Diag(Tok.getLocation(), diag::err_pragma_optimize_extra_argument)
+      << PP.getSpelling(Tok);
+    return;
+  }
+
+  Actions.ActOnPragmaOptimize(IsOn, FirstToken.getLocation());
+}
+
+/// \brief Handle the \#pragma clang loop directive.
+///  #pragma clang 'loop' loop-hints
+///
+///  loop-hints:
+///    loop-hint loop-hints[opt]
+///
+///  loop-hint:
+///    'vectorize' '(' loop-hint-keyword ')'
+///    'interleave' '(' loop-hint-keyword ')'
+///    'unroll' '(' loop-hint-keyword ')'
+///    'vectorize_width' '(' loop-hint-value ')'
+///    'interleave_count' '(' loop-hint-value ')'
+///    'unroll_count' '(' loop-hint-value ')'
+///
+///  loop-hint-keyword:
+///    'enable'
+///    'disable'
+///
+///  loop-hint-value:
+///    constant-expression
+///
+/// Specifying vectorize(enable) or vectorize_width(_value_) instructs llvm to
+/// try vectorizing the instructions of the loop it precedes. Specifying
+/// interleave(enable) or interleave_count(_value_) instructs llvm to try
+/// interleaving multiple iterations of the loop it precedes. The width of the
+/// vector instructions is specified by vectorize_width() and the number of
+/// interleaved loop iterations is specified by interleave_count(). Specifying a
+/// value of 1 effectively disables vectorization/interleaving, even if it is
+/// possible and profitable, and 0 is invalid. The loop vectorizer currently
+/// only works on inner loops.
+///
+/// The unroll and unroll_count directives control the concatenation
+/// unroller. Specifying unroll(enable) instructs llvm to try to
+/// unroll the loop completely, and unroll(disable) disables unrolling
+/// for the loop. Specifying unroll_count(_value_) instructs llvm to
+/// try to unroll the loop the number of times indicated by the value.
+/// If unroll(enable) and unroll_count are both specified only
+/// unroll_count takes effect.
+void PragmaLoopHintHandler::HandlePragma(Preprocessor &PP,
+                                         PragmaIntroducerKind Introducer,
+                                         Token &Tok) {
+  Token Loop = Tok;
+  SmallVector<Token, 1> TokenList;
+
+  // Lex the optimization option and verify it is an identifier.
+  PP.Lex(Tok);
+  if (Tok.isNot(tok::identifier)) {
+    PP.Diag(Tok.getLocation(), diag::err_pragma_loop_invalid_option)
+        << /*MissingOption=*/true << "";
+    return;
+  }
+
+  while (Tok.is(tok::identifier)) {
+    Token Option = Tok;
+    IdentifierInfo *OptionInfo = Tok.getIdentifierInfo();
+
+    bool OptionValid = llvm::StringSwitch<bool>(OptionInfo->getName())
+        .Case("vectorize", true)
+        .Case("interleave", true)
+        .Case("unroll", true)
+        .Case("vectorize_width", true)
+        .Case("interleave_count", true)
+        .Case("unroll_count", true)
+        .Default(false);
+    if (!OptionValid) {
+      PP.Diag(Tok.getLocation(), diag::err_pragma_loop_invalid_option)
+          << /*MissingOption=*/false << OptionInfo;
+      return;
+    }
+
+    // Read '('
+    PP.Lex(Tok);
+    if (Tok.isNot(tok::l_paren)) {
+      PP.Diag(Tok.getLocation(), diag::err_expected) << tok::l_paren;
+      return;
+    }
+
+    // FIXME: All tokens between '(' and ')' should be stored and parsed as a
+    // constant expression.
+    PP.Lex(Tok);
+    Token Value;
+    if (Tok.is(tok::identifier) || Tok.is(tok::numeric_constant))
+      Value = Tok;
+
+    // Read ')'
+    PP.Lex(Tok);
+    if (Tok.isNot(tok::r_paren)) {
+      PP.Diag(Tok.getLocation(), diag::err_expected) << tok::r_paren;
+      return;
+    }
+
+    // Get next optimization option.
+    PP.Lex(Tok);
+
+    auto *Info = new (PP.getPreprocessorAllocator()) PragmaLoopHintInfo;
+    Info->Loop = Loop;
+    Info->Option = Option;
+    Info->Value = Value;
+
+    // Generate the vectorization hint token.
+    Token LoopHintTok;
+    LoopHintTok.startToken();
+    LoopHintTok.setKind(tok::annot_pragma_loop_hint);
+    LoopHintTok.setLocation(Loop.getLocation());
+    LoopHintTok.setAnnotationValue(static_cast<void *>(Info));
+    TokenList.push_back(LoopHintTok);
+  }
+
+  if (Tok.isNot(tok::eod)) {
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
+        << "clang loop";
+    return;
+  }
+
+  Token *TokenArray = new Token[TokenList.size()];
+  std::copy(TokenList.begin(), TokenList.end(), TokenArray);
+
+  PP.EnterTokenStream(TokenArray, TokenList.size(),
+                      /*DisableMacroExpansion=*/false,
+                      /*OwnsTokens=*/true);
 }

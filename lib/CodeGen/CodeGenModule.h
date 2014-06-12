@@ -71,7 +71,6 @@ class CodeGenOptions;
 class DiagnosticsEngine;
 class AnnotateAttr;
 class CXXDestructorDecl;
-class MangleBuffer;
 class Module;
 
 namespace CodeGen {
@@ -233,7 +232,18 @@ class CodeGenModule : public CodeGenTypeCache {
   CodeGenModule(const CodeGenModule &) LLVM_DELETED_FUNCTION;
   void operator=(const CodeGenModule &) LLVM_DELETED_FUNCTION;
 
-  typedef std::vector<std::pair<llvm::Constant*, int> > CtorList;
+  struct Structor {
+    Structor() : Priority(0), Initializer(nullptr), AssociatedData(nullptr) {}
+    Structor(int Priority, llvm::Constant *Initializer,
+             llvm::Constant *AssociatedData)
+        : Priority(Priority), Initializer(Initializer),
+          AssociatedData(AssociatedData) {}
+    int Priority;
+    llvm::Constant *Initializer;
+    llvm::Constant *AssociatedData;
+  };
+
+  typedef std::vector<Structor> CtorList;
 
   ASTContext &Context;
   const LangOptions &LangOpts;
@@ -277,7 +287,7 @@ class CodeGenModule : public CodeGenTypeCache {
   /// for emission and therefore should only be output if they are actually
   /// used. If a decl is in this, then it is known to have not been referenced
   /// yet.
-  llvm::StringMap<GlobalDecl> DeferredDecls;
+  std::map<StringRef, GlobalDecl> DeferredDecls;
 
   /// This is a list of deferred decls which we have seen that *are* actually
   /// referenced. These get code generated when the module is done.
@@ -317,8 +327,8 @@ class CodeGenModule : public CodeGenTypeCache {
 
   /// A map of canonical GlobalDecls to their mangled names.
   llvm::DenseMap<GlobalDecl, StringRef> MangledDeclNames;
-  llvm::BumpPtrAllocator MangledNamesAllocator;
-  
+  llvm::StringMap<GlobalDecl, llvm::BumpPtrAllocator> Manglings;
+
   /// Global annotations.
   std::vector<llvm::Constant*> Annotations;
 
@@ -512,6 +522,9 @@ public:
     StaticLocalDeclGuardMap[D] = C;
   }
 
+  bool lookupRepresentativeDecl(StringRef MangledName,
+                                GlobalDecl &Result) const;
+
   llvm::Constant *getAtomicSetterHelperFnMap(QualType Ty) {
     return AtomicSetterHelperFnMap[Ty];
   }
@@ -528,10 +541,10 @@ public:
     AtomicGetterHelperFnMap[Ty] = Fn;
   }
 
-  llvm::Constant *getTypeDescriptor(QualType Ty) {
+  llvm::Constant *getTypeDescriptorFromMap(QualType Ty) {
     return TypeDescriptorMap[Ty];
   }
-  void setTypeDescriptor(QualType Ty, llvm::Constant *C) {
+  void setTypeDescriptorInMap(QualType Ty, llvm::Constant *C) {
     TypeDescriptorMap[Ty] = C;
   }
 
@@ -710,6 +723,12 @@ public:
   /// The type of a generic block literal.
   llvm::Type *getGenericBlockLiteralType();
 
+  /// \brief Gets or a creats a Microsoft TypeDescriptor.
+  llvm::Constant *getMSTypeDescriptor(QualType Ty);
+  /// \brief Gets or a creats a Microsoft CompleteObjectLocator.
+  llvm::GlobalVariable *getMSCompleteObjectLocator(const CXXRecordDecl *RD,
+                                                   const VPtrInfo *Info);
+
   /// Gets the address of a block which requires no captures.
   llvm::Constant *GetAddrOfGlobalBlock(const BlockExpr *BE, const char *);
   
@@ -730,28 +749,14 @@ public:
   /// Return a pointer to a constant array for the given ObjCEncodeExpr node.
   llvm::Constant *GetAddrOfConstantStringFromObjCEncode(const ObjCEncodeExpr *);
 
-  /// Returns a pointer to a character array containing the literal. This
-  /// contents are exactly that of the given string, i.e. it will not be null
-  /// terminated automatically; see GetAddrOfConstantCString. Note that whether
-  /// the result is actually a pointer to an LLVM constant depends on
-  /// Feature.WriteableStrings.
-  ///
-  /// The result has pointer to array type.
-  ///
-  /// \param GlobalName If provided, the name to use for the global
-  /// (if one is created).
-  llvm::Constant *GetAddrOfConstantString(StringRef Str,
-                                          const char *GlobalName=nullptr,
-                                          unsigned Alignment=0);
-
   /// Returns a pointer to a character array containing the literal and a
   /// terminating '\0' character. The result has pointer to array type.
   ///
   /// \param GlobalName If provided, the name to use for the global (if one is
   /// created).
   llvm::Constant *GetAddrOfConstantCString(const std::string &str,
-                                           const char *GlobalName=nullptr,
-                                           unsigned Alignment=0);
+                                           const char *GlobalName = nullptr,
+                                           unsigned Alignment = 0);
 
   /// Returns a pointer to a constant global variable for the given file-scope
   /// compound literal expression.
@@ -920,8 +925,7 @@ public:
                               bool AttrOnCallSite);
 
   StringRef getMangledName(GlobalDecl GD);
-  void getBlockMangledName(GlobalDecl GD, MangleBuffer &Buffer,
-                           const BlockDecl *BD);
+  StringRef getBlockMangledName(GlobalDecl GD, const BlockDecl *BD);
 
   void EmitTentativeDefinition(const VarDecl *D);
 
@@ -945,6 +949,9 @@ public:
     F->setLinkage(getFunctionLinkage(GD));
   }
 
+  /// \brief Returns the appropriate linkage for the TypeInfo struct for a type.
+  llvm::GlobalVariable::LinkageTypes getTypeInfoLinkage(QualType Ty);
+
   /// Return the appropriate linkage for the vtable, VTT, and type information
   /// of the given class.
   llvm::GlobalVariable::LinkageTypes getVTableLinkage(const CXXRecordDecl *RD);
@@ -955,8 +962,7 @@ public:
   /// Returns LLVM linkage for a declarator.
   llvm::GlobalValue::LinkageTypes
   getLLVMLinkageForDeclarator(const DeclaratorDecl *D, GVALinkage Linkage,
-                              bool IsConstantVariable,
-                              bool UseThunkForDtorVariant);
+                              bool IsConstantVariable);
 
   /// Returns LLVM linkage for a declarator.
   llvm::GlobalValue::LinkageTypes
@@ -1013,8 +1019,10 @@ private:
 
   llvm::Constant *GetOrCreateLLVMGlobal(StringRef MangledName,
                                         llvm::PointerType *PTy,
-                                        const VarDecl *D,
-                                        bool UnnamedAddr = false);
+                                        const VarDecl *D);
+
+  llvm::StringMapEntry<llvm::GlobalVariable *> *
+  getConstantStringMapEntry(StringRef Str, int CharByteWidth);
 
   /// Set attributes which are common to any form of a global definition (alias,
   /// Objective-C method, function, global variable).
@@ -1073,8 +1081,9 @@ private:
                                     bool PerformInit);
 
   // FIXME: Hardcoding priority here is gross.
-  void AddGlobalCtor(llvm::Function *Ctor, int Priority=65535);
-  void AddGlobalDtor(llvm::Function *Dtor, int Priority=65535);
+  void AddGlobalCtor(llvm::Function *Ctor, int Priority = 65535,
+                     llvm::Constant *AssociatedData = 0);
+  void AddGlobalDtor(llvm::Function *Dtor, int Priority = 65535);
 
   /// Generates a global array of functions and priorities using the given list
   /// and name. This array will have appending linkage and is suitable for use
