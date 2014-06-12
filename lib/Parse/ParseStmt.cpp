@@ -19,6 +19,7 @@
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/PrettyDeclStackTrace.h"
 #include "clang/Sema/Scope.h"
@@ -1709,8 +1710,9 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     DeclGroupPtrTy DG = ParseSimpleDeclaration(
         Stmts, Declarator::ForContext, DeclEnd, attrs, false,
         MightBeForRangeStmt ? &ForRangeInit : nullptr);
-    FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, Tok.getLocation(), 
-        isEero ? PrevTokLocation : Tok.getLocation()));
+    FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, 
+                                      isEero ? PrevTokLocation 
+                                             : Tok.getLocation());
 
     // Generated index counter, like Python's "for-in-enumerate."
     // Looks like "for int index : id elem in collection".

@@ -1626,8 +1626,9 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
   else if (Actions.GetTypeFromParser(ReturnType)->isVoidType())
     FnBody = StmtResult(MessageExpr.take());
   else
-    FnBody = Actions.ActOnReturnStmt(SourceLocation(), MessageExpr.take());
-
+    FnBody = Actions.ActOnReturnStmt(SourceLocation(),
+                                     MessageExpr.take(),
+                                     getCurScope());
   {
     Sema::CompoundScopeRAII CompoundScope(Actions);
     StmtVector Stmts;
@@ -2615,7 +2616,9 @@ Decl *Parser::ParseObjCMethodDefinition() {
       Sema::CompoundScopeRAII CompoundScope(Actions);
       SourceLocation BodyEndLoc = FnBody.get()->getLocEnd();
       StmtResult DefaultReturnStmt = 
-          Actions.ActOnReturnStmt(ReturnLoc, DefaultReturnExpr.take());
+          Actions.ActOnReturnStmt(ReturnLoc, 
+                                  DefaultReturnExpr.take(),
+                                  getCurScope());
       StmtVector Stmts;
       if (clang::CompoundStmt *CStmt =
               dyn_cast_or_null<clang::CompoundStmt>(FnBody.get())) {

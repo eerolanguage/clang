@@ -2723,7 +2723,8 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     Sema::CompoundScopeRAII CompoundScope(Actions);
     if (Tok.is(tok::kw_return)) {
       Stmt = Actions.ActOnReturnStmt(ConsumeToken(), // the "return"
-                                     ParseAssignmentExpression().take());
+                                     ParseAssignmentExpression().take(),
+                                     getCurScope());
     } else {      
       ExprResult Res(ParseAssignmentExpression()); // no comma operators?
       if (!Res.isInvalid())
