@@ -1602,7 +1602,7 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
       ArgExprs.push_back(
           Actions.ActOnIdExpression(getCurScope(), 
                                     EmptyScopeSpec, SourceLocation(),
-                                    ArgIds[i].get(), false, false, 0).take());
+                                    ArgIds[i].get(), false, false, 0).get());
     } else { // use the parameter default expression
       ExprResult DefaultExpr = DefaultExprs[j++];
       if (!DefaultExpr.isInvalid())
@@ -1624,23 +1624,23 @@ Parser::ParseMethodDefaultParams(SourceLocation mLoc,
   if (MessageExpr.isInvalid())
     FnBody = StmtError();
   else if (Actions.GetTypeFromParser(ReturnType)->isVoidType())
-    FnBody = StmtResult(MessageExpr.take());
+    FnBody = StmtResult(MessageExpr.get());
   else
     FnBody = Actions.ActOnReturnStmt(SourceLocation(),
-                                     MessageExpr.take(),
+                                     MessageExpr.get(),
                                      getCurScope());
   {
     Sema::CompoundScopeRAII CompoundScope(Actions);
     StmtVector Stmts;
     if (!FnBody.isInvalid())
-      Stmts.push_back(FnBody.release());
+      Stmts.push_back(FnBody.get());
     FnBody = Actions.ActOnCompoundStmt(mLoc, mLoc, Stmts, false);
   }
 
   // Leave the function body scope.
   BodyScope.Exit();
 
-  Actions.ActOnFinishFunctionBody(OptDecl, FnBody.take());
+  Actions.ActOnFinishFunctionBody(OptDecl, FnBody.get());
 
   DeclGroupPtrTy DGroup = Actions.ConvertDeclToDeclGroup(OptDecl);
   Actions.getASTConsumer().HandleTopLevelDecl(DGroup.get());
@@ -2617,7 +2617,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
       SourceLocation BodyEndLoc = FnBody.get()->getLocEnd();
       StmtResult DefaultReturnStmt = 
           Actions.ActOnReturnStmt(ReturnLoc, 
-                                  DefaultReturnExpr.take(),
+                                  DefaultReturnExpr.get(),
                                   getCurScope());
       StmtVector Stmts;
       if (clang::CompoundStmt *CStmt =
@@ -2628,9 +2628,9 @@ Decl *Parser::ParseObjCMethodDefinition() {
           Stmts.push_back(*BI);
         }
       } else {
-        Stmts.push_back(FnBody.release());
+        Stmts.push_back(FnBody.get());
       }
-      Stmts.push_back(DefaultReturnStmt.release());
+      Stmts.push_back(DefaultReturnStmt.get());
       FnBody = Actions.ActOnCompoundStmt(BodyStartLoc, BodyEndLoc, 
                                          Stmts, false);
     }
@@ -2638,7 +2638,7 @@ Decl *Parser::ParseObjCMethodDefinition() {
     // Leave the function body scope.
     BodyScope.Exit();
 
-    Decl *result = Actions.ActOnFinishFunctionBody(MDecl, FnBody.take());
+    Decl *result = Actions.ActOnFinishFunctionBody(MDecl, FnBody.get());
     ParsedObjCMethods.push_back(result);
 
     // *** leave now ***

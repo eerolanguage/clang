@@ -1621,7 +1621,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
       Actions.ProcessDeclAttributeList(S, TheDecl, D.getAttributes());
     Actions.PushOnScopeChains(TheDecl, S);
     Actions.AddInitializerToDecl(TheDecl,
-                                 FuncAsBlock.take(), 
+                                 FuncAsBlock.get(),
                                  false, false);
 
     return Actions.ConvertDeclToDeclGroup(TheDecl);

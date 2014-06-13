@@ -1466,12 +1466,12 @@ bool Sema::CheckMessageArgumentTypes(QualType ReceiverType,
     ExprResult ArgE = PerformCopyInitialization(Entity, SelLoc, argExpr);
 
     if (instancetype) {
+      ExprResult PrevArgE;
       // Make the param type 'id' for the code generator's benefit
       param->setType(Context.getObjCIdType());
       Entity = InitializedEntity::InitializeParameter(Context, param);
-      ExprResult PrevArgE = ArgE;
+      PrevArgE = ArgE;
       ArgE = PerformCopyInitialization(Entity, lbrac, argExpr);
-      PrevArgE.release();
       // Reset the param type to 'instancetype' for the next user
       param->setType(Context.getObjCInstanceType());
     }
@@ -4410,7 +4410,7 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
         if (boxedExpr.isInvalid()) {
           return ExprError();
         }
-        RHSExpr = boxedExpr.take();
+        RHSExpr = boxedExpr.get();
         RHSType = RHSExpr->getType();
       } else if (!LHSType->isObjCObjectPointerType()) {
         ExprResult boxedExpr =
@@ -4418,7 +4418,7 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
         if (boxedExpr.isInvalid()) {
           return ExprError();
         }
-        LHSExpr = boxedExpr.take();
+        LHSExpr = boxedExpr.get();
         LHSType = LHSExpr->getType();
       }
 
@@ -4437,10 +4437,10 @@ ExprResult Sema::ActOnObjectBinOp(Scope *S, SourceLocation TokLoc,
                                     RHSExpr->getLocEnd(),
                                     MultiExprArg(&RHSExpr, 1));
       if (invert) {
-        result = CreateBuiltinUnaryOp(TokLoc, UO_LNot, result.take());
+        result = CreateBuiltinUnaryOp(TokLoc, UO_LNot, result.get());
       }
       if (assign) {
-        result = CreateBuiltinBinOp(TokLoc, BO_Assign, LHSExpr, result.take());
+        result = CreateBuiltinBinOp(TokLoc, BO_Assign, LHSExpr, result.get());
       }
     }
   }
@@ -4523,12 +4523,12 @@ ExprResult Sema::ActOnRangeBinOp(Scope *S, SourceLocation TokLoc,
   ExprResult LengthExpr = ActOnBinOp(S, TokLoc, tok::minus, RHSExpr, LHSExpr);
   llvm::APInt One(Context.getTypeSize(Context.IntTy), 1);
   ExprResult OneExpr = IntegerLiteral::Create(Context, One, Context.IntTy, TokLoc);
-  LengthExpr = ActOnBinOp(S, TokLoc, tok::plus, LengthExpr.take(), OneExpr.take());
+  LengthExpr = ActOnBinOp(S, TokLoc, tok::plus, LengthExpr.get(), OneExpr.get());
 
   // Build (NSRange){ location, length } compound literal expression    
-  Expr* exprList[] = { LHSExpr, LengthExpr.take() };
+  Expr* exprList[] = { LHSExpr, LengthExpr.get() };
   MultiExprArg InitExprs(exprList, 2);
   ExprResult Result = ActOnInitList(LLoc, InitExprs, RLoc);
-  return ActOnCompoundLiteral(LLoc, RangeType, RLoc, Result.take());
+  return ActOnCompoundLiteral(LLoc, RangeType, RLoc, Result.get());
 }
 

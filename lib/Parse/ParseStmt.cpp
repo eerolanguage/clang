@@ -771,7 +771,7 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
   if (getLangOpts().OffSideRule && !PP.isInLegacyMode(FirstCaseLoc)) {
     SubStmt = ParseCompoundStatement();
     if (!SubStmt.isInvalid() && isEero)
-      SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
+      SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.get());
   } else if (Tok.isNot(tok::r_brace)) {
     SubStmt = ParseStatement();
   } else {
@@ -831,7 +831,7 @@ StmtResult Parser::ParseDefaultStatement() {
   if (getLangOpts().OffSideRule && !PP.isInLegacyMode(DefaultLoc)) {
     SubStmt = ParseCompoundStatement();
     if (!SubStmt.isInvalid() && isEero)
-      SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.take());
+      SubStmt = Actions.AddBreakToCaseOrDefaultBlock(SubStmt.get());
   } else if (Tok.isNot(tok::r_brace)) {
     SubStmt = ParseStatement();
   } else {
@@ -1991,7 +1991,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     if (indexStmt.isUsable()) {
       StmtVector indexAndForStmts;
       indexAndForStmts.push_back(indexStmt.get());
-      indexAndForStmts.push_back(forStmt.take());
+      indexAndForStmts.push_back(forStmt.get());
       forStmt = Actions.ActOnCompoundStmt(Body.get()->getLocStart(),
                                           Body.get()->getLocEnd(),
                                           indexAndForStmts, false);

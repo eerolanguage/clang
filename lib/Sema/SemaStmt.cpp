@@ -1880,7 +1880,7 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
       return StmtError(Diag(VD->getLocation(), diag::err_non_variable_decl_in_for));
 
     ValueDecl *valDecl = cast<ValueDecl>(D);
-    InitVarExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, First->getLocStart()).take();
+    InitVarExpr = BuildDeclRefExpr(valDecl, FirstType, VK_LValue, First->getLocStart()).get();
 
   } else {
     InitVarExpr = cast<Expr>(First);
@@ -1937,40 +1937,40 @@ Sema::ActOnForNSRangeStmt(SourceLocation ForLoc,
   ExprResult endExpr =  CreateBuiltinBinOp(SourceLocation(),
                                            BO_Add,
                                            beginExpr.get(),
-                                           lengthExpr.take());
+                                           lengthExpr.get());
   endExpr = ActOnParenExpr(InLoc,
                            PP.getLocForEndOfToken(InLoc, 1),
-                           endExpr.take());
+                           endExpr.get());
 
   Stmt* initStmt;
 
   if (hasDeclaration) {
-    AddInitializerToDecl(VD, beginExpr.take(), false, false);
+    AddInitializerToDecl(VD, beginExpr.get(), false, false);
 
     DeclGroupPtrTy DeclGroup = DeclGroupPtrTy::make(DS->getDeclGroup());
     initStmt = ActOnDeclStmt(DeclGroup,
                              First->getLocStart(),
-                             First->getLocEnd()).take();
+                             First->getLocEnd()).get();
   } else {
     initStmt = CreateBuiltinBinOp(SourceLocation(),
                                   BO_Assign,
                                   InitVarExpr,
-                                  beginExpr.take()).take();
+                                  beginExpr.get()).get();
   }
 
   ExprResult condExpr = CreateBuiltinBinOp(SourceLocation(),
                                            BO_LT,
                                            CondVarExpr.get(),
-                                           endExpr.take() );
+                                           endExpr.get() );
 
   ExprResult incrExpr = CreateBuiltinUnaryOp(Second->getLocStart(),
                                              UO_PostInc,
-                                             IncVarExpr.take() );
+                                             IncVarExpr.get() );
 
-  return Owned(new (Context) ForStmt(Context, initStmt, 
-                                     condExpr.take(), 0, 
-                                     incrExpr.take(), Body, ForLoc, 
-                                     LParenLoc, RParenLoc));
+  return new (Context) ForStmt(Context, initStmt, 
+                               condExpr.get(), 0, 
+                               incrExpr.get(), Body, ForLoc, 
+                               LParenLoc, RParenLoc);
 }
 
 /// Finish building a variable declaration for a for-range statement.
@@ -2606,7 +2606,7 @@ ExprResult Sema::ActOnForIndexStatement(StmtResult &IndexStmt) {
       indexIncExpr = ActOnUnaryOp(getCurScope(),
                                   SourceLocation(),
                                   tok::plusplus,
-                                  IncVarExpr.take());
+                                  IncVarExpr.get());
     } else { // a pre-declared variable
       const SourceLocation litEndLoc =
           IndexStmt.get()->getLocEnd().getLocWithOffset(1);
@@ -2622,7 +2622,7 @@ ExprResult Sema::ActOnForIndexStatement(StmtResult &IndexStmt) {
                                   SourceLocation(),
                                   tok::plusplus,
                                   indexExpr);
-      IndexStmt = StmtResult(initExpr.take());
+      IndexStmt = StmtResult(initExpr.get());
     }
   }
   return indexIncExpr;
@@ -3336,7 +3336,7 @@ Sema::ActOnObjCAtTryStmt(SourceLocation AtLoc, Stmt *Try,
       }
     }
     if (!cxxCatchStmts.empty()) {
-      Stmt *objcRethrowStmt = BuildObjCAtThrowStmt(SourceLocation(), 0).take();
+      Stmt *objcRethrowStmt = BuildObjCAtThrowStmt(SourceLocation(), 0).get();
       StmtResult rethrowCompoundStmt =
           ActOnCompoundStmt(SourceLocation(),
                             SourceLocation(),
@@ -3347,19 +3347,19 @@ Sema::ActOnObjCAtTryStmt(SourceLocation AtLoc, Stmt *Try,
             ActOnCXXCatchBlock(objcEllipsisStmt->getAtCatchLoc(),
                                0,
                                objcEllipsisStmt->getCatchBody());
-        cxxCatchStmts.push_back(cxxEllipsis.take());
+        cxxCatchStmts.push_back(cxxEllipsis.get());
       } else {
         StmtResult stubEllipsis = ActOnObjCAtCatchStmt(SourceLocation(),
                                                        SourceLocation(), 0, 0);
-        objcEllipsisStmt = cast<ObjCAtCatchStmt>(stubEllipsis.take());
+        objcEllipsisStmt = cast<ObjCAtCatchStmt>(stubEllipsis.get());
         objcCatchStmts.push_back(objcEllipsisStmt);
       }
       StmtResult cxxTryBlock =
           ActOnCXXTryBlock(SourceLocation(),
-                           rethrowCompoundStmt.take(),
+                           rethrowCompoundStmt.get(),
                            MultiStmtArg(cxxCatchStmts));
 
-      objcEllipsisStmt->setCatchBody(cxxTryBlock.take());
+      objcEllipsisStmt->setCatchBody(cxxTryBlock.get());
       CatchStmts = MultiStmtArg(objcCatchStmts);
       NumCatchStmts = CatchStmts.size();
     }

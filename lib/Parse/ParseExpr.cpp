@@ -1590,13 +1590,13 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           ConsumeToken(); // the '='
           ExprResult SetterArgExpr = ParseAssignmentExpression();
           if (!SetterArgExpr.isInvalid()) {
-            Expr* SetterArg = SetterArgExpr.take();
+            Expr* SetterArg = SetterArgExpr.get();
             MsgExprArg = MultiExprArg(SetterArg);
             MsgEndLoc = SetterArg->getLocEnd();
           }
         }
         LHS = Actions.ActOnInstanceMessage(getCurScope(),
-                                           LHS.take(),
+                                           LHS.get(),
                                            Sel,
                                            LHS.get()->getLocStart(),
                                            Name.getLocStart(),
@@ -2723,7 +2723,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     Sema::CompoundScopeRAII CompoundScope(Actions);
     if (Tok.is(tok::kw_return)) {
       Stmt = Actions.ActOnReturnStmt(ConsumeToken(), // the "return"
-                                     ParseAssignmentExpression().take(),
+                                     ParseAssignmentExpression().get(),
                                      getCurScope());
     } else {      
       ExprResult Res(ParseAssignmentExpression()); // no comma operators?
@@ -2735,7 +2735,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
     if (!Stmt.isInvalid()) {     // make into a compound statement needed
       StmtVector Stmts; // by ActOnBlockStmtExpr)
-      Stmts.push_back(Stmt.release());
+      Stmts.push_back(Stmt.get());
       Stmt = Actions.ActOnCompoundStmt(Stmt.get()->getLocStart(),
                                        Stmt.get()->getLocEnd(),
                                        Stmts, false);
@@ -2795,6 +2795,6 @@ ExprResult Parser::ParseNestedFunctionAsBlock(ParsingDeclSpec &DS,
   StmtResult Body = ParseCompoundStatementBody(); 
   BlockScope.Exit();
   
-  return Actions.ActOnBlockStmtExpr(BodyStartLoc, Body.take(), getCurScope());
+  return Actions.ActOnBlockStmtExpr(BodyStartLoc, Body.get(), getCurScope());
 }
 
